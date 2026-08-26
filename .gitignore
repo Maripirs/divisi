@@ -4,3 +4,12 @@ xcuserdata/
 DerivedData/
 .build/
 .claude/worktrees/
+
+# Backend (Python)
+Backend/.venv/
+Backend/__pycache__/
+Backend/**/__pycache__/
+Backend/.env
+Backend/data/
+Backend/**/*.egg-info/
+Backend/.pytest_cache/

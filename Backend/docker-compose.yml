@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: divisi
+      POSTGRES_PASSWORD: divisi
+      POSTGRES_DB: divisi
+    ports:
+      - "5432:5432"
+    volumes:
+      - divisi_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U divisi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg2://divisi:divisi@postgres:5432/divisi
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data/storage:/srv/data/storage
+
+volumes:
+  divisi_postgres_data:
