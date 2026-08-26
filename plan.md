@@ -1,6 +1,6 @@
 # Project Plan: Divisi
 
-**Current milestone:** M3
+**Current milestone:** M4
 
 ## Milestones
 
@@ -36,7 +36,7 @@
 - [ ] Supply a few real choir MIDI files (from your practice library) as test fixtures
 - [ ] Spot-check the track→voice-part mapping against a file where you know the real SATB order
 
-### M3 — MIDI playback engine [?]
+### M3 — MIDI playback engine [x]
 
 **Acceptance criteria:**
 - [x] MIDI file plays audibly at correct tempo (simulator or device)
@@ -116,6 +116,7 @@
 
 ## Log
 
+- 2026-08-26: M3 approved. Moving to M4 (in-app follow-along sync engine + piano-roll).
 - 2026-08-26: M3 device test passed — plays on a physical iPhone (device already had a valid signing cert for the WZWT86647J team), and audio survives backgrounding. All acceptance criteria met.
 - 2026-08-26: M3 built — DivisiPlaybackService verified: position-tracking mechanics via a standalone macOS harness, audible playback confirmed by human on the iPhone 17 Pro simulator (temporary smoke-test button in ContentView). Two of three acceptance criteria met; backgrounding-survives-on-device still needs the human's real-device test.
 - 2026-08-26: M2 approved. Moving to M3 (playback engine).
