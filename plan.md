@@ -20,16 +20,16 @@
 **Tasks — Human:**
 - [x] Confirm/set the bundle identifier and signing team in `project.yml` (tied to your Apple Developer account)
 
-### M2 — MIDI parsing (notes + lyric events) [~]
+### M2 — MIDI parsing (notes + lyric events) [?]
 
 **Acceptance criteria:**
-- [ ] Given a fixture MIDI file, parsed note count/timing spot-checks correctly against the source for a sample measure
-- [ ] Lyric events parse correctly when present, and parsing degrades gracefully (empty array, no crash) when absent
+- [x] Given a fixture MIDI file, parsed note count/timing spot-checks correctly against the source for a sample measure
+- [x] Lyric events parse correctly when present, and parsing degrades gracefully (empty array, no crash) when absent
 
 **Tasks — Claude:**
-- [ ] Define `MIDINote` / `MIDILyricEvent` models (pitch, start/duration in ms, voice part)
-- [ ] Write `MIDIParser` using `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` to pull note events and lyric/text meta-events (type 0x05) per track — reuses AVFoundation's own MIDI parsing instead of hand-rolling raw byte parsing like LRCLIB's regex approach
-- [ ] Map tracks to voice parts: prefer track-name meta-events, fall back to track order or mean-pitch ranking (S/A/T/B high→low)
+- [x] Define `MIDINote` / `MIDILyricEvent` models (pitch, start/duration in ms, voice part)
+- [x] Write `MIDIParser` — pivoted from the planned `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` to AudioToolbox's `MusicSequence`/`MusicEventIterator` C API: `AVMIDIMetaEvent` in the current SDK only exposes `.type`, not the payload bytes, so lyric/track-name text can't actually be read back through it. Same underlying engine, one layer down.
+- [x] Map tracks to voice parts: track-name meta-events (tolerant of numbering/punctuation/divisi splits), fall back to mean-pitch ranking (S/A/T/B high→low) when names are ambiguous or absent
 - [x] Add 1–2 sample/public-domain SATB MIDI fixtures to the repo for dev use
 
 **Tasks — Human:**
@@ -115,6 +115,7 @@
 
 ## Log
 
+- 2026-08-26: M2 parser built and verified against all three fixtures (note counts/timing/pitches match generate.py's source exactly; lyrics parse when present, empty when absent; Organ track correctly excluded). Pivoted off the plan's originally-named `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` approach to AudioToolbox's `MusicSequence`/`MusicEventIterator` C API after discovering `AVMIDIMetaEvent` doesn't expose readable payload bytes in the current SDK — only `.type`. Also added SMF format 0/1 detection and more tolerant track-name matching (numbering, punctuation, divisi splits) ahead of getting real files, per the user's expectation that real-world MIDI exports will vary more than the synthetic fixtures.
 - 2026-08-26: Added M2 dev fixtures — 3 synthetic MIDI files under `Fixtures/` (plain SATB, SATB+lyrics, SATB+accompaniment track), approximating the opening of Mozart's Requiem's "Requiem aeternam" chorus. Generated via `Fixtures/generate.py` (mido) rather than sourced from a choral archive — most free MIDI/choral archive sites (CPDL, 8notes, MuseScore, smallchurchmusic) blocked automated fetching or required accounts. Pitches are a from-memory approximation, not a verified transcription; see `Fixtures/README.md` for the caveat.
 - 2026-08-26: M1 approved — same team confirmed, bundle ID/signing team left as-is. Moving to M2.
 - 2026-08-26: M1 scaffold built — xcodegen spec, App/ + empty DivisiKit/, xcodegen+xcodebuild verified green, app launches showing the placeholder screen (screenshotted in simulator). Bundle ID (`com.maripaz.divisi`) and dev team (`WZWT86647J`) carried over from LyricsPiP as defaults — human task to confirm/adjust these still open.
