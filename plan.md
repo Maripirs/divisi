@@ -36,19 +36,19 @@
 - [ ] Supply a few real choir MIDI files (from your practice library) as test fixtures
 - [ ] Spot-check the track→voice-part mapping against a file where you know the real SATB order
 
-### M3 — MIDI playback engine [~]
+### M3 — MIDI playback engine [?]
 
 **Acceptance criteria:**
 - [x] MIDI file plays audibly at correct tempo (simulator or device)
 - [x] Play/pause/seek work and reported position stays accurate
-- [ ] Backgrounding the app during playback doesn't stop audio (device test)
+- [x] Backgrounding the app during playback doesn't stop audio (device test)
 
 **Tasks — Claude:**
 - [x] Build `DivisiPlaybackService` wrapping `AVAudioSequencer` + `AVAudioEngine` (default GM sampler for MVP), exposing play/pause/seek and a polled `currentPositionMs`, shaped like `SpotifyNowPlayingService`
 - [x] Configure `AVAudioSession` (`.playback` category, background audio) — this app generates its own sound, unlike LyricsPiP's `.mixWithOthers`
 
 **Tasks — Human:**
-- [ ] Verify playback and background audio survive backgrounding on a real device
+- [x] Verify playback and background audio survive backgrounding on a real device
 
 ### M4 — In-app follow-along (sync engine + on-screen piano-roll) [ ]
 
@@ -116,6 +116,7 @@
 
 ## Log
 
+- 2026-08-26: M3 device test passed — plays on a physical iPhone (device already had a valid signing cert for the WZWT86647J team), and audio survives backgrounding. All acceptance criteria met.
 - 2026-08-26: M3 built — DivisiPlaybackService verified: position-tracking mechanics via a standalone macOS harness, audible playback confirmed by human on the iPhone 17 Pro simulator (temporary smoke-test button in ContentView). Two of three acceptance criteria met; backgrounding-survives-on-device still needs the human's real-device test.
 - 2026-08-26: M2 approved. Moving to M3 (playback engine).
 - 2026-08-26: M2 parser built and verified against all three fixtures (note counts/timing/pitches match generate.py's source exactly; lyrics parse when present, empty when absent; Organ track correctly excluded). Pivoted off the plan's originally-named `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` approach to AudioToolbox's `MusicSequence`/`MusicEventIterator` C API after discovering `AVMIDIMetaEvent` doesn't expose readable payload bytes in the current SDK — only `.type`. Also added SMF format 0/1 detection and more tolerant track-name matching (numbering, punctuation, divisi splits) ahead of getting real files, per the user's expectation that real-world MIDI exports will vary more than the synthetic fixtures.
