@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */; };
+		0A695632E04AD4540E8FEA6C /* MusicXMLConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */; };
 		1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065A297D3D4F72343403924 /* MIDIParser.swift */; };
 		5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EDADD73263374141CD15A05 /* ContentView.swift */; };
 		632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */; };
@@ -20,6 +21,7 @@
 /* Begin PBXFileReference section */
 		01E8477131F120304F4714EA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */ = {isa = PBXFileReference; lastKnownFileType = audio.midi; path = "requiem-satb-plain.mid"; sourceTree = "<group>"; };
+		32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicXMLConverter.swift; sourceTree = "<group>"; };
 		5EDADD73263374141CD15A05 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiPlaybackService.swift; sourceTree = "<group>"; };
 		9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */ = {isa = PBXFileReference; path = TimGM6mb.sf2; sourceTree = "<group>"; };
@@ -66,6 +68,7 @@
 				789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */,
 				F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */,
 				F065A297D3D4F72343403924 /* MIDIParser.swift */,
+				32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */,
 				CB8FD13BCFDE5DBB516C50F3 /* Resources */,
 			);
 			path = DivisiKit;
@@ -157,6 +160,7 @@
 				A27876277F14FEF383828175 /* DivisiPlaybackService.swift in Sources */,
 				632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */,
 				1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */,
+				0A695632E04AD4540E8FEA6C /* MusicXMLConverter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

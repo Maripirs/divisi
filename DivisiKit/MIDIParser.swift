@@ -22,11 +22,17 @@ final class MIDIParser {
 
     private static let metaEventTypeTrackName: UInt8 = 0x03
     private static let metaEventTypeLyric: UInt8 = 0x05
+    private static let metaEventTypeSetTempo: UInt8 = 0x51
+    private static let metaEventTypeTimeSignature: UInt8 = 0x58
+    private static let metaEventTypeKeySignature: UInt8 = 0x59
 
     private struct RawTrack {
         let name: String?
         let notes: [(beat: MusicTimeStamp, durationBeats: Double, pitch: UInt8)]
         let lyrics: [(beat: MusicTimeStamp, text: String)]
+        let tempoBPM: Double?
+        let timeSignature: MIDITimeSignature?
+        let keySignatureFifths: Int?
     }
 
     func parse(fileURL: URL) throws -> ParsedMIDI {
@@ -85,7 +91,15 @@ final class MIDIParser {
 
         notes.sort { $0.startMs < $1.startMs }
         lyrics.sort { $0.timeMs < $1.timeMs }
-        return ParsedMIDI(notes: notes, lyrics: lyrics)
+
+        // First occurrence wins, in track order (conductor track is
+        // conventionally track 0) — mid-file changes aren't tracked, see
+        // `ParsedMIDI`'s doc comment.
+        let tempoBPM = rawTracks.compactMap(\.tempoBPM).first ?? 120
+        let timeSignature = rawTracks.compactMap(\.timeSignature).first ?? .defaultSignature
+        let keySignatureFifths = rawTracks.compactMap(\.keySignatureFifths).first ?? 0
+
+        return ParsedMIDI(notes: notes, lyrics: lyrics, tempoBPM: tempoBPM, timeSignature: timeSignature, keySignatureFifths: keySignatureFifths)
     }
 
     // MARK: - Track reading
@@ -94,10 +108,13 @@ final class MIDIParser {
         var name: String?
         var notes: [(beat: MusicTimeStamp, durationBeats: Double, pitch: UInt8)] = []
         var lyrics: [(beat: MusicTimeStamp, text: String)] = []
+        var tempoBPM: Double?
+        var timeSignature: MIDITimeSignature?
+        var keySignatureFifths: Int?
 
         var iterator: MusicEventIterator?
         guard NewMusicEventIterator(track, &iterator) == noErr, let iterator else {
-            return RawTrack(name: nil, notes: [], lyrics: [])
+            return RawTrack(name: nil, notes: [], lyrics: [], tempoBPM: nil, timeSignature: nil, keySignatureFifths: nil)
         }
         defer { DisposeMusicEventIterator(iterator) }
 
@@ -116,16 +133,30 @@ final class MIDIParser {
                     notes.append((beat: timeStamp, durationBeats: Double(note.duration), pitch: note.note))
                 case kMusicEventType_Meta:
                     let meta = eventData.assumingMemoryBound(to: MIDIMetaEvent.self).pointee
-                    if meta.metaEventType == Self.metaEventTypeTrackName || meta.metaEventType == Self.metaEventTypeLyric {
-                        let dataOffset = MemoryLayout<MIDIMetaEvent>.offset(of: \.data)!
-                        let bytes = Data(bytes: UnsafeRawPointer(eventData).advanced(by: dataOffset), count: Int(meta.dataLength))
-                        if let text = String(data: bytes, encoding: .utf8) {
-                            if meta.metaEventType == Self.metaEventTypeTrackName {
-                                name = text
-                            } else {
-                                lyrics.append((beat: timeStamp, text: text))
-                            }
+                    let dataOffset = MemoryLayout<MIDIMetaEvent>.offset(of: \.data)!
+                    let bytes = [UInt8](UnsafeRawBufferPointer(start: UnsafeRawPointer(eventData).advanced(by: dataOffset), count: Int(meta.dataLength)))
+                    switch meta.metaEventType {
+                    case Self.metaEventTypeTrackName:
+                        name = String(bytes: bytes, encoding: .utf8)
+                    case Self.metaEventTypeLyric:
+                        if let text = String(bytes: bytes, encoding: .utf8) {
+                            lyrics.append((beat: timeStamp, text: text))
                         }
+                    case Self.metaEventTypeSetTempo where bytes.count == 3:
+                        // 24-bit big-endian microseconds per quarter note.
+                        let microsecondsPerQuarter = Int(bytes[0]) << 16 | Int(bytes[1]) << 8 | Int(bytes[2])
+                        if microsecondsPerQuarter > 0 {
+                            tempoBPM = 60_000_000.0 / Double(microsecondsPerQuarter)
+                        }
+                    case Self.metaEventTypeTimeSignature where bytes.count >= 2:
+                        // numerator, then log2(denominator) — clocks-per-click
+                        // and 32nds-per-quarter (bytes 2-3) aren't needed here.
+                        timeSignature = MIDITimeSignature(numerator: Int(bytes[0]), denominator: 1 << Int(bytes[1]))
+                    case Self.metaEventTypeKeySignature where bytes.count >= 1:
+                        // Signed byte: sharps if positive, flats if negative.
+                        keySignatureFifths = Int(Int8(bitPattern: bytes[0]))
+                    default:
+                        break
                     }
                 default:
                     break
@@ -135,7 +166,7 @@ final class MIDIParser {
             MusicEventIteratorHasCurrentEvent(iterator, &hasEvent)
         }
 
-        return RawTrack(name: name, notes: notes, lyrics: lyrics)
+        return RawTrack(name: name, notes: notes, lyrics: lyrics, tempoBPM: tempoBPM, timeSignature: timeSignature, keySignatureFifths: keySignatureFifths)
     }
 
     // MARK: - Format detection
