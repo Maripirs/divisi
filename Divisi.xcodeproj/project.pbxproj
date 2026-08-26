@@ -8,7 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */; };
+		1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065A297D3D4F72343403924 /* MIDIParser.swift */; };
 		5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EDADD73263374141CD15A05 /* ContentView.swift */; };
+		632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */; };
 		E8655D08BFF3286CB71E74EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -17,8 +19,9 @@
 		5EDADD73263374141CD15A05 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiApp.swift; sourceTree = "<group>"; };
 		BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		C552FE905787E6EB3CC3D53E /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
 		DCB749CCD8C95982EDFD29E1 /* Divisi.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Divisi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F065A297D3D4F72343403924 /* MIDIParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIParser.swift; sourceTree = "<group>"; };
+		F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -45,7 +48,8 @@
 		EB5A852FBD920612A0B44527 /* DivisiKit */ = {
 			isa = PBXGroup;
 			children = (
-				C552FE905787E6EB3CC3D53E /* .gitkeep */,
+				F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */,
+				F065A297D3D4F72343403924 /* MIDIParser.swift */,
 			);
 			path = DivisiKit;
 			sourceTree = "<group>";
@@ -131,6 +135,8 @@
 			files = (
 				5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */,
 				0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */,
+				632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */,
+				1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
