@@ -39,13 +39,13 @@
 ### M3 — MIDI playback engine [~]
 
 **Acceptance criteria:**
-- [ ] MIDI file plays audibly at correct tempo (simulator or device)
-- [ ] Play/pause/seek work and reported position stays accurate
+- [x] MIDI file plays audibly at correct tempo (simulator or device)
+- [x] Play/pause/seek work and reported position stays accurate
 - [ ] Backgrounding the app during playback doesn't stop audio (device test)
 
 **Tasks — Claude:**
-- [ ] Build `DivisiPlaybackService` wrapping `AVAudioSequencer` + `AVAudioEngine` (default GM sampler for MVP), exposing play/pause/seek and a polled `currentPositionMs`, shaped like `SpotifyNowPlayingService`
-- [ ] Configure `AVAudioSession` (`.playback` category, background audio) — this app generates its own sound, unlike LyricsPiP's `.mixWithOthers`
+- [x] Build `DivisiPlaybackService` wrapping `AVAudioSequencer` + `AVAudioEngine` (default GM sampler for MVP), exposing play/pause/seek and a polled `currentPositionMs`, shaped like `SpotifyNowPlayingService`
+- [x] Configure `AVAudioSession` (`.playback` category, background audio) — this app generates its own sound, unlike LyricsPiP's `.mixWithOthers`
 
 **Tasks — Human:**
 - [ ] Verify playback and background audio survive backgrounding on a real device
@@ -112,9 +112,11 @@
 - Real engraved staff notation rendering (clefs/beams/ties) as an alternative/upgrade to the piano-roll view
 - Pitch feedback (mic input + pitch detection against the reference part)
 - Printed sheet music → MIDI conversion (OMR), likely by shelling out to an existing open-source engine (Audiveris, oemer) rather than building recognition from scratch
+  - Post-OMR correction UI (fix misassigned voice parts, wrong pitches, mistimed notes before the file is used for practice) — evaluate MIDIKit's `MIDIKitSMF` (editable Swift event/track model) vs. raw AudioToolbox `MusicSequence` (insert/delete events + `MusicSequenceFileCreate` to write back) for the edit+export layer
 
 ## Log
 
+- 2026-08-26: M3 built — DivisiPlaybackService verified: position-tracking mechanics via a standalone macOS harness, audible playback confirmed by human on the iPhone 17 Pro simulator (temporary smoke-test button in ContentView). Two of three acceptance criteria met; backgrounding-survives-on-device still needs the human's real-device test.
 - 2026-08-26: M2 approved. Moving to M3 (playback engine).
 - 2026-08-26: M2 parser built and verified against all three fixtures (note counts/timing/pitches match generate.py's source exactly; lyrics parse when present, empty when absent; Organ track correctly excluded). Pivoted off the plan's originally-named `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` approach to AudioToolbox's `MusicSequence`/`MusicEventIterator` C API after discovering `AVMIDIMetaEvent` doesn't expose readable payload bytes in the current SDK — only `.type`. Also added SMF format 0/1 detection and more tolerant track-name matching (numbering, punctuation, divisi splits) ahead of getting real files, per the user's expectation that real-world MIDI exports will vary more than the synthetic fixtures.
 - 2026-08-26: Added M2 dev fixtures — 3 synthetic MIDI files under `Fixtures/` (plain SATB, SATB+lyrics, SATB+accompaniment track), approximating the opening of Mozart's Requiem's "Requiem aeternam" chorus. Generated via `Fixtures/generate.py` (mido) rather than sourced from a choral archive — most free MIDI/choral archive sites (CPDL, 8notes, MuseScore, smallchurchmusic) blocked automated fetching or required accounts. Pitches are a from-memory approximation, not a verified transcription; see `Fixtures/README.md` for the caveat.
