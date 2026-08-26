@@ -50,21 +50,24 @@
 **Tasks — Human:**
 - [x] Verify playback and background audio survive backgrounding on a real device
 
-### M4 — In-app follow-along (sync engine + on-screen piano-roll) [ ]
+### M4 — In-app follow-along (sync engine + moving staff-notation cursor) [ ]
+
+**Pivoted from a piano-roll to real engraved notation** (was backlog "Real engraved staff notation" — promoted here after the human decided a MuseScore-style moving cursor over actual sheet music was the real goal, not a DAW-style piano-roll). Rendering via [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay) (MIT, VexFlow-based, has a `Cursor` API built for exactly this) in a `WKWebView`, rather than hand-rolling an engraving engine.
 
 **Acceptance criteria:**
-- [ ] Starting playback shows the piano-roll live on-screen, updating smoothly with correct notes highlighted at correct times
+- [ ] Starting playback renders real engraved notation (via OpenSheetMusicDisplay) for the selected voice part, with a MuseScore-style cursor moving in sync with playback position
 - [ ] Pause/resume/seek reflected within ~1s
-- [ ] Human confirms the scrolling roll actually reads as useful for practice, before PiP work is invested in
+- [ ] Human confirms the moving-notation view actually reads as useful for practice, before PiP work is invested in
 
 **Tasks — Claude:**
-- [ ] Build `DivisiSyncEngine` (`@MainActor`, `ObservableObject`): each playback poll tick, compute the current time window of notes per voice part from parsed MIDI data
-- [ ] Build an in-app SwiftUI view (Canvas-based) rendering the piano-roll — lanes per voice part, note bars, playhead — using layout logic that will later back the PiP renderer directly, not a rewrite
-- [ ] Render lyric text below the roll when present for the current time
+- [ ] Build a MIDI→MusicXML converter: quantize `ParsedMIDI` notes to a fixed rhythmic grid (derived from the file's tempo/time-signature) and emit MusicXML for one voice part at a time
+- [ ] Embed OpenSheetMusicDisplay in a `WKWebView` (mirroring the [massimobio Swift/WKWebView example](https://github.com/massimobio/OpenSheetMusicDisplay-Swift-Example)) to render the generated MusicXML
+- [ ] Build `DivisiSyncEngine` (`@MainActor`, `ObservableObject`): each playback poll tick, map `currentPositionMs` to the corresponding OSMD cursor step and drive it via a JS bridge
+- [ ] Render lyric text alongside/below the score when present for the current time
 - [ ] Handle pause/resume/seek/no-file-loaded states in the sync engine from the start (LyricsPiP's own backlog flagged this as skipped for the Spotify case)
 
 **Tasks — Human:**
-- [ ] Try it against a real MIDI file end-to-end; sign off that the on-screen roll is actually useful before moving on
+- [ ] Try it against a real MIDI file end-to-end; sign off that the moving-notation view is actually useful before moving on
 
 ### M5 — Basic SwiftUI shell [ ]
 
@@ -78,7 +81,9 @@
 **Tasks — Human:**
 - [ ] Provide real MIDI files and practice-test the in-app flow end to end
 
-### M6 — PiP piano-roll renderer (port to CVPixelBuffer) [ ]
+### M6 — PiP score renderer (port to CVPixelBuffer) [ ]
+
+**Note:** originally planned as a straight port of the piano-roll's layout math (M4 was Canvas-based then). Since M4 pivoted to OSMD rendering in a `WKWebView`, and a `WKWebView` can't stream frames to a `CVPixelBuffer` at real-time rates, this milestone needs its own rendering answer for PiP — most likely a native re-render of the same quantized note data (from the M4 MusicXML converter), not a port of OSMD itself. Revisit the approach when M5 is done.
 
 **Acceptance criteria:**
 - [ ] A static single-frame render (given a fake playback position) lays out correctly — verify by dumping a frame to PNG for inspection
@@ -109,13 +114,13 @@
 
 ## Backlog
 
-- Real engraved staff notation rendering (clefs/beams/ties) as an alternative/upgrade to the piano-roll view
 - Pitch feedback (mic input + pitch detection against the reference part)
 - Printed sheet music → MIDI conversion (OMR), likely by shelling out to an existing open-source engine (Audiveris, oemer) rather than building recognition from scratch
   - Post-OMR correction UI (fix misassigned voice parts, wrong pitches, mistimed notes before the file is used for practice) — evaluate MIDIKit's `MIDIKitSMF` (editable Swift event/track model) vs. raw AudioToolbox `MusicSequence` (insert/delete events + `MusicSequenceFileCreate` to write back) for the edit+export layer
 
 ## Log
 
+- 2026-08-26: M4 replanned mid-flight — pivoted from a Canvas piano-roll to real engraved notation (OpenSheetMusicDisplay in a `WKWebView`, MuseScore-style moving cursor), per the human's preference for actual sheet music over a DAW-style roll. Backlog's "real engraved staff notation" item promoted into M4. Flagged a downstream consequence for M6: WKWebView can't stream to a `CVPixelBuffer` for PiP, so that milestone will need its own native rendering approach later.
 - 2026-08-26: M3 approved. Moving to M4 (in-app follow-along sync engine + piano-roll).
 - 2026-08-26: M3 device test passed — plays on a physical iPhone (device already had a valid signing cert for the WZWT86647J team), and audio survives backgrounding. All acceptance criteria met.
 - 2026-08-26: M3 built — DivisiPlaybackService verified: position-tracking mechanics via a standalone macOS harness, audible playback confirmed by human on the iPhone 17 Pro simulator (temporary smoke-test button in ContentView). Two of three acceptance criteria met; backgrounding-survives-on-device still needs the human's real-device test.
