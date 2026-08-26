@@ -84,14 +84,14 @@ full queue yet), docker-compose for local dev.
 - [x] Upload endpoint (stores file via `app/storage/files.py`), version creation, group-push endpoint (admin-only), per-user library listing
 - [x] Submit-for-review endpoint (member), approve/reject endpoints (admin-only), status transitions enforced server-side
 
-### B5 — Annotations + sharing [ ]
+### B5 — Annotations + sharing [x]
 
 **Acceptance criteria:**
-- [ ] A user's annotation on a piece is invisible to others by default, and becomes visible to a specific peer once explicitly shared
+- [x] A user's annotation on a piece is invisible to others by default, and becomes visible to a specific peer once explicitly shared
 
 **Tasks — Claude:**
-- [ ] `Annotation`, `AnnotationShare` models + migration
-- [ ] CRUD endpoints scoped to the owning user; share/unshare endpoint; visibility check on read
+- [x] `Annotation`, `AnnotationShare` models + migration
+- [x] CRUD endpoints scoped to the owning user; share/unshare endpoint; visibility check on read
 
 ### B6 — OMR pipeline [ ]
 
@@ -127,3 +127,4 @@ full queue yet), docker-compose for local dev.
 - 2026-08-26: B3 approved. Moving to B4 (Piece, versions, distribution, review).
 - 2026-08-26: B4 built — `Piece`/`PieceVersion`/`Distribution` models + migration (verified upgrade/downgrade/re-upgrade against Postgres); `/library/pieces` (upload, create piece+initial version), `/library/pieces/{id}/versions` (add a version), `/library/versions/{id}/submit|approve|reject` (status transitions enforced server-side — draft→submitted→approved/rejected, review authority = group admin or individual owner), `/library/pieces/{id}/versions/{id}/distribute` (admin-only push to group, requires approved status, 409 on double-push), `/library/pieces` GET (per-user library: owned pieces + latest distributed version per group piece). 4 new tests pass (18 total) plus a manual end-to-end smoke test against the real containers (upload group piece → distribute blocked pre-approval (409) → submit → member-approve blocked (403) → admin approves → distribute (201) → double-distribute blocked (409) → member sees it in their library). All three B4 acceptance criteria pass; ready for approval.
 - 2026-08-26: B4 approved. Moving to B5 (annotations + sharing).
+- 2026-08-26: B5 built — `Annotation`/`AnnotationShare` models + migration (verified upgrade/downgrade/re-upgrade against Postgres); `/annotations` router: create (requires access to the piece), piece-scoped list (own + shared-with-me), get/update/delete (owner-only for write), `/annotations/{id}/share` and `.../share/{user_id}` unshare (owner-only, share is 409 on duplicate, 400 on self-share). 3 new tests pass (21 total) covering default privacy, share-grants/unshare-revokes visibility (plus peer can't edit/unshare), and owner update/delete. Note: B4's code was still uncommitted in the working tree when this started — committed separately just before this. Pending review.

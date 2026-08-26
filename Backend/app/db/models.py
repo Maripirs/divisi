@@ -112,3 +112,30 @@ class Distribution(Base):
     piece_version_id: Mapped[str] = mapped_column(String, ForeignKey("piece_versions.id"), nullable=False)
     group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
     distributed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Annotation(Base):
+    """Attaches to the logical `Piece`, not a specific version, so it carries
+    forward across versions. Private to its owner by default; visible to a
+    peer only via an explicit `AnnotationShare`."""
+
+    __tablename__ = "annotations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    position: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AnnotationShare(Base):
+    __tablename__ = "annotation_shares"
+    __table_args__ = (
+        UniqueConstraint("annotation_id", "shared_with_user_id", name="uq_annotation_share"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    annotation_id: Mapped[str] = mapped_column(String, ForeignKey("annotations.id"), nullable=False)
+    shared_with_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
