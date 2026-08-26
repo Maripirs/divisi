@@ -1,9 +1,39 @@
-"""Library routes (pieces, versions, distribution, annotations).
+"""Library routes: pieces, versions, review, distribution.
 
-Land across B3–B5 — see Backend/plan.md.
+A `Piece` is owned either by an individual user or by a group. New versions
+start as `draft`; a member submits a draft for review, and only the review
+authority for that piece (the group's admin, or the individual owner) can
+approve or reject it. Only an `approved` version can be pushed (distributed)
+to a group's members, and draft/rejected versions are never pushed — see the
+domain model in Backend/plan.md.
 """
 
-from fastapi import APIRouter
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_user
+from app.api.schemas import (
+    DistributionOut,
+    LibraryEntryOut,
+    PieceUploadOut,
+    PieceVersionOut,
+)
+from app.db.models import (
+    Distribution,
+    Group,
+    GroupMembership,
+    GroupRole,
+    OwnerType,
+    Piece,
+    PieceVersion,
+    User,
+    VersionSource,
+    VersionStatus,
+)
+from app.db.session import get_db
+from app.storage.files import save_file
 
 router = APIRouter(prefix="/library", tags=["library"])
 
@@ -11,3 +41,276 @@ router = APIRouter(prefix="/library", tags=["library"])
 @router.get("/ping")
 def ping() -> dict[str, str]:
     return {"status": "library stub — see B3-B5 in plan.md"}
+
+
+def _get_piece_or_404(piece_id: str, db: Session) -> Piece:
+    piece = db.get(Piece, piece_id)
+    if piece is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+    return piece
+
+
+def _get_version_or_404(version_id: str, db: Session) -> PieceVersion:
+    version = db.get(PieceVersion, version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    return version
+
+
+def _group_role(group_id: str, user_id: str, db: Session) -> GroupRole | None:
+    membership = (
+        db.query(GroupMembership)
+        .filter(GroupMembership.group_id == group_id, GroupMembership.user_id == user_id)
+        .first()
+    )
+    return membership.role if membership else None
+
+
+def _require_piece_access(piece: Piece, user: User, db: Session) -> None:
+    """Can this user work on (view / add a version to) this piece?"""
+    if piece.owner_type == OwnerType.user:
+        if piece.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not the owner of this piece")
+    else:
+        if _group_role(piece.owner_id, user.id, db) is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this piece's group")
+
+
+def _require_review_authority(piece: Piece, user: User, db: Session) -> None:
+    """Can this user approve/reject versions of this piece?"""
+    if piece.owner_type == OwnerType.user:
+        if piece.owner_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can review this piece")
+    else:
+        if _group_role(piece.owner_id, user.id, db) != GroupRole.admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+
+
+@router.post("/pieces", response_model=PieceUploadOut, status_code=status.HTTP_201_CREATED)
+async def upload_piece(
+    title: str = Form(...),
+    owner_type: OwnerType = Form(...),
+    group_id: str | None = Form(None),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceUploadOut:
+    if owner_type == OwnerType.group:
+        if not group_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="group_id is required for a group-owned piece")
+        if db.get(Group, group_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+        if _group_role(group_id, current_user.id, db) != GroupRole.admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+        owner_id = group_id
+    else:
+        owner_id = current_user.id
+
+    data = await file.read()
+    suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
+    file_path = save_file(data, suffix=suffix)
+
+    piece = Piece(title=title, owner_type=owner_type, owner_id=owner_id)
+    db.add(piece)
+    db.flush()
+    version = PieceVersion(
+        piece_id=piece.id,
+        created_by=current_user.id,
+        source=VersionSource.original,
+        status=VersionStatus.draft,
+        file_path=file_path,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(piece)
+    db.refresh(version)
+    return PieceUploadOut(piece=piece, version=version)
+
+
+@router.post(
+    "/pieces/{piece_id}/versions", response_model=PieceVersionOut, status_code=status.HTTP_201_CREATED
+)
+async def upload_version(
+    piece_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    piece = _get_piece_or_404(piece_id, db)
+    _require_piece_access(piece, current_user, db)
+
+    data = await file.read()
+    suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
+    file_path = save_file(data, suffix=suffix)
+
+    version = PieceVersion(
+        piece_id=piece.id,
+        created_by=current_user.id,
+        source=VersionSource.modification,
+        status=VersionStatus.draft,
+        file_path=file_path,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return version
+
+
+@router.post("/versions/{version_id}/submit", response_model=PieceVersionOut)
+def submit_version(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    version = _get_version_or_404(version_id, db)
+    if version.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the creator can submit this version")
+    if version.status != VersionStatus.draft:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Version is not in draft status")
+    version.status = VersionStatus.submitted
+    db.commit()
+    db.refresh(version)
+    return version
+
+
+@router.post("/versions/{version_id}/approve", response_model=PieceVersionOut)
+def approve_version(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    if version.status != VersionStatus.submitted:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Version is not pending review")
+    version.status = VersionStatus.approved
+    version.reviewed_by = current_user.id
+    version.reviewed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(version)
+    return version
+
+
+@router.post("/versions/{version_id}/reject", response_model=PieceVersionOut)
+def reject_version(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    if version.status != VersionStatus.submitted:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Version is not pending review")
+    version.status = VersionStatus.rejected
+    version.reviewed_by = current_user.id
+    version.reviewed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(version)
+    return version
+
+
+@router.post(
+    "/pieces/{piece_id}/versions/{version_id}/distribute",
+    response_model=DistributionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def distribute_version(
+    piece_id: str,
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DistributionOut:
+    piece = _get_piece_or_404(piece_id, db)
+    version = _get_version_or_404(version_id, db)
+    if version.piece_id != piece.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    if piece.owner_type != OwnerType.group:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only group-owned pieces can be distributed")
+    if _group_role(piece.owner_id, current_user.id, db) != GroupRole.admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    if version.status != VersionStatus.approved:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only an approved version can be distributed")
+
+    existing = (
+        db.query(Distribution)
+        .filter(Distribution.piece_version_id == version.id, Distribution.group_id == piece.owner_id)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Already distributed to this group")
+
+    distribution = Distribution(piece_version_id=version.id, group_id=piece.owner_id)
+    db.add(distribution)
+    db.commit()
+    db.refresh(distribution)
+    return distribution
+
+
+@router.get("/pieces", response_model=list[LibraryEntryOut])
+def list_my_library(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[LibraryEntryOut]:
+    entries: list[LibraryEntryOut] = []
+
+    owned_pieces = (
+        db.query(Piece)
+        .filter(Piece.owner_type == OwnerType.user, Piece.owner_id == current_user.id)
+        .all()
+    )
+    for piece in owned_pieces:
+        latest = (
+            db.query(PieceVersion)
+            .filter(PieceVersion.piece_id == piece.id)
+            .order_by(PieceVersion.created_at.desc())
+            .first()
+        )
+        if latest is None:
+            continue
+        entries.append(
+            LibraryEntryOut(
+                piece_id=piece.id,
+                title=piece.title,
+                owner_type=piece.owner_type,
+                owner_id=piece.owner_id,
+                version_id=latest.id,
+                version_status=latest.status,
+                version_source=latest.source,
+                version_created_at=latest.created_at,
+            )
+        )
+
+    my_group_ids = [
+        row[0]
+        for row in db.query(GroupMembership.group_id).filter(GroupMembership.user_id == current_user.id).all()
+    ]
+    if my_group_ids:
+        distributed_rows = (
+            db.query(Distribution, PieceVersion, Piece)
+            .join(PieceVersion, Distribution.piece_version_id == PieceVersion.id)
+            .join(Piece, PieceVersion.piece_id == Piece.id)
+            .filter(Distribution.group_id.in_(my_group_ids))
+            .order_by(Distribution.distributed_at.desc())
+            .all()
+        )
+        seen_piece_ids: set[str] = set()
+        for _distribution, version, piece in distributed_rows:
+            if piece.id in seen_piece_ids:
+                continue
+            seen_piece_ids.add(piece.id)
+            entries.append(
+                LibraryEntryOut(
+                    piece_id=piece.id,
+                    title=piece.title,
+                    owner_type=piece.owner_type,
+                    owner_id=piece.owner_id,
+                    version_id=version.id,
+                    version_status=version.status,
+                    version_source=version.source,
+                    version_created_at=version.created_at,
+                )
+            )
+
+    return entries

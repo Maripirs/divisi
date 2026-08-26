@@ -1,8 +1,10 @@
 """Pydantic request/response models for the API."""
 
+from datetime import datetime
+
 from pydantic import BaseModel, EmailStr
 
-from app.db.models import GroupRole
+from app.db.models import GroupRole, OwnerType, VersionSource, VersionStatus
 
 
 class UserCreate(BaseModel):
@@ -53,3 +55,50 @@ class GroupMemberOut(BaseModel):
     role: GroupRole
 
     model_config = {"from_attributes": True}
+
+
+class PieceOut(BaseModel):
+    id: str
+    title: str
+    owner_type: OwnerType
+    owner_id: str
+
+    model_config = {"from_attributes": True}
+
+
+class PieceVersionOut(BaseModel):
+    id: str
+    piece_id: str
+    created_by: str
+    created_at: datetime
+    source: VersionSource
+    status: VersionStatus
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class PieceUploadOut(BaseModel):
+    piece: PieceOut
+    version: PieceVersionOut
+
+
+class DistributionOut(BaseModel):
+    id: str
+    piece_version_id: str
+    group_id: str
+    distributed_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LibraryEntryOut(BaseModel):
+    piece_id: str
+    title: str
+    owner_type: OwnerType
+    owner_id: str
+    version_id: str
+    version_status: VersionStatus
+    version_source: VersionSource
+    version_created_at: datetime

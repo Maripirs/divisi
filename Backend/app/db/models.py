@@ -57,3 +57,58 @@ class GroupMembership(Base):
         SAEnum(GroupRole, native_enum=False), nullable=False, default=GroupRole.member
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class OwnerType(str, enum.Enum):
+    user = "user"
+    group = "group"
+
+
+class VersionSource(str, enum.Enum):
+    original = "original"
+    modification = "modification"
+
+
+class VersionStatus(str, enum.Enum):
+    draft = "draft"
+    submitted = "submitted"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class Piece(Base):
+    __tablename__ = "pieces"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    owner_type: Mapped[OwnerType] = mapped_column(SAEnum(OwnerType, native_enum=False), nullable=False)
+    # Polymorphic: a user id when owner_type == user, a group id when owner_type == group.
+    # No FK constraint since it points at either table depending on owner_type.
+    owner_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class PieceVersion(Base):
+    __tablename__ = "piece_versions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    source: Mapped[VersionSource] = mapped_column(SAEnum(VersionSource, native_enum=False), nullable=False)
+    status: Mapped[VersionStatus] = mapped_column(
+        SAEnum(VersionStatus, native_enum=False), nullable=False, default=VersionStatus.draft
+    )
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Distribution(Base):
+    __tablename__ = "distributions"
+    __table_args__ = (UniqueConstraint("piece_version_id", "group_id", name="uq_distribution"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    piece_version_id: Mapped[str] = mapped_column(String, ForeignKey("piece_versions.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    distributed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

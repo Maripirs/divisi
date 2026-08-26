@@ -2,7 +2,7 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B3
+**Current milestone:** B5
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -72,17 +72,17 @@ full queue yet), docker-compose for local dev.
 - [x] `Group`, `GroupMembership` models + migration
 - [x] CRUD endpoints: create group, add/remove member, list my groups, role enforcement
 
-### B4 — Piece, versions, distribution, review [ ]
+### B4 — Piece, versions, distribution, review [x]
 
 **Acceptance criteria:**
-- [ ] A group admin can upload a piece and push a version to all members; a member sees it in their library
-- [ ] An individual can upload/own a piece independent of any group
-- [ ] A member can submit a worked-on version for review; an admin can approve (making it distributable) or reject it; members never receive draft/rejected versions
+- [x] A group admin can upload a piece and push a version to all members; a member sees it in their library
+- [x] An individual can upload/own a piece independent of any group
+- [x] A member can submit a worked-on version for review; an admin can approve (making it distributable) or reject it; members never receive draft/rejected versions
 
 **Tasks — Claude:**
-- [ ] `Piece`, `PieceVersion`, `Distribution` models + migration
-- [ ] Upload endpoint (stores file via `app/storage/files.py`), version creation, group-push endpoint (admin-only), per-user library listing
-- [ ] Submit-for-review endpoint (member), approve/reject endpoints (admin-only), status transitions enforced server-side
+- [x] `Piece`, `PieceVersion`, `Distribution` models + migration
+- [x] Upload endpoint (stores file via `app/storage/files.py`), version creation, group-push endpoint (admin-only), per-user library listing
+- [x] Submit-for-review endpoint (member), approve/reject endpoints (admin-only), status transitions enforced server-side
 
 ### B5 — Annotations + sharing [ ]
 
@@ -124,3 +124,6 @@ full queue yet), docker-compose for local dev.
 - 2026-08-26: B2 approved. Moving to B3 (choir + membership).
 - 2026-08-26: Renamed the "Choir" concept to "Group" throughout the domain model, code, and this plan (human call, before B3 code existed) — `Choir`/`ChoirMembership` → `Group`/`GroupMembership`, `/choirs` → `/groups`, `choir_id` → `group_id`.
 - 2026-08-26: B3 built — `Group`/`GroupMembership` models + migration (verified upgrade/downgrade/re-upgrade against Postgres), `/groups` (create, list mine), `/groups/{id}/members` (list, add — admin-only, remove — admin-only, blocks removing the last admin). 7 new tests pass (14 total) plus a manual end-to-end smoke test against the real containers (create group → add member → list → outsider gets 403 → remove member → removing last admin gets 409). Pending review.
+- 2026-08-26: B3 approved. Moving to B4 (Piece, versions, distribution, review).
+- 2026-08-26: B4 built — `Piece`/`PieceVersion`/`Distribution` models + migration (verified upgrade/downgrade/re-upgrade against Postgres); `/library/pieces` (upload, create piece+initial version), `/library/pieces/{id}/versions` (add a version), `/library/versions/{id}/submit|approve|reject` (status transitions enforced server-side — draft→submitted→approved/rejected, review authority = group admin or individual owner), `/library/pieces/{id}/versions/{id}/distribute` (admin-only push to group, requires approved status, 409 on double-push), `/library/pieces` GET (per-user library: owned pieces + latest distributed version per group piece). 4 new tests pass (18 total) plus a manual end-to-end smoke test against the real containers (upload group piece → distribute blocked pre-approval (409) → submit → member-approve blocked (403) → admin approves → distribute (201) → double-distribute blocked (409) → member sees it in their library). All three B4 acceptance criteria pass; ready for approval.
+- 2026-08-26: B4 approved. Moving to B5 (annotations + sharing).
