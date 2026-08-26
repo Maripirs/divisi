@@ -1,26 +1,26 @@
 # Project Plan: Divisi
 
-**Current milestone:** M1
+**Current milestone:** M2
 
 ## Milestones
 
-### M1 — Project scaffold [~]
+### M1 — Project scaffold [x]
 
 **Acceptance criteria:**
-- [ ] `xcodegen generate && xcodebuild -project Divisi.xcodeproj -scheme Divisi -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build` succeeds
-- [ ] App launches in the simulator showing a placeholder screen
+- [x] `xcodegen generate && xcodebuild -project Divisi.xcodeproj -scheme Divisi -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build` succeeds
+- [x] App launches in the simulator showing a placeholder screen
 
 **Tasks — Claude:**
-- [ ] Write `project.yml` (xcodegen spec) mirroring LyricsPiP: iOS app target, `App/` + `DivisiKit/` split, background modes for audio (PiP-related capabilities deferred to M7)
-- [ ] Add minimal `App/` (app entry point + placeholder `ContentView`) and empty `DivisiKit/`
-- [ ] Add `.gitignore` (standard Xcode/Swift) and a README stub describing the project
-- [ ] Run `xcodegen generate`, confirm the empty scaffold builds
-- [ ] Initial commit
+- [x] Write `project.yml` (xcodegen spec) mirroring LyricsPiP: iOS app target, `App/` + `DivisiKit/` split, background modes for audio (PiP-related capabilities deferred to M7)
+- [x] Add minimal `App/` (app entry point + placeholder `ContentView`) and empty `DivisiKit/`
+- [x] Add `.gitignore` (standard Xcode/Swift) and a README stub describing the project
+- [x] Run `xcodegen generate`, confirm the empty scaffold builds
+- [x] Initial commit
 
 **Tasks — Human:**
-- [ ] Confirm/set the bundle identifier and signing team in `project.yml` (tied to your Apple Developer account)
+- [x] Confirm/set the bundle identifier and signing team in `project.yml` (tied to your Apple Developer account)
 
-### M2 — MIDI parsing (notes + lyric events) [ ]
+### M2 — MIDI parsing (notes + lyric events) [~]
 
 **Acceptance criteria:**
 - [ ] Given a fixture MIDI file, parsed note count/timing spot-checks correctly against the source for a sample measure
@@ -115,6 +115,8 @@
 
 ## Log
 
+- 2026-08-26: M1 approved — same team confirmed, bundle ID/signing team left as-is. Moving to M2.
+- 2026-08-26: M1 scaffold built — xcodegen spec, App/ + empty DivisiKit/, xcodegen+xcodebuild verified green, app launches showing the placeholder screen (screenshotted in simulator). Bundle ID (`com.maripaz.divisi`) and dev team (`WZWT86647J`) carried over from LyricsPiP as defaults — human task to confirm/adjust these still open.
 - 2026-08-26: Project started. Inspired by LyricsPiP (~/projects/karaoke) — reusing the PiPController/PiPVisualSettings/PiPSettingsStore pattern and the overall SyncEngine shape (poll position → derive current → push frame), swapping Spotify+LRCLIB for MIDI playback + parsed note/lyric events.
 - 2026-08-26: Plan expanded to full task/criteria detail across all 7 MVP milestones in one pass.
 - 2026-08-26: Reordered milestones — PiP (renderer port + PiPController) pushed to M6/M7, after an in-app (on-screen, non-PiP) follow-along is validated in M4/M5. Reasoning: prove the core practice loop before taking on PiP's CVPixelBuffer/AVPictureInPictureController plumbing.
