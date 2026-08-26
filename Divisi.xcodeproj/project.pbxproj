@@ -11,12 +11,18 @@
 		1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065A297D3D4F72343403924 /* MIDIParser.swift */; };
 		5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EDADD73263374141CD15A05 /* ContentView.swift */; };
 		632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */; };
+		722E33264DD7CFD676FB7DA9 /* TimGM6mb.sf2 in Resources */ = {isa = PBXBuildFile; fileRef = 9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */; };
+		9EDD8A515E3EC04763C5CF37 /* requiem-satb-plain.mid in Resources */ = {isa = PBXBuildFile; fileRef = 186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */; };
+		A27876277F14FEF383828175 /* DivisiPlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */; };
 		E8655D08BFF3286CB71E74EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		01E8477131F120304F4714EA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */ = {isa = PBXFileReference; lastKnownFileType = audio.midi; path = "requiem-satb-plain.mid"; sourceTree = "<group>"; };
 		5EDADD73263374141CD15A05 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiPlaybackService.swift; sourceTree = "<group>"; };
+		9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */ = {isa = PBXFileReference; path = TimGM6mb.sf2; sourceTree = "<group>"; };
 		B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiApp.swift; sourceTree = "<group>"; };
 		BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DCB749CCD8C95982EDFD29E1 /* Divisi.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Divisi.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -45,11 +51,22 @@
 			);
 			sourceTree = "<group>";
 		};
+		CB8FD13BCFDE5DBB516C50F3 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */,
+				9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		EB5A852FBD920612A0B44527 /* DivisiKit */ = {
 			isa = PBXGroup;
 			children = (
+				789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */,
 				F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */,
 				F065A297D3D4F72343403924 /* MIDIParser.swift */,
+				CB8FD13BCFDE5DBB516C50F3 /* Resources */,
 			);
 			path = DivisiKit;
 			sourceTree = "<group>";
@@ -123,6 +140,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				E8655D08BFF3286CB71E74EE /* Assets.xcassets in Resources */,
+				722E33264DD7CFD676FB7DA9 /* TimGM6mb.sf2 in Resources */,
+				9EDD8A515E3EC04763C5CF37 /* requiem-satb-plain.mid in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -135,6 +154,7 @@
 			files = (
 				5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */,
 				0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */,
+				A27876277F14FEF383828175 /* DivisiPlaybackService.swift in Sources */,
 				632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */,
 				1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */,
 			);
