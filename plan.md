@@ -1,6 +1,6 @@
 # Project Plan: Divisi
 
-**Current milestone:** M2
+**Current milestone:** M3
 
 ## Milestones
 
@@ -20,7 +20,7 @@
 **Tasks — Human:**
 - [x] Confirm/set the bundle identifier and signing team in `project.yml` (tied to your Apple Developer account)
 
-### M2 — MIDI parsing (notes + lyric events) [?]
+### M2 — MIDI parsing (notes + lyric events) [x]
 
 **Acceptance criteria:**
 - [x] Given a fixture MIDI file, parsed note count/timing spot-checks correctly against the source for a sample measure
@@ -36,7 +36,7 @@
 - [ ] Supply a few real choir MIDI files (from your practice library) as test fixtures
 - [ ] Spot-check the track→voice-part mapping against a file where you know the real SATB order
 
-### M3 — MIDI playback engine [ ]
+### M3 — MIDI playback engine [~]
 
 **Acceptance criteria:**
 - [ ] MIDI file plays audibly at correct tempo (simulator or device)
@@ -115,6 +115,7 @@
 
 ## Log
 
+- 2026-08-26: M2 approved. Moving to M3 (playback engine).
 - 2026-08-26: M2 parser built and verified against all three fixtures (note counts/timing/pitches match generate.py's source exactly; lyrics parse when present, empty when absent; Organ track correctly excluded). Pivoted off the plan's originally-named `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` approach to AudioToolbox's `MusicSequence`/`MusicEventIterator` C API after discovering `AVMIDIMetaEvent` doesn't expose readable payload bytes in the current SDK — only `.type`. Also added SMF format 0/1 detection and more tolerant track-name matching (numbering, punctuation, divisi splits) ahead of getting real files, per the user's expectation that real-world MIDI exports will vary more than the synthetic fixtures.
 - 2026-08-26: Added M2 dev fixtures — 3 synthetic MIDI files under `Fixtures/` (plain SATB, SATB+lyrics, SATB+accompaniment track), approximating the opening of Mozart's Requiem's "Requiem aeternam" chorus. Generated via `Fixtures/generate.py` (mido) rather than sourced from a choral archive — most free MIDI/choral archive sites (CPDL, 8notes, MuseScore, smallchurchmusic) blocked automated fetching or required accounts. Pitches are a from-memory approximation, not a verified transcription; see `Fixtures/README.md` for the caveat.
 - 2026-08-26: M1 approved — same team confirmed, bundle ID/signing team left as-is. Moving to M2.
