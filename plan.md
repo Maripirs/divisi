@@ -30,7 +30,7 @@
 - [ ] Define `MIDINote` / `MIDILyricEvent` models (pitch, start/duration in ms, voice part)
 - [ ] Write `MIDIParser` using `AVAudioSequencer`/`AVMusicTrack.enumerateEvents` to pull note events and lyric/text meta-events (type 0x05) per track — reuses AVFoundation's own MIDI parsing instead of hand-rolling raw byte parsing like LRCLIB's regex approach
 - [ ] Map tracks to voice parts: prefer track-name meta-events, fall back to track order or mean-pitch ranking (S/A/T/B high→low)
-- [ ] Add 1–2 sample/public-domain SATB MIDI fixtures to the repo for dev use
+- [x] Add 1–2 sample/public-domain SATB MIDI fixtures to the repo for dev use
 
 **Tasks — Human:**
 - [ ] Supply a few real choir MIDI files (from your practice library) as test fixtures
@@ -115,6 +115,7 @@
 
 ## Log
 
+- 2026-08-26: Added M2 dev fixtures — 3 synthetic MIDI files under `Fixtures/` (plain SATB, SATB+lyrics, SATB+accompaniment track), approximating the opening of Mozart's Requiem's "Requiem aeternam" chorus. Generated via `Fixtures/generate.py` (mido) rather than sourced from a choral archive — most free MIDI/choral archive sites (CPDL, 8notes, MuseScore, smallchurchmusic) blocked automated fetching or required accounts. Pitches are a from-memory approximation, not a verified transcription; see `Fixtures/README.md` for the caveat.
 - 2026-08-26: M1 approved — same team confirmed, bundle ID/signing team left as-is. Moving to M2.
 - 2026-08-26: M1 scaffold built — xcodegen spec, App/ + empty DivisiKit/, xcodegen+xcodebuild verified green, app launches showing the placeholder screen (screenshotted in simulator). Bundle ID (`com.maripaz.divisi`) and dev team (`WZWT86647J`) carried over from LyricsPiP as defaults — human task to confirm/adjust these still open.
 - 2026-08-26: Project started. Inspired by LyricsPiP (~/projects/karaoke) — reusing the PiPController/PiPVisualSettings/PiPSettingsStore pattern and the overall SyncEngine shape (poll position → derive current → push frame), swapping Spotify+LRCLIB for MIDI playback + parsed note/lyric events.
