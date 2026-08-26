@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<!--
+  Host page for OpenSheetMusicDisplay (MIT license,
+  https://github.com/opensheetmusicdisplay/opensheetmusicdisplay), loaded
+  into a WKWebView by OSMDWebView.swift (M4). Vendored locally rather than
+  from a CDN so the score renders offline and without an ATS exception.
+
+  Swift → JS: `divisiLoadScore(xml)`, `divisiSetCursorIndex(targetIndex)`.
+  JS → Swift: `window.webkit.messageHandlers.divisi.postMessage({type, ...})`
+  with `type` one of "ready" | "error".
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <style>
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    #osmd-container { width: 100%; }
+  </style>
+  <script src="opensheetmusicdisplay.min.js"></script>
+</head>
+<body>
+  <div id="osmd-container"></div>
+  <script>
+    let osmd = null;
+    let cursorIndex = 0; // Which voice-entry step the OSMD cursor is currently sitting on.
+
+    function post(message) {
+      window.webkit.messageHandlers.divisi.postMessage(message);
+    }
+
+    function divisiInit() {
+      osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container", {
+        autoResize: true,
+        drawTitle: false,
+        followCursor: true,
+      });
+    }
+
+    /// Loads and renders a new MusicXML document, resetting the cursor to
+    /// the first note. Called once per voice-part selection / file load —
+    /// re-called on every load, not diffed against the previous score.
+    async function divisiLoadScore(xml) {
+      try {
+        if (!osmd) divisiInit();
+        await osmd.load(xml);
+        osmd.render();
+        osmd.cursor.show();
+        cursorIndex = 0;
+        post({ type: "ready" });
+      } catch (e) {
+        post({ type: "error", message: String(e) });
+      }
+    }
+
+    /// Moves the cursor to sit on voice-entry `targetIndex` (0-based, in the
+    /// same document order as the `<note>` elements MusicXMLConverter
+    /// emitted — rests included). OSMD's cursor only supports stepping via
+    /// next()/previous()/reset(), so this replays from whichever end is
+    /// closer rather than jumping directly.
+    function divisiSetCursorIndex(targetIndex) {
+      if (!osmd || !osmd.cursor) return;
+      if (targetIndex === cursorIndex) return;
+
+      if (targetIndex < cursorIndex) {
+        osmd.cursor.reset();
+        osmd.cursor.show();
+        cursorIndex = 0;
+      }
+      while (cursorIndex < targetIndex && !osmd.cursor.iterator.EndReached) {
+        osmd.cursor.next();
+        cursorIndex++;
+      }
+    }
+
+    /// Hides the cursor and clears the score for the "no file loaded" /
+    /// "no notes for this voice part" states.
+    function divisiClear() {
+      if (osmd && osmd.cursor) osmd.cursor.hide();
+      cursorIndex = 0;
+    }
+  </script>
+</body>
+</html>

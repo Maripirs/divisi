@@ -60,11 +60,11 @@
 - [ ] Human confirms the moving-notation view actually reads as useful for practice, before PiP work is invested in
 
 **Tasks — Claude:**
-- [ ] Build a MIDI→MusicXML converter: quantize `ParsedMIDI` notes to a fixed rhythmic grid (derived from the file's tempo/time-signature) and emit MusicXML for one voice part at a time
-- [ ] Embed OpenSheetMusicDisplay in a `WKWebView` (mirroring the [massimobio Swift/WKWebView example](https://github.com/massimobio/OpenSheetMusicDisplay-Swift-Example)) to render the generated MusicXML
-- [ ] Build `DivisiSyncEngine` (`@MainActor`, `ObservableObject`): each playback poll tick, map `currentPositionMs` to the corresponding OSMD cursor step and drive it via a JS bridge
-- [ ] Render lyric text alongside/below the score when present for the current time
-- [ ] Handle pause/resume/seek/no-file-loaded states in the sync engine from the start (LyricsPiP's own backlog flagged this as skipped for the Spotify case)
+- [x] Build a MIDI→MusicXML converter: quantize `ParsedMIDI` notes to a fixed rhythmic grid (derived from the file's tempo/time-signature) and emit MusicXML for one voice part at a time
+- [x] Embed OpenSheetMusicDisplay in a `WKWebView` (mirroring the [massimobio Swift/WKWebView example](https://github.com/massimobio/OpenSheetMusicDisplay-Swift-Example)) to render the generated MusicXML
+- [x] Build `DivisiSyncEngine` (`@MainActor`, `ObservableObject`): each playback poll tick, map `currentPositionMs` to the corresponding OSMD cursor step and drive it via a JS bridge
+- [x] Render lyric text alongside/below the score when present for the current time
+- [x] Handle pause/resume/seek/no-file-loaded states in the sync engine from the start (LyricsPiP's own backlog flagged this as skipped for the Spotify case)
 
 **Tasks — Human:**
 - [ ] Try it against a real MIDI file end-to-end; sign off that the moving-notation view is actually useful before moving on
@@ -120,6 +120,7 @@
 
 ## Log
 
+- 2026-08-26: M4 Claude tasks complete — OSMD embedded in a `WKWebView` (vendored `opensheetmusicdisplay.min.js`, local `index.html` host page, JS↔Swift bridge via `WKScriptMessageHandler`/`evaluateJavaScript`), `DivisiSyncEngine` wired to `DivisiPlaybackService` polling + the MusicXML converter's `noteStartMs` array (binary search → cursor index, immediate update on seek), lyric text derived the same way, and a `State` enum (`noFileLoaded`/`ready`/`noNotesForVoicePart`/`error`) covers the sync engine's states from the start. Verified visually on the simulator against `requiem-satb-plain.mid`: engraved notation renders correctly (clef/key/time sig, notes) with the cursor sitting on the first note. Two bugs found and fixed along the way: (1) XcodeGen/Xcode flattens `Resources/osmd/`'s subfolder into the bundle root rather than preserving it, so the HTML/JS lookup and the `<script src>` path both had to assume no subdirectory; (2) `WKWebView.evaluateJavaScript` can't marshal a Promise back across the bridge, so calling the `async` `divisiLoadScore` always reported a spurious "unsupported result type" error even on success — fixed by treating the JS-posted "ready"/"error" message as the authoritative signal and special-casing that one error code. ContentView's M3 smoke test replaced with an M4 equivalent (voice-part picker + score view + lyric + play/pause). Live cursor-advances-during-playback and the two human tasks (real end-to-end MIDI file, usefulness sign-off) still open.
 - 2026-08-26: M4 replanned mid-flight — pivoted from a Canvas piano-roll to real engraved notation (OpenSheetMusicDisplay in a `WKWebView`, MuseScore-style moving cursor), per the human's preference for actual sheet music over a DAW-style roll. Backlog's "real engraved staff notation" item promoted into M4. Flagged a downstream consequence for M6: WKWebView can't stream to a `CVPixelBuffer` for PiP, so that milestone will need its own native rendering approach later.
 - 2026-08-26: M3 approved. Moving to M4 (in-app follow-along sync engine + piano-roll).
 - 2026-08-26: M3 device test passed — plays on a physical iPhone (device already had a valid signing cert for the WZWT86647J team), and audio survives backgrounding. All acceptance criteria met.

@@ -9,18 +9,23 @@
 /* Begin PBXBuildFile section */
 		0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */; };
 		0A695632E04AD4540E8FEA6C /* MusicXMLConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */; };
+		14E051160FE5A1DD7C5877A8 /* index.html in Resources */ = {isa = PBXBuildFile; fileRef = 2941EFE4F75F62C98E30E821 /* index.html */; };
 		1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F065A297D3D4F72343403924 /* MIDIParser.swift */; };
 		5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EDADD73263374141CD15A05 /* ContentView.swift */; };
 		632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */; };
 		722E33264DD7CFD676FB7DA9 /* TimGM6mb.sf2 in Resources */ = {isa = PBXBuildFile; fileRef = 9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */; };
 		9EDD8A515E3EC04763C5CF37 /* requiem-satb-plain.mid in Resources */ = {isa = PBXBuildFile; fileRef = 186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */; };
 		A27876277F14FEF383828175 /* DivisiPlaybackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */; };
+		A84E6444C4088DBAB9728D33 /* OSMDWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA14CBC47A732CE1233BE326 /* OSMDWebView.swift */; };
+		DE9A157607D482B37BC18CCD /* DivisiSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB92C8C6F320DB2BC4EDF4D2 /* DivisiSyncEngine.swift */; };
 		E8655D08BFF3286CB71E74EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */; };
+		FCDB091C41ADCE584897CB7B /* opensheetmusicdisplay.min.js in Resources */ = {isa = PBXBuildFile; fileRef = E41318B1F82D54F351BC2CEC /* opensheetmusicdisplay.min.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		01E8477131F120304F4714EA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */ = {isa = PBXFileReference; lastKnownFileType = audio.midi; path = "requiem-satb-plain.mid"; sourceTree = "<group>"; };
+		2941EFE4F75F62C98E30E821 /* index.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = index.html; sourceTree = "<group>"; };
 		32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicXMLConverter.swift; sourceTree = "<group>"; };
 		5EDADD73263374141CD15A05 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiPlaybackService.swift; sourceTree = "<group>"; };
@@ -28,8 +33,11 @@
 		B218D6B5E91D5F84F3FDFDCC /* DivisiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiApp.swift; sourceTree = "<group>"; };
 		BFCC46C5B2A5A3E1CD9C7895 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DCB749CCD8C95982EDFD29E1 /* Divisi.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Divisi.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E41318B1F82D54F351BC2CEC /* opensheetmusicdisplay.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = opensheetmusicdisplay.min.js; sourceTree = "<group>"; };
+		EB92C8C6F320DB2BC4EDF4D2 /* DivisiSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DivisiSyncEngine.swift; sourceTree = "<group>"; };
 		F065A297D3D4F72343403924 /* MIDIParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIParser.swift; sourceTree = "<group>"; };
 		F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MIDIModels.swift; sourceTree = "<group>"; };
+		FA14CBC47A732CE1233BE326 /* OSMDWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OSMDWebView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -53,11 +61,21 @@
 			);
 			sourceTree = "<group>";
 		};
+		B9A212A56CAA601948319B63 /* osmd */ = {
+			isa = PBXGroup;
+			children = (
+				2941EFE4F75F62C98E30E821 /* index.html */,
+				E41318B1F82D54F351BC2CEC /* opensheetmusicdisplay.min.js */,
+			);
+			path = osmd;
+			sourceTree = "<group>";
+		};
 		CB8FD13BCFDE5DBB516C50F3 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
 				186786E4BB6F4AA2CBAFEC83 /* requiem-satb-plain.mid */,
 				9F109BEBBF435D9025B3BAD2 /* TimGM6mb.sf2 */,
+				B9A212A56CAA601948319B63 /* osmd */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -66,9 +84,11 @@
 			isa = PBXGroup;
 			children = (
 				789EF7533F4CD23C41C0C907 /* DivisiPlaybackService.swift */,
+				EB92C8C6F320DB2BC4EDF4D2 /* DivisiSyncEngine.swift */,
 				F44BD1425BEAEAE3F6F02B40 /* MIDIModels.swift */,
 				F065A297D3D4F72343403924 /* MIDIParser.swift */,
 				32D3365A7E7480CFB15A71DB /* MusicXMLConverter.swift */,
+				FA14CBC47A732CE1233BE326 /* OSMDWebView.swift */,
 				CB8FD13BCFDE5DBB516C50F3 /* Resources */,
 			);
 			path = DivisiKit;
@@ -144,6 +164,8 @@
 			files = (
 				E8655D08BFF3286CB71E74EE /* Assets.xcassets in Resources */,
 				722E33264DD7CFD676FB7DA9 /* TimGM6mb.sf2 in Resources */,
+				14E051160FE5A1DD7C5877A8 /* index.html in Resources */,
+				FCDB091C41ADCE584897CB7B /* opensheetmusicdisplay.min.js in Resources */,
 				9EDD8A515E3EC04763C5CF37 /* requiem-satb-plain.mid in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -158,9 +180,11 @@
 				5CEF17B3E55F04B07F4DA946 /* ContentView.swift in Sources */,
 				0974E06F7A1D53C62170D45C /* DivisiApp.swift in Sources */,
 				A27876277F14FEF383828175 /* DivisiPlaybackService.swift in Sources */,
+				DE9A157607D482B37BC18CCD /* DivisiSyncEngine.swift in Sources */,
 				632619A3241D98A62CCDB021 /* MIDIModels.swift in Sources */,
 				1C60335C8D1EF7AF158A6327 /* MIDIParser.swift in Sources */,
 				0A695632E04AD4540E8FEA6C /* MusicXMLConverter.swift in Sources */,
+				A84E6444C4088DBAB9728D33 /* OSMDWebView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
