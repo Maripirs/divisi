@@ -32,7 +32,8 @@
 		displayMode,
 		staffVisualStates,
 		scoreTheme,
-		onNoteClick
+		onNoteClick,
+		zoom = $bindable(1)
 	}: {
 		xml: string;
 		positionWholeNotes: number;
@@ -40,6 +41,10 @@
 		staffVisualStates?: VisualState[];
 		scoreTheme?: ResolvedTheme;
 		onNoteClick?: (wholeNotes: number) => void;
+		// Bindable rather than a plain prop — both the +/− buttons/pinch
+		// gesture in here and the parent's persisted-settings restore on
+		// load need to drive the same value.
+		zoom?: number;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -56,8 +61,19 @@
 	const MAX_ZOOM = 2;
 	const ZOOM_STEP = 0.1;
 	const CURSOR_TYPE_THIN_LEFT = 1;
+	// A slight vertical scale-up reads as a nice "couple pixels over" overhang
+	// on a single staff, but the same multiplier blows up badly once OSMD's
+	// native cursor height already spans several staves (flat/highlighted
+	// mode) — so it's only applied when exactly one staff is visible;
+	// multi-staff cursors keep OSMD's own untouched geometry.
 	const CURSOR_HEIGHT_SCALE = 1.75;
-	let zoom = $state(1);
+	// Once engaged (via `scrollCursorIntoView`), OSMD's own cursor.update()
+	// keeps scrolling the cursor into view on every subsequent step for as
+	// long as both `FollowCursor` and the cursor's own `follow` option stay
+	// true — no custom continuous-scroll loop needed on our end. Disengages
+	// the moment the human scrolls or drags manually, so it never fights
+	// them.
+	let following = $state(false);
 
 	interface ScoreColors {
 		music: string;
@@ -86,12 +102,85 @@
 		PointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(displayMode, scoreTheme));
 		container.addEventListener('click', handleContainerClick);
+		container.addEventListener('touchstart', handleTouchStart, { passive: true });
+		container.addEventListener('touchmove', handleTouchMove, { passive: false });
+		container.addEventListener('touchend', handleTouchEnd);
+		container.addEventListener('touchcancel', handleTouchEnd);
+		container.addEventListener('wheel', cancelFollow, { passive: true });
 	});
 
 	onDestroy(() => {
 		container?.removeEventListener('click', handleContainerClick);
+		container?.removeEventListener('touchstart', handleTouchStart);
+		container?.removeEventListener('touchmove', handleTouchMove);
+		container?.removeEventListener('touchend', handleTouchEnd);
+		container?.removeEventListener('touchcancel', handleTouchEnd);
+		container?.removeEventListener('wheel', cancelFollow);
+		if (pinchRaf !== null) cancelAnimationFrame(pinchRaf);
 		osmd = undefined;
 	});
+
+	function cancelFollow(): void {
+		following = false;
+	}
+
+	// Two-finger pinch drives the same `zoom` state the +/− buttons do, so
+	// score-only zoom works without touching the page's own bars — those
+	// live outside this component entirely. Native pinch-zoom is disabled
+	// on this container via `touch-action` in the stylesheet below, since
+	// that's a whole-page camera pass that would scale the anchored
+	// top/bottom bars right along with the score.
+	let pinchState: { initialDistance: number; initialZoom: number } | null = null;
+	let pinchRaf: number | null = null;
+	let pendingZoom: number | null = null;
+
+	function touchDistance(touches: TouchList): number {
+		return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
+	}
+
+	function handleTouchStart(event: TouchEvent): void {
+		if (event.touches.length !== 2) {
+			pinchState = null;
+			return;
+		}
+		pinchState = { initialDistance: touchDistance(event.touches), initialZoom: zoom };
+	}
+
+	function handleTouchMove(event: TouchEvent): void {
+		if (event.touches.length === 1) {
+			// A one-finger drag is a manual scroll/pan, not a pinch — let it
+			// proceed natively, just stop auto-following since the human is
+			// clearly looking somewhere else on purpose.
+			cancelFollow();
+			return;
+		}
+		if (!pinchState || event.touches.length !== 2) return;
+		event.preventDefault();
+		const scale = touchDistance(event.touches) / pinchState.initialDistance;
+		pendingZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(pinchState.initialZoom * scale * 100) / 100));
+		// Committing straight into `zoom` on every touchmove would trigger a
+		// full OSMD re-render dozens of times a second — throttle to once
+		// per animation frame instead.
+		if (pinchRaf === null) {
+			pinchRaf = requestAnimationFrame(() => {
+				pinchRaf = null;
+				if (pendingZoom !== null) zoom = pendingZoom;
+			});
+		}
+	}
+
+	function handleTouchEnd(event: TouchEvent): void {
+		if (event.touches.length >= 2) return;
+		pinchState = null;
+		if (pinchRaf !== null) {
+			cancelAnimationFrame(pinchRaf);
+			pinchRaf = null;
+		}
+		if (pendingZoom !== null) {
+			zoom = pendingZoom;
+			pendingZoom = null;
+		}
+	}
 
 	/** Hit-tests a click against the rendered score and, if it landed near a
 	 * note, reports that note's timestamp via `onNoteClick`. Screen pixels
@@ -159,6 +248,16 @@
 		applyScoreTreatments();
 	});
 
+	// Cheap on/off toggle — no re-render needed, `FollowCursor`/the cursor's
+	// own `follow` option are read live by OSMD's cursor.update() each time
+	// it moves.
+	$effect(() => {
+		const isFollowing = following;
+		if (!osmd || !cursorReady) return;
+		osmd.FollowCursor = isFollowing;
+		osmd.cursor.CursorOptions = cursorOptions(displayMode, scoreTheme);
+	});
+
 	function applyScoreTreatments(): void {
 		showCursor();
 		applyHighlightedStaffTreatment();
@@ -174,8 +273,14 @@
 	function applyCursorTreatment(): void {
 		const element = osmd?.cursor.cursorElement;
 		if (!element) return;
-		element.style.transform = `scaleY(${CURSOR_HEIGHT_SCALE})`;
-		element.style.transformOrigin = 'center center';
+		const singleStaff = (staffVisualStates?.length ?? 0) <= 1;
+		if (singleStaff) {
+			element.style.transform = `scaleY(${CURSOR_HEIGHT_SCALE})`;
+			element.style.transformOrigin = 'center center';
+		} else {
+			element.style.transform = '';
+			element.style.transformOrigin = '';
+		}
 		element.style.width = '3px';
 		element.style.borderRadius = '999px';
 		element.style.pointerEvents = 'none';
@@ -297,7 +402,7 @@
 			type: CURSOR_TYPE_THIN_LEFT,
 			color: theme.cursor,
 			alpha: theme.cursorAlpha,
-			follow: false
+			follow: following
 		};
 	}
 
@@ -306,7 +411,7 @@
 		return {
 			autoResize: true,
 			drawTitle: false,
-			followCursor: false,
+			followCursor: following,
 			coloringEnabled: true,
 			colorStemsLikeNoteheads: true,
 			defaultColorMusic: theme.music,
@@ -333,6 +438,16 @@
 			cursorAlpha: alpha,
 			page: palette.surface
 		} satisfies ScoreColors;
+	}
+
+	/** Scrolls the container so the playback cursor is back in view, then
+	 * keeps following it — for a "bring me to cursor" control next to the
+	 * transport, since a human scrolling/zooming to read ahead is expected
+	 * to lose the cursor off screen sometimes. Disengages the moment they
+	 * scroll or drag manually (see the touch/wheel handlers below). */
+	export function scrollCursorIntoView(): void {
+		following = true;
+		osmd?.cursor.cursorElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	}
 
 	function zoomBy(delta: number): void {
@@ -444,6 +559,11 @@
 		background: var(--score-page);
 		border-radius: 0;
 		padding: 0;
+		/* Keep native panning (both axes — this container can scroll
+		   horizontally too, see overflow-x above) but hand pinch-zoom to our
+		   own gesture handler instead of the browser's native whole-page
+		   zoom, which would scale the app's fixed top/bottom bars too. */
+		touch-action: pan-x pan-y;
 	}
 
 	.score-container :global(svg) {

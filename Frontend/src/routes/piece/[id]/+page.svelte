@@ -43,6 +43,13 @@
 		dark: 'Dark'
 	};
 
+	type ViewMode = 'player' | 'pdf';
+	const VIEW_MODES: ViewMode[] = ['player', 'pdf'];
+	const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+		player: 'Player',
+		pdf: 'PDF'
+	};
+
 	type LoadState =
 		| { kind: 'loading' }
 		| { kind: 'notFound' }
@@ -70,6 +77,8 @@
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
+	let viewMode = $state<ViewMode>('player');
+	let zoomLevel = $state(1);
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>({
@@ -79,6 +88,8 @@
 		bass: 0.5,
 		accompaniment: 0.5
 	});
+
+	let scoreView: ScoreView | undefined = $state();
 
 	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
 	let visibleMixParts = $derived(MIX_PARTS.filter((part) => visualStates[part] !== 'off'));
@@ -101,6 +112,13 @@
 
 	async function bootstrap() {
 		if (!piece) return;
+		const stored = loadPersistedSettings(piece.id);
+		if (stored.voicePart) voicePart = stored.voicePart;
+		if (stored.displayMode) displayMode = stored.displayMode;
+		if (stored.visualStates) visualStates = stored.visualStates;
+		if (stored.balance) balance = stored.balance;
+		if (stored.viewMode) viewMode = stored.viewMode;
+		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
 		try {
 			const [fetchedPlayer, loadedPiece] = await Promise.all([MidiPlayer.create(), piece.load()]);
 			if (destroyed) {
@@ -116,8 +134,13 @@
 				return;
 			}
 			durationMs = player.duration;
-			tempoBpm = player.tempoBPM;
 			baseTempoBpm = player.baseBPM;
+			const storedTempo = stored.tempoBpm;
+			if (storedTempo !== undefined && storedTempo >= MIN_TEMPO_BPM && storedTempo <= MAX_TEMPO_BPM) {
+				setTempo(storedTempo, false);
+			} else {
+				tempoBpm = player.tempoBPM;
+			}
 			for (const part of MIX_PARTS) player.setPartVolume(part, balance[part]);
 			render();
 			setupMediaSession();
@@ -171,11 +194,60 @@
 	function setBalance(part: MixPart, value: number) {
 		balance = { ...balance, [part]: value };
 		player?.setPartVolume(part, value);
+		persistSettings();
 	}
 
-	function setTempo(bpm: number) {
+	// Every user-adjustable player setting, keyed per piece id so switching
+	// pieces doesn't bleed one piece's mix/tempo/view into another's, and
+	// restored on the next visit instead of always starting from the
+	// hardcoded defaults above.
+	interface PersistedSettings {
+		tempoBpm: number;
+		voicePart: VoicePart;
+		displayMode: DisplayMode;
+		visualStates: Record<MixPart, VisualState>;
+		balance: Record<MixPart, number>;
+		viewMode: ViewMode;
+		zoomLevel: number;
+	}
+
+	function settingsStorageKey(id: string): string {
+		return `divisi:settings:${id}`;
+	}
+
+	function loadPersistedSettings(id: string): Partial<PersistedSettings> {
+		const raw = localStorage.getItem(settingsStorageKey(id));
+		if (!raw) return {};
+		try {
+			return JSON.parse(raw) as Partial<PersistedSettings>;
+		} catch {
+			return {};
+		}
+	}
+
+	function persistSettings() {
+		if (!piece) return;
+		const settings: PersistedSettings = {
+			tempoBpm,
+			voicePart,
+			displayMode,
+			visualStates,
+			balance,
+			viewMode,
+			zoomLevel
+		};
+		localStorage.setItem(settingsStorageKey(piece.id), JSON.stringify(settings));
+	}
+
+	function setTempo(bpm: number, persist = true) {
 		tempoBpm = bpm;
 		player?.setTempo(bpm);
+		if (persist) persistSettings();
+	}
+
+	function setViewMode(mode: ViewMode) {
+		viewMode = mode;
+		persistSettings();
 	}
 
 	function setFocus(part: MixPart) {
@@ -184,11 +256,13 @@
 		if (displayMode === 'highlighted' || displayMode === 'solo') {
 			visualStates = presetVisualStates(displayMode, part);
 		}
+		persistSettings();
 	}
 
 	function setDisplayMode(mode: DisplayMode) {
 		displayMode = mode;
 		if (mode !== 'custom') visualStates = presetVisualStates(mode, voicePart);
+		persistSettings();
 	}
 
 	function presetVisualStates(mode: DisplayMode, focusPart: VoicePart): Record<MixPart, VisualState> {
@@ -209,6 +283,7 @@
 		const nextStates = { ...visualStates, [part]: nextState };
 		visualStates = nextStates;
 		displayMode = matchingDisplayMode(nextStates, voicePart);
+		persistSettings();
 	}
 
 	function matchingDisplayMode(states: Record<MixPart, VisualState>, focusPart: VoicePart): DisplayMode {
@@ -220,8 +295,45 @@
 		return MIX_PARTS.every((part) => a[part] === b[part]);
 	}
 
-	function handleMenuKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') menuOpen = false;
+	function handleGlobalKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			menuOpen = false;
+			return;
+		}
+		const target = event.target as HTMLElement | null;
+		const tag = target?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || target?.isContentEditable) {
+			return;
+		}
+		if (
+			loadState.kind !== 'ready' &&
+			loadState.kind !== 'noNotesForVoicePart' &&
+			loadState.kind !== 'noVisibleTracks'
+		) {
+			return;
+		}
+		if (event.code === 'Space') {
+			event.preventDefault();
+			void togglePlay();
+		} else if (event.key === 'ArrowRight') {
+			event.preventDefault();
+			seekByMeasure(1);
+		} else if (event.key === 'ArrowLeft') {
+			event.preventDefault();
+			seekByMeasure(-1);
+		}
+	}
+
+	function measureDurationMs(): number {
+		if (!parsed || msPerWholeNote <= 0) return 0;
+		const { numerator, denominator } = parsed.timeSignature;
+		return msPerWholeNote * (numerator / denominator);
+	}
+
+	function seekByMeasure(direction: 1 | -1) {
+		const measureMs = measureDurationMs();
+		if (measureMs <= 0) return;
+		seek(Math.min(durationMs, Math.max(0, positionMs + direction * measureMs)));
 	}
 
 	function describeBalance(value: number): string {
@@ -232,6 +344,10 @@
 
 	function describeTempo(bpm: number): string {
 		return `${bpm} BPM (${Math.round((bpm / baseTempoBpm) * 100)}%)`;
+	}
+
+	function stepTempo(delta: number) {
+		setTempo(Math.min(MAX_TEMPO_BPM, Math.max(MIN_TEMPO_BPM, tempoBpm + delta)));
 	}
 
 	function setupMediaSession() {
@@ -256,6 +372,17 @@
 		render();
 	});
 
+	// `zoomLevel` is driven two-way from inside `ScoreView` (buttons + pinch
+	// gesture), not through a page-level setter like the other settings, so
+	// it needs its own persist effect. Guarded on `loadState` so it doesn't
+	// fire — and clobber a real stored value with the "1" default — before
+	// `bootstrap()`'s restore has actually run.
+	$effect(() => {
+		zoomLevel;
+		if (loadState.kind === 'loading') return;
+		persistSettings();
+	});
+
 	function formatTime(ms: number): string {
 		const totalSeconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
@@ -277,7 +404,7 @@
 	}
 </script>
 
-<svelte:window onkeydown={handleMenuKeydown} />
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 {#key data.id}
 	<div class="player-shell">
@@ -312,35 +439,53 @@
 		</header>
 
 		<main class="score-area">
-			{#if loadState.kind === 'loading'}
-				<div class="status-card">
-					<div class="spinner" aria-hidden="true"></div>
-					<p>Loading score...</p>
-				</div>
-			{:else if loadState.kind === 'notFound'}
-				<div class="status-card status-card--error">
-					<p>No piece found with that id.</p>
-					<button class="text-link" onclick={() => goto('/')}>Back to library</button>
-				</div>
-			{:else if loadState.kind === 'error'}
-				<div class="status-card status-card--error">
-					<p>Couldn't load the piece.</p>
-					<p class="status-detail">{loadState.message}</p>
-				</div>
-			{:else if loadState.kind === 'noNotesForVoicePart'}
-				<p class="empty-note">No notes for {mixLabel(loadState.part)} in this file.</p>
-			{:else if loadState.kind === 'noVisibleTracks'}
-				<p class="empty-note">No visible tracks selected.</p>
-			{:else}
-				<div class="score-card">
-					<ScoreView
-						{xml}
-						{displayMode}
-						staffVisualStates={visibleStaffStates}
-						scoreTheme={$resolvedTheme}
-						positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
-						onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
-					/>
+			<!-- Both panes stay mounted once shown, toggling only via `hidden` —
+			     switching view modes used to swap them with an {#if}, which tore
+			     down and rebuilt OSMD's whole SVG tree (or re-fetched the PDF)
+			     on every toggle, stalling the main thread long enough to glitch
+			     the synth's audio callback (js-synthesizer runs on a
+			     ScriptProcessorNode, not an AudioWorklet, so it's not immune to
+			     main-thread jank). -->
+			<div class="view-pane" class:hidden={viewMode !== 'player'}>
+				{#if loadState.kind === 'loading'}
+					<div class="status-card">
+						<div class="spinner" aria-hidden="true"></div>
+						<p>Loading score...</p>
+					</div>
+				{:else if loadState.kind === 'notFound'}
+					<div class="status-card status-card--error">
+						<p>No piece found with that id.</p>
+						<button class="text-link" onclick={() => goto('/')}>Back to library</button>
+					</div>
+				{:else if loadState.kind === 'error'}
+					<div class="status-card status-card--error">
+						<p>Couldn't load the piece.</p>
+						<p class="status-detail">{loadState.message}</p>
+					</div>
+				{:else if loadState.kind === 'noNotesForVoicePart'}
+					<p class="empty-note">No notes for {mixLabel(loadState.part)} in this file.</p>
+				{:else if loadState.kind === 'noVisibleTracks'}
+					<p class="empty-note">No visible tracks selected.</p>
+				{:else}
+					<div class="score-card">
+						<ScoreView
+							bind:this={scoreView}
+							bind:zoom={zoomLevel}
+							{xml}
+							{displayMode}
+							staffVisualStates={visibleStaffStates}
+							scoreTheme={$resolvedTheme}
+							positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
+							onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
+						/>
+					</div>
+				{/if}
+			</div>
+			{#if piece}
+				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
+					<div class="pdf-card">
+						<iframe class="pdf-frame" src={piece.pdfUrl} title="{piece.title} score PDF"></iframe>
+					</div>
 				</div>
 			{/if}
 		</main>
@@ -375,6 +520,15 @@
 						<span>{formatTime(durationMs)}</span>
 					</div>
 				</div>
+
+				{#if viewMode === 'player'}
+					<button class="icon-btn" onclick={() => scoreView?.scrollCursorIntoView()} aria-label="Scroll to cursor">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<circle cx="12" cy="12" r="3" />
+							<path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+						</svg>
+					</button>
+				{/if}
 			</footer>
 		{/if}
 
@@ -389,6 +543,17 @@
 						</svg>
 					</button>
 				</header>
+
+				<section class="menu-section">
+					<h3>View</h3>
+					<div class="segmented" role="group" aria-label="View">
+						{#each VIEW_MODES as mode (mode)}
+							<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
+								{VIEW_MODE_LABELS[mode]}
+							</button>
+						{/each}
+					</div>
+				</section>
 
 				<section class="menu-section">
 					<h3>Display</h3>
@@ -415,16 +580,29 @@
 				<section class="menu-section">
 					<h3>Tempo</h3>
 					<div class="tempo-row">
-						<input
-							type="range"
-							min={MIN_TEMPO_BPM}
-							max={MAX_TEMPO_BPM}
-							step="1"
-							value={tempoBpm}
-							aria-label="Tempo"
-							oninput={(e) => setTempo(Number((e.target as HTMLInputElement).value))}
-						/>
+						<button
+							type="button"
+							class="tempo-step-btn"
+							disabled={tempoBpm <= MIN_TEMPO_BPM}
+							aria-label="Decrease tempo"
+							onclick={() => stepTempo(-1)}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M5 12h14" />
+							</svg>
+						</button>
 						<span class="tempo-value">{describeTempo(tempoBpm)}</span>
+						<button
+							type="button"
+							class="tempo-step-btn"
+							disabled={tempoBpm >= MAX_TEMPO_BPM}
+							aria-label="Increase tempo"
+							onclick={() => stepTempo(1)}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M12 5v14M5 12h14" />
+							</svg>
+						</button>
 					</div>
 				</section>
 
@@ -490,6 +668,7 @@
 		display: flex;
 		flex-direction: column;
 		background: var(--bg);
+		overscroll-behavior: none;
 	}
 
 	.top-bar,
@@ -572,6 +751,12 @@
 		overflow-x: hidden;
 		overflow-y: auto;
 		padding: 0;
+		/* Without this, overscrolling past the top/bottom of the score
+		   content chains into the page's own scroll/bounce — on mobile,
+		   that rubber-bands the whole `body` past this fixed shell, briefly
+		   revealing space below the anchored top/bottom bars. Containing it
+		   here keeps any overscroll bounce inside this element only. */
+		overscroll-behavior: contain;
 	}
 
 	.score-card {
@@ -580,6 +765,26 @@
 		background: transparent;
 		border-radius: 0;
 		padding: 0;
+	}
+
+	.view-pane {
+		height: 100%;
+	}
+
+	.view-pane.hidden {
+		display: none;
+	}
+
+	.pdf-card {
+		height: 100%;
+	}
+
+	.pdf-frame {
+		display: block;
+		width: 100%;
+		height: 100%;
+		border: none;
+		background: var(--surface);
 	}
 
 	.text-link {
@@ -786,18 +991,50 @@
 	.tempo-row {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		justify-content: center;
+		gap: 1rem;
 	}
 
-	.tempo-row input[type='range'] {
-		flex: 1;
-		min-width: 0;
+	.tempo-step-btn {
+		flex-shrink: 0;
+		width: 2.25rem;
+		height: 2.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--surface-2);
+		color: var(--text);
+		cursor: pointer;
+	}
+
+	.tempo-step-btn:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--accent);
+	}
+
+	.tempo-step-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+
+	.tempo-step-btn svg {
+		width: 18px;
+		height: 18px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 
 	.tempo-value {
 		flex-shrink: 0;
+		min-width: 8rem;
+		text-align: center;
 		color: var(--text-muted);
-		font-size: 0.75rem;
+		font-size: 0.8125rem;
 		font-variant-numeric: tabular-nums;
 	}
 

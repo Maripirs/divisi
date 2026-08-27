@@ -42,7 +42,17 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 		id: el.getAttribute('id') ?? '',
 		name: el.querySelector('part-name')?.textContent?.trim() || null
 	}));
-	const rawParts = partList.map(({ id, name }) => readPart(doc, id, name));
+	// A real-world export's tempo direction almost always lives on one part
+	// only (usually the first) rather than being repeated on every part's
+	// own stream, unlike `divisions`, which every part must declare for
+	// itself. Pre-scanning across the whole document — first occurrence in
+	// document order, i.e. whichever part has it — means every part starts
+	// its own note-timing math from the same tempo instead of the parts
+	// without their own direction silently falling back to
+	// `DEFAULT_TEMPO_BPM` and racing ahead of/lagging the one that does.
+	const scoreTempoAttr = doc.querySelector('part > measure > direction > sound[tempo]')?.getAttribute('tempo');
+	const scoreTempoBPM = scoreTempoAttr ? Number(scoreTempoAttr) : DEFAULT_TEMPO_BPM;
+	const rawParts = partList.map(({ id, name }) => readPart(doc, id, name, scoreTempoBPM));
 
 	// Keep multi-staff parts (a grand staff — `<staves>` > 1 — is a
 	// keyboard/harp/organ-style part) out of SATB assignment, then carry
@@ -72,12 +82,14 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
 	// First-occurrence-in-part-order wins — same simplification
-	// `midi/parser.ts` already makes for these three fields (see its own
-	// doc comment): a single steady tempo/meter/key for the whole piece,
-	// not a full change map.
+	// `midi/parser.ts` already makes for these two fields (see its own doc
+	// comment): a single steady time signature/key for the whole piece, not
+	// a full change map. Tempo uses the same document-wide `scoreTempoBPM`
+	// every part was seeded with above, rather than re-deriving from
+	// per-part results, since most parts never carry their own direction.
 	const keySignatureFifths = rawParts.map((p) => p.keySignatureFifths).find((v) => v != null) ?? 0;
 	const timeSignature = rawParts.map((p) => p.timeSignature).find((v) => v != null) ?? DEFAULT_TIME_SIGNATURE;
-	const tempoBPM = rawParts.map((p) => p.initialTempoBPM).find((v) => v != null) ?? DEFAULT_TEMPO_BPM;
+	const tempoBPM = scoreTempoBPM;
 
 	return {
 		notes,
@@ -109,7 +121,6 @@ interface RawPart {
 	lyrics: { text: string; timeMs: number }[];
 	keySignatureFifths: number | null;
 	timeSignature: MIDITimeSignature | null;
-	initialTempoBPM: number | null;
 }
 
 /**
@@ -126,22 +137,21 @@ interface RawPart {
  * `RawNote` spanning both, matching how a MIDI file would represent the
  * same held note with no separate tie concept.
  */
-function readPart(doc: Document, partId: string, name: string | null): RawPart {
+function readPart(doc: Document, partId: string, name: string | null, initialTempoBPM: number): RawPart {
 	const result: RawPart = {
 		name,
 		staffCount: 1,
 		notes: [],
 		lyrics: [],
 		keySignatureFifths: null,
-		timeSignature: null,
-		initialTempoBPM: null
+		timeSignature: null
 	};
 
 	const partEl = doc.querySelector(`part[id="${partId}"]`);
 	if (!partEl) return result;
 
 	let divisions = 1; // divisions-per-quarter-note; always set by a real file's first <attributes>
-	let tempoBPM = DEFAULT_TEMPO_BPM;
+	let tempoBPM = initialTempoBPM;
 	let measureStartMs = 0;
 	// Open ties, keyed by "voice:pitch" -> the note being extended. A tie
 	// chain (stop+start on the same note, continuing into a third note)
@@ -173,10 +183,7 @@ function readPart(doc: Document, partId: string, name: string | null): RawPart {
 				}
 				case 'direction': {
 					const tempoAttr = el.querySelector(':scope > sound[tempo]')?.getAttribute('tempo');
-					if (tempoAttr) {
-						tempoBPM = Number(tempoAttr);
-						if (result.initialTempoBPM === null) result.initialTempoBPM = tempoBPM;
-					}
+					if (tempoAttr) tempoBPM = Number(tempoAttr);
 					break;
 				}
 				case 'backup': {

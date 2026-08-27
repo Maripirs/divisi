@@ -103,6 +103,16 @@ function loadVendorScripts(): Promise<void> {
 export class MidiPlayer {
 	private readonly context: AudioContext;
 	private readonly synth: JSSynthesizer;
+	// The synth's output is routed here rather than straight to
+	// `context.destination`, then re-played through a real `<audio>` element
+	// below — plain Web Audio API output gets suspended by iOS Safari the
+	// moment the tab is backgrounded or the phone locks, since iOS only
+	// grants continued background execution to genuine `HTMLMediaElement`
+	// playback (the Media Session API's lock-screen controls need that same
+	// real element to attach to; they don't grant background execution by
+	// themselves).
+	private readonly streamDestination: MediaStreamAudioDestinationNode;
+	private readonly audioEl: HTMLAudioElement;
 	private channelForPart: Record<MixPart, number> | null = null;
 	private durationMs = 0;
 	private pausedAtMs = 0;
@@ -117,9 +127,16 @@ export class MidiPlayer {
 	private currentTempoBPM = 120;
 	private destroyed = false;
 
-	private constructor(context: AudioContext, synth: JSSynthesizer) {
+	private constructor(
+		context: AudioContext,
+		synth: JSSynthesizer,
+		streamDestination: MediaStreamAudioDestinationNode,
+		audioEl: HTMLAudioElement
+	) {
 		this.context = context;
 		this.synth = synth;
+		this.streamDestination = streamDestination;
+		this.audioEl = audioEl;
 	}
 
 	static async create(): Promise<MidiPlayer> {
@@ -128,12 +145,23 @@ export class MidiPlayer {
 		const synth = new window.JSSynth.Synthesizer();
 		synth.init(context.sampleRate);
 		const node = synth.createAudioNode(context, 8192);
-		node.connect(context.destination);
+		const streamDestination = context.createMediaStreamDestination();
+		node.connect(streamDestination);
+
+		// Not attached to the visible DOM tree (no layout/paint role — audio
+		// only) but still appended to `document.body`, which some browsers
+		// require for the background-audio/lock-screen allowances above to
+		// actually apply.
+		const audioEl = document.createElement('audio');
+		audioEl.style.display = 'none';
+		audioEl.setAttribute('playsinline', ''); // iOS Safari: never take over fullscreen
+		audioEl.srcObject = streamDestination.stream;
+		document.body.appendChild(audioEl);
 
 		const soundfont = await fetch(SOUNDFONT_URL).then((r) => r.arrayBuffer());
 		await synth.loadSFont(soundfont);
 
-		return new MidiPlayer(context, synth);
+		return new MidiPlayer(context, synth, streamDestination, audioEl);
 	}
 
 	/** Loads a new piece, replacing whatever was previously loaded and
@@ -166,7 +194,13 @@ export class MidiPlayer {
 	async play(): Promise<void> {
 		if (this.destroyed) return;
 		if (this.playing) return;
-		if (this.context.state === 'suspended') await this.context.resume();
+		// Both fired before any other await, so the `<audio>` element's
+		// play() call still originates from the same user gesture that
+		// invoked this method — iOS Safari's autoplay gate requires that,
+		// not just that a gesture happened *somewhere* earlier in the chain.
+		const resumeAudioEl = this.audioEl.play().catch(() => {});
+		const resumeContext = this.context.state === 'suspended' ? this.context.resume() : Promise.resolve();
+		await Promise.all([resumeAudioEl, resumeContext]);
 		this.synth.seekPlayer(this.msToTick(this.pausedAtMs));
 		await this.synth.playPlayer();
 		this.startContextTime = this.context.currentTime - this.pausedAtMs / 1000 / this.rate;
@@ -178,12 +212,14 @@ export class MidiPlayer {
 		if (!this.playing) return;
 		this.pausedAtMs = this.positionMs;
 		this.synth.stopPlayer();
+		this.audioEl.pause();
 		this.playing = false;
 	}
 
 	private stop(): void {
 		if (this.destroyed) return;
 		this.synth.stopPlayer();
+		this.audioEl.pause();
 		this.playing = false;
 		this.pausedAtMs = 0;
 	}
@@ -195,6 +231,9 @@ export class MidiPlayer {
 		this.pausedAtMs = 0;
 		this.channelForPart = null;
 		this.destroyed = true;
+		this.audioEl.pause();
+		this.audioEl.srcObject = null;
+		this.audioEl.remove();
 		this.synth.close();
 		void this.context.close().catch(() => {});
 	}

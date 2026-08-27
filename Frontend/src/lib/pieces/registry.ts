@@ -7,9 +7,15 @@ async function loadMidi(url: string) {
 	return parseMidiFile(new Uint8Array(bytes));
 }
 
-async function loadMusicXml(url: string) {
+/** `tempoOverrideBPM` covers pieces whose MusicXML export carries no
+ * `<sound tempo>` direction at all (see `Frontend/plan.md`'s log) — there's
+ * no tempo data to recover, so the parser's 120 BPM fallback is a guess and
+ * usually wrong. These values are hand-supplied by the human from the
+ * piece's real tempo, not derived from the file. */
+async function loadMusicXml(url: string, tempoOverrideBPM?: number) {
 	const text = await fetch(url).then((r) => r.text());
-	return parseMusicXmlFile(text);
+	const parsed = parseMusicXmlFile(text);
+	return tempoOverrideBPM === undefined ? parsed : { ...parsed, tempoBPM: tempoOverrideBPM };
 }
 
 /** Static, frontend-only piece list — same "no backend" philosophy as F1's
@@ -38,7 +44,7 @@ export const PIECES: Piece[] = [
 		// heuristic can't disambiguate that (see Frontend/plan.md's log) —
 		// so it's sourced from its MusicXML export instead, which has one
 		// `<part>` per staff.
-		load: () => loadMusicXml('/fixtures/SFCC/The_Challenge_of_Thor_Elgar.musicxml')
+		load: () => loadMusicXml('/fixtures/SFCC/The_Challenge_of_Thor_Elgar.musicxml', 104)
 	},
 	{
 		id: 'der-abend',
