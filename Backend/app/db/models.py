@@ -157,10 +157,11 @@ class OmrJobStatus(str, enum.Enum):
 class OmrJob(Base):
     """B8: tracks one OMR (optical music recognition) attempt on an
     uploaded scanned-score file, run via `app/jobs/omr_jobs.py`'s
-    background task. Not tied to a `Piece`/`PieceVersion` yet — the result
-    (MusicXML + derived MIDI) is just a downloadable pair for now; folding
-    it into the library flow (e.g. as a new version's source file) is a
-    follow-up, not part of B8's acceptance criteria."""
+    background task. Still not tied to a `Piece`/`PieceVersion` by a
+    foreign key here — a job's result (MusicXML + derived MIDI) stays a
+    downloadable pair on its own — but `POST /omr/jobs/{id}/import`
+    (`app/api/routes/omr.py`) can turn a `done` job's result into a real
+    library entry on demand."""
 
     __tablename__ = "omr_jobs"
 

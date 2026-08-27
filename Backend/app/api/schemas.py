@@ -172,6 +172,25 @@ class OmrJobOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class OmrImportRequest(BaseModel):
+    """B8 follow-up: turn a completed OMR job's derived MIDI into a
+    library entry. Exactly one of `piece_id` (add a version to an
+    existing piece) or `title` (create a brand-new piece, with
+    `owner_type`/`group_id` matching `/library/pieces`' upload shape)
+    must be given."""
+
+    piece_id: str | None = None
+    title: str | None = None
+    owner_type: OwnerType | None = None
+    group_id: str | None = None
+
+
+class OmrImportOut(BaseModel):
+    piece: PieceOut
+    version: PieceVersionOut
+    created_new_piece: bool
+
+
 class RenderManifestOut(BaseModel):
     """B7: stems + MusicXML + tempo metadata for a rendered `PieceVersion`.
     URLs are relative to this API's root."""

@@ -26,7 +26,6 @@ from app.api.schemas import (
 from app.core.config import get_settings
 from app.db.models import (
     Distribution,
-    Group,
     GroupMembership,
     GroupRole,
     OwnerType,
@@ -38,6 +37,14 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.services.pieces import (
+    add_version,
+    create_piece_with_version,
+    get_piece_or_404,
+    group_role,
+    require_piece_access,
+    resolve_new_piece_owner_id,
+)
 from app.storage.files import save_file
 
 router = APIRouter(prefix="/library", tags=["library"])
@@ -48,11 +55,11 @@ def ping() -> dict[str, str]:
     return {"status": "library stub — see B3-B5 in plan.md"}
 
 
-def _get_piece_or_404(piece_id: str, db: Session) -> Piece:
-    piece = db.get(Piece, piece_id)
-    if piece is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
-    return piece
+# `_get_piece_or_404`, `_group_role`, `_require_piece_access`: moved to
+# app/services/pieces.py so B8's OMR-import endpoint can share the exact
+# same access-control rules instead of reimplementing them.
+_get_piece_or_404 = get_piece_or_404
+_group_role = group_role
 
 
 def _get_version_or_404(version_id: str, db: Session) -> PieceVersion:
@@ -62,23 +69,8 @@ def _get_version_or_404(version_id: str, db: Session) -> PieceVersion:
     return version
 
 
-def _group_role(group_id: str, user_id: str, db: Session) -> GroupRole | None:
-    membership = (
-        db.query(GroupMembership)
-        .filter(GroupMembership.group_id == group_id, GroupMembership.user_id == user_id)
-        .first()
-    )
-    return membership.role if membership else None
-
-
 def _require_piece_access(piece: Piece, user: User, db: Session) -> None:
-    """Can this user work on (view / add a version to) this piece?"""
-    if piece.owner_type == OwnerType.user:
-        if piece.owner_id != user.id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not the owner of this piece")
-    else:
-        if _group_role(piece.owner_id, user.id, db) is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this piece's group")
+    require_piece_access(piece, user.id, db)
 
 
 def _require_review_authority(piece: Piece, user: User, db: Session) -> None:
@@ -100,35 +92,20 @@ async def upload_piece(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PieceUploadOut:
-    if owner_type == OwnerType.group:
-        if not group_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="group_id is required for a group-owned piece")
-        if db.get(Group, group_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-        if _group_role(group_id, current_user.id, db) != GroupRole.admin:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
-        owner_id = group_id
-    else:
-        owner_id = current_user.id
+    owner_id = resolve_new_piece_owner_id(owner_type, group_id, current_user.id, db)
 
     data = await file.read()
     suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
     file_path = save_file(data, suffix=suffix)
 
-    piece = Piece(title=title, owner_type=owner_type, owner_id=owner_id)
-    db.add(piece)
-    db.flush()
-    version = PieceVersion(
-        piece_id=piece.id,
+    piece, version = create_piece_with_version(
+        title=title,
+        owner_type=owner_type,
+        owner_id=owner_id,
         created_by=current_user.id,
-        source=VersionSource.original,
-        status=VersionStatus.draft,
         file_path=file_path,
+        db=db,
     )
-    db.add(version)
-    db.commit()
-    db.refresh(piece)
-    db.refresh(version)
     return PieceUploadOut(piece=piece, version=version)
 
 
@@ -148,16 +125,9 @@ async def upload_version(
     suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
     file_path = save_file(data, suffix=suffix)
 
-    version = PieceVersion(
-        piece_id=piece.id,
-        created_by=current_user.id,
-        source=VersionSource.modification,
-        status=VersionStatus.draft,
-        file_path=file_path,
+    version = add_version(
+        piece=piece, created_by=current_user.id, file_path=file_path, source=VersionSource.modification, db=db
     )
-    db.add(version)
-    db.commit()
-    db.refresh(version)
     return version
 
 

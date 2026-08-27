@@ -11,12 +11,19 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import OmrJobOut
+from app.api.schemas import OmrImportOut, OmrImportRequest, OmrJobOut
 from app.core.config import get_settings
-from app.db.models import OmrJob, OmrJobStatus, User
+from app.db.models import OmrJob, OmrJobStatus, User, VersionSource
 from app.db.session import get_db
 from app.jobs.omr_jobs import run_omr_job
-from app.storage.files import save_file
+from app.services.pieces import (
+    add_version,
+    create_piece_with_version,
+    get_piece_or_404,
+    require_piece_access,
+    resolve_new_piece_owner_id,
+)
+from app.storage.files import load_file, save_file
 
 router = APIRouter(prefix="/omr", tags=["omr"])
 
@@ -79,6 +86,71 @@ def get_job(
 ) -> OmrJobOut:
     job = _get_own_job_or_404(job_id, current_user, db)
     return _job_out(job)
+
+
+@router.post("/jobs/{job_id}/import", response_model=OmrImportOut, status_code=status.HTTP_201_CREATED)
+def import_job_result(
+    job_id: str,
+    payload: OmrImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OmrImportOut:
+    """Turns a finished OMR job into a library entry — either a brand-new
+    piece or a new version of an existing one, mirroring `/library/pieces`
+    and `/library/pieces/{id}/versions`' two upload shapes, and reusing
+    their exact access-control/creation logic via `app/services/pieces.py`
+    so this route can't drift from the library's own rules.
+
+    Deliberately imports the job's derived `.mid`, not its `.musicxml`:
+    a `PieceVersion`'s manifest endpoint (B7) only knows how to render a
+    MIDI source, so this is what lets an OMR'd piece flow through the same
+    stem/notation pipeline as any other version instead of needing a
+    separate MusicXML playback path (see app/omr/pipeline.py).
+    """
+    job = _get_own_job_or_404(job_id, current_user, db)
+    if job.status != OmrJobStatus.done or job.result_midi_path is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Job has no result to import yet")
+
+    wants_new_piece = payload.title is not None
+    wants_existing_piece = payload.piece_id is not None
+    if wants_new_piece == wants_existing_piece:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide exactly one of piece_id (add a version) or title (create a new piece)",
+        )
+
+    # Copy the job's result into its own stored file rather than pointing
+    # the new version straight at `result_midi_path` — a `PieceVersion`'s
+    # file should be independently owned, not tied to an OMR job's
+    # lifetime (e.g. a future job-cleanup pass must not be able to orphan
+    # a distributed piece).
+    suffix = Path(job.result_midi_path).suffix
+    file_path = save_file(load_file(job.result_midi_path), suffix=suffix)
+
+    if wants_existing_piece:
+        piece = get_piece_or_404(payload.piece_id, db)
+        require_piece_access(piece, current_user.id, db)
+        version = add_version(
+            piece=piece,
+            created_by=current_user.id,
+            file_path=file_path,
+            source=VersionSource.modification,
+            db=db,
+        )
+        return OmrImportOut(piece=piece, version=version, created_new_piece=False)
+
+    if payload.owner_type is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="owner_type is required when creating a new piece")
+    owner_id = resolve_new_piece_owner_id(payload.owner_type, payload.group_id, current_user.id, db)
+    piece, version = create_piece_with_version(
+        title=payload.title,
+        owner_type=payload.owner_type,
+        owner_id=owner_id,
+        created_by=current_user.id,
+        file_path=file_path,
+        db=db,
+    )
+    return OmrImportOut(piece=piece, version=version, created_new_piece=True)
 
 
 @router.get("/jobs/{job_id}/result/{kind}")
