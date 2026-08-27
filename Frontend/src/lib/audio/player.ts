@@ -9,11 +9,20 @@ const TICKS_PER_BEAT = 480; // must match `playbackMidiBuilder.ts`'s constant
 // deliberate here: this file is the vendor-integration boundary, not the
 // portable algorithm core (that's `midi/`) — see the Android-portability
 // reasoning carried over from the iOS app's plan.
+//
+// `AudioWorkletNodeSynthesizer` (not the plain `Synthesizer`) is the class
+// actually used below — it runs FluidSynth's render loop on the dedicated
+// audio-rendering thread via an AudioWorklet, rather than on the main
+// thread via a `ScriptProcessorNode`. That matters because main-thread work
+// (e.g. an OSMD re-render on a display-mode change) can stall a
+// `ScriptProcessorNode`'s callback long enough to be audible; an
+// AudioWorkletNode's `process()` runs regardless of main-thread load. See
+// the backlog note this closed in `plan.md`.
 declare global {
 	interface Window {
 		JSSynth: {
 			waitForReady(): Promise<void>;
-			Synthesizer: new () => JSSynthesizer;
+			AudioWorkletNodeSynthesizer: new () => JSSynthesizer;
 			// Nested under `Constants` in the vendored bundle's export map
 			// (`Constants: () => Constants_namespaceObject`, which holds
 			// `PlayerSetTempoType`) — not a top-level `JSSynth` export.
@@ -24,7 +33,11 @@ declare global {
 
 interface JSSynthesizer {
 	init(sampleRate: number): void;
-	createAudioNode(context: AudioContext, frameCount: number): AudioNode;
+	// No frame-count/buffer-size argument here (unlike the plain
+	// `Synthesizer`'s `createAudioNode`) — the AudioWorklet's render
+	// quantum is fixed by the browser, not something this library lets
+	// callers tune.
+	createAudioNode(context: AudioContext): AudioNode;
 	loadSFont(bin: ArrayBuffer): Promise<number>;
 	resetPlayer(): Promise<void>;
 	addSMFDataToPlayer(bin: ArrayBuffer): Promise<void>;
@@ -39,7 +52,16 @@ interface JSSynthesizer {
 export const MIN_TEMPO_BPM = 40;
 export const MAX_TEMPO_BPM = 240;
 
+// Loaded onto the main thread as `window.JSSynth` — needed there for the
+// `AudioWorkletNodeSynthesizer` constructor and `Constants`, even though
+// the actual synthesis work happens on the worklet thread below.
 const VENDOR_SCRIPTS = ['/vendor/libfluidsynth-2.4.6.js', '/vendor/js-synthesizer.js'];
+// Registered into the AudioWorklet's own global scope via
+// `audioWorklet.addModule()` (a separate JS environment from the main
+// thread's `window` — the two `libfluidsynth-2.4.6.js` loads are not
+// redundant). `js-synthesizer.worklet.js` self-registers the processor
+// (`registerAudioWorkletProcessor()`) as soon as the module loads.
+const WORKLET_MODULES = ['/vendor/libfluidsynth-2.4.6.js', '/vendor/js-synthesizer.worklet.js'];
 const SOUNDFONT_URL = '/soundfonts/TimGM6mb.sf2';
 
 let vendorScriptsLoaded: Promise<void> | null = null;
@@ -89,9 +111,11 @@ function loadVendorScripts(): Promise<void> {
 
 /**
  * Plays a `ParsedMIDI` accurately and lets its four SATB parts be balanced
- * live, using a WASM FluidSynth instance (via js-synthesizer) as the sound
- * engine and the page's own `AudioContext` clock as the single source of
- * truth for playback position — never a polled readout.
+ * live, using a WASM FluidSynth instance (via js-synthesizer's
+ * `AudioWorkletNodeSynthesizer`, rendering on the audio thread rather than
+ * the main thread) as the sound engine and the page's own `AudioContext`
+ * clock as the single source of truth for playback position — never a
+ * polled readout.
  *
  * The whole piece is fed to one FluidSynth player instance (accurate,
  * sample-scheduled by the synth itself) rather than driving individual
@@ -142,9 +166,15 @@ export class MidiPlayer {
 	static async create(): Promise<MidiPlayer> {
 		await loadVendorScripts();
 		const context = new AudioContext();
-		const synth = new window.JSSynth.Synthesizer();
+		// Must happen before constructing the node below — these register
+		// the processor into this context's own AudioWorklet global scope,
+		// a separate environment per `AudioContext`.
+		for (const url of WORKLET_MODULES) {
+			await context.audioWorklet.addModule(url);
+		}
+		const synth = new window.JSSynth.AudioWorkletNodeSynthesizer();
 		synth.init(context.sampleRate);
-		const node = synth.createAudioNode(context, 8192);
+		const node = synth.createAudioNode(context);
 		const streamDestination = context.createMediaStreamDestination();
 		node.connect(streamDestination);
 
