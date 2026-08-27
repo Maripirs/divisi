@@ -2,11 +2,12 @@ import SwiftUI
 import WebKit
 
 /// Drives the OpenSheetMusicDisplay instance living in `osmd/index.html`
-/// (M4) — load a MusicXML score, step its cursor, or clear it. Owned by
-/// `DivisiSyncEngine`; `OSMDWebView` just wires a live `WKWebView` into it.
+/// (M4) — load a MusicXML score, step its cursor, report score taps, or
+/// clear it. Owned by `DivisiSyncEngine`; `OSMDWebView` just wires a live
+/// `WKWebView` into it.
 ///
-/// The JS side is the source of truth for "which cursor step are we on" —
-/// see `index.html`'s `divisiSetCursorIndex` — so this controller is a thin,
+/// The JS side is the source of truth for "where is the cursor" — see
+/// `index.html`'s `divisiSetCursorTimestamp` — so this controller is a thin,
 /// mostly-stateless relay rather than mirroring cursor position itself.
 @MainActor
 final class OSMDController: NSObject, ObservableObject {
@@ -16,6 +17,7 @@ final class OSMDController: NSObject, ObservableObject {
     @Published fileprivate(set) var errorText: String?
 
     fileprivate weak var webView: WKWebView?
+    var onSeekTimestamp: ((Double) -> Void)?
     /// Whether the WKWebView has actually finished loading `index.html` —
     /// `SwiftUI` calls `loadScore` from `.onAppear` essentially
     /// synchronously with `makeUIView`, well before the page's `<script>`
@@ -24,20 +26,32 @@ final class OSMDController: NSObject, ObservableObject {
     /// arrives first is queued and flushed once `pageLoaded` flips true.
     fileprivate var pageLoaded = false
     private var pendingXML: String?
+    private var currentZoom: Double = 0.85
 
-    func loadScore(xml: String) {
+    func loadScore(xml: String, zoom: Double) {
         isReady = false
         errorText = nil
+        currentZoom = zoom
         guard pageLoaded else {
             pendingXML = xml
             return
         }
-        run("divisiLoadScore(`\(Self.escape(xml))`)")
+        run("divisiLoadScore(`\(Self.escape(xml))`, \(zoom))")
     }
 
-    func setCursorIndex(_ index: Int) {
+    func setZoom(_ zoom: Double) {
+        currentZoom = zoom
+        guard pageLoaded else { return }
+        run("divisiSetZoom(\(zoom))")
+    }
+
+    /// Moves the cursor to `wholeNotes` (a position in the score measured in
+    /// whole notes from the start — the same unit OSMD's own cursor
+    /// iterator reports), regardless of how many parts are currently
+    /// rendered.
+    func setCursorTimestamp(_ wholeNotes: Double) {
         guard isReady else { return }
-        run("divisiSetCursorIndex(\(index))")
+        run("divisiSetCursorTimestamp(\(wholeNotes))")
     }
 
     /// Hides the cursor and drops the ready flag — used for "no file
@@ -56,7 +70,7 @@ final class OSMDController: NSObject, ObservableObject {
         pageLoaded = true
         if let pendingXML {
             self.pendingXML = nil
-            loadScore(xml: pendingXML)
+            loadScore(xml: pendingXML, zoom: currentZoom)
         }
     }
 
@@ -101,7 +115,7 @@ struct OSMDWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
-        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.isScrollEnabled = true
         webView.navigationDelegate = context.coordinator
         controller.webView = webView
 
@@ -148,6 +162,9 @@ struct OSMDWebView: UIViewRepresentable {
                 case "error":
                     controller.isReady = false
                     controller.errorText = body["message"] as? String ?? "Unknown OSMD error"
+                case "seek":
+                    guard let wholeNotes = body["wholeNotes"] as? Double else { return }
+                    controller.onSeekTimestamp?(wholeNotes)
                 default:
                     break
                 }

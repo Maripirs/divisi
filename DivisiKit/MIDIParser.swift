@@ -94,7 +94,14 @@ final class MIDIParser {
         let keySignatureFifths = rawTracks.compactMap(\.keySignatureFifths).first ?? 0
         let (tempoBPM, timeSignature) = Self.readTempoTrack(sequence)
 
-        return ParsedMIDI(notes: notes, lyrics: lyrics, tempoBPM: tempoBPM, timeSignature: timeSignature, keySignatureFifths: keySignatureFifths)
+        return ParsedMIDI(
+            notes: notes,
+            lyrics: lyrics,
+            tempoBPM: tempoBPM,
+            timeSignature: timeSignature,
+            keySignatureFifths: keySignatureFifths,
+            trackVoiceParts: assignments
+        )
     }
 
     /// Tempo (0x51) and time-signature (0x58) meta-events don't come back

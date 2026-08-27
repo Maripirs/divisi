@@ -30,37 +30,116 @@ struct MusicXMLConverter {
 
     struct Result {
         let xml: String
-        /// Parallel to the `<note>` elements in `xml`, in document order
-        /// (rests are `<note>` elements too, per the MusicXML spec) — the ms
-        /// timestamp each one starts sounding at. This is exactly the
-        /// sequence `DivisiSyncEngine` will drive an OSMD cursor step
-        /// against: on each poll tick, find how far into this array
-        /// `currentPositionMs` has advanced.
-        let noteStartMs: [Int]
+        /// How many milliseconds of real time correspond to one whole note
+        /// at this file's tempo. OSMD's cursor iterator reports its position
+        /// as a timestamp in whole notes (`cursor.iterator.currentTimeStamp`),
+        /// so `DivisiSyncEngine` converts `currentPositionMs / msPerWholeNote`
+        /// to drive it — a continuous mapping, not a per-note lookup table,
+        /// so it works the same whether one part or all four are on screen
+        /// (a discrete "note index" doesn't: a multi-part score's cursor
+        /// advances through the union of all parts' event timestamps, not
+        /// any single part's own note count).
+        let msPerWholeNote: Double
+    }
+
+    struct MultiPartResult {
+        let xml: String
+        /// Same meaning as `Result.msPerWholeNote` — one tempo covers the
+        /// whole (single-tempo) file, so it's shared across all four parts.
+        let msPerWholeNote: Double
     }
 
     func convert(_ parsed: ParsedMIDI, voicePart: VoicePart) throws -> Result {
-        let partNotes = parsed.notes.filter { $0.voicePart == voicePart }
-        let notes = partNotes.sorted { $0.startMs < $1.startMs }
+        let notes = Self.notes(parsed, voicePart: voicePart)
         guard !notes.isEmpty else { throw MusicXMLConverterError.noNotesForVoicePart }
 
-        let unitMs = 60_000.0 / parsed.tempoBPM / (Double(Self.divisionsPerQuarter))
-        let unitsPerMeasure = parsed.timeSignature.numerator * (Self.unitsPerWholeNote / parsed.timeSignature.denominator)
+        let unitMs = Self.unitMs(tempoBPM: parsed.tempoBPM)
+        let unitsPerMeasure = Self.unitsPerMeasure(timeSignature: parsed.timeSignature)
+        let measureUnitSpans = Self.measures(notes: notes, unitMs: unitMs, unitsPerMeasure: unitsPerMeasure)
+        let useFlats = parsed.keySignatureFifths < 0
+        let attributesXML = Self.attributesXML(timeSignature: parsed.timeSignature, keySignatureFifths: parsed.keySignatureFifths, voicePart: voicePart)
 
-        let timeline = Self.buildTimeline(notes: notes, unitMs: unitMs, unitsPerMeasure: unitsPerMeasure)
-        let measureUnitSpans = Self.splitAtMeasureBoundaries(timeline, unitsPerMeasure: unitsPerMeasure)
+        let body = Self.bodyXML(measureUnitSpans: measureUnitSpans, useFlats: useFlats, firstMeasureAttributesXML: attributesXML)
+        let xml = Self.scoreXML(parts: [(id: "P1", name: voicePart.rawValue.capitalized, body: body)])
+        return Result(xml: xml, msPerWholeNote: unitMs * Double(Self.unitsPerWholeNote))
+    }
+
+    /// Notehead color applied to `highlightedPart`'s notes in
+    /// `convertAllParts` — a standard MusicXML `color` attribute, which OSMD
+    /// renders natively (see `noteXML`), rather than a WebView-side CSS/JS
+    /// hack. iOS system blue; not user-configurable yet.
+    static let highlightColor = "#3478F6"
+
+    /// Converts all four voice parts into one multi-part score, one `<part>`
+    /// per voice in SATB order, all padded to the same shared measure count
+    /// so barlines line up vertically across staves — needed for the flat
+    /// and highlighted display modes (M4), where every part is visible at
+    /// once. A part with no notes at all in the file still gets its full
+    /// share of rest-only measures rather than being omitted, so every mode
+    /// shows a consistent SATB grid regardless of which parts a given file
+    /// actually uses. When `highlightedPart` is non-nil, that part's
+    /// noteheads are tinted `highlightColor` (the "highlighted" display
+    /// mode); nil renders every part in the default color (the "flat" mode).
+    func convertAllParts(_ parsed: ParsedMIDI, highlightedPart: VoicePart? = nil) throws -> MultiPartResult {
+        let unitMs = Self.unitMs(tempoBPM: parsed.tempoBPM)
+        let unitsPerMeasure = Self.unitsPerMeasure(timeSignature: parsed.timeSignature)
         let useFlats = parsed.keySignatureFifths < 0
 
+        var measureUnitSpansByPart: [VoicePart: [[MeasurePiece]]] = [:]
+        for voicePart in VoicePart.allCases {
+            let notes = Self.notes(parsed, voicePart: voicePart)
+            measureUnitSpansByPart[voicePart] = Self.measures(notes: notes, unitMs: unitMs, unitsPerMeasure: unitsPerMeasure)
+        }
+
+        let sharedMeasureCount = max(1, measureUnitSpansByPart.values.map(\.count).max() ?? 1)
+        let restMeasure: [MeasurePiece] = [MeasurePiece(durationUnits: unitsPerMeasure, pitch: nil, continuesFromPrevious: false, continuesToNext: false)]
+        for voicePart in VoicePart.allCases {
+            while measureUnitSpansByPart[voicePart]!.count < sharedMeasureCount {
+                measureUnitSpansByPart[voicePart]!.append(restMeasure)
+            }
+        }
+
+        var parts: [(id: String, name: String, body: String)] = []
+        for (index, voicePart) in VoicePart.allCases.enumerated() {
+            let attributesXML = Self.attributesXML(timeSignature: parsed.timeSignature, keySignatureFifths: parsed.keySignatureFifths, voicePart: voicePart)
+            let color = voicePart == highlightedPart ? Self.highlightColor : nil
+            let body = Self.bodyXML(measureUnitSpans: measureUnitSpansByPart[voicePart]!, useFlats: useFlats, firstMeasureAttributesXML: attributesXML, color: color)
+            parts.append((id: "P\(index + 1)", name: voicePart.rawValue.capitalized, body: body))
+        }
+
+        return MultiPartResult(xml: Self.scoreXML(parts: parts), msPerWholeNote: unitMs * Double(Self.unitsPerWholeNote))
+    }
+
+    private static func notes(_ parsed: ParsedMIDI, voicePart: VoicePart) -> [MIDINote] {
+        parsed.notes.filter { $0.voicePart == voicePart }.sorted { $0.startMs < $1.startMs }
+    }
+
+    private static func unitMs(tempoBPM: Double) -> Double {
+        60_000.0 / tempoBPM / Double(divisionsPerQuarter)
+    }
+
+    private static func unitsPerMeasure(timeSignature: MIDITimeSignature) -> Int {
+        timeSignature.numerator * (unitsPerWholeNote / timeSignature.denominator)
+    }
+
+    private static func measures(notes: [MIDINote], unitMs: Double, unitsPerMeasure: Int) -> [[MeasurePiece]] {
+        let timeline = buildTimeline(notes: notes, unitMs: unitMs, unitsPerMeasure: unitsPerMeasure)
+        return splitAtMeasureBoundaries(timeline, unitsPerMeasure: unitsPerMeasure)
+    }
+
+    /// Emits one part's `<measure>` elements, shared between the
+    /// single-part and multi-part conversions. `color`, when given, tints
+    /// this part's noteheads (rests are left uncolored — there's no
+    /// notehead to tint) for the "highlighted" display mode.
+    private static func bodyXML(measureUnitSpans: [[MeasurePiece]], useFlats: Bool, firstMeasureAttributesXML: String, color: String? = nil) -> String {
         var body = ""
-        var noteStartMs: [Int] = []
-        var unitCursor = 0
         for (measureIndex, measureEvents) in measureUnitSpans.enumerated() {
             body += "    <measure number=\"\(measureIndex + 1)\">\n"
             if measureIndex == 0 {
-                body += Self.attributesXML(timeSignature: parsed.timeSignature, keySignatureFifths: parsed.keySignatureFifths, voicePart: voicePart)
+                body += firstMeasureAttributesXML
             }
             for piece in measureEvents {
-                let chunks = Self.decompose(units: piece.durationUnits)
+                let chunks = decompose(units: piece.durationUnits)
                 for (chunkIndex, chunk) in chunks.enumerated() {
                     // A chunk needs a tie to its neighbor whenever there's a
                     // sounding note on both sides of the split — either
@@ -70,29 +149,29 @@ struct MusicXMLConverter {
                     let isNote = piece.pitch != nil
                     let tieStop = isNote && (chunkIndex > 0 || piece.continuesFromPrevious)
                     let tieStart = isNote && (chunkIndex < chunks.count - 1 || piece.continuesToNext)
-                    body += Self.noteXML(pitch: piece.pitch, chunk: chunk, useFlats: useFlats, tieStart: tieStart, tieStop: tieStop)
-                    noteStartMs.append(Int((Double(unitCursor) * unitMs).rounded()))
-                    unitCursor += chunk.units
+                    body += noteXML(pitch: piece.pitch, chunk: chunk, useFlats: useFlats, tieStart: tieStart, tieStop: tieStop, color: isNote ? color : nil)
                 }
             }
             body += "    </measure>\n"
         }
+        return body
+    }
 
-        let partName = voicePart.rawValue.capitalized
-        let xml = """
+    private static func scoreXML(parts: [(id: String, name: String, body: String)]) -> String {
+        let scorePartsXML = parts.map { part in
+            "    <score-part id=\"\(part.id)\">\n      <part-name>\(part.name)</part-name>\n    </score-part>\n"
+        }.joined()
+        let partsXML = parts.map { part in
+            "  <part id=\"\(part.id)\">\n\(part.body)  </part>\n"
+        }.joined()
+        return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
         <score-partwise version="4.0">
           <part-list>
-            <score-part id="P1">
-              <part-name>\(partName)</part-name>
-            </score-part>
-          </part-list>
-          <part id="P1">
-        \(body)  </part>
-        </score-partwise>
+        \(scorePartsXML)  </part-list>
+        \(partsXML)</score-partwise>
         """
-        return Result(xml: xml, noteStartMs: noteStartMs)
     }
 
     // MARK: - Grid quantization
@@ -287,7 +366,7 @@ struct MusicXMLConverter {
     private static let flatSteps = ["C", "D", "D", "E", "E", "F", "G", "G", "A", "A", "B", "B"]
     private static let flatAlters = [0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0]
 
-    private static func noteXML(pitch: UInt8?, chunk: Chunk, useFlats: Bool, tieStart: Bool, tieStop: Bool) -> String {
+    private static func noteXML(pitch: UInt8?, chunk: Chunk, useFlats: Bool, tieStart: Bool, tieStop: Bool, color: String? = nil) -> String {
         let dotsXML = String(repeating: "\n          <dot/>", count: chunk.dots)
         let pitchOrRestXML: String
         if let pitch {
@@ -321,9 +400,14 @@ struct MusicXMLConverter {
             tiedNotationsXML += "\n            <tied type=\"start\"/>"
         }
         let notationsXML = tiedNotationsXML.isEmpty ? "" : "\n          <notations>\(tiedNotationsXML)\n          </notations>"
+        // `color` is a standard MusicXML attribute (present on <note> and
+        // several other elements) that OSMD honors directly when rendering
+        // — no custom CSS/JS needed for the "highlighted" display mode's
+        // notehead tinting.
+        let colorAttrXML = color.map { " color=\"\($0)\"" } ?? ""
 
         return """
-              <note>
+              <note\(colorAttrXML)>
         \(pitchOrRestXML)
                 <duration>\(chunk.units)</duration>\(tieXML)
                 <type>\(chunk.type)</type>\(dotsXML)\(notationsXML)

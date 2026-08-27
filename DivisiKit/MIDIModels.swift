@@ -8,6 +8,19 @@ enum VoicePart: String, CaseIterable {
     case soprano, alto, tenor, bass
 }
 
+/// How the score view presents the four voice parts relative to whichever
+/// one is currently chosen (M4). Independent of what audio plays — playback
+/// always plays the full mix regardless of display mode; only what's drawn
+/// on screen changes.
+enum DisplayMode: String, CaseIterable {
+    /// Full SATB score, no part visually emphasized.
+    case flat
+    /// Full SATB score, with the chosen voice part's noteheads tinted.
+    case highlighted
+    /// Only the chosen voice part's staff.
+    case solo
+}
+
 /// A single sung note, already resolved to a voice part and to milliseconds
 /// (tempo-map applied — see `MIDIParser`).
 struct MIDINote {
@@ -55,6 +68,10 @@ struct ParsedMIDI {
     /// key signature, straight from the MIDI key-signature meta-event's
     /// `sf` byte. 0 (C major/A minor) when absent.
     let keySignatureFifths: Int
+    /// Regular MIDI track index -> SATB voice part, using the same mapping
+    /// that produced `notes`/`lyrics`. Playback uses this to route each
+    /// track to a per-part mixer channel for the M4 balance slider.
+    let trackVoiceParts: [Int: VoicePart]
 
-    static let empty = ParsedMIDI(notes: [], lyrics: [], tempoBPM: 120, timeSignature: .defaultSignature, keySignatureFifths: 0)
+    static let empty = ParsedMIDI(notes: [], lyrics: [], tempoBPM: 120, timeSignature: .defaultSignature, keySignatureFifths: 0, trackVoiceParts: [:])
 }
