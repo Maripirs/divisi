@@ -107,6 +107,7 @@
 		container.addEventListener('touchend', handleTouchEnd);
 		container.addEventListener('touchcancel', handleTouchEnd);
 		container.addEventListener('wheel', cancelFollow, { passive: true });
+		window.addEventListener('resize', handleWindowResize);
 	});
 
 	onDestroy(() => {
@@ -116,9 +117,30 @@
 		container?.removeEventListener('touchend', handleTouchEnd);
 		container?.removeEventListener('touchcancel', handleTouchEnd);
 		container?.removeEventListener('wheel', cancelFollow);
+		window.removeEventListener('resize', handleWindowResize);
+		if (resizeReapplyTimeout !== undefined) clearTimeout(resizeReapplyTimeout);
 		if (pinchRaf !== null) cancelAnimationFrame(pinchRaf);
 		osmd = undefined;
 	});
+
+	// OSMD's own resize handling redraws the whole graphical sheet, but on
+	// its own ~200ms debounce and without ever calling back into our custom
+	// cursor styling/muted-staff repaint — those only ever get (re)applied
+	// from our own render calls (see the zoom/displayMode effects above).
+	// Left alone, any resize (including the synthetic one +page.svelte
+	// fires after unhiding this view) silently reverts the cursor to OSMD's
+	// bare default the moment it redraws. Reapplying after a delay longer
+	// than OSMD's own debounce, rather than immediately, makes sure that
+	// redraw has actually finished first.
+	let resizeReapplyTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	function handleWindowResize(): void {
+		if (resizeReapplyTimeout !== undefined) clearTimeout(resizeReapplyTimeout);
+		resizeReapplyTimeout = setTimeout(() => {
+			resizeReapplyTimeout = undefined;
+			if (cursorReady) applyScoreTreatments();
+		}, 300);
+	}
 
 	function cancelFollow(): void {
 		following = false;

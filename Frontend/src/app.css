@@ -56,6 +56,16 @@ body {
 	height: 100%;
 }
 
+/* Stops the double-tap-to-zoom gesture (and iOS's ~300ms tap delay) on
+   actual controls — not an accessibility regression: `manipulation` still
+   leaves pinch-zoom enabled everywhere on the page for anyone who needs
+   it, this only removes double-tap-zoom specifically on tappable buttons,
+   where it's a UI annoyance (e.g. quickly tapping a zoom +/- button twice)
+   rather than something anyone relies on. */
+button {
+	touch-action: manipulation;
+}
+
 body {
 	margin: 0;
 	background: var(--bg);

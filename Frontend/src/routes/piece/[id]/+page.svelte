@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick as svelteTick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
@@ -16,6 +16,7 @@
 	} from '$lib/midi/types';
 	import { getPiece } from '$lib/pieces/registry';
 	import { THEME_MODES, highlightedMutedInk, resolvedTheme, setThemeMode, themeMode, type ThemeMode } from '$lib/theme';
+	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 
 	let { data }: { data: { id: string } } = $props();
@@ -79,6 +80,7 @@
 	let menuOpen = $state(false);
 	let viewMode = $state<ViewMode>('player');
 	let zoomLevel = $state(1);
+	let pdfZoomLevel = $state(1);
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>({
@@ -119,6 +121,7 @@
 		if (stored.balance) balance = stored.balance;
 		if (stored.viewMode) viewMode = stored.viewMode;
 		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
+		if (stored.pdfZoomLevel !== undefined) pdfZoomLevel = Math.min(2, Math.max(0.5, stored.pdfZoomLevel));
 		try {
 			const [fetchedPlayer, loadedPiece] = await Promise.all([MidiPlayer.create(), piece.load()]);
 			if (destroyed) {
@@ -209,6 +212,7 @@
 		balance: Record<MixPart, number>;
 		viewMode: ViewMode;
 		zoomLevel: number;
+		pdfZoomLevel: number;
 	}
 
 	function settingsStorageKey(id: string): string {
@@ -234,7 +238,8 @@
 			visualStates,
 			balance,
 			viewMode,
-			zoomLevel
+			zoomLevel,
+			pdfZoomLevel
 		};
 		localStorage.setItem(settingsStorageKey(piece.id), JSON.stringify(settings));
 	}
@@ -248,6 +253,16 @@
 	function setViewMode(mode: ViewMode) {
 		viewMode = mode;
 		persistSettings();
+		if (mode === 'player') {
+			// The score view was hidden via CSS (`display: none`), not
+			// unmounted — but OSMD's `autoResize` only recalculates layout on
+			// a real `window` resize event, not a ResizeObserver on its own
+			// container, so it never notices regaining a real width until
+			// one actually fires. A synthetic one nudges it to re-measure
+			// and redraw immediately, instead of leaving a stale/blank
+			// layout until the next incidental resize (e.g. zooming).
+			void svelteTick().then(() => window.dispatchEvent(new Event('resize')));
+		}
 	}
 
 	function setFocus(part: MixPart) {
@@ -379,6 +394,7 @@
 	// `bootstrap()`'s restore has actually run.
 	$effect(() => {
 		zoomLevel;
+		pdfZoomLevel;
 		if (loadState.kind === 'loading') return;
 		persistSettings();
 	});
@@ -484,7 +500,7 @@
 			{#if piece}
 				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
 					<div class="pdf-card">
-						<iframe class="pdf-frame" src={piece.pdfUrl} title="{piece.title} score PDF"></iframe>
+						<PdfView pdfUrl={piece.pdfUrl} bind:zoom={pdfZoomLevel} />
 					</div>
 				</div>
 			{/if}
@@ -777,14 +793,6 @@
 
 	.pdf-card {
 		height: 100%;
-	}
-
-	.pdf-frame {
-		display: block;
-		width: 100%;
-		height: 100%;
-		border: none;
-		background: var(--surface);
 	}
 
 	.text-link {
