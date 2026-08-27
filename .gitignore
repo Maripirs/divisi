@@ -13,3 +13,5 @@ Backend/.env
 Backend/data/
 Backend/**/*.egg-info/
 Backend/.pytest_cache/
+.neon
+.env.local
