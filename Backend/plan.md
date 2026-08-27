@@ -2,7 +2,15 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B9 (Homework/assignments), started 2026-08-27 to unblock `Frontend/plan.md`'s expanded F4. B6 done (approved via the human's join-code-format call, see log). B7's Claude tasks are also done, still pending the human's listening sign-off. B8 (OMR)'s Claude tasks are also done, still pending the human's engine-install + real-test-PDF sign-off.
+**Current milestone:** B11 (deploy to hosting), the last of several done in parallel
+this session across worktrees — B6 done (approved via the human's join-code-format
+call, see log); B7's and B8's Claude tasks are also done, still pending the human's
+listening / engine-install sign-offs; B9 (Homework/assignments) and B10 (guest
+privacy controls) both pending review, added to unblock `Frontend/plan.md`'s
+expanded F4. B11 started 2026-08-27 in a dedicated worktree, per the human's request
+to get a real reachable backend for `Frontend/plan.md`'s F2 — **renumbered from B9**
+on merge, since that number was independently claimed by the Homework milestone in
+a parallel session; no task content changed, just the label.
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -193,11 +201,35 @@ should be an opt-in guest exposure, not automatic just because pieces are shared
 - [x] `app/api/routes/guest.py`: password check on all four guest routes (resolve, homework, manifest, render file); homework listing additionally 404s when `guest_homework_visible` is false
 - [x] Tests: default-no-password groups unaffected, password required/wrong/right, settings update round-trip, non-admin can't change settings, homework hidden by default and visible once toggled on
 
+### B11 — Deploy to hosting [~]
+
+Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move past the bundled fixture). Free-tier stack per the human's "as free as possible" call: Render (free web service, deploys the existing `Dockerfile` as-is via a root-level `render.yaml` blueprint) + Neon (free Postgres — chosen over Render's own free Postgres because Render's expires after 30 days and Neon's doesn't).
+
+**Known limitation, accepted for now:** Render's free plan has no persistent disk, so `STORAGE_DIR` (uploaded piece source files + the B7 render cache) is wiped on every restart/redeploy. Not fixed here. Update: the Neon project was created with its Object Storage service enabled (S3-compatible, free during beta, `us-east-2` — see the `neon`/`neon-postgres` agent skills installed into this worktree at `.agents/skills/`), so a real fix no longer needs a separate Cloudflare R2 setup — bucket + credentials already exist (`AWS_*` vars in `Backend/.env`, not committed). Still needs actual code (`app/storage/files.py` only writes to local disk today) — tracked as a new Backlog item, not done as part of this pass.
+
+**Acceptance criteria:**
+- [x] The backend is reachable at a public HTTPS URL, `/health` returns 200 — confirmed live at `https://divisi.onrender.com/health`
+- [x] Migrations run automatically on deploy (no manual `alembic upgrade head` step) — Dockerfile's `alembic upgrade head` ran clean against Neon at deploy time
+- [ ] A real end-to-end smoke test against the deployed instance (register → login → create group → guest join-code fetch) passes — blocked: the deployed instance predates this merge, so it's missing CORS/Homework/B10 entirely (see Log); needs a redeploy off the merged `backend/deploy` before this can pass
+
+**Tasks — Claude:**
+- [x] `Dockerfile` CMD now runs `alembic upgrade head` before starting `uvicorn`, and binds `$PORT` when the host assigns one dynamically
+- [x] Root-level `render.yaml` blueprint (Docker runtime, free plan, `/health` check, `DATABASE_URL`/`JWT_SECRET`/`STORAGE_DIR` env wiring)
+- [x] Push repo to a new private GitHub repo (no remote existed) so Render can deploy from it — `github.com/Maripirs/divisi`, `main` + `backend/deploy` both pushed, `main` set as default
+- [x] Installed the Neon CLI + MCP server + `neon`/`neon-postgres` agent skills (`npx skills add neondatabase/agent-skills -s neon -s neon-postgres -y`, then `neon init -y`); authenticated via browser OAuth and `neon link`ed this worktree to the human's Neon project (`noisy-darkness-99816843`, org `org-shy-grass-28822737`, branch `production`) — `.neon` file (gitignored) records the link
+- [x] Wrote `Backend/.env` from the linked project's pulled vars: `DATABASE_URL` (pooled, scheme changed to `postgresql+psycopg2://` for SQLAlchemy), `DATABASE_URL_UNPOOLED` (direct, for future migrations/dumps), plus the project's `AWS_*` Object Storage credentials for the future storage-backend work above. Verified for real: `alembic upgrade head` ran clean against the live Neon database (all 6 migrations), and a manual connectivity check confirmed the `users` table is reachable through `app.db.session.engine`.
+
+**Tasks — Human:**
+- [x] Create a Neon account/project, get its Postgres connection string — done via the deploy wizard + `neon link` above
+- [x] Create a Render account, deploy from `render.yaml`, paste `Backend/.env`'s `DATABASE_URL` into Render's `DATABASE_URL` prompt — live at `divisi.onrender.com`
+- [x] Confirm the deployed `/health` URL
+- [ ] Redeploy on Render once this merge (CORS + B9/B10) reaches `backend/deploy`, so the live instance actually has it
+
 ## Backlog
 
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
-- S3 (or equivalent) migration for file storage once local-disk stops being enough
+- Wire `app/storage/files.py` to Neon's Object Storage (S3-compatible, already provisioned on the project — see B9's log) instead of local disk, to fix the free-tier ephemeral-disk gap. Credentials already sit in `Backend/.env` (`AWS_*`); this item is the actual code + `boto3` dependency work, not yet started.
 - Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
 
 ## Log

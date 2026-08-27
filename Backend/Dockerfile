@@ -15,4 +15,8 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run pending migrations before serving — keeps deploy platforms that don't
+# support a separate pre-deploy-command step (e.g. Render's free tier)
+# working with a single container command. $PORT is honored when the host
+# assigns one dynamically (Render); falls back to 8000 for local/compose use.
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
