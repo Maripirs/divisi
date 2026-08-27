@@ -134,3 +134,22 @@ class AnnotationShareOut(BaseModel):
     annotation_id: str
     shared_with_user_id: str
     email: EmailStr
+
+
+class TimeSignatureOut(BaseModel):
+    numerator: int
+    denominator: int
+
+
+class RenderManifestOut(BaseModel):
+    """B7: stems + MusicXML + tempo metadata for a rendered `PieceVersion`.
+    URLs are relative to this API's root."""
+
+    piece_version_id: str
+    stems: dict[str, str]
+    musicxml_url: str
+    tempo_bpm: float
+    time_signature: TimeSignatureOut
+    key_signature_fifths: int
+    ms_per_whole_note: float
+    duration_ms: int

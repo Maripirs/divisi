@@ -9,8 +9,10 @@ domain model in Backend/plan.md.
 """
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -19,7 +21,9 @@ from app.api.schemas import (
     LibraryEntryOut,
     PieceUploadOut,
     PieceVersionOut,
+    RenderManifestOut,
 )
+from app.core.config import get_settings
 from app.db.models import (
     Distribution,
     Group,
@@ -33,6 +37,7 @@ from app.db.models import (
     VersionStatus,
 )
 from app.db.session import get_db
+from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 from app.storage.files import save_file
 
 router = APIRouter(prefix="/library", tags=["library"])
@@ -314,3 +319,61 @@ def list_my_library(
             )
 
     return entries
+
+
+@router.get("/versions/{version_id}/manifest", response_model=RenderManifestOut)
+def get_version_manifest(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RenderManifestOut:
+    """B7: stems + MusicXML + tempo metadata for this version, rendering
+    (and caching) it on first request. Authenticated-member access only for
+    now — B6's guest join-code path will call `render_manifest`/
+    `render_file_path` directly, scoped to that group's actual
+    distributions, once it exists."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_piece_access(piece, current_user, db)
+
+    if not is_midi_file(version.file_path):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This version's file isn't a MIDI file")
+
+    settings = get_settings()
+    source_path = Path(settings.storage_dir) / version.file_path
+    try:
+        manifest = render_manifest(version_id, source_path)
+    except RenderError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    base = f"/library/versions/{version_id}/renders"
+    return RenderManifestOut(
+        piece_version_id=manifest["piece_version_id"],
+        stems={name: f"{base}/{filename}" for name, filename in manifest["stems"].items()},
+        musicxml_url=f"{base}/{manifest['musicxml']}",
+        tempo_bpm=manifest["tempo_bpm"],
+        time_signature=manifest["time_signature"],
+        key_signature_fifths=manifest["key_signature_fifths"],
+        ms_per_whole_note=manifest["ms_per_whole_note"],
+        duration_ms=manifest["duration_ms"],
+    )
+
+
+@router.get("/versions/{version_id}/renders/{filename}")
+def get_version_render_file(
+    filename: str,
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Serves one file (a stem WAV or the MusicXML) named by the manifest
+    above. Same access gate as the manifest endpoint."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_piece_access(piece, current_user, db)
+
+    try:
+        path = render_file_path(version_id, filename)
+    except RenderError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return FileResponse(path)

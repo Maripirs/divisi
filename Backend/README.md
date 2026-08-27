@@ -5,6 +5,12 @@ FastAPI service for two things (see `plan.md` for the full milestone breakdown):
 1. **OMR** — convert scanned sheet-music PDFs to MIDI/MusicXML via Audiveris/oemer.
 2. **Accounts + sync** — individual and group (e.g. choir) accounts, groups distributing
    piece versions to members, private per-user annotations with optional sharing.
+3. **Rendering** — a `PieceVersion`'s MIDI file into per-voice-part audio stems (via
+   FluidSynth) plus multi-part MusicXML, cached per version (see `plan.md` B7).
+
+Rendering shells out to the `fluidsynth` binary (not just the `mido` Python package) —
+install it locally with `brew install fluid-synth` (macOS) or `apt install fluidsynth`
+(Debian/Ubuntu); the Docker image installs it automatically.
 
 ## Local dev
 

@@ -1,5 +1,10 @@
 FROM python:3.11-slim
 
+# fluidsynth: shells out from app/rendering/synth.py to render MIDI stems
+# (B7) — not a Python dependency, needs the actual binary on PATH.
+RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /srv
 
 COPY pyproject.toml ./

@@ -2,7 +2,7 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B5
+**Current milestone:** B7 (Claude tasks done, human listening sign-off pending — see log; picked up ahead of B6 per the human's explicit choice, done in parallel with another session driving `Frontend/plan.md`'s F1. B6 itself is still not started.)
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -93,7 +93,52 @@ full queue yet), docker-compose for local dev.
 - [x] `Annotation`, `AnnotationShare` models + migration
 - [x] CRUD endpoints scoped to the owning user; share/unshare endpoint; visibility check on read
 
-### B6 — OMR pipeline [ ]
+### B6 — Guest access (join links) [ ]
+
+Needed by the new `Frontend/` web player (see its `plan.md`) — the product pivoted to
+guests joining a group's practice tracks via a shareable link, no login required
+unless they want to save annotations. This is additive: existing member-authenticated
+flows (B2–B5) are unaffected.
+
+**Acceptance criteria:**
+- [ ] A group has a join code/link; resolving it with no `Authorization` header returns the group's distributed pieces
+- [ ] An invalid/unknown join code returns a clear 404 — no crash, no leaking other groups' data
+- [ ] A guest can fetch a specific distributed piece's file/notation data by id, but only if it's actually been distributed to that group (no guessing a piece id into arbitrary access)
+
+**Tasks — Claude:**
+- [ ] Add a `join_code` field to `Group` (+ migration), generated at group creation
+- [ ] Public (unauthenticated) endpoint: resolve `join_code` → group name + its distributed pieces (title, version, file reference)
+- [ ] Public (unauthenticated) endpoint: fetch a specific distributed piece's file, scoped to that group's actual distributions
+- [ ] Decide (doesn't have to be a full implementation yet) how to harden the public endpoints against brute-forcing join codes
+
+**Tasks — Human:**
+- [ ] Decide join-code format (short memorable code vs. opaque token) and how admins see/share it
+
+### B7 — MIDI → audio + notation rendering pipeline [ ]
+
+Feeds `Frontend/plan.md`'s F2 (accurate synced playback) and F3 (notation
+follow-along) — both need this to exist before they can do anything real. Ported
+from the iOS app's proven design (`MIDIParser`'s voice-part heuristic,
+`MusicXMLConverter`'s quantization/tie/measure logic), rewritten server-side since
+that code was Swift/AudioToolbox.
+
+**Acceptance criteria:**
+- [x] Given a distributed `PieceVersion`'s MIDI file, produces one audio stem per SATB voice part plus a backing/accompaniment stem, all sample-accurately alignable (same start offset, same tempo) when played together
+- [x] The same version also produces multi-part MusicXML (SATB clefs, fixed-grid quantization, ties/measures — matching the iOS design) for OSMD to render
+- [x] Rendering is cached per `PieceVersion` and only re-runs if that version's file changes
+- [x] A manifest endpoint returns stem URLs (labeled by part), the MusicXML URL, and the tempo/time-signature metadata the frontend's cursor math needs — reachable by both authenticated members and B6's guest path
+
+**Tasks — Claude:**
+- [x] Port MIDI parsing to Python (`mido`, already used in `Fixtures/generate.py`) — replicate `MIDIParser`'s track→voice-part heuristic (track-name matching + mean-pitch fallback)
+- [x] Port `MusicXMLConverter`'s quantization/tie/measure-splitting logic to Python (or decide to do this step in a small Node/TS service instead, since OSMD's own ecosystem is JS-native — worth a real decision when this milestone starts, not an assumption)
+- [x] Audio rendering: shell out to FluidSynth with a GM soundfont (reuse `TimGM6mb.sf2` from the iOS project) to render each voice part's MIDI to a stem; decide stem format (WAV for fidelity vs. compressed for download size)
+- [x] Cache rendered output per `PieceVersion` via `app/storage/files.py`
+- [x] Manifest endpoint combining stems + MusicXML + tempo metadata
+
+**Tasks — Human:**
+- [ ] Listen to a rendered stem set and confirm the GM soundfont's sound quality holds up for practice use
+
+### B8 — OMR pipeline [ ]
 
 **Acceptance criteria:**
 - [ ] Uploading a scanned sheet-music PDF produces a job id; polling it eventually returns MusicXML/MIDI output for a real test PDF
@@ -116,6 +161,9 @@ full queue yet), docker-compose for local dev.
 
 ## Log
 
+- 2026-08-27: B7 built — picked up ahead of B6 (still not started) per the human's explicit choice, running in a separate session in parallel with another session driving `Frontend/plan.md`'s F1. New `app/rendering/` package: `midi_parser.py` (ports `MIDIParser.swift` to `mido` — track-name + mean-pitch-fallback voice-part heuristic, tempo-map-aware tick→ms conversion honoring mid-file tempo changes, SMF format-0-vs-1 channel-splitting, key-signature-name→fifths lookup; also collects unassigned-track notes into a new `backing_notes` field with no Swift equivalent, needed for the backing/accompaniment stem), `musicxml_converter.py` (straight port of `MusicXMLConverter.swift`'s fixed-grid quantization/tie/measure-splitting/pitch-spelling logic, verified byte-for-byte equivalent in behavior against the same fixture), `synth.py` (shells out to the `fluidsynth` CLI — not the `pyfluidsynth` binding, since only the CLI binary was worth depending on here — rendering each SATB part plus a backing stem to WAV via a per-part MIDI file built with `mido`, padded with a trailing marker event so every stem covers the same nominal duration and stays aligned when mixed), `pipeline.py` (orchestrates parse→stems→MusicXML, caching per `piece_version_id` under `storage_dir/renders/` since a version's `file_path` is immutable once created — cache-hit is just "manifest.json exists", no content hashing needed). Vendored `TimGM6mb.sf2` into `app/rendering/resources/` (same soundfont as the iOS app) rather than depending on `Fixtures/`, and added it to `pyproject.toml`'s `package-data` so it survives a real wheel build; Dockerfile now `apt-get install`s the `fluidsynth` binary (a system dependency `mido` alone doesn't provide). New endpoints on the existing `library` router: `GET /library/versions/{id}/manifest` (stems + MusicXML URLs + tempo/time-sig/key metadata, gated by the existing `_require_piece_access` check — B6's guest path will call `render_manifest`/`render_file_path` directly once it exists, scoped to that group's distributions, rather than reusing this authenticated route) and `GET /library/versions/{id}/renders/{filename}` (serves one stem/MusicXML file, same access gate, path-traversal-guarded). Verified: `pytest` — 31 passed, including new parser/converter unit tests against the existing `requiem-satb-*.mid` fixtures (copied into `Backend/tests/fixtures/`) and a real end-to-end API test that uploads a MIDI fixture, hits the manifest endpoint (real `fluidsynth` subprocess calls, not mocked), downloads a stem (checked its RIFF/WAV header) and the MusicXML, and confirms a second manifest call is served from cache. Manually cross-checked all 4 SATB stems from `requiem-satb-accompanied.mid` render to exactly the same sample count (verified via `wave.getnframes()`), confirming stem alignment; the `backing` stem's trailing release tail runs slightly longer, which is the accompaniment patch's own decay envelope, not a sync bug. Human task (listen to a rendered stem set for soundfont quality) still open — didn't mark this milestone's header `[x]` for that reason, following this file's own convention (see B1–B5 above, header only flips once every task including human ones is checked).
+- 2026-08-27: Added B7 (MIDI → audio + notation rendering pipeline), needed by the Frontend's F2/F3, renumbering the old B7 (OMR) to B8 — same reasoning as B6 vs. the old B6/OMR renumber: this is now on the critical path for the top-priority web player, OMR stays real but lower-urgency backlog-ish work.
+- 2026-08-27: Product pivot on the app side (see root `plan.md`'s log) — Divisi's iOS app paused in favor of a new web player (`Frontend/plan.md`), which needs unauthenticated guest access to a group's distributed pieces. Added B6 (Guest access / join links) to cover it, renumbering the old B6 (OMR) to B7 — OMR was always lower-priority backlog-ish work, guest access is now genuinely blocking the new top-priority effort. Didn't touch B1–B5 or reorder "Current milestone" (still B5, pending whoever's actually driving this plan to approve it) — this is additive scope, not a reprioritization of in-flight work.
 - 2026-08-26: Backend plan created, split from the root `plan.md` to stay out of the other session's way (which owns M4 on the iOS app). Domain model for users/choirs/pieces/annotations agreed with the human. Starting B1 (scaffold).
 - 2026-08-26: B1 scaffold built and verified — `docker compose up --build` brought up api+postgres clean, `/health` + all three route stubs returned 200, `alembic upgrade head` ran clean against the containerized Postgres (no real migrations yet). Containers torn down after verification. All three B1 acceptance criteria pass; ready for approval.
 - 2026-08-26: Domain model extended — a member can submit a worked-on `PieceVersion` for admin review before it's distributable (`status: draft|submitted|approved|rejected` on `PieceVersion`, replacing plain create-and-push). Folded into B4.
