@@ -1,6 +1,7 @@
 import {
 	MIX_PARTS,
 	VOICE_PARTS,
+	type MIDILyricEvent,
 	type MIDINote,
 	type MIDITimeSignature,
 	type MixPart,
@@ -57,11 +58,11 @@ export interface ConvertResult {
 export const MUTED_NOTE_COLOR = '#686b7a';
 
 export function convert(parsed: ParsedMIDI, voicePart: VoicePart): ConvertResult {
-	const notes = notesFor(parsed, voicePart);
-	if (notes.length === 0) throw new NoNotesForVoicePartError(voicePart);
+	if (notesFor(parsed, voicePart).length === 0) throw new NoNotesForVoicePartError(voicePart);
 
 	const unitMs = msPerUnit(parsed.tempoBPM);
 	const unitsPerMeasure = unitsPerMeasureFor(parsed.timeSignature);
+	const notes = notesForPart(parsed, voicePart, unitMs);
 	const measureUnitSpans = measuresFor(notes, unitMs, unitsPerMeasure);
 	const useFlats = parsed.keySignatureFifths < 0;
 	const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, voicePart);
@@ -106,13 +107,13 @@ export function convertVisualParts(
 
 	const measureUnitSpansByPart = new Map<MixPart, MeasurePiece[][]>();
 	for (const part of visibleParts) {
-		const notes = notesForPart(parsed, part);
+		const notes = notesForPart(parsed, part, unitMs);
 		measureUnitSpansByPart.set(part, measuresFor(notes, unitMs, unitsPerMeasure));
 	}
 
 	const sharedMeasureCount = Math.max(1, ...[...measureUnitSpansByPart.values()].map((m) => m.length));
 	const restMeasure: MeasurePiece[] = [
-		{ durationUnits: unitsPerMeasure, pitches: null, continuesFromPrevious: false, continuesToNext: false }
+		{ durationUnits: unitsPerMeasure, pitches: null, lyric: null, continuesFromPrevious: false, continuesToNext: false }
 	];
 	for (const part of visibleParts) {
 		const spans = measureUnitSpansByPart.get(part)!;
@@ -133,11 +134,51 @@ function notesFor(parsed: ParsedMIDI, voicePart: VoicePart): MIDINote[] {
 	return parsed.notes.filter((n) => n.voicePart === voicePart).sort((a, b) => a.startMs - b.startMs);
 }
 
-type TimedNote = Pick<MIDINote, 'pitch' | 'startMs' | 'durationMs'>;
+type TimedNote = Pick<MIDINote, 'pitch' | 'startMs' | 'durationMs'> & { lyric: string | null };
 
-function notesForPart(parsed: ParsedMIDI, part: MixPart): TimedNote[] {
-	if (part !== 'accompaniment') return notesFor(parsed, part);
-	return parsed.backingNotes;
+/** Accompaniment has no lyrics of its own (see `MIDILyricEvent`, which is
+ * always attached to a voice part), so its notes pass through untouched;
+ * named voice parts get theirs paired up by `attachLyrics`. */
+function notesForPart(parsed: ParsedMIDI, part: MixPart, unitMs: number): TimedNote[] {
+	if (part === 'accompaniment') return parsed.backingNotes.map((n) => ({ ...n, lyric: null }));
+	return attachLyrics(notesFor(parsed, part), lyricsFor(parsed, part), unitMs);
+}
+
+function lyricsFor(parsed: ParsedMIDI, voicePart: VoicePart): MIDILyricEvent[] {
+	return parsed.lyrics.filter((l) => l.voicePart === voicePart);
+}
+
+/**
+ * Pairs each lyric event with the note whose onset it most closely matches
+ * (nearest match within half a grid unit, greedily consuming each lyric
+ * event at most once). MIDI lyric meta-events are ordinary standalone
+ * events, not a structural link to a note, but choral SMFs overwhelmingly
+ * emit one right at the tick of the note it's sung on — matching by nearest
+ * timestamp (rather than requiring an exact ms match) tolerates the small
+ * rounding drift the parser's tick-to-ms conversion can introduce. Notes
+ * with no matching event simply carry no lyric; this is a "show what we
+ * can" feature, not a strict validator, so an unmatched lyric event (e.g. a
+ * melisma marker with no distinct note of its own) is silently dropped
+ * rather than surfaced as an error.
+ */
+function attachLyrics(notes: MIDINote[], lyricEvents: MIDILyricEvent[], unitMs: number): TimedNote[] {
+	const tolerance = unitMs / 2;
+	const remaining = [...lyricEvents];
+	return [...notes]
+		.sort((a, b) => a.startMs - b.startMs)
+		.map((note) => {
+			let bestIndex = -1;
+			let bestDelta = tolerance;
+			for (let i = 0; i < remaining.length; i++) {
+				const delta = Math.abs(remaining[i].timeMs - note.startMs);
+				if (delta <= bestDelta) {
+					bestDelta = delta;
+					bestIndex = i;
+				}
+			}
+			const lyric = bestIndex >= 0 ? remaining.splice(bestIndex, 1)[0].text : null;
+			return { pitch: note.pitch, startMs: note.startMs, durationMs: note.durationMs, lyric };
+		});
 }
 
 function msPerUnit(tempoBPM: number): number {
@@ -168,6 +209,7 @@ interface GridEvent {
 	startUnit: number;
 	durationUnits: number;
 	pitches: number[] | null; // null = rest; multiple pitches = MusicXML chord
+	lyric: string | null;
 }
 
 /**
@@ -181,16 +223,17 @@ interface GridEvent {
  * notation software.
  */
 function buildTimeline(notes: TimedNote[], unitMs: number, unitsPerMeasure: number): GridEvent[] {
-	const notesByStartUnit = new Map<number, { endUnit: number; pitch: number }[]>();
+	const notesByStartUnit = new Map<number, { endUnit: number; pitch: number; lyric: string | null }[]>();
 	for (const note of notes) {
 		const startUnit = Math.round(note.startMs / unitMs);
 		const endUnit = Math.max(Math.round((note.startMs + note.durationMs) / unitMs), startUnit + 1);
+		const entry = { endUnit, pitch: note.pitch, lyric: note.lyric };
 		const existing = notesByStartUnit.get(startUnit);
-		if (existing) existing.push({ endUnit, pitch: note.pitch });
-		else notesByStartUnit.set(startUnit, [{ endUnit, pitch: note.pitch }]);
+		if (existing) existing.push(entry);
+		else notesByStartUnit.set(startUnit, [entry]);
 	}
 
-	const quantized: { startUnit: number; endUnit: number; pitches: number[] }[] = [];
+	const quantized: { startUnit: number; endUnit: number; pitches: number[]; lyric: string | null }[] = [];
 	let cursor = 0;
 	for (const [rawStartUnit, onsetNotes] of [...notesByStartUnit.entries()].sort(([a], [b]) => a - b)) {
 		let startUnit = rawStartUnit;
@@ -201,7 +244,10 @@ function buildTimeline(notes: TimedNote[], unitMs: number, unitsPerMeasure: numb
 		startUnit = Math.max(startUnit, cursor);
 		endUnit = Math.max(endUnit, startUnit + 1);
 		const pitches = [...new Set(onsetNotes.map((note) => note.pitch))].sort((a, b) => a - b);
-		quantized.push({ startUnit, endUnit, pitches });
+		// One syllable per onset, not per pitch in the onset's chord — a
+		// divisi split within a part still sings the same word together.
+		const lyric = onsetNotes.find((note) => note.lyric !== null)?.lyric ?? null;
+		quantized.push({ startUnit, endUnit, pitches, lyric });
 		cursor = endUnit;
 	}
 
@@ -209,15 +255,20 @@ function buildTimeline(notes: TimedNote[], unitMs: number, unitsPerMeasure: numb
 	let unitCursor = 0;
 	for (const note of quantized) {
 		if (note.startUnit > unitCursor) {
-			timeline.push({ startUnit: unitCursor, durationUnits: note.startUnit - unitCursor, pitches: null });
+			timeline.push({ startUnit: unitCursor, durationUnits: note.startUnit - unitCursor, pitches: null, lyric: null });
 		}
-		timeline.push({ startUnit: note.startUnit, durationUnits: note.endUnit - note.startUnit, pitches: note.pitches });
+		timeline.push({
+			startUnit: note.startUnit,
+			durationUnits: note.endUnit - note.startUnit,
+			pitches: note.pitches,
+			lyric: note.lyric
+		});
 		unitCursor = note.endUnit;
 	}
 
 	const remainder = unitCursor % unitsPerMeasure;
 	if (remainder !== 0) {
-		timeline.push({ startUnit: unitCursor, durationUnits: unitsPerMeasure - remainder, pitches: null });
+		timeline.push({ startUnit: unitCursor, durationUnits: unitsPerMeasure - remainder, pitches: null, lyric: null });
 	}
 	return timeline;
 }
@@ -229,6 +280,7 @@ function buildTimeline(notes: TimedNote[], unitMs: number, unitsPerMeasure: numb
 interface MeasurePiece {
 	durationUnits: number;
 	pitches: number[] | null;
+	lyric: string | null;
 	continuesFromPrevious: boolean;
 	continuesToNext: boolean;
 }
@@ -261,6 +313,7 @@ function splitAtMeasureBoundaries(timeline: GridEvent[], unitsPerMeasure: number
 			measures[measures.length - 1].push({
 				durationUnits: pieceDuration,
 				pitches: event.pitches,
+				lyric: event.lyric,
 				continuesFromPrevious: isNote && pieceIndex > 0,
 				continuesToNext: isNote && pieceIndex < totalPieces - 1
 			});
@@ -395,7 +448,8 @@ function noteXML(
 	tieStart: boolean,
 	tieStop: boolean,
 	color?: string,
-	isChord = false
+	isChord = false,
+	lyric?: string
 ): string {
 	const dotsXML = '\n          <dot/>'.repeat(chunk.dots);
 	const chordXML = isChord ? '        <chord/>\n' : '';
@@ -435,12 +489,26 @@ function noteXML(
 	// notehead tinting.
 	const colorAttrXML = color ? ` color="${color}"` : '';
 
+	// One `<lyric>` per note, MusicXML's standard way to attach sung text —
+	// OSMD renders it under the staff natively, no custom drawing needed.
+	const lyricXML = lyric
+		? `\n          <lyric number="1">\n            <syllabic>single</syllabic>\n            <text>${escapeXmlText(lyric)}</text>\n          </lyric>`
+		: '';
+
 	return `      <note${colorAttrXML}>
 ${chordXML}${pitchOrRestXML}
         <duration>${chunk.units}</duration>${tieXML}
-        <type>${chunk.type}</type>${dotsXML}${notationsXML}
+        <type>${chunk.type}</type>${dotsXML}${notationsXML}${lyricXML}
       </note>
 `;
+}
+
+/** Escapes the handful of characters that would otherwise break the
+ * hand-built XML below — lyric text is the one place in this file that
+ * embeds arbitrary file-provided text rather than a controlled value (note
+ * names, part names), so it's the one place this matters. */
+function escapeXmlText(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /** Emits one part's `<measure>` elements, shared between the single-part
@@ -462,9 +530,14 @@ function bodyXML(measureUnitSpans: MeasurePiece[][], useFlats: boolean, firstMea
 				// measure-boundary fragment of a longer original note.
 				const tieStop = isNote && (chunkIndex > 0 || piece.continuesFromPrevious);
 				const tieStart = isNote && (chunkIndex < chunks.length - 1 || piece.continuesToNext);
+				// Only the first note of a chord, on the first written
+				// fragment of a tie group, carries the lyric — engraving
+				// convention is one syllable per chord/tie group, not one
+				// per stacked pitch or tied fragment.
+				const lyric = isNote && !tieStop ? (piece.lyric ?? undefined) : undefined;
 				if (piece.pitches) {
 					piece.pitches.forEach((pitch, pitchIndex) => {
-						body += noteXML(pitch, chunk, useFlats, tieStart, tieStop, color, pitchIndex > 0);
+						body += noteXML(pitch, chunk, useFlats, tieStart, tieStop, color, pitchIndex > 0, pitchIndex === 0 ? lyric : undefined);
 					});
 				} else {
 					body += noteXML(null, chunk, useFlats, false, false, color);
