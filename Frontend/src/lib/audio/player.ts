@@ -14,6 +14,10 @@ declare global {
 		JSSynth: {
 			waitForReady(): Promise<void>;
 			Synthesizer: new () => JSSynthesizer;
+			// Nested under `Constants` in the vendored bundle's export map
+			// (`Constants: () => Constants_namespaceObject`, which holds
+			// `PlayerSetTempoType`) — not a top-level `JSSynth` export.
+			Constants: { PlayerSetTempoType: { Internal: 0; ExternalBpm: 1; ExternalMidi: 2 } };
 		};
 	}
 }
@@ -28,8 +32,12 @@ interface JSSynthesizer {
 	stopPlayer(): void;
 	seekPlayer(ticks: number): void;
 	midiControl(chan: number, ctrl: number, val: number): void;
+	setPlayerTempo(tempoType: number, tempo: number): void;
 	close(): void;
 }
+
+export const MIN_TEMPO_BPM = 40;
+export const MAX_TEMPO_BPM = 240;
 
 const VENDOR_SCRIPTS = ['/vendor/libfluidsynth-2.4.6.js', '/vendor/js-synthesizer.js'];
 const SOUNDFONT_URL = '/soundfonts/TimGM6mb.sf2';
@@ -100,7 +108,13 @@ export class MidiPlayer {
 	private pausedAtMs = 0;
 	private startContextTime = 0;
 	private playing = false;
-	private tempoBPM = 120;
+	// The tempo `msToTick` was built against — ticks in the loaded SMF are
+	// spaced for this tempo (see `playbackMidiBuilder.ts`), so it never
+	// changes after `load()` even while `currentTempoBPM` does live.
+	private baseTempoBPM = 120;
+	// The live playback tempo (`setTempo`) — starts equal to `baseTempoBPM`
+	// and diverges only once the human moves the tempo control.
+	private currentTempoBPM = 120;
 	private destroyed = false;
 
 	private constructor(context: AudioContext, synth: JSSynthesizer) {
@@ -130,7 +144,8 @@ export class MidiPlayer {
 		const { bytes, channelForPart } = buildPlaybackMidi(parsed);
 		if (this.destroyed) return;
 		this.channelForPart = channelForPart;
-		this.tempoBPM = parsed.tempoBPM;
+		this.baseTempoBPM = parsed.tempoBPM;
+		this.currentTempoBPM = parsed.tempoBPM;
 		this.durationMs = Math.max(
 			0,
 			...parsed.notes.map((n) => n.startMs + n.durationMs),
@@ -141,6 +156,11 @@ export class MidiPlayer {
 		await this.synth.resetPlayer();
 		if (this.destroyed) return;
 		await this.synth.addSMFDataToPlayer(bytes.buffer as ArrayBuffer);
+		if (this.destroyed) return;
+		// Set after `resetPlayer`/`addSMFDataToPlayer`, which (re)initialize
+		// the underlying fluid_player_t and would otherwise clobber this back
+		// to the SMF's own tempo events.
+		this.synth.setPlayerTempo(window.JSSynth.Constants.PlayerSetTempoType.ExternalBpm, this.currentTempoBPM);
 	}
 
 	async play(): Promise<void> {
@@ -149,7 +169,7 @@ export class MidiPlayer {
 		if (this.context.state === 'suspended') await this.context.resume();
 		this.synth.seekPlayer(this.msToTick(this.pausedAtMs));
 		await this.synth.playPlayer();
-		this.startContextTime = this.context.currentTime - this.pausedAtMs / 1000;
+		this.startContextTime = this.context.currentTime - this.pausedAtMs / 1000 / this.rate;
 		this.playing = true;
 	}
 
@@ -185,8 +205,40 @@ export class MidiPlayer {
 		this.pausedAtMs = clamped;
 		this.synth.seekPlayer(this.msToTick(clamped));
 		if (this.playing) {
-			this.startContextTime = this.context.currentTime - clamped / 1000;
+			this.startContextTime = this.context.currentTime - clamped / 1000 / this.rate;
 		}
+	}
+
+	/** Live playback tempo, in BPM — re-anchors the position clock so musical
+	 * position stays continuous across the change instead of jumping (see
+	 * `positionMs`'s doc comment for why a rate multiplier is needed at all). */
+	setTempo(bpm: number): void {
+		if (this.destroyed) return;
+		const clamped = Math.round(Math.min(MAX_TEMPO_BPM, Math.max(MIN_TEMPO_BPM, bpm)));
+		if (clamped === this.currentTempoBPM) return;
+		if (this.playing) {
+			const positionAtOldRate = this.positionMs;
+			this.currentTempoBPM = clamped;
+			this.pausedAtMs = positionAtOldRate;
+			this.startContextTime = this.context.currentTime - positionAtOldRate / 1000 / this.rate;
+		} else {
+			this.currentTempoBPM = clamped;
+		}
+		this.synth.setPlayerTempo(window.JSSynth.Constants.PlayerSetTempoType.ExternalBpm, clamped);
+	}
+
+	get tempoBPM(): number {
+		return this.currentTempoBPM;
+	}
+
+	get baseBPM(): number {
+		return this.baseTempoBPM;
+	}
+
+	/** `currentTempoBPM / baseTempoBPM` — how much faster/slower than the
+	 * piece's original tempo playback is currently running. */
+	private get rate(): number {
+		return this.currentTempoBPM / this.baseTempoBPM;
 	}
 
 	/** Live per-bucket volume, `0`–`1` — sent as a MIDI CC7 (channel volume)
@@ -203,11 +255,17 @@ export class MidiPlayer {
 		return this.playing;
 	}
 
-	/** Current playback position in ms, read directly off the
-	 * `AudioContext` clock while playing — never a polled value. */
+	/** Current playback position, in ms of *musical* time at the piece's
+	 * original tempo — the same unit `durationMs`/`msPerWholeNote` (in
+	 * `musicXmlConverter.ts`) already use, so score/cursor code never needs
+	 * to know playback is running faster or slower than that. Read directly
+	 * off the `AudioContext` clock while playing — never a polled value —
+	 * scaled by `rate` so a live tempo change (which speeds up/slows down
+	 * *real* elapsed time per unit of musical time) still reports the right
+	 * musical position. */
 	get positionMs(): number {
 		if (!this.playing) return this.pausedAtMs;
-		const elapsed = (this.context.currentTime - this.startContextTime) * 1000;
+		const elapsed = (this.context.currentTime - this.startContextTime) * 1000 * this.rate;
 		return Math.min(this.durationMs, Math.max(0, elapsed));
 	}
 
@@ -216,11 +274,11 @@ export class MidiPlayer {
 	}
 
 	private msToTick(ms: number): number {
-		// `channelForPart` is only set once a piece is loaded; tempo is
-		// baked into the built MIDI at `TICKS_PER_BEAT` — see
-		// `playbackMidiBuilder.ts`. Recomputed from `tempoBPM` stashed at
-		// load time.
-		return Math.round((ms / 1000) * (this.tempoBPM / 60) * TICKS_PER_BEAT);
+		// `ms` is musical time at the original tempo (see `positionMs`'s doc
+		// comment), which is exactly what the built MIDI's ticks are spaced
+		// for (`TICKS_PER_BEAT` — see `playbackMidiBuilder.ts`) — so this
+		// always uses `baseTempoBPM`, never the live `currentTempoBPM`.
+		return Math.round((ms / 1000) * (this.baseTempoBPM / 60) * TICKS_PER_BEAT);
 	}
 }
 

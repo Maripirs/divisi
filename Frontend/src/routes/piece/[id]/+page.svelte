@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { MidiPlayer } from '$lib/audio/player';
+	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
 	import {
 		DISPLAY_MODES,
@@ -70,6 +70,8 @@
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
+	let tempoBpm = $state(120);
+	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>({
 		soprano: 0.5,
 		alto: 0.5,
@@ -114,6 +116,8 @@
 				return;
 			}
 			durationMs = player.duration;
+			tempoBpm = player.tempoBPM;
+			baseTempoBpm = player.baseBPM;
 			for (const part of MIX_PARTS) player.setPartVolume(part, balance[part]);
 			render();
 			setupMediaSession();
@@ -169,6 +173,11 @@
 		player?.setPartVolume(part, value);
 	}
 
+	function setTempo(bpm: number) {
+		tempoBpm = bpm;
+		player?.setTempo(bpm);
+	}
+
 	function setFocus(part: MixPart) {
 		if (part === 'accompaniment') return;
 		voicePart = part;
@@ -219,6 +228,10 @@
 		const diff = Math.round((value - 0.5) * 200);
 		if (Math.abs(diff) < 4) return 'Even';
 		return diff > 0 ? `+${diff}%` : `${diff}%`;
+	}
+
+	function describeTempo(bpm: number): string {
+		return `${bpm} BPM (${Math.round((bpm / baseTempoBpm) * 100)}%)`;
 	}
 
 	function setupMediaSession() {
@@ -396,6 +409,22 @@
 								{THEME_LABELS[mode]}
 							</button>
 						{/each}
+					</div>
+				</section>
+
+				<section class="menu-section">
+					<h3>Tempo</h3>
+					<div class="tempo-row">
+						<input
+							type="range"
+							min={MIN_TEMPO_BPM}
+							max={MAX_TEMPO_BPM}
+							step="1"
+							value={tempoBpm}
+							aria-label="Tempo"
+							oninput={(e) => setTempo(Number((e.target as HTMLInputElement).value))}
+						/>
+						<span class="tempo-value">{describeTempo(tempoBpm)}</span>
 					</div>
 				</section>
 
@@ -752,6 +781,24 @@
 		font-weight: 700;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
+	}
+
+	.tempo-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.tempo-row input[type='range'] {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.tempo-value {
+		flex-shrink: 0;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.balances {
