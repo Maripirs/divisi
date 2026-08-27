@@ -7,11 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth \
 
 WORKDIR /srv
 
-COPY pyproject.toml ./
-COPY app ./app
-COPY alembic.ini ./
+COPY Backend/pyproject.toml ./
+COPY Backend/app ./app
+COPY Backend/alembic.ini ./
 
 RUN pip install --no-cache-dir .
+
+# Read-only, version-controlled piece source files (see B11's plan.md log
+# and app/core/config.py's `fixtures_dir` doc comment) — copied from the
+# repo root, one level up from Backend/, which is why the build context
+# had to move to the repo root (render.yaml's `dockerContext`).
+COPY Fixtures ./fixtures
 
 EXPOSE 8000
 

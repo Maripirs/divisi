@@ -9,7 +9,6 @@ domain model in Backend/plan.md.
 """
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -23,7 +22,6 @@ from app.api.schemas import (
     PieceVersionOut,
     RenderManifestOut,
 )
-from app.core.config import get_settings
 from app.db.models import (
     Distribution,
     GroupMembership,
@@ -37,6 +35,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.storage.files import resolve_source_path
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
@@ -309,8 +308,7 @@ def get_version_manifest(
     if not is_midi_file(version.file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This version's file isn't a MIDI file")
 
-    settings = get_settings()
-    source_path = Path(settings.storage_dir) / version.file_path
+    source_path = resolve_source_path(version.file_path)
     try:
         manifest = render_manifest(version_id, source_path)
     except RenderError as exc:

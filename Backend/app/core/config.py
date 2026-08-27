@@ -13,6 +13,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
     storage_dir: str = "./data/storage"
+    # Read-only, version-controlled piece source files (the repo root's
+    # `Fixtures/`, copied into the image at `./fixtures` by the Dockerfile —
+    # see render.yaml's `dockerContext`). Distinct from `storage_dir`
+    # (user-uploaded files, writable, wiped on every Render free-tier
+    # restart/redeploy): a `PieceVersion.file_path` starting with
+    # `fixtures/` resolves against this instead, so bundled demo pieces
+    # survive redeploys without needing real object storage. See
+    # `app/storage/files.py`'s `resolve_source_path`.
+    fixtures_dir: str = "./fixtures"
 
     # Frontend origins allowed to call this API cross-origin (browser CORS).
     # Comma-separated in the env var. Defaults cover the SvelteKit dev

@@ -7,9 +7,17 @@
 # free tier doesn't). Set DATABASE_URL manually to the Neon connection
 # string when creating the service from this blueprint.
 #
-# Storage note (see B9): the free plan has no persistent disk, so
-# STORAGE_DIR's contents (uploaded piece files, render cache) are wiped on
-# every restart/redeploy. Known MVP limitation, not fixed here.
+# Storage note (see B9, and B11's fixtures_dir addition): the free plan has
+# no persistent disk, so STORAGE_DIR's contents (user-uploaded piece files,
+# render cache) are wiped on every restart/redeploy — still a known MVP
+# limitation for genuinely new uploads. Bundled/demo pieces are unaffected:
+# their source files live in the repo's Fixtures/, baked into the image
+# itself (see the Dockerfile and .dockerignore at repo root) rather than
+# STORAGE_DIR, so they survive restarts with no object-storage work needed.
+#
+# dockerContext is the repo root (not ./Backend) so the Dockerfile can COPY
+# that sibling Fixtures/ directory — see root .dockerignore for what
+# actually gets sent in the build context.
 
 services:
   - type: web
@@ -17,7 +25,7 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Backend/Dockerfile
-    dockerContext: ./Backend
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL

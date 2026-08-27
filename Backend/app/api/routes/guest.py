@@ -11,19 +11,17 @@ arbitrary access). Rate-limited (`app/core/rate_limit.py`) as the
 brute-force hardening called for in B6's plan.
 """
 
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import GuestGroupOut, GuestPieceOut, HomeworkOut, RenderManifestOut
-from app.core.config import get_settings
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import verify_password
 from app.db.models import Distribution, Group, Homework, Piece, PieceVersion
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.storage.files import resolve_source_path
 
 router = APIRouter(prefix="/guest", tags=["guest"], dependencies=[Depends(rate_limit_guest)])
 
@@ -130,8 +128,7 @@ def get_guest_piece_manifest(
     if not is_midi_file(version.file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This version's file isn't a MIDI file")
 
-    settings = get_settings()
-    source_path = Path(settings.storage_dir) / version.file_path
+    source_path = resolve_source_path(version.file_path)
     try:
         manifest = render_manifest(version.id, source_path)
     except RenderError as exc:
