@@ -22,7 +22,10 @@ export const PIECES: Piece[] = [
 		composer: 'Mozart — Requiem',
 		collection: 'demo',
 		pdfUrl: '/fixtures/demo/Mozart_Lacrymosa_from_Requiem_SATB_with_piano.pdf',
-		load: () => loadMidi('/fixtures/demo/Mozart_Lacrymosa_from_Requiem_SATB_with_piano.mid')
+		// Sourced from MusicXML, not the bundled MIDI (still present alongside
+		// it, unused) — the MIDI export dropped this piece's lyrics, while the
+		// MusicXML export (from the same MuseScore project) kept them.
+		load: () => loadMusicXml('/fixtures/demo/Mozart_Lacrymosa_from_Requiem_SATB_with_piano.musicxml')
 	},
 	{
 		id: 'challenge-of-thor',
