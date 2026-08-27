@@ -1,0 +1,105 @@
+/* Design tokens + global reset for the whole app. Kept as one small global
+   stylesheet rather than duplicated per-component so light/dark tokens stay
+   in exactly one place. */
+
+:root,
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	--palette-bg: #f5f5fa;
+	--palette-surface: #ffffff;
+	--palette-ink: #16161f;
+	--palette-muted: #686b7a;
+	--palette-accent: #4f46e5;
+
+	--bg: var(--palette-bg);
+	--surface: var(--palette-surface);
+	--surface-2: color-mix(in srgb, var(--surface) 86%, var(--accent) 14%);
+	--border: color-mix(in srgb, var(--surface) 82%, var(--text) 18%);
+	--text: var(--palette-ink);
+	--text-muted: var(--palette-muted);
+	--accent: var(--palette-accent);
+	--accent-hover: color-mix(in srgb, var(--accent) 88%, var(--text) 12%);
+	--accent-contrast: var(--surface);
+	--danger: color-mix(in srgb, var(--accent) 72%, var(--text) 28%);
+
+	--radius-lg: 16px;
+	--radius-md: 10px;
+	--radius-full: 999px;
+	--shadow: 0 1px 2px rgba(20, 20, 40, 0.04), 0 10px 30px rgba(20, 20, 40, 0.07);
+
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+:root[data-theme='dark'] {
+	color-scheme: dark;
+
+	--palette-bg: #121218;
+	--palette-surface: #1b1b23;
+	--palette-ink: #d8d9e6;
+	--palette-muted: #9a9aac;
+	--palette-accent: #818cf8;
+
+	--accent-contrast: var(--bg);
+	--shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	text-size-adjust: 100%;
+}
+
+/* Shared range-input skin — both the transport scrubber and the per-part
+   balance sliders use plain <input type="range">, so this lives globally
+   rather than being copy-pasted into every component's <style>. */
+input[type='range'] {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 100%;
+	height: 6px;
+	border-radius: var(--radius-full);
+	background: var(--surface-2);
+	outline: none;
+	cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--accent);
+	border: 2px solid var(--surface);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+input[type='range']::-moz-range-track {
+	height: 6px;
+	border-radius: var(--radius-full);
+	background: var(--surface-2);
+}
+
+input[type='range']::-moz-range-thumb {
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--accent);
+	border: 2px solid var(--surface);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
