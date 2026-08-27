@@ -1,17 +1,17 @@
 <script lang="ts">
 	import PieceLibrary from '$lib/components/PieceLibrary.svelte';
-	import { DEMO_PIECES } from '$lib/pieces/registry';
+	import { SFCC_PIECES } from '$lib/pieces/registry';
 </script>
 
 <main>
 	<header class="app-header">
-		<h1>Divisi</h1>
-		<p class="tagline">Demos</p>
+		<h1>SFCC</h1>
+		<p class="tagline">Pieces</p>
 	</header>
 
-	<PieceLibrary pieces={DEMO_PIECES} />
+	<PieceLibrary pieces={SFCC_PIECES} />
 
-	<a class="section-link" href="/sfcc">SFCC pieces</a>
+	<a class="section-link" href="/">Demos</a>
 </main>
 
 <style>

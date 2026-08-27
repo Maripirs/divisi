@@ -49,7 +49,7 @@
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
 		| { kind: 'noVisibleTracks' }
-		| { kind: 'noNotesForVoicePart'; voicePart: VoicePart };
+		| { kind: 'noNotesForVoicePart'; part: MixPart };
 
 	let loadState = $state<LoadState>(piece ? { kind: 'loading' } : { kind: 'notFound' });
 	let parsed: ParsedMIDI | undefined;
@@ -57,11 +57,12 @@
 
 	let voicePart = $state<VoicePart>('soprano');
 	let displayMode = $state<DisplayMode>('solo');
-	let visualStates = $state<Record<VoicePart, VisualState>>({
+	let visualStates = $state<Record<MixPart, VisualState>>({
 		soprano: 'active',
 		alto: 'off',
 		tenor: 'off',
-		bass: 'off'
+		bass: 'off',
+		accompaniment: 'off'
 	});
 	let xml = $state('');
 	let msPerWholeNote = $state(0);
@@ -78,8 +79,8 @@
 	});
 
 	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
-	let visibleVoiceParts = $derived(VOICE_PARTS.filter((part) => visualStates[part] !== 'off'));
-	let visibleStaffStates = $derived(visibleVoiceParts.map((part) => visualStates[part]));
+	let visibleMixParts = $derived(MIX_PARTS.filter((part) => visualStates[part] !== 'off'));
+	let visibleStaffStates = $derived(visibleMixParts.map((part) => visualStates[part]));
 	let rafHandle: number;
 	let destroyed = false;
 
@@ -123,14 +124,14 @@
 
 	function render() {
 		if (!parsed) return;
-		if (visibleVoiceParts.length === 0) {
+		if (visibleMixParts.length === 0) {
 			xml = '';
 			loadState = { kind: 'noVisibleTracks' };
 			return;
 		}
-		if (visibleVoiceParts.length === 1 && parsed.notes.every((note) => note.voicePart !== visibleVoiceParts[0])) {
+		if (visibleMixParts.length === 1 && !hasNotesForPart(parsed, visibleMixParts[0])) {
 			xml = '';
-			loadState = { kind: 'noNotesForVoicePart', voicePart: visibleVoiceParts[0] };
+			loadState = { kind: 'noNotesForVoicePart', part: visibleMixParts[0] };
 			return;
 		}
 		try {
@@ -141,7 +142,7 @@
 			loadState = { kind: 'ready' };
 		} catch {
 			xml = '';
-			loadState = { kind: 'noNotesForVoicePart', voicePart };
+			loadState = { kind: 'noNotesForVoicePart', part: voicePart };
 		}
 	}
 
@@ -181,20 +182,19 @@
 		if (mode !== 'custom') visualStates = presetVisualStates(mode, voicePart);
 	}
 
-	function presetVisualStates(mode: DisplayMode, focusPart: VoicePart): Record<VoicePart, VisualState> {
+	function presetVisualStates(mode: DisplayMode, focusPart: VoicePart): Record<MixPart, VisualState> {
 		return Object.fromEntries(
-			VOICE_PARTS.map((part) => {
+			MIX_PARTS.map((part) => {
 				let state: VisualState;
 				if (mode === 'flat' || mode === 'custom') state = 'active';
 				else if (mode === 'highlighted') state = part === focusPart ? 'active' : 'muted';
 				else state = part === focusPart ? 'active' : 'off';
 				return [part, state];
 			})
-		) as Record<VoicePart, VisualState>;
+		) as Record<MixPart, VisualState>;
 	}
 
 	function cycleVisualState(part: MixPart) {
-		if (part === 'accompaniment') return;
 		const currentIndex = VISUAL_STATES.indexOf(visualStates[part]);
 		const nextState = VISUAL_STATES[(currentIndex + 1) % VISUAL_STATES.length];
 		const nextStates = { ...visualStates, [part]: nextState };
@@ -202,13 +202,13 @@
 		displayMode = matchingDisplayMode(nextStates, voicePart);
 	}
 
-	function matchingDisplayMode(states: Record<VoicePart, VisualState>, focusPart: VoicePart): DisplayMode {
+	function matchingDisplayMode(states: Record<MixPart, VisualState>, focusPart: VoicePart): DisplayMode {
 		const presetModes: DisplayMode[] = ['flat', 'highlighted', 'solo'];
 		return presetModes.find((mode) => sameVisualStates(states, presetVisualStates(mode, focusPart))) ?? 'custom';
 	}
 
-	function sameVisualStates(a: Record<VoicePart, VisualState>, b: Record<VoicePart, VisualState>): boolean {
-		return VOICE_PARTS.every((part) => a[part] === b[part]);
+	function sameVisualStates(a: Record<MixPart, VisualState>, b: Record<MixPart, VisualState>): boolean {
+		return MIX_PARTS.every((part) => a[part] === b[part]);
 	}
 
 	function handleMenuKeydown(event: KeyboardEvent) {
@@ -254,8 +254,13 @@
 		return part === 'accompaniment' ? 'Accomp.' : part;
 	}
 
-	function visualStateFor(part: MixPart): VisualState | null {
-		return part === 'accompaniment' ? null : visualStates[part];
+	function visualStateFor(part: MixPart): VisualState {
+		return visualStates[part];
+	}
+
+	function hasNotesForPart(piece: ParsedMIDI, part: MixPart): boolean {
+		if (part === 'accompaniment') return piece.backingNotes.length > 0;
+		return piece.notes.some((note) => note.voicePart === part);
 	}
 </script>
 
@@ -310,7 +315,7 @@
 					<p class="status-detail">{loadState.message}</p>
 				</div>
 			{:else if loadState.kind === 'noNotesForVoicePart'}
-				<p class="empty-note">No notes for {loadState.voicePart} in this file.</p>
+				<p class="empty-note">No notes for {mixLabel(loadState.part)} in this file.</p>
 			{:else if loadState.kind === 'noVisibleTracks'}
 				<p class="empty-note">No visible tracks selected.</p>
 			{:else}
@@ -405,13 +410,8 @@
 									class:visual-state-btn--off={visualStateFor(part) === 'off'}
 									class:visual-state-btn--muted={visualStateFor(part) === 'muted'}
 									class:visual-state-btn--active={visualStateFor(part) === 'active'}
-									disabled={part === 'accompaniment'}
-									aria-label={part === 'accompaniment'
-										? 'Accompaniment is audio only'
-										: `${mixLabel(part)} visual state: ${VISUAL_STATE_LABELS[visualStateFor(part) ?? 'off']}`}
-									title={part === 'accompaniment'
-										? 'Audio only'
-										: `${VISUAL_STATE_LABELS[visualStateFor(part) ?? 'off']}`}
+									aria-label={`${mixLabel(part)} visual state: ${VISUAL_STATE_LABELS[visualStateFor(part)]}`}
+									title={VISUAL_STATE_LABELS[visualStateFor(part)]}
 									onclick={() => cycleVisualState(part)}
 								>
 									<svg viewBox="0 0 24 24" aria-hidden="true">

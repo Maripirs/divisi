@@ -1,7 +1,9 @@
 import {
+	MIX_PARTS,
 	VOICE_PARTS,
 	type MIDINote,
 	type MIDITimeSignature,
+	type MixPart,
 	type ParsedMIDI,
 	type VisualState,
 	type VoicePart
@@ -82,46 +84,46 @@ export function convert(parsed: ParsedMIDI, voicePart: VoicePart): ConvertResult
  */
 export function convertAllParts(parsed: ParsedMIDI, highlightedPart?: VoicePart, mutedNoteColor = MUTED_NOTE_COLOR): ConvertResult {
 	const visualStates = Object.fromEntries(
-		VOICE_PARTS.map((voicePart) => [
+		MIX_PARTS.map((voicePart) => [
 			voicePart,
 			highlightedPart && voicePart !== highlightedPart ? 'muted' : 'active'
 		])
-	) as Record<VoicePart, VisualState>;
+	) as Record<MixPart, VisualState>;
 	return convertVisualParts(parsed, visualStates, mutedNoteColor);
 }
 
 export function convertVisualParts(
 	parsed: ParsedMIDI,
-	visualStates: Record<VoicePart, VisualState>,
+	visualStates: Record<MixPart, VisualState>,
 	mutedNoteColor = MUTED_NOTE_COLOR
 ): ConvertResult {
 	const unitMs = msPerUnit(parsed.tempoBPM);
 	const unitsPerMeasure = unitsPerMeasureFor(parsed.timeSignature);
 	const useFlats = parsed.keySignatureFifths < 0;
-	const visibleParts = VOICE_PARTS.filter((voicePart) => visualStates[voicePart] !== 'off');
+	const visibleParts = MIX_PARTS.filter((part) => visualStates[part] !== 'off');
 
 	if (visibleParts.length === 0) throw new Error('No visible voice parts selected.');
 
-	const measureUnitSpansByPart = new Map<VoicePart, MeasurePiece[][]>();
-	for (const voicePart of visibleParts) {
-		const notes = notesFor(parsed, voicePart);
-		measureUnitSpansByPart.set(voicePart, measuresFor(notes, unitMs, unitsPerMeasure));
+	const measureUnitSpansByPart = new Map<MixPart, MeasurePiece[][]>();
+	for (const part of visibleParts) {
+		const notes = notesForPart(parsed, part);
+		measureUnitSpansByPart.set(part, measuresFor(notes, unitMs, unitsPerMeasure));
 	}
 
 	const sharedMeasureCount = Math.max(1, ...[...measureUnitSpansByPart.values()].map((m) => m.length));
 	const restMeasure: MeasurePiece[] = [
-		{ durationUnits: unitsPerMeasure, pitch: null, continuesFromPrevious: false, continuesToNext: false }
+		{ durationUnits: unitsPerMeasure, pitches: null, continuesFromPrevious: false, continuesToNext: false }
 	];
-	for (const voicePart of visibleParts) {
-		const spans = measureUnitSpansByPart.get(voicePart)!;
+	for (const part of visibleParts) {
+		const spans = measureUnitSpansByPart.get(part)!;
 		while (spans.length < sharedMeasureCount) spans.push(restMeasure);
 	}
 
-	const parts = visibleParts.map((voicePart, index) => {
-		const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, voicePart);
-		const color = visualStates[voicePart] === 'muted' ? mutedNoteColor : undefined;
-		const body = bodyXML(measureUnitSpansByPart.get(voicePart)!, useFlats, attributes, color);
-		return { id: `P${index + 1}`, name: capitalize(voicePart), body };
+	const parts = visibleParts.map((part, index) => {
+		const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, part);
+		const color = visualStates[part] === 'muted' ? mutedNoteColor : undefined;
+		const body = bodyXML(measureUnitSpansByPart.get(part)!, useFlats, attributes, color);
+		return { id: `P${index + 1}`, name: partLabel(part), body };
 	});
 
 	return { xml: scoreXML(parts), msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE };
@@ -129,6 +131,13 @@ export function convertVisualParts(
 
 function notesFor(parsed: ParsedMIDI, voicePart: VoicePart): MIDINote[] {
 	return parsed.notes.filter((n) => n.voicePart === voicePart).sort((a, b) => a.startMs - b.startMs);
+}
+
+type TimedNote = Pick<MIDINote, 'pitch' | 'startMs' | 'durationMs'>;
+
+function notesForPart(parsed: ParsedMIDI, part: MixPart): TimedNote[] {
+	if (part !== 'accompaniment') return notesFor(parsed, part);
+	return parsed.backingNotes;
 }
 
 function msPerUnit(tempoBPM: number): number {
@@ -139,9 +148,14 @@ function unitsPerMeasureFor(timeSignature: MIDITimeSignature): number {
 	return timeSignature.numerator * (UNITS_PER_WHOLE_NOTE / timeSignature.denominator);
 }
 
-function measuresFor(notes: MIDINote[], unitMs: number, unitsPerMeasure: number): MeasurePiece[][] {
+function measuresFor(notes: TimedNote[], unitMs: number, unitsPerMeasure: number): MeasurePiece[][] {
 	const timeline = buildTimeline(notes, unitMs, unitsPerMeasure);
 	return splitAtMeasureBoundaries(timeline, unitsPerMeasure);
+}
+
+function partLabel(part: MixPart): string {
+	if (part === 'accompaniment') return 'Accomp.';
+	return capitalize(part);
 }
 
 function capitalize(s: string): string {
@@ -153,7 +167,7 @@ function capitalize(s: string): string {
 interface GridEvent {
 	startUnit: number;
 	durationUnits: number;
-	pitch: number | null; // null = rest
+	pitches: number[] | null; // null = rest; multiple pitches = MusicXML chord
 }
 
 /**
@@ -166,18 +180,28 @@ interface GridEvent {
  * the last measure would fall short of `unitsPerMeasure` and mis-justify in
  * notation software.
  */
-function buildTimeline(notes: MIDINote[], unitMs: number, unitsPerMeasure: number): GridEvent[] {
-	const quantized: { startUnit: number; endUnit: number; pitch: number }[] = [];
+function buildTimeline(notes: TimedNote[], unitMs: number, unitsPerMeasure: number): GridEvent[] {
+	const notesByStartUnit = new Map<number, { endUnit: number; pitch: number }[]>();
+	for (const note of notes) {
+		const startUnit = Math.round(note.startMs / unitMs);
+		const endUnit = Math.max(Math.round((note.startMs + note.durationMs) / unitMs), startUnit + 1);
+		const existing = notesByStartUnit.get(startUnit);
+		if (existing) existing.push({ endUnit, pitch: note.pitch });
+		else notesByStartUnit.set(startUnit, [{ endUnit, pitch: note.pitch }]);
+	}
+
+	const quantized: { startUnit: number; endUnit: number; pitches: number[] }[] = [];
 	let cursor = 0;
-	for (const note of [...notes].sort((a, b) => a.startMs - b.startMs)) {
-		let startUnit = Math.round(note.startMs / unitMs);
-		let endUnit = Math.round((note.startMs + note.durationMs) / unitMs);
-		// Rounding two adjacent notes onto the same grid unit (or a tiny
-		// negative gap) can make them overlap — resolve by clamping to
-		// wherever the previous note actually finished.
+	for (const [rawStartUnit, onsetNotes] of [...notesByStartUnit.entries()].sort(([a], [b]) => a - b)) {
+		let startUnit = rawStartUnit;
+		let endUnit = Math.max(...onsetNotes.map((note) => note.endUnit));
+		// Rounding two adjacent onsets onto a tiny negative gap can make
+		// them overlap. Clamp whole onsets, not individual notes, so notes
+		// that genuinely start together can remain a displayed chord.
 		startUnit = Math.max(startUnit, cursor);
 		endUnit = Math.max(endUnit, startUnit + 1);
-		quantized.push({ startUnit, endUnit, pitch: note.pitch });
+		const pitches = [...new Set(onsetNotes.map((note) => note.pitch))].sort((a, b) => a - b);
+		quantized.push({ startUnit, endUnit, pitches });
 		cursor = endUnit;
 	}
 
@@ -185,15 +209,15 @@ function buildTimeline(notes: MIDINote[], unitMs: number, unitsPerMeasure: numbe
 	let unitCursor = 0;
 	for (const note of quantized) {
 		if (note.startUnit > unitCursor) {
-			timeline.push({ startUnit: unitCursor, durationUnits: note.startUnit - unitCursor, pitch: null });
+			timeline.push({ startUnit: unitCursor, durationUnits: note.startUnit - unitCursor, pitches: null });
 		}
-		timeline.push({ startUnit: note.startUnit, durationUnits: note.endUnit - note.startUnit, pitch: note.pitch });
+		timeline.push({ startUnit: note.startUnit, durationUnits: note.endUnit - note.startUnit, pitches: note.pitches });
 		unitCursor = note.endUnit;
 	}
 
 	const remainder = unitCursor % unitsPerMeasure;
 	if (remainder !== 0) {
-		timeline.push({ startUnit: unitCursor, durationUnits: unitsPerMeasure - remainder, pitch: null });
+		timeline.push({ startUnit: unitCursor, durationUnits: unitsPerMeasure - remainder, pitches: null });
 	}
 	return timeline;
 }
@@ -204,7 +228,7 @@ function buildTimeline(notes: MIDINote[], unitMs: number, unitsPerMeasure: numbe
  * either side (always false for rests — tying rests is meaningless). */
 interface MeasurePiece {
 	durationUnits: number;
-	pitch: number | null;
+	pitches: number[] | null;
 	continuesFromPrevious: boolean;
 	continuesToNext: boolean;
 }
@@ -225,7 +249,7 @@ function splitAtMeasureBoundaries(timeline: GridEvent[], unitsPerMeasure: number
 		// each piece emitted below can know whether a later piece of the
 		// same event follows, for tie continuation.
 		const totalPieces = pieceCount(event.startUnit, event.durationUnits, measureStart, unitsPerMeasure);
-		const isNote = event.pitch !== null;
+		const isNote = event.pitches !== null;
 
 		let remainingStart = event.startUnit;
 		let remainingDuration = event.durationUnits;
@@ -236,7 +260,7 @@ function splitAtMeasureBoundaries(timeline: GridEvent[], unitsPerMeasure: number
 			const pieceDuration = Math.min(remainingDuration, roomInMeasure);
 			measures[measures.length - 1].push({
 				durationUnits: pieceDuration,
-				pitch: event.pitch,
+				pitches: event.pitches,
 				continuesFromPrevious: isNote && pieceIndex > 0,
 				continuesToNext: isNote && pieceIndex < totalPieces - 1
 			});
@@ -314,11 +338,11 @@ function decompose(units: number): Chunk[] {
 
 // MARK: - XML emission
 
-function attributesXML(timeSignature: MIDITimeSignature, keySignatureFifths: number, voicePart: VoicePart): string {
+function attributesXML(timeSignature: MIDITimeSignature, keySignatureFifths: number, part: MixPart): string {
 	let clefSign: string;
 	let clefLine: number;
 	let clefOctaveChange: number | null;
-	switch (voicePart) {
+	switch (part) {
 		case 'soprano':
 		case 'alto':
 			clefSign = 'G';
@@ -331,6 +355,7 @@ function attributesXML(timeSignature: MIDITimeSignature, keySignatureFifths: num
 			clefOctaveChange = -1; // vocal tenor clef
 			break;
 		case 'bass':
+		case 'accompaniment':
 			clefSign = 'F';
 			clefLine = 4;
 			clefOctaveChange = null;
@@ -363,8 +388,17 @@ const SHARP_ALTERS = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];
 const FLAT_STEPS = ['C', 'D', 'D', 'E', 'E', 'F', 'G', 'G', 'A', 'A', 'B', 'B'];
 const FLAT_ALTERS = [0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0];
 
-function noteXML(pitch: number | null, chunk: Chunk, useFlats: boolean, tieStart: boolean, tieStop: boolean, color?: string): string {
+function noteXML(
+	pitch: number | null,
+	chunk: Chunk,
+	useFlats: boolean,
+	tieStart: boolean,
+	tieStop: boolean,
+	color?: string,
+	isChord = false
+): string {
 	const dotsXML = '\n          <dot/>'.repeat(chunk.dots);
+	const chordXML = isChord ? '        <chord/>\n' : '';
 	let pitchOrRestXML: string;
 	if (pitch !== null) {
 		const pitchClass = pitch % 12;
@@ -402,7 +436,7 @@ function noteXML(pitch: number | null, chunk: Chunk, useFlats: boolean, tieStart
 	const colorAttrXML = color ? ` color="${color}"` : '';
 
 	return `      <note${colorAttrXML}>
-${pitchOrRestXML}
+${chordXML}${pitchOrRestXML}
         <duration>${chunk.units}</duration>${tieXML}
         <type>${chunk.type}</type>${dotsXML}${notationsXML}
       </note>
@@ -419,7 +453,7 @@ function bodyXML(measureUnitSpans: MeasurePiece[][], useFlats: boolean, firstMea
 		if (measureIndex === 0) body += firstMeasureAttributesXML;
 		for (const piece of measureEvents) {
 			const chunks = decompose(piece.durationUnits);
-			const isNote = piece.pitch !== null;
+			const isNote = piece.pitches !== null;
 			chunks.forEach((chunk, chunkIndex) => {
 				// A chunk needs a tie to its neighbor whenever there's a
 				// sounding note on both sides of the split — either
@@ -428,7 +462,13 @@ function bodyXML(measureUnitSpans: MeasurePiece[][], useFlats: boolean, firstMea
 				// measure-boundary fragment of a longer original note.
 				const tieStop = isNote && (chunkIndex > 0 || piece.continuesFromPrevious);
 				const tieStart = isNote && (chunkIndex < chunks.length - 1 || piece.continuesToNext);
-				body += noteXML(piece.pitch, chunk, useFlats, tieStart, tieStop, color);
+				if (piece.pitches) {
+					piece.pitches.forEach((pitch, pitchIndex) => {
+						body += noteXML(pitch, chunk, useFlats, tieStart, tieStop, color, pitchIndex > 0);
+					});
+				} else {
+					body += noteXML(null, chunk, useFlats, false, false, color);
+				}
 			});
 		}
 		body += '    </measure>\n';

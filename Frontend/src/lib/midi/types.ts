@@ -35,8 +35,8 @@ export interface MIDINote {
 }
 
 /** A note that belongs to accompaniment or another non-SATB source. These
- * notes play back, but they are intentionally not shown as selectable voice
- * parts in the practice score. */
+ * notes play back as one collapsed mixer bucket and can be rendered as a
+ * simplified accompaniment cue staff in the practice score. */
 export interface BackingNote {
 	pitch: number;
 	startMs: number;

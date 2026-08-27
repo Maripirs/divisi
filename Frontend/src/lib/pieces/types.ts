@@ -6,6 +6,8 @@ export interface PieceSummary {
 	id: string;
 	title: string;
 	composer: string;
+	pdfUrl: string;
+	collection: 'demo' | 'sfcc';
 }
 
 /** A pickable piece. `load()` resolves to the same `ParsedMIDI` shape
