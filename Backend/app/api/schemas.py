@@ -38,6 +38,7 @@ class GroupCreate(BaseModel):
 class GroupOut(BaseModel):
     id: str
     name: str
+    join_code: str  # B6: share this (or a link embedding it) to let guests in
     role: GroupRole  # the requesting user's role in this group
 
     model_config = {"from_attributes": True}
@@ -139,6 +140,21 @@ class AnnotationShareOut(BaseModel):
 class TimeSignatureOut(BaseModel):
     numerator: int
     denominator: int
+
+
+class GuestPieceOut(BaseModel):
+    """One of a group's currently-distributed pieces, as seen by an
+    unauthenticated guest via B6's join-code route."""
+
+    piece_id: str
+    title: str
+    version_id: str
+    distributed_at: datetime
+
+
+class GuestGroupOut(BaseModel):
+    group_name: str
+    pieces: list[GuestPieceOut]
 
 
 class RenderManifestOut(BaseModel):

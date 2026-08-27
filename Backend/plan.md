@@ -2,7 +2,7 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B7 (Claude tasks done, human listening sign-off pending — see log; picked up ahead of B6 per the human's explicit choice, done in parallel with another session driving `Frontend/plan.md`'s F1. B6 itself is still not started.)
+**Current milestone:** B6 done (approved via the human's join-code-format call, see log). B7's Claude tasks are also done, still pending the human's listening sign-off. B8 (OMR) not started. All of this done in parallel with another session driving `Frontend/plan.md`'s F1.
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -93,7 +93,7 @@ full queue yet), docker-compose for local dev.
 - [x] `Annotation`, `AnnotationShare` models + migration
 - [x] CRUD endpoints scoped to the owning user; share/unshare endpoint; visibility check on read
 
-### B6 — Guest access (join links) [ ]
+### B6 — Guest access (join links) [x]
 
 Needed by the new `Frontend/` web player (see its `plan.md`) — the product pivoted to
 guests joining a group's practice tracks via a shareable link, no login required
@@ -101,18 +101,18 @@ unless they want to save annotations. This is additive: existing member-authenti
 flows (B2–B5) are unaffected.
 
 **Acceptance criteria:**
-- [ ] A group has a join code/link; resolving it with no `Authorization` header returns the group's distributed pieces
-- [ ] An invalid/unknown join code returns a clear 404 — no crash, no leaking other groups' data
-- [ ] A guest can fetch a specific distributed piece's file/notation data by id, but only if it's actually been distributed to that group (no guessing a piece id into arbitrary access)
+- [x] A group has a join code/link; resolving it with no `Authorization` header returns the group's distributed pieces
+- [x] An invalid/unknown join code returns a clear 404 — no crash, no leaking other groups' data
+- [x] A guest can fetch a specific distributed piece's file/notation data by id, but only if it's actually been distributed to that group (no guessing a piece id into arbitrary access)
 
 **Tasks — Claude:**
-- [ ] Add a `join_code` field to `Group` (+ migration), generated at group creation
-- [ ] Public (unauthenticated) endpoint: resolve `join_code` → group name + its distributed pieces (title, version, file reference)
-- [ ] Public (unauthenticated) endpoint: fetch a specific distributed piece's file, scoped to that group's actual distributions
-- [ ] Decide (doesn't have to be a full implementation yet) how to harden the public endpoints against brute-forcing join codes
+- [x] Add a `join_code` field to `Group` (+ migration), generated at group creation
+- [x] Public (unauthenticated) endpoint: resolve `join_code` → group name + its distributed pieces (title, version, file reference)
+- [x] Public (unauthenticated) endpoint: fetch a specific distributed piece's file, scoped to that group's actual distributions
+- [x] Decide (doesn't have to be a full implementation yet) how to harden the public endpoints against brute-forcing join codes
 
 **Tasks — Human:**
-- [ ] Decide join-code format (short memorable code vs. opaque token) and how admins see/share it
+- [x] Decide join-code format (short memorable code vs. opaque token) and how admins see/share it — chose short code (see log)
 
 ### B7 — MIDI → audio + notation rendering pipeline [ ]
 
@@ -161,6 +161,7 @@ that code was Swift/AudioToolbox.
 
 ## Log
 
+- 2026-08-27: B6 built (after B7, in the same session) — human chose short join codes over an opaque token (8 chars, a 32-symbol alphabet excluding visually/aurally ambiguous characters `0/O 1/I/L`, generated in `app/core/join_codes.py`), meant to be typed/read aloud or embedded in a shareable `<frontend>/join/{code}` link; they also confirmed liking the share-link framing generally. Added `Group.join_code` (unique, indexed) via a new migration that backfills existing groups with generated codes before making the column required; `POST /groups` now generates one at creation with a small retry-on-`IntegrityError` loop (collision odds are ~1/32^8, this is belt-and-suspenders) and `GroupOut` surfaces it to admins. New `app/api/routes/guest.py`, mounted with no `get_current_user` dependency anywhere: `GET /guest/{join_code}` (group name + its currently-distributed pieces, most-recent version per piece — same de-dup logic as `library.py`'s per-user library listing), `GET /guest/{join_code}/pieces/{id}/manifest` and `.../renders/{filename}` (same B7 `render_manifest`/`render_file_path` pipeline the authenticated route uses, per that milestone's plan — scoped by resolving the *group's own* distributed version for that piece id server-side, never trusting a client-supplied version, so a guest can't guess their way into an undistributed piece). Unknown join codes and pieces-not-distributed-to-this-group both return the same generic 404 message, so a guest can't distinguish "wrong code" from "right code, no such piece" — deliberately not leaking which case it is. Brute-force hardening (the plan's open decision): a simple in-process fixed-window rate limiter (`app/core/rate_limit.py`, 20 req/min per client IP) on the whole `/guest` router — logged as an explicit MVP tradeoff, not a real distributed limiter, since a single-instance deployment doesn't need one yet. Verified: `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against a real Postgres container; `pytest` — 38 passed (7 new: join-code presence, distributed-pieces listing, empty-group listing, unknown-code 404, guest manifest+stem fetch via a real end-to-end render, not-distributed-to-this-group 404, and the rate limiter actually tripping at the configured threshold).
 - 2026-08-27: B7 built — picked up ahead of B6 (still not started) per the human's explicit choice, running in a separate session in parallel with another session driving `Frontend/plan.md`'s F1. New `app/rendering/` package: `midi_parser.py` (ports `MIDIParser.swift` to `mido` — track-name + mean-pitch-fallback voice-part heuristic, tempo-map-aware tick→ms conversion honoring mid-file tempo changes, SMF format-0-vs-1 channel-splitting, key-signature-name→fifths lookup; also collects unassigned-track notes into a new `backing_notes` field with no Swift equivalent, needed for the backing/accompaniment stem), `musicxml_converter.py` (straight port of `MusicXMLConverter.swift`'s fixed-grid quantization/tie/measure-splitting/pitch-spelling logic, verified byte-for-byte equivalent in behavior against the same fixture), `synth.py` (shells out to the `fluidsynth` CLI — not the `pyfluidsynth` binding, since only the CLI binary was worth depending on here — rendering each SATB part plus a backing stem to WAV via a per-part MIDI file built with `mido`, padded with a trailing marker event so every stem covers the same nominal duration and stays aligned when mixed), `pipeline.py` (orchestrates parse→stems→MusicXML, caching per `piece_version_id` under `storage_dir/renders/` since a version's `file_path` is immutable once created — cache-hit is just "manifest.json exists", no content hashing needed). Vendored `TimGM6mb.sf2` into `app/rendering/resources/` (same soundfont as the iOS app) rather than depending on `Fixtures/`, and added it to `pyproject.toml`'s `package-data` so it survives a real wheel build; Dockerfile now `apt-get install`s the `fluidsynth` binary (a system dependency `mido` alone doesn't provide). New endpoints on the existing `library` router: `GET /library/versions/{id}/manifest` (stems + MusicXML URLs + tempo/time-sig/key metadata, gated by the existing `_require_piece_access` check — B6's guest path will call `render_manifest`/`render_file_path` directly once it exists, scoped to that group's distributions, rather than reusing this authenticated route) and `GET /library/versions/{id}/renders/{filename}` (serves one stem/MusicXML file, same access gate, path-traversal-guarded). Verified: `pytest` — 31 passed, including new parser/converter unit tests against the existing `requiem-satb-*.mid` fixtures (copied into `Backend/tests/fixtures/`) and a real end-to-end API test that uploads a MIDI fixture, hits the manifest endpoint (real `fluidsynth` subprocess calls, not mocked), downloads a stem (checked its RIFF/WAV header) and the MusicXML, and confirms a second manifest call is served from cache. Manually cross-checked all 4 SATB stems from `requiem-satb-accompanied.mid` render to exactly the same sample count (verified via `wave.getnframes()`), confirming stem alignment; the `backing` stem's trailing release tail runs slightly longer, which is the accompaniment patch's own decay envelope, not a sync bug. Human task (listen to a rendered stem set for soundfont quality) still open — didn't mark this milestone's header `[x]` for that reason, following this file's own convention (see B1–B5 above, header only flips once every task including human ones is checked).
 - 2026-08-27: Added B7 (MIDI → audio + notation rendering pipeline), needed by the Frontend's F2/F3, renumbering the old B7 (OMR) to B8 — same reasoning as B6 vs. the old B6/OMR renumber: this is now on the critical path for the top-priority web player, OMR stays real but lower-urgency backlog-ish work.
 - 2026-08-27: Product pivot on the app side (see root `plan.md`'s log) — Divisi's iOS app paused in favor of a new web player (`Frontend/plan.md`), which needs unauthenticated guest access to a group's distributed pieces. Added B6 (Guest access / join links) to cover it, renumbering the old B6 (OMR) to B7 — OMR was always lower-priority backlog-ish work, guest access is now genuinely blocking the new top-priority effort. Didn't touch B1–B5 or reorder "Current milestone" (still B5, pending whoever's actually driving this plan to approve it) — this is additive scope, not a reprioritization of in-flight work.

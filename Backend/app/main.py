@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import annotations, auth, groups, library, omr
+from app.api.routes import annotations, auth, groups, guest, library, omr
 
 app = FastAPI(title="Divisi Backend")
 
@@ -9,6 +9,7 @@ app.include_router(groups.router)
 app.include_router(omr.router)
 app.include_router(library.router)
 app.include_router(annotations.router)
+app.include_router(guest.router)
 
 
 @app.get("/health")

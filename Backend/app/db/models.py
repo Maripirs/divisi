@@ -43,6 +43,12 @@ class Group(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    # B6: lets a guest resolve this group's distributed pieces with no
+    # login (`<frontend>/join/{join_code}`). Generated explicitly at
+    # creation time (app/api/routes/groups.py), not as a column default,
+    # so a rare collision can be retried against the unique constraint
+    # below rather than failing silently.
+    join_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

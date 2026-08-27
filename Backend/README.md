@@ -7,6 +7,8 @@ FastAPI service for two things (see `plan.md` for the full milestone breakdown):
    piece versions to members, private per-user annotations with optional sharing.
 3. **Rendering** — a `PieceVersion`'s MIDI file into per-voice-part audio stems (via
    FluidSynth) plus multi-part MusicXML, cached per version (see `plan.md` B7).
+4. **Guest access** — a group's `join_code` resolves (no login) to its distributed
+   pieces and their rendered stems/MusicXML, via `/guest/*` (see `plan.md` B6).
 
 Rendering shells out to the `fluidsynth` binary (not just the `mido` Python package) —
 install it locally with `brew install fluid-synth` (macOS) or `apt install fluidsynth`

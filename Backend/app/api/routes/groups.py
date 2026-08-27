@@ -5,14 +5,18 @@ members; a group is never left without at least one admin.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import GroupCreate, GroupMemberAdd, GroupMemberOut, GroupOut
+from app.core.join_codes import generate_join_code
 from app.db.models import Group, GroupMembership, GroupRole, User
 from app.db.session import get_db
 
 router = APIRouter(prefix="/groups", tags=["groups"])
+
+_JOIN_CODE_CREATE_ATTEMPTS = 5
 
 
 def _get_group_or_404(group_id: str, db: Session) -> Group:
@@ -43,13 +47,24 @@ def create_group(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> GroupOut:
-    group = Group(name=payload.name)
-    db.add(group)
-    db.flush()
+    # join_code is generated here (not a column default) so a collision —
+    # astronomically unlikely at 8 chars over a 32-symbol alphabet, but not
+    # impossible — can just retry against the unique constraint instead of
+    # failing the request.
+    for attempt in range(_JOIN_CODE_CREATE_ATTEMPTS):
+        group = Group(name=payload.name, join_code=generate_join_code())
+        db.add(group)
+        try:
+            db.flush()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == _JOIN_CODE_CREATE_ATTEMPTS - 1:
+                raise
     db.add(GroupMembership(group_id=group.id, user_id=current_user.id, role=GroupRole.admin))
     db.commit()
     db.refresh(group)
-    return GroupOut(id=group.id, name=group.name, role=GroupRole.admin)
+    return GroupOut(id=group.id, name=group.name, join_code=group.join_code, role=GroupRole.admin)
 
 
 @router.get("", response_model=list[GroupOut])
@@ -63,7 +78,7 @@ def list_my_groups(
         .filter(GroupMembership.user_id == current_user.id)
         .all()
     )
-    return [GroupOut(id=group.id, name=group.name, role=role) for group, role in rows]
+    return [GroupOut(id=group.id, name=group.name, join_code=group.join_code, role=role) for group, role in rows]
 
 
 @router.get("/{group_id}/members", response_model=list[GroupMemberOut])
