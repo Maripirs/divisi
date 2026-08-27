@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr
 
-from app.db.models import GroupRole, OwnerType, VersionSource, VersionStatus
+from app.db.models import GroupRole, OmrJobStatus, OwnerType, VersionSource, VersionStatus
 
 
 class UserCreate(BaseModel):
@@ -155,6 +155,21 @@ class GuestPieceOut(BaseModel):
 class GuestGroupOut(BaseModel):
     group_name: str
     pieces: list[GuestPieceOut]
+
+
+class OmrJobOut(BaseModel):
+    """B8: status/result of one OMR job. `musicxml_url`/`midi_url` are
+    only populated once `status == done`."""
+
+    id: str
+    status: OmrJobStatus
+    error_message: str | None
+    musicxml_url: str | None
+    midi_url: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class RenderManifestOut(BaseModel):

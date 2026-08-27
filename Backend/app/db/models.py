@@ -145,3 +145,33 @@ class AnnotationShare(Base):
     annotation_id: Mapped[str] = mapped_column(String, ForeignKey("annotations.id"), nullable=False)
     shared_with_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class OmrJobStatus(str, enum.Enum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class OmrJob(Base):
+    """B8: tracks one OMR (optical music recognition) attempt on an
+    uploaded scanned-score file, run via `app/jobs/omr_jobs.py`'s
+    background task. Not tied to a `Piece`/`PieceVersion` yet — the result
+    (MusicXML + derived MIDI) is just a downloadable pair for now; folding
+    it into the library flow (e.g. as a new version's source file) is a
+    follow-up, not part of B8's acceptance criteria."""
+
+    __tablename__ = "omr_jobs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    status: Mapped[OmrJobStatus] = mapped_column(
+        SAEnum(OmrJobStatus, native_enum=False), nullable=False, default=OmrJobStatus.pending
+    )
+    source_file_path: Mapped[str] = mapped_column(String, nullable=False)
+    result_musicxml_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_midi_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
