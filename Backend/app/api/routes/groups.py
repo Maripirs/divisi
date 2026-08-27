@@ -9,8 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import GroupCreate, GroupMemberAdd, GroupMemberOut, GroupOut
+from app.api.schemas import GroupCreate, GroupGuestSettingsUpdate, GroupMemberAdd, GroupMemberOut, GroupOut
 from app.core.join_codes import generate_join_code
+from app.core.security import hash_password
 from app.db.models import Group, GroupMembership, GroupRole, User
 from app.db.session import get_db
 
@@ -51,8 +52,14 @@ def create_group(
     # astronomically unlikely at 8 chars over a 32-symbol alphabet, but not
     # impossible — can just retry against the unique constraint instead of
     # failing the request.
+    guest_password_hash = hash_password(payload.guest_password) if payload.guest_password else None
     for attempt in range(_JOIN_CODE_CREATE_ATTEMPTS):
-        group = Group(name=payload.name, join_code=generate_join_code())
+        group = Group(
+            name=payload.name,
+            join_code=generate_join_code(),
+            guest_password_hash=guest_password_hash,
+            guest_homework_visible=payload.guest_homework_visible,
+        )
         db.add(group)
         try:
             db.flush()
@@ -64,7 +71,18 @@ def create_group(
     db.add(GroupMembership(group_id=group.id, user_id=current_user.id, role=GroupRole.admin))
     db.commit()
     db.refresh(group)
-    return GroupOut(id=group.id, name=group.name, join_code=group.join_code, role=GroupRole.admin)
+    return _group_out(group, GroupRole.admin)
+
+
+def _group_out(group: Group, role: GroupRole) -> GroupOut:
+    return GroupOut(
+        id=group.id,
+        name=group.name,
+        join_code=group.join_code,
+        role=role,
+        has_guest_password=group.guest_password_hash is not None,
+        guest_homework_visible=group.guest_homework_visible,
+    )
 
 
 @router.get("", response_model=list[GroupOut])
@@ -78,7 +96,28 @@ def list_my_groups(
         .filter(GroupMembership.user_id == current_user.id)
         .all()
     )
-    return [GroupOut(id=group.id, name=group.name, join_code=group.join_code, role=role) for group, role in rows]
+    return [_group_out(group, role) for group, role in rows]
+
+
+@router.put("/{group_id}/guest-settings", response_model=GroupOut)
+def update_guest_settings(
+    group_id: str,
+    payload: GroupGuestSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupOut:
+    """Partial patch of the guest-facing settings covered by B10 — a field
+    the client didn't send is left untouched; see `GroupGuestSettingsUpdate`."""
+    group = _get_group_or_404(group_id, db)
+    membership = _require_admin(group_id, current_user, db)
+    fields_sent = payload.model_fields_set
+    if "guest_password" in fields_sent:
+        group.guest_password_hash = hash_password(payload.guest_password) if payload.guest_password else None
+    if "guest_homework_visible" in fields_sent and payload.guest_homework_visible is not None:
+        group.guest_homework_visible = payload.guest_homework_visible
+    db.commit()
+    db.refresh(group)
+    return _group_out(group, membership.role)
 
 
 @router.get("/{group_id}/members", response_model=list[GroupMemberOut])

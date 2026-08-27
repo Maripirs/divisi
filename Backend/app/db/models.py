@@ -49,6 +49,16 @@ class Group(Base):
     # so a rare collision can be retried against the unique constraint
     # below rather than failing silently.
     join_code: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    # Optional second factor on top of the join code itself, so a leaked
+    # link alone doesn't hand out guest access — `None` means "no password
+    # set", the group behaves exactly as it did before this existed. Stored
+    # hashed via the same bcrypt helper `User.hashed_password` uses.
+    guest_password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Whether the guest (no-login) view exposes this group's homework, not
+    # just its distributed pieces. Defaults to hidden — an admin opts in
+    # per group rather than every group's assignments being guest-visible
+    # by default.
+    guest_homework_visible: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -144,6 +154,25 @@ class AnnotationShare(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     annotation_id: Mapped[str] = mapped_column(String, ForeignKey("annotations.id"), nullable=False)
     shared_with_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Homework(Base):
+    """B9: a group admin's assignment to their members — a piece (optional;
+    a homework entry can exist before a piece is picked), a range/label,
+    instructions, and a due date. Unrelated to `PieceVersion.status` (B4);
+    an assignment can point at any piece regardless of its review state."""
+
+    __tablename__ = "homework"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    range: Mapped[str] = mapped_column(String, nullable=False)
+    instructions: Mapped[str] = mapped_column(String, nullable=False, default="")
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

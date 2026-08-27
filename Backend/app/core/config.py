@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24
     storage_dir: str = "./data/storage"
 
+    # Frontend origins allowed to call this API cross-origin (browser CORS).
+    # Comma-separated in the env var. Defaults cover the SvelteKit dev
+    # server (both plain-HTTP and the self-signed-HTTPS mode vite.config.ts
+    # uses for AudioWorklet support) plus the deployed Cloudflare domain.
+    cors_origins: str = (
+        "http://localhost:5173,https://localhost:5173,https://divisi.maripi.net"
+    )
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     # B8: OMR engine selection. "audiveris" is preferred (handles
     # multi-page PDFs natively); "oemer" is a single-page-only fallback.
     # Neither binary is installed by default — see Backend/plan.md's B8

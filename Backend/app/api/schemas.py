@@ -33,6 +33,10 @@ class Token(BaseModel):
 
 class GroupCreate(BaseModel):
     name: str
+    # Optional second factor on the guest (no-login) join-code view — see
+    # `Group.guest_password_hash`. `None`/omitted means no password.
+    guest_password: str | None = None
+    guest_homework_visible: bool = False
 
 
 class GroupOut(BaseModel):
@@ -40,8 +44,22 @@ class GroupOut(BaseModel):
     name: str
     join_code: str  # B6: share this (or a link embedding it) to let guests in
     role: GroupRole  # the requesting user's role in this group
+    has_guest_password: bool  # never the password/hash itself, just whether one is set
+    guest_homework_visible: bool
 
     model_config = {"from_attributes": True}
+
+
+class GroupGuestSettingsUpdate(BaseModel):
+    """Partial patch: a field left out of the request body is left
+    untouched (checked via Pydantic's `model_fields_set`, not just "was it
+    `None`") — so an admin can toggle `guest_homework_visible` without
+    having to resend a password, which the API never lets them read back
+    to resend in the first place. Explicitly sending `guest_password: null`
+    does clear it — that's a provided value, just an empty one."""
+
+    guest_password: str | None = None
+    guest_homework_visible: bool | None = None
 
 
 class GroupMemberAdd(BaseModel):
@@ -135,6 +153,28 @@ class AnnotationShareOut(BaseModel):
     annotation_id: str
     shared_with_user_id: str
     email: EmailStr
+
+
+class HomeworkCreate(BaseModel):
+    piece_id: str | None = None
+    title: str
+    range: str
+    instructions: str = ""
+    due_date: datetime | None = None
+
+
+class HomeworkOut(BaseModel):
+    id: str
+    group_id: str
+    piece_id: str | None
+    title: str
+    range: str
+    instructions: str
+    due_date: datetime | None
+    created_by: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class TimeSignatureOut(BaseModel):

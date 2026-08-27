@@ -119,6 +119,72 @@ def test_guest_cannot_fetch_manifest_for_a_piece_not_distributed_to_this_group(c
     assert response.status_code == 404
 
 
+def test_guest_can_list_homework_no_auth(client):
+    admin_headers = _register_and_login(client, "gh-admin@example.com")
+    group = client.post(
+        "/groups", json={"name": "Choir GH", "guest_homework_visible": True}, headers=admin_headers
+    ).json()
+    client.post(
+        "/groups/" + group["id"] + "/homework",
+        json={"title": "Lacrymosa", "range": "mm. 18-42"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/homework")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["title"] == "Lacrymosa"
+
+
+def test_guest_homework_unknown_join_code_404s(client):
+    response = client.get("/guest/NOTAREAL/homework")
+    assert response.status_code == 404
+
+
+def test_guest_homework_hidden_by_default(client):
+    admin_headers = _register_and_login(client, "gh-admin2@example.com")
+    group = client.post("/groups", json={"name": "Choir GH2"}, headers=admin_headers).json()
+    client.post(
+        "/groups/" + group["id"] + "/homework",
+        json={"title": "Lacrymosa", "range": "mm. 18-42"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/homework")
+    assert response.status_code == 404
+
+
+def test_guest_password_protects_all_routes(client):
+    admin_headers = _register_and_login(client, "gp-admin@example.com")
+    group = client.post(
+        "/groups", json={"name": "Protected Choir", "guest_password": "s3cret"}, headers=admin_headers
+    ).json()
+
+    no_password = client.get(f"/guest/{group['join_code']}")
+    assert no_password.status_code == 401
+
+    wrong_password = client.get(f"/guest/{group['join_code']}", params={"password": "nope"})
+    assert wrong_password.status_code == 401
+
+    right_password = client.get(f"/guest/{group['join_code']}", params={"password": "s3cret"})
+    assert right_password.status_code == 200
+
+
+def test_guest_password_can_be_set_via_guest_settings(client):
+    admin_headers = _register_and_login(client, "gp-admin2@example.com")
+    group = client.post("/groups", json={"name": "Choir GP2"}, headers=admin_headers).json()
+    assert client.get(f"/guest/{group['join_code']}").status_code == 200
+
+    client.put(
+        "/groups/" + group["id"] + "/guest-settings",
+        json={"guest_password": "newpass", "guest_homework_visible": False},
+        headers=admin_headers,
+    )
+    assert client.get(f"/guest/{group['join_code']}").status_code == 401
+    assert client.get(f"/guest/{group['join_code']}", params={"password": "newpass"}).status_code == 200
+
+
 def test_guest_endpoints_are_rate_limited(client):
     admin_headers = _register_and_login(client, "admin4@example.com")
     group = client.post("/groups", json={"name": "Choir4"}, headers=admin_headers).json()

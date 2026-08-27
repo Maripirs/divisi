@@ -15,6 +15,16 @@ services:
       timeout: 5s
       retries: 5
 
+  # Dev-only web UI for browsing the Postgres data directly (tables/rows,
+  # ad-hoc SQL) — not part of the app itself, nothing depends on it.
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: .
     environment:

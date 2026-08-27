@@ -17,10 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.schemas import GuestGroupOut, GuestPieceOut, RenderManifestOut
+from app.api.schemas import GuestGroupOut, GuestPieceOut, HomeworkOut, RenderManifestOut
 from app.core.config import get_settings
 from app.core.rate_limit import rate_limit_guest
-from app.db.models import Distribution, Group, Piece, PieceVersion
+from app.core.security import verify_password
+from app.db.models import Distribution, Group, Homework, Piece, PieceVersion
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 
@@ -37,6 +38,18 @@ def _get_group_by_join_code_or_404(join_code: str, db: Session) -> Group:
     return group
 
 
+def _check_guest_password(group: Group, password: str | None) -> None:
+    """B10: if the group's admin set a guest password, every route below
+    requires it — a leaked join-code link alone shouldn't be enough. One
+    generic message either way (missing vs. wrong) rather than
+    distinguishing them; nothing meaningful is gained by telling an
+    unauthorized caller which case they're in."""
+    if group.guest_password_hash is None:
+        return
+    if password is None or not verify_password(password, group.guest_password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect or missing group password")
+
+
 def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> PieceVersion | None:
     row = (
         db.query(PieceVersion)
@@ -49,8 +62,9 @@ def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> Pi
 
 
 @router.get("/{join_code}", response_model=GuestGroupOut)
-def resolve_join_code(join_code: str, db: Session = Depends(get_db)) -> GuestGroupOut:
+def resolve_join_code(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> GuestGroupOut:
     group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
 
     distributed_rows = (
         db.query(Distribution, PieceVersion, Piece)
@@ -78,13 +92,37 @@ def resolve_join_code(join_code: str, db: Session = Depends(get_db)) -> GuestGro
     return GuestGroupOut(group_name=group.name, pieces=pieces)
 
 
+@router.get("/{join_code}/homework", response_model=list[HomeworkOut])
+def list_guest_homework(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> list[Homework]:
+    """Read-only, same no-auth stance as the rest of this router — a
+    homework assignment (title/range/instructions/due date) carries no more
+    sensitivity than the piece titles already exposed above, so it's
+    scoped by join code the same way, no membership required. Also gated
+    by B10's `guest_homework_visible` flag (default off) — unlike pieces,
+    an admin may not want assignments visible to non-members at all, even
+    ones who have the join code/password."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    if not group.guest_homework_visible:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Homework not available for this group")
+    return (
+        db.query(Homework)
+        .filter(Homework.group_id == group.id)
+        .order_by(Homework.due_date.asc().nulls_last(), Homework.created_at.asc())
+        .all()
+    )
+
+
 @router.get("/{join_code}/pieces/{piece_id}/manifest", response_model=RenderManifestOut)
-def get_guest_piece_manifest(join_code: str, piece_id: str, db: Session = Depends(get_db)) -> RenderManifestOut:
+def get_guest_piece_manifest(
+    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+) -> RenderManifestOut:
     """Same manifest shape/pipeline as the authenticated
     `/library/versions/{id}/manifest` (B7) — scoped here to whatever
     version this group actually has distributed for this piece, rather
     than trusting a client-supplied version id."""
     group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
@@ -113,8 +151,11 @@ def get_guest_piece_manifest(join_code: str, piece_id: str, db: Session = Depend
 
 
 @router.get("/{join_code}/pieces/{piece_id}/renders/{filename}")
-def get_guest_render_file(join_code: str, piece_id: str, filename: str, db: Session = Depends(get_db)) -> FileResponse:
+def get_guest_render_file(
+    join_code: str, piece_id: str, filename: str, password: str | None = None, db: Session = Depends(get_db)
+) -> FileResponse:
     group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")

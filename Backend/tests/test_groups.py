@@ -104,3 +104,54 @@ def test_add_member_requires_existing_user(client):
         headers=admin_headers,
     )
     assert missing.status_code == 404
+
+
+def test_group_created_with_no_guest_password_by_default(client):
+    admin_headers = _register_and_login(client, "admin8@example.com")
+    group = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()
+    assert group["has_guest_password"] is False
+    assert group["guest_homework_visible"] is False
+
+
+def test_group_can_be_created_with_a_guest_password(client):
+    admin_headers = _register_and_login(client, "admin9@example.com")
+    group = client.post(
+        "/groups", json={"name": "G", "guest_password": "letmein"}, headers=admin_headers
+    ).json()
+    assert group["has_guest_password"] is True
+
+
+def test_admin_can_update_guest_settings(client):
+    admin_headers = _register_and_login(client, "admin10@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    updated = client.put(
+        "/groups/" + group_id + "/guest-settings",
+        json={"guest_password": "s3cret", "guest_homework_visible": True},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["has_guest_password"] is True
+    assert body["guest_homework_visible"] is True
+
+    cleared = client.put(
+        "/groups/" + group_id + "/guest-settings",
+        json={"guest_password": None, "guest_homework_visible": False},
+        headers=admin_headers,
+    )
+    assert cleared.json()["has_guest_password"] is False
+
+
+def test_non_admin_cannot_update_guest_settings(client):
+    admin_headers = _register_and_login(client, "admin11@example.com")
+    member_headers = _register_and_login(client, "member11@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "member11@example.com"}, headers=admin_headers)
+
+    forbidden = client.put(
+        "/groups/" + group_id + "/guest-settings",
+        json={"guest_password": "hack", "guest_homework_visible": True},
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
