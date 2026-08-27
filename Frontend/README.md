@@ -47,9 +47,34 @@ npm run check:watch    # watch mode
 npm run build
 ```
 
-Preview the production build with `npm run preview`. No deployment adapter
-is configured yet (see `@sveltejs/adapter-auto`'s own warning at build time)
-— that's expected to land alongside F2, once this talks to a real backend.
+Preview the production build with `npm run preview`. Builds target
+Cloudflare Workers via `@sveltejs/adapter-cloudflare` (see `vite.config.ts`,
+`wrangler.jsonc`); output lands in `.svelte-kit/cloudflare`.
+
+## Deployment
+
+Live at **https://divisi.maripi.net**, running as the `divisi-frontend`
+Worker on Cloudflare (account: mariapazmaluenda@gmail.com).
+
+To redeploy:
+
+```sh
+npm run build
+npx wrangler deploy
+```
+
+`wrangler deploy` does not build for you — it just uploads whatever is
+already in `.svelte-kit/cloudflare`, so always run `npm run build`
+immediately before it to avoid shipping a stale build. First-time setup on
+a new machine needs `npx wrangler login` (opens a
+browser OAuth flow) — `wrangler whoami` confirms you're authenticated.
+
+The custom domain (`divisi.maripi.net`) and routing live in `wrangler.jsonc`,
+not the Cloudflare dashboard — changes to the route/domain belong there so
+they redeploy with the app. Registering the account's `workers.dev`
+subdomain (a one-time, account-wide setting, done once already) is the one
+piece not scriptable through `wrangler deploy` itself if it's ever needed
+again on a fresh account.
 
 ## Project layout
 
