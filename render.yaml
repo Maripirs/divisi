@@ -1,0 +1,28 @@
+# Render Blueprint for the Divisi backend (FastAPI + fluidsynth).
+# https://render.com/docs/blueprint-spec
+#
+# Deploys Backend/Dockerfile as a free web service. Postgres is NOT declared
+# here — see Backend/plan.md B9: using Neon's free Postgres instead of
+# Render's own (Render's free Postgres auto-expires after 30 days; Neon's
+# free tier doesn't). Set DATABASE_URL manually to the Neon connection
+# string when creating the service from this blueprint.
+#
+# Storage note (see B9): the free plan has no persistent disk, so
+# STORAGE_DIR's contents (uploaded piece files, render cache) are wiped on
+# every restart/redeploy. Known MVP limitation, not fixed here.
+
+services:
+  - type: web
+    name: divisi-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Backend/Dockerfile
+    dockerContext: ./Backend
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false # set manually to the Neon connection string
+      - key: JWT_SECRET
+        generateValue: true
+      - key: STORAGE_DIR
+        value: /srv/data/storage

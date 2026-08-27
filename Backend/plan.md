@@ -2,7 +2,7 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B6 done (approved via the human's join-code-format call, see log). B7's Claude tasks are also done, still pending the human's listening sign-off. B8 (OMR)'s Claude tasks are also done, still pending the human's engine-install + real-test-PDF sign-off. All of this done in parallel with another session driving `Frontend/plan.md`'s F1.
+**Current milestone:** B6 done (approved via the human's join-code-format call, see log). B7's Claude tasks are also done, still pending the human's listening sign-off. B8 (OMR)'s Claude tasks are also done, still pending the human's engine-install + real-test-PDF sign-off. B9 (deploy to hosting) started 2026-08-27, in a dedicated worktree, per the human's request to get a real reachable backend for `Frontend/plan.md`'s F2. All of this done in parallel with another session driving `Frontend/plan.md`'s F3.
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -153,11 +153,32 @@ that code was Swift/AudioToolbox.
 - [ ] Supply a real scanned sheet-music PDF to test the pipeline end-to-end
 - [ ] Install Audiveris locally (or confirm container approach) — licensing/install path not yet decided
 
+### B9 — Deploy to hosting [ ]
+
+Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move past the bundled fixture). Free-tier stack per the human's "as free as possible" call: Render (free web service, deploys the existing `Dockerfile` as-is via a root-level `render.yaml` blueprint) + Neon (free Postgres — chosen over Render's own free Postgres because Render's expires after 30 days and Neon's doesn't).
+
+**Known limitation, accepted for now:** Render's free plan has no persistent disk, so `STORAGE_DIR` (uploaded piece source files + the B7 render cache) is wiped on every restart/redeploy. Not fixed here — see Backlog's S3/R2 item; revisit once this actually bites (e.g. once F2 depends on distributed pieces surviving a redeploy).
+
+**Acceptance criteria:**
+- [ ] The backend is reachable at a public HTTPS URL, `/health` returns 200
+- [ ] Migrations run automatically on deploy (no manual `alembic upgrade head` step)
+- [ ] A real end-to-end smoke test against the deployed instance (register → login → create group → guest join-code fetch) passes
+
+**Tasks — Claude:**
+- [x] `Dockerfile` CMD now runs `alembic upgrade head` before starting `uvicorn`, and binds `$PORT` when the host assigns one dynamically
+- [x] Root-level `render.yaml` blueprint (Docker runtime, free plan, `/health` check, `DATABASE_URL`/`JWT_SECRET`/`STORAGE_DIR` env wiring)
+- [ ] Push repo to a new private GitHub repo (no remote existed) so Render can deploy from it
+
+**Tasks — Human:**
+- [ ] Create a Neon account/project, get its Postgres connection string
+- [ ] Create a Render account, deploy from `render.yaml`, paste the Neon connection string into `DATABASE_URL`
+- [ ] Confirm the deployed `/health` URL
+
 ## Backlog
 
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
-- S3 (or equivalent) migration for file storage once local-disk stops being enough
+- S3 (or equivalent, e.g. Cloudflare R2) migration for file storage once local-disk/free-tier-ephemeral-disk stops being enough (see B9's known limitation)
 - Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
 
 ## Log
