@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import { themeMode, setThemeMode, type ThemeMode } from '$lib/theme';
 	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
@@ -56,6 +58,22 @@
 	let keepScreenAwake = $state(DEFAULT_SETTINGS.keepScreenAwake);
 	let countIn = $state(DEFAULT_SETTINGS.countIn);
 	let backgroundAudio = $state(DEFAULT_SETTINGS.backgroundAudio);
+
+	// Account section: "Edit name" click-to-edit, same inline-form pattern
+	// as a group's member-title editor (`groups/[id]/+page.svelte`). Posts
+	// to `/settings`'s actions rather than this route's own — this drawer
+	// is mounted once in the root layout and can be open over any page, so
+	// there's no local `+page.server.ts` for it to target.
+	let editingName = $state(false);
+	let nameDraft = $state('');
+	let savingName = $state(false);
+	let nameError = $state<string | null>(null);
+
+	// Account section: "Delete account" click-to-confirm, same pattern as a
+	// group's "Leave group".
+	let confirmingDelete = $state(false);
+	let deletingAccount = $state(false);
+	let deleteError = $state<string | null>(null);
 </script>
 
 {#if settingsDrawer.open}
@@ -73,7 +91,54 @@
 		<section class="menu-section">
 			<h3>Account</h3>
 			{#if user}
-				<div class="list-row"><span>Name</span><span class="dim">{user.name}</span></div>
+				{#if editingName}
+					<form
+						method="POST"
+						action="/settings?/updateName"
+						class="inline-edit-row"
+						use:enhance={() => {
+							savingName = true;
+							nameError = null;
+							return async ({ result }) => {
+								savingName = false;
+								if (result.type === 'failure') {
+									nameError = (result.data as { error?: string } | undefined)?.error ?? 'Could not update name';
+									return;
+								}
+								if (result.type === 'success') {
+									editingName = false;
+									await invalidateAll();
+								}
+							};
+						}}
+					>
+						<input name="name" bind:value={nameDraft} required />
+						<button type="submit" class="btn btn-outline" disabled={savingName}>
+							{savingName ? 'Saving…' : 'Save'}
+						</button>
+						<button type="button" class="text-link" onclick={() => (editingName = false)} disabled={savingName}>
+							Cancel
+						</button>
+					</form>
+					{#if nameError}<p class="error">{nameError}</p>{/if}
+				{:else}
+					<div class="list-row">
+						<span>Name</span>
+						<span class="value-with-action">
+							<span class="dim">{user.name}</span>
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									nameDraft = user.name;
+									editingName = true;
+								}}
+							>
+								Edit
+							</button>
+						</span>
+					</div>
+				{/if}
 				<div class="list-row"><span>Email</span><span class="dim">{user.email}</span></div>
 			{:else}
 				<p class="card-meta">
@@ -127,10 +192,6 @@
 					{/each}
 				</select>
 			</label>
-			<p class="card-note field--sub">
-				Only applies to a piece that actually splits your voice (e.g. Soprano 1/2) — everything
-				else looks exactly the same either way.
-			</p>
 			<label class="field">
 				<span>Display</span>
 				<select
@@ -191,7 +252,7 @@
 		<section class="menu-section">
 			<a class="list-row-link" href="/settings/more" onclick={close}>
 				<span>More</span>
-				<span class="dim">About Divisi, contact</span>
+				<span class="dim">About Divisi, portfolio</span>
 			</a>
 		</section>
 
@@ -199,6 +260,57 @@
 			<form method="POST" action="/logout">
 				<button class="btn btn-danger btn-block" type="submit">Log out</button>
 			</form>
+
+			{#if confirmingDelete}
+				<p class="card-note">
+					This permanently deletes your account and anything genuinely yours (private notes,
+					personal pieces). Content you created for a group — homework, responsibility
+					schedules — stays for the group, just no longer attributed to you.
+				</p>
+				{#if deleteError}<p class="error">{deleteError}</p>{/if}
+				<div class="btn-row">
+					<button
+						type="button"
+						class="btn btn-outline"
+						onclick={() => (confirmingDelete = false)}
+						disabled={deletingAccount}
+					>
+						Cancel
+					</button>
+					<form
+						method="POST"
+						action="/settings?/deleteAccount"
+						use:enhance={() => {
+							deletingAccount = true;
+							deleteError = null;
+							return async ({ result }) => {
+								if (result.type === 'failure') {
+									deletingAccount = false;
+									deleteError =
+										(result.data as { error?: string } | undefined)?.error ?? 'Could not delete account';
+									return;
+								}
+								if (result.type === 'redirect') {
+									close();
+									window.location.href = result.location;
+								}
+							};
+						}}
+					>
+						<button type="submit" class="btn btn-danger" disabled={deletingAccount}>
+							{deletingAccount ? 'Deleting…' : 'Yes, delete account'}
+						</button>
+					</form>
+				</div>
+			{:else}
+				<button
+					type="button"
+					class="text-link text-link--danger delete-account-link"
+					onclick={() => (confirmingDelete = true)}
+				>
+					Delete account
+				</button>
+			{/if}
 		{/if}
 	</aside>
 {/if}
@@ -320,5 +432,65 @@
 		width: 2.2rem;
 		height: 1.3rem;
 		accent-color: var(--accent);
+	}
+
+	.value-with-action {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.text-link {
+		flex: 0 0 auto;
+		background: none;
+		border: none;
+		padding: 0;
+		font: inherit;
+		font-size: 0.8125rem;
+		font-weight: 700;
+		color: var(--accent);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.text-link--danger {
+		color: var(--danger);
+	}
+
+	/* `.text-link` is a flex child of the drawer's own column layout, which
+	   stretches it full-width by default — centered and unpadded is what
+	   actually reads as "small", sitting quietly under the much louder
+	   Log out button rather than matching its width. */
+	.delete-account-link {
+		align-self: center;
+		font-size: 0.75rem;
+		font-weight: 400;
+		text-decoration: underline;
+	}
+
+	.inline-edit-row {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.inline-edit-row input:not([type]) {
+		flex: 1 1 auto;
+		min-width: 0;
+		font: inherit;
+		font-size: 0.875rem;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-md);
+		padding: 0.5rem 0.6rem;
+	}
+
+	.error {
+		margin: 0.4rem 0 0;
+		font-size: 0.8125rem;
+		color: var(--danger);
 	}
 </style>

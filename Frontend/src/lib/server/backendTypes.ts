@@ -110,4 +110,5 @@ export interface LibraryEntryOut {
 	version_status: VersionStatus;
 	version_source: VersionSource;
 	version_created_at: string;
+	default_tempo_bpm: number | null;
 }

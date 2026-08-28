@@ -45,8 +45,17 @@
 	// Homework (the "primary" tab) is the default landing tab, but it's a
 	// dead end with nothing to show when the group has none yet (or isn't
 	// even visible to this member) — Rehearsal Tracks is the one that's
-	// actually useful to land on then.
-	let tab = $state<Tab>(data.homework.length === 0 || !tabVisible('primary') ? 'tracks' : 'primary');
+	// actually useful to land on then. A deep link (`?tab=responsibilities`,
+	// used by Home's "Upcoming responsibilities" list) overrides that
+	// default when the requested tab is actually reachable.
+	const requestedTab = page.url.searchParams.get('tab') as Tab | null;
+	let tab = $state<Tab>(
+		requestedTab && tabsInOrder.includes(requestedTab) && tabVisible(requestedTab)
+			? requestedTab
+			: data.homework.length === 0 || !tabVisible('primary')
+				? 'tracks'
+				: 'primary'
+	);
 
 	// One-time confirmation right after `/groups/new` creates this group —
 	// UX_WIREFRAME.md's Create Group Flow wants a "created" screen with the
@@ -67,6 +76,12 @@
 	// Members tab: which member's row (by id) has its "Remove" button
 	// expanded into a confirm/cancel pair — at most one at a time.
 	let confirmingRemoveMemberId = $state<string | null>(null);
+	// Tracks tab (admin only): which track's row (by piece id) has its
+	// default-tempo swapped for the inline edit form — same pattern as the
+	// Members tab's title editor below.
+	let editingTempoPieceId = $state<string | null>(null);
+	let tempoDraft = $state('');
+	let savingTempo = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
@@ -89,6 +104,22 @@
 	// Info/About tab: "Leave group" click-to-confirm.
 	let confirmingLeave = $state(false);
 	let leavingGroup = $state(false);
+	// Info/About tab: "Copy link" briefly confirms itself, same pattern as
+	// elsewhere in this file for a one-shot action with no server round trip.
+	let joinLinkCopied = $state(false);
+	async function copyJoinLink() {
+		const link = `${page.url.origin}/join/${data.group.join_code}`;
+		try {
+			await navigator.clipboard.writeText(link);
+		} catch {
+			// Clipboard access can be denied (permissions, non-secure
+			// context) — nothing useful to recover into beyond not showing
+			// a false "Copied!".
+			return;
+		}
+		joinLinkCopied = true;
+		setTimeout(() => (joinLinkCopied = false), 2000);
+	}
 
 	const PAGE_LABELS: Record<GroupPage, string> = {
 		homework: 'Homework',
@@ -232,11 +263,61 @@
 		{:else}
 			{#each visibleTracks as track (track.piece_id)}
 				{@const bundled = getPieceByTitle(track.title)}
+				{@const practiceHref = bundled
+					? `/piece/${bundled.id}${track.default_tempo_bpm ? `?defaultTempo=${track.default_tempo_bpm}` : ''}`
+					: null}
 				<section class="card track-card">
 					<div class="track-info">
 						<p class="card-title">{track.title}</p>
 						{#if mode === 'admin'}
 							<p class="card-meta">Status: {track.version_status}</p>
+							{#if editingTempoPieceId === track.piece_id}
+								<form
+									method="POST"
+									action="?/updateDefaultTempo"
+									use:enhance={() => {
+										savingTempo = true;
+										return async ({ update }) => {
+											savingTempo = false;
+											editingTempoPieceId = null;
+											await update();
+										};
+									}}
+									class="inline-edit-row"
+								>
+									<input type="hidden" name="pieceId" value={track.piece_id} />
+									<input
+										name="defaultTempoBpm"
+										type="number"
+										min="1"
+										bind:value={tempoDraft}
+										placeholder="e.g. 96"
+									/>
+									<button type="submit" class="btn btn-outline" disabled={savingTempo}>Save</button>
+									<button
+										type="button"
+										class="text-link"
+										onclick={() => (editingTempoPieceId = null)}
+										disabled={savingTempo}
+									>
+										Cancel
+									</button>
+								</form>
+							{:else}
+								<p class="card-meta">
+									Default tempo: {track.default_tempo_bpm ? `${track.default_tempo_bpm} BPM` : "MIDI file's own tempo"}
+									<button
+										type="button"
+										class="text-link"
+										onclick={() => {
+											tempoDraft = track.default_tempo_bpm ? String(track.default_tempo_bpm) : '';
+											editingTempoPieceId = track.piece_id;
+										}}
+									>
+										{track.default_tempo_bpm ? 'Edit' : '+ Set default'}
+									</button>
+								</p>
+							{/if}
 						{/if}
 						{#if !bundled}
 							<p class="card-note">
@@ -244,8 +325,8 @@
 							</p>
 						{/if}
 					</div>
-					{#if bundled}
-						<a class="piece-action piece-action--primary" href="/piece/{bundled.id}" aria-label="Open player">
+					{#if practiceHref}
+						<a class="piece-action piece-action--primary" href={practiceHref} aria-label="Open player">
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 								<path d="M8 5v14l11-7z" />
 							</svg>
@@ -846,7 +927,16 @@
 				{data.tracks.length} rehearsal track{data.tracks.length === 1 ? '' : 's'} shared ·
 				{data.homework.length} active assignment{data.homework.length === 1 ? '' : 's'}
 			</p>
-			<div class="list-row"><span>Join code</span><span class="dim">{data.group.join_code}</span></div>
+			<div class="list-row">
+				<span>Join code</span>
+				<span class="dim">{data.group.join_code}</span>
+			</div>
+			<div class="list-row">
+				<span>Join link</span>
+				<button type="button" class="text-link" onclick={() => copyJoinLink()}>
+					{joinLinkCopied ? 'Copied!' : 'Copy link'}
+				</button>
+			</div>
 		</section>
 
 		<section class="card">

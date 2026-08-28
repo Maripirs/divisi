@@ -67,13 +67,18 @@
 	// mode) — so it's only applied when exactly one staff is visible;
 	// multi-staff cursors keep OSMD's own untouched geometry.
 	const CURSOR_HEIGHT_SCALE = 1.75;
-	// Once engaged (via `scrollCursorIntoView`), OSMD's own cursor.update()
-	// keeps scrolling the cursor into view on every subsequent step for as
-	// long as both `FollowCursor` and the cursor's own `follow` option stay
-	// true — no custom continuous-scroll loop needed on our end. Disengages
-	// the moment the human scrolls or drags manually, so it never fights
-	// them.
-	let following = $state(false);
+	// On by default. OSMD's own built-in follow-cursor (`FollowCursor` +
+	// `cursor.CursorOptions.follow`) is kept permanently off below — its
+	// `cursor.update()` does an animated `scrollIntoView({behavior: 'smooth'})`
+	// on *every* step, not just when the cursor actually leaves view, which
+	// reads as constant scroll-animation during playback. `following` here
+	// instead drives our own `followCursorIfNeeded()`, called after every
+	// cursor step: a plain `scrollTop`/`scrollLeft` assignment, and only when
+	// the cursor's bounding box has actually left the container's viewport.
+	// Disengages the moment the human scrolls or drags manually (see the
+	// touch/wheel handlers below), so it never fights them — `following`
+	// only comes back via the "scroll to cursor" control re-engaging it.
+	let following = $state(true);
 
 	interface ScoreColors {
 		music: string;
@@ -230,6 +235,7 @@
 		loadedXml = currentXml;
 		cursorReady = false;
 		loadError = null;
+		lastCursorSystemTop = undefined;
 		osmd.setOptions(osmdOptions(displayMode, scoreTheme));
 		osmd
 			.load(currentXml)
@@ -289,16 +295,6 @@
 		applyScoreTreatments();
 	});
 
-	// Cheap on/off toggle — no re-render needed, `FollowCursor`/the cursor's
-	// own `follow` option are read live by OSMD's cursor.update() each time
-	// it moves.
-	$effect(() => {
-		const isFollowing = following;
-		if (!osmd || !cursorReady) return;
-		osmd.FollowCursor = isFollowing;
-		osmd.cursor.CursorOptions = cursorOptions(displayMode, scoreTheme);
-	});
-
 	function applyScoreTreatments(): void {
 		showCursor();
 		applyHighlightedStaffTreatment();
@@ -325,6 +321,86 @@
 		element.style.width = '3px';
 		element.style.borderRadius = '999px';
 		element.style.pointerEvents = 'none';
+		applyCurrentNoteTreatment();
+		followCursorIfNeeded();
+	}
+
+	// SVG elements (noteheads + stems) currently wearing the `.current-note`
+	// accent class, so the next step can un-mark exactly them rather than
+	// needing to know what color they're "supposed" to revert to — a plain
+	// CSS class toggle, not `GraphicalNote.setColor()` (which mutates the
+	// SVG directly with no way back), so un-marking just lets whatever
+	// `applyHighlightedStaffTreatment` already painted show through again,
+	// untouched.
+	let currentNoteElements: HTMLElement[] = [];
+
+	/** Accent-colors the notehead(s)/stem(s) the cursor is currently sitting
+	 * on. Reaches into VexFlow-specific accessors (`getNoteheadSVGs`/
+	 * `getStemSVG`) that aren't on the base `GraphicalNote` type — safe here
+	 * since OSMD only ships the VexFlow SVG backend, the one this component
+	 * already assumes elsewhere (`GetNearestNote` hit-testing, etc). */
+	/** `getNoteheadSVGs()`/`getStemSVG()` return VexFlow's SVG *groups*
+	 * (`<g class="vf-notehead">` etc), not the painted shape itself — the
+	 * group can nest the actual `<path>`/`<use>` one or more levels deep,
+	 * and that leaf already carries its own explicit `fill`/`stroke`
+	 * attribute from OSMD's coloring pass. A CSS class only styles the
+	 * element it's added to, not descendants that already have their own
+	 * conflicting attribute, so `.current-note` has to land on the leaf(s),
+	 * not the wrapping group (confirmed via devtools: `getNoteheadSVGs()`
+	 * was returning real `g.vf-notehead` elements, but adding the class to
+	 * the group left noteheads unpainted while stems — whose own getter
+	 * already drills into `children[0]` — worked fine). */
+	function paintableLeaves(element: HTMLElement): HTMLElement[] {
+		const leaves = [
+			...element.querySelectorAll<HTMLElement>('path, use, text, rect, polygon, polyline, circle, ellipse')
+		];
+		return leaves.length > 0 ? leaves : [element];
+	}
+
+	function applyCurrentNoteTreatment(): void {
+		for (const element of currentNoteElements) element.classList.remove('current-note');
+		currentNoteElements = [];
+		if (!osmd?.cursor) return;
+		const notes = osmd.cursor.GNotesUnderCursor() as unknown as Array<{
+			getNoteheadSVGs?: () => HTMLElement[];
+			getStemSVG?: () => HTMLElement | undefined;
+			getFlagSVG?: () => HTMLElement | undefined;
+			getModifierSVGs?: () => HTMLElement[];
+		}>;
+		for (const note of notes) {
+			for (const group of note.getNoteheadSVGs?.() ?? []) {
+				for (const element of paintableLeaves(group)) {
+					element.classList.add('current-note');
+					currentNoteElements.push(element);
+				}
+			}
+			const stem = note.getStemSVG?.();
+			if (stem) {
+				for (const element of paintableLeaves(stem)) {
+					element.classList.add('current-note');
+					currentNoteElements.push(element);
+				}
+			}
+			// The flag ("tail") on an unbeamed eighth-note-or-shorter note —
+			// same `<g>`-wrapping-a-leaf shape as the notehead, so it needs
+			// the same drill-down.
+			const flag = note.getFlagSVG?.();
+			if (flag) {
+				for (const element of paintableLeaves(flag)) {
+					element.classList.add('current-note');
+					currentNoteElements.push(element);
+				}
+			}
+			// Everything else VexFlow attaches to the note as a "modifier" —
+			// accidentals (sharp/flat/natural), augmentation dots,
+			// articulations — all live in one shared `vf-modifiers` group.
+			for (const group of note.getModifierSVGs?.() ?? []) {
+				for (const element of paintableLeaves(group)) {
+					element.classList.add('current-note');
+					currentNoteElements.push(element);
+				}
+			}
+		}
 	}
 
 	function applyHighlightedStaffTreatment(): void {
@@ -443,7 +519,10 @@
 			type: CURSOR_TYPE_THIN_LEFT,
 			color: theme.cursor,
 			alpha: theme.cursorAlpha,
-			follow: following
+			// Always off — OSMD's own follow-cursor animates a scrollIntoView
+			// on every step (see the `following` declaration comment above);
+			// `followCursorIfNeeded()` replaces it with our own instant jump.
+			follow: false
 		};
 	}
 
@@ -452,7 +531,7 @@
 		return {
 			autoResize: true,
 			drawTitle: false,
-			followCursor: following,
+			followCursor: false,
 			coloringEnabled: true,
 			colorStemsLikeNoteheads: true,
 			defaultColorMusic: theme.music,
@@ -481,6 +560,93 @@
 		} satisfies ScoreColors;
 	}
 
+	/** `container` (`.score-container`) only actually scrolls horizontally
+	 * (`overflow-x: auto`) — vertical overflow isn't clipped here at all, it
+	 * expands into whatever ancestor scrolls instead (`.score-area` on the
+	 * player page). So "the scroll container" is different per axis, and
+	 * neither one is necessarily `container` itself; this walks up from
+	 * `container` to find whichever ancestor is actually the scrolling
+	 * element for a given axis. */
+	function nearestScrollable(start: HTMLElement, axis: 'x' | 'y'): HTMLElement | null {
+		let node: HTMLElement | null = start;
+		while (node) {
+			const style = getComputedStyle(node);
+			const overflow = axis === 'x' ? style.overflowX : style.overflowY;
+			const scrollable =
+				axis === 'x' ? node.scrollWidth > node.clientWidth : node.scrollHeight > node.clientHeight;
+			if ((overflow === 'auto' || overflow === 'scroll') && scrollable) return node;
+			node = node.parentElement;
+		}
+		return null;
+	}
+
+	/** Centers whichever ancestor actually scrolls on the cursor element via
+	 * a direct `scrollTop`/`scrollLeft` assignment — an instant jump, never
+	 * an animated scroll (unlike OSMD's own built-in follow-cursor,
+	 * permanently disabled above, which uses
+	 * `scrollIntoView({behavior: 'smooth', ...})`). */
+	function jumpToCursor(): void {
+		const element = osmd?.cursor.cursorElement;
+		if (!element || !container) return;
+		const elementRect = element.getBoundingClientRect();
+		const verticalScroller = nearestScrollable(container, 'y');
+		if (verticalScroller) {
+			const scrollerRect = verticalScroller.getBoundingClientRect();
+			verticalScroller.scrollTop +=
+				elementRect.top + elementRect.height / 2 - (scrollerRect.top + scrollerRect.height / 2);
+		}
+		const horizontalScroller = nearestScrollable(container, 'x');
+		if (horizontalScroller) {
+			const scrollerRect = horizontalScroller.getBoundingClientRect();
+			horizontalScroller.scrollLeft +=
+				elementRect.left + elementRect.width / 2 - (scrollerRect.left + scrollerRect.width / 2);
+		}
+	}
+
+	// OSMD sets `cursorElement.style.top` to an absolute, scroll-independent
+	// pixel offset within the rendered score — constant while the cursor
+	// moves horizontally through a system, and only changing when it moves
+	// to a new system (row) or page. Tracking that (rather than only
+	// reacting once the cursor visually leaves the viewport) is what lets
+	// `followCursorIfNeeded` recenter on every new system, not just once the
+	// cursor would otherwise scroll off screen. Reset to `undefined`
+	// whenever a new score loads (see the xml-load effect above), so the
+	// first system of a fresh piece still counts as "changed".
+	let lastCursorSystemTop: number | undefined;
+
+	function currentCursorSystemTop(): number | undefined {
+		const raw = osmd?.cursor.cursorElement?.style.top;
+		if (!raw) return undefined;
+		const parsed = parseFloat(raw);
+		return Number.isNaN(parsed) ? undefined : parsed;
+	}
+
+	/** Called after every cursor step while `following` is on. Recenters
+	 * whenever the cursor has moved to a new system (row/page) — keeping the
+	 * current system centered rather than waiting for the cursor to actually
+	 * scroll off screen — and otherwise only nudges horizontally if zoom/pan
+	 * has pushed it out of view sideways within the same system. */
+	function followCursorIfNeeded(): void {
+		if (!following) return;
+		const element = osmd?.cursor.cursorElement;
+		if (!element || !container) return;
+		const currentTop = currentCursorSystemTop();
+		if (currentTop !== undefined && currentTop !== lastCursorSystemTop) {
+			lastCursorSystemTop = currentTop;
+			jumpToCursor();
+			return;
+		}
+		const elementRect = element.getBoundingClientRect();
+		const horizontalScroller = nearestScrollable(container, 'x');
+		const outOfViewX = horizontalScroller
+			? (() => {
+					const r = horizontalScroller.getBoundingClientRect();
+					return elementRect.left < r.left || elementRect.right > r.right;
+				})()
+			: false;
+		if (outOfViewX) jumpToCursor();
+	}
+
 	/** Scrolls the container so the playback cursor is back in view, then
 	 * keeps following it — for a "bring me to cursor" control next to the
 	 * transport, since a human scrolling/zooming to read ahead is expected
@@ -488,7 +654,8 @@
 	 * scroll or drag manually (see the touch/wheel handlers below). */
 	export function scrollCursorIntoView(): void {
 		following = true;
-		osmd?.cursor.cursorElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		jumpToCursor();
+		lastCursorSystemTop = currentCursorSystemTop();
 	}
 
 	function zoomBy(delta: number): void {
@@ -567,6 +734,13 @@
 		padding: 0.5rem 0.75rem;
 		border-bottom: 1px solid var(--score-chrome-border);
 		background: var(--score-chrome);
+		/* `.score-view` itself doesn't scroll — the score's vertical scroll
+		   happens on an ancestor (`.score-area` in the player page) — so
+		   `sticky` pins this to that ancestor's viewport top instead of
+		   scrolling away with the score content above it. */
+		position: sticky;
+		top: 0;
+		z-index: 1;
 	}
 	.zoom-controls button {
 		min-width: 2.125rem;
@@ -611,6 +785,16 @@
 		display: block;
 		min-width: 100%;
 		background: var(--score-page);
+	}
+
+	/* The notehead(s)/stem the cursor is currently on — `!important` since
+	   it has to win over `paintSymbolsInMutedBands`'s inline fill/stroke,
+	   which doesn't know to skip these elements. Toggled via `classList`
+	   in `applyCurrentNoteTreatment`, not scoped to this component's own
+	   markup (OSMD renders these into `container` itself), hence `:global`. */
+	.score-container :global(.current-note) {
+		fill: var(--accent) !important;
+		stroke: var(--accent) !important;
 	}
 
 	.error {

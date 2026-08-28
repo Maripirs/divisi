@@ -1,5 +1,7 @@
 <script lang="ts">
 	import '$lib/styles/shell.css';
+
+	const portfolioUrl = 'https://your-portfolio-url.example';
 </script>
 
 <main class="shell">
@@ -9,20 +11,32 @@
 	<section class="card">
 		<p class="card-eyebrow">About Divisi</p>
 		<p class="card-meta body">
-			Divisi is a small, self-hosted choir companion app — score, audio, homework, and your
-			part, kept in sync.
+			Divisi is a choir companion app for singers, section leaders, and directors.
+		</p>
+		<p class="card-meta body">
+			It brings scores, rehearsal tracks, assignments, and personal practice notes into one
+			place. Singers can practice with their part, accompaniment, and score in sync, while
+			groups can organize shared materials and homework.
+		</p>
+		<p class="card-meta body">
+			Built by
+			<a class="text-link" href={portfolioUrl} target="_blank" rel="noreferrer">Maripi</a>
 		</p>
 	</section>
 
 	<section class="card">
 		<p class="card-eyebrow">Creating a group</p>
 		<p class="card-meta body">
-			Group creation isn't open to everyone right now — Divisi runs on one small server, and a
-			new group is real hosting cost, not just a database row.
+			Group creation is available by request while Divisi is still small.
 		</p>
 		<p class="card-meta body">
-			If you'd like to start a group here for your own choir — and you're open to helping cover
-			hosting so the app can support more of them — get in touch and we'll set one up.
+			Each group needs dedicated setup for members, assignments, scores, audio, and shared
+			materials. For now, new groups are created intentionally so the app can stay stable and
+			useful.
+		</p>
+		<p class="card-meta body">
+			If you would like to use Divisi with your choir, reach out to discuss setting up a
+			group.
 		</p>
 	</section>
 </main>
@@ -37,5 +51,15 @@
 
 	.body {
 		color: var(--text);
+	}
+
+	.text-link {
+		color: var(--accent);
+		font-weight: 800;
+		text-decoration: none;
+	}
+
+	.text-link:hover {
+		text-decoration: underline;
 	}
 </style>

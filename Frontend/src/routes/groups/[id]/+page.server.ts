@@ -227,6 +227,34 @@ export const actions: Actions = {
 		return { success: true, form: 'removeMember' };
 	},
 
+	// Admin-only, full replace (`PUT /library/pieces/{id}/default-tempo`) —
+	// the tempo a track's player starts at, until someone changes it locally
+	// (see `piece/[id]/+page.svelte`'s "Reset to default"). A blank field
+	// clears it back to "use the MIDI file's own tempo".
+	updateDefaultTempo: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const pieceId = String(form.get('pieceId') ?? '');
+		const raw = String(form.get('defaultTempoBpm') ?? '').trim();
+		if (!pieceId) return fail(400, { error: 'Missing track', form: 'defaultTempo' });
+		const defaultTempoBpm = raw ? Number(raw) : null;
+		if (raw && (!Number.isFinite(defaultTempoBpm) || defaultTempoBpm! <= 0)) {
+			return fail(400, { error: 'Enter a valid tempo', form: 'defaultTempo' });
+		}
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/library/pieces/${pieceId}/default-tempo`,
+				{ method: 'PUT', body: JSON.stringify({ default_tempo_bpm: defaultTempoBpm }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'defaultTempo' });
+			throw err;
+		}
+		return { success: true, form: 'defaultTempo' };
+	},
+
 	// Admin-only; promoting is always allowed, demoting the last admin gets
 	// the same 409 removing them would.
 	updateMemberRole: async ({ request, locals, fetch, params }) => {

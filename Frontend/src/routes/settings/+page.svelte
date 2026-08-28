@@ -198,7 +198,7 @@
 	<section class="card">
 		<a class="list-row-link" href="/settings/more">
 			<span>More</span>
-			<span class="dim">About Divisi, contact</span>
+			<span class="dim">About Divisi, portfolio</span>
 		</a>
 	</section>
 

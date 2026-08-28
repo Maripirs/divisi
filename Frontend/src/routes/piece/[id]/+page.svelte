@@ -40,6 +40,20 @@
 	// the generic library.
 	const guestJoinCode = page.url.searchParams.get('code');
 
+	// The admin's chosen tempo for this piece (`PUT
+	// /library/pieces/{id}/default-tempo`, set from a group's Tracks tab),
+	// bridged in via the URL rather than looked up directly — this route is
+	// `ssr:false` and keyed off `$lib/pieces/registry`'s fixture id, not the
+	// Backend's real piece id, so whatever generated this link (Tracks tab,
+	// personal Library, guest join page) is the one place that actually has
+	// both ids to correlate. `null` when the admin never set one, or the
+	// piece has no real Backend counterpart yet (fixture-only demo tracks).
+	const adminDefaultTempoParam = page.url.searchParams.get('defaultTempo');
+	const adminDefaultTempo: number | null = (() => {
+		const parsed = adminDefaultTempoParam ? Number(adminDefaultTempoParam) : NaN;
+		return Number.isFinite(parsed) && parsed >= MIN_TEMPO_BPM && parsed <= MAX_TEMPO_BPM ? parsed : null;
+	})();
+
 	// Singer-facing labels per UX_WIREFRAME.md's "Practice View Labels" —
 	// these are the same DisplayMode values (flat/highlighted/solo/custom)
 	// the converter/mixer logic already uses, just relabeled in the UI.
@@ -232,6 +246,11 @@
 			const storedTempo = stored.tempoBpm;
 			if (storedTempo !== undefined && storedTempo >= MIN_TEMPO_BPM && storedTempo <= MAX_TEMPO_BPM) {
 				setTempo(storedTempo, false);
+			} else if (adminDefaultTempo !== null) {
+				// First time this piece has ever been opened here (no stored
+				// tempo yet) — start at the admin's chosen default instead of
+				// the MIDI file's own native tempo.
+				setTempo(adminDefaultTempo, false);
 			} else {
 				tempoBpm = player.tempoBPM;
 			}
@@ -813,6 +832,11 @@
 							</svg>
 						</button>
 					</div>
+					{#if adminDefaultTempo !== null && tempoBpm !== adminDefaultTempo}
+						<button type="button" class="text-link default-link" onclick={() => setTempo(adminDefaultTempo)}>
+							Reset to default ({adminDefaultTempo} BPM)
+						</button>
+					{/if}
 				</section>
 
 				<section class="menu-section">

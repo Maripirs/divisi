@@ -75,6 +75,22 @@ body {
 	text-size-adjust: 100%;
 }
 
+/* iOS Safari zooms the whole page in on focus whenever a text field's
+   computed font-size is under 16px — a platform quirk triggered by several
+   components' own smaller `font-size` on their inputs, none of which meant
+   to opt into that. Scoped to mobile widths (desktop browsers don't do
+   this) and `!important` since it has to win over each component's own
+   scoped style, not just this file's place in the cascade. Range/checkbox/
+   radio inputs are excluded — no text is ever focused/typed into them, so
+   there's nothing here for iOS to zoom on. */
+@media (max-width: 768px) {
+	input:not([type='range']):not([type='checkbox']):not([type='radio']),
+	textarea,
+	select {
+		font-size: 16px !important;
+	}
+}
+
 /* Shared range-input skin — both the transport scrubber and the per-part
    balance sliders use plain <input type="range">, so this lives globally
    rather than being copy-pasted into every component's <style>. */

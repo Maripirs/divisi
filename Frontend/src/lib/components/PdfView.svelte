@@ -5,7 +5,7 @@
 	// than a static top-level one: both are DOM/worker-dependent packages
 	// SvelteKit's SSR can't statically import, and this route already
 	// disables SSR (`+page.ts`) for exactly this reason.
-	import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
+	import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 
 	/**
 	 * Renders a PDF with our own zoom controls (+/- buttons and a two-finger
@@ -122,13 +122,46 @@
 		}
 	}
 
-	async function computeBaseScaleAndRender(pdf: PDFDocumentProxy): Promise<void> {
-		if (!container.clientWidth) return;
+	// On a plain navigation the PDF fetch is slow enough that by the time it
+	// resolves, the page's own layout has long since settled — masking a
+	// race where `container.clientWidth` is still 0 right after mount. A
+	// reload can be fast enough (PDF served from cache) to actually hit that
+	// window, especially when this pane is the persisted default and so is
+	// already `active` at first render — no hidden->visible transition ever
+	// happens for the `active`-prop effect below to catch, and the
+	// `ResizeObserver`'s one guaranteed initial callback fires at mount
+	// (before `doc` exists) with nothing left to retry it once the real
+	// size does show up, since the size never actually changes again after
+	// that. Retrying a few frames instead of bailing once covers it either
+	// way. `attempt` bounds it (~0.5s) rather than risking a runaway loop if
+	// the container is genuinely, persistently zero-width.
+	async function computeBaseScaleAndRender(pdf: PDFDocumentProxy, attempt = 0): Promise<void> {
+		if (!container.clientWidth) {
+			if (attempt >= 30) return;
+			requestAnimationFrame(() => {
+				if (doc === pdf) void computeBaseScaleAndRender(pdf, attempt + 1);
+			});
+			return;
+		}
 		const firstPage = await pdf.getPage(1);
 		const naturalWidth = firstPage.getViewport({ scale: 1 }).width;
 		baseScale = container.clientWidth / naturalWidth;
 		await renderAllPages(pdf);
 	}
+
+	// Load/resize/zoom/the `active` transition can all independently decide
+	// a render pass is needed, and on a fast (e.g. cache-served) reload
+	// several of those can fire within the same tick. The `token` check
+	// below only ever runs *between* pages, so it doesn't stop two calls
+	// racing on the *same* page: pdf.js throws if `page.render()` is called
+	// again on a canvas that already has one in flight, which silently
+	// killed everything after whatever page was mid-render — "only the
+	// first page/segment shows" and stays that way, since nothing retries a
+	// call that died to an uncaught rejection. Tracking (and cancelling) any
+	// in-flight `RenderTask` per canvas before starting a new one on it
+	// closes that race properly, rather than just reducing how often it's
+	// hit.
+	let activeRenderTasks: (RenderTask | undefined)[] = [];
 
 	async function renderAllPages(pdf: PDFDocumentProxy): Promise<void> {
 		const token = ++renderToken;
@@ -139,11 +172,20 @@
 			const viewport = page.getViewport({ scale });
 			const canvas = canvasRefs[i];
 			if (!canvas) continue;
+			activeRenderTasks[i]?.cancel();
 			canvas.width = viewport.width;
 			canvas.height = viewport.height;
 			const ctx = canvas.getContext('2d');
 			if (!ctx) continue;
-			await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+			const task = page.render({ canvasContext: ctx, viewport, canvas });
+			activeRenderTasks[i] = task;
+			try {
+				await task.promise;
+			} catch (e) {
+				if ((e as { name?: string })?.name !== 'RenderingCancelledException') throw e;
+			} finally {
+				if (activeRenderTasks[i] === task) activeRenderTasks[i] = undefined;
+			}
 		}
 	}
 

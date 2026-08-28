@@ -61,7 +61,7 @@
 		<section class="card">
 			<p class="card-eyebrow">Upcoming responsibilities</p>
 			{#each data.responsibilities as r (r.id)}
-				<a class="list-row-link" href="/groups/{r.groupId}">
+				<a class="list-row-link" href="/groups/{r.groupId}?tab=responsibilities">
 					<span>{r.schedule_name} · {r.groupName}</span>
 					<span class="dim">{formatDate(r.date)}</span>
 				</a>
