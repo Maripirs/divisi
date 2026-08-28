@@ -19,7 +19,7 @@ export interface GroupOut {
 
 /** B12: per-(group, page) visibility, replacing the old single
  * `guest_homework_visible` flag — one row per page, always all 5. */
-export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities';
+export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities' | 'weekly_notes';
 export type PageAudience = 'members' | 'everyone';
 
 export interface GroupPageSettingOut {
@@ -98,6 +98,19 @@ export interface HomeworkOut {
 	instructions: string;
 	due_date: string | null;
 	created_by: string;
+	created_at: string;
+}
+
+/** A group admin's dated bulletin entry — a history feed, not a single
+ * running note. `note_date` is the "week of" date the entry is about,
+ * distinct from `created_at` (when it was actually posted). */
+export interface WeeklyNoteOut {
+	id: string;
+	group_id: string;
+	title: string;
+	body: string;
+	note_date: string;
+	created_by: string | null;
 	created_at: string;
 }
 

@@ -7,11 +7,23 @@
 
 	let { data }: { data: PageData } = $props();
 
-	type Tab = 'tracks' | 'homework' | 'responsibilities';
+	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities';
 	let tab = $state<Tab>('tracks');
+
+	// Nudges an anonymous guest toward creating an account — no persistence
+	// (plain `$state`, not `localStorage`), so it reappears every visit
+	// since guests aren't tracked across sessions at all.
+	let bannerDismissed = $state(false);
 
 	function formatDate(iso: string) {
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	}
+
+	// Weekly Notes' `note_date` has no time-of-day meaning — see the group
+	// page's matching `formatNoteDate` note on why this needs pinning to
+	// UTC instead of `formatDate`'s local-time conversion.
+	function formatNoteDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 	}
 
 	function formatDateTime(iso: string) {
@@ -66,7 +78,21 @@
 	{:else if data.group}
 		<AppHeader title={data.group.groupName} homeHref="/join/{data.code}" />
 
-		{#if data.homeworkVisible || data.responsibilitiesVisible}
+		{#if !bannerDismissed}
+			<section class="card card--highlight">
+				<p class="card-note">
+					Browsing as a guest — sign in to save annotations and get full member access.
+				</p>
+				<div class="btn-row">
+					<a class="btn btn-primary" href="/login?redirectTo=/join/{data.code}">Sign in</a>
+					<button type="button" class="btn btn-outline" onclick={() => (bannerDismissed = true)} aria-label="Dismiss">
+						Not now
+					</button>
+				</div>
+			</section>
+		{/if}
+
+		{#if data.homeworkVisible || data.responsibilitiesVisible || data.weeklyNotesVisible}
 			<div class="tabs" role="tablist">
 				<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
 					Rehearsal Tracks
@@ -74,6 +100,11 @@
 				{#if data.homeworkVisible}
 					<button class="tab" class:active={tab === 'homework'} onclick={() => (tab = 'homework')}>
 						Homework
+					</button>
+				{/if}
+				{#if data.weeklyNotesVisible}
+					<button class="tab" class:active={tab === 'weeklyNotes'} onclick={() => (tab = 'weeklyNotes')}>
+						Weekly Notes
 					</button>
 				{/if}
 				{#if data.responsibilitiesVisible}
@@ -95,6 +126,20 @@
 						<p class="card-meta">{hw.range}</p>
 						{#if hw.instructions}
 							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
+						{/if}
+					</section>
+				{/each}
+			{/if}
+		{:else if tab === 'weeklyNotes' && data.weeklyNotesVisible}
+			{#if data.weeklyNotes.length === 0}
+				<p class="empty">No weekly notes posted yet.</p>
+			{:else}
+				{#each data.weeklyNotes as n (n.id)}
+					<section class="card">
+						<p class="card-eyebrow">Week of {formatNoteDate(n.noteDate)}</p>
+						<p class="card-title">{n.title}</p>
+						{#if n.body}
+							<p class="card-note">{n.body}</p>
 						{/if}
 					</section>
 				{/each}

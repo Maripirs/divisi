@@ -14,7 +14,7 @@
 	// picker below. Keeping one `tab` state (rather than separate
 	// member/admin tab state) means switching modes never has to remap a
 	// tab selection that doesn't exist on the other side.
-	type Tab = 'primary' | 'tracks' | 'members' | 'responsibilities' | 'about';
+	type Tab = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'about';
 
 	// Admin mode is a *view* of this same group page, not a separate
 	// destination (UX_WIREFRAME.md's Admin Experience) — reachable via the
@@ -32,10 +32,11 @@
 	// admin's own settings tab (below) is where those real settings show.
 	// Tracks/About have no page gate on the member-facing routes yet, so
 	// they're always shown.
-	const tabsInOrder: Tab[] = ['primary', 'tracks', 'members', 'responsibilities', 'about'];
+	const tabsInOrder: Tab[] = ['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'about'];
 	function tabVisible(t: Tab): boolean {
 		if (mode === 'admin') return true;
 		if (t === 'primary') return data.homeworkEnabled;
+		if (t === 'weeklyNotes') return data.weeklyNotesEnabled;
 		if (t === 'members') return data.membersEnabled;
 		if (t === 'responsibilities') return data.responsibilitiesEnabled;
 		return true;
@@ -97,6 +98,16 @@
 	let notesEditDraft = $state('');
 	let savingDateEdit = $state(false);
 	let confirmingDeleteDateId = $state<string | null>(null);
+	// Weekly Notes admin panel: same create/inline-edit/click-to-confirm
+	// patterns as Responsibilities' dates above, one level flatter (no
+	// separate schedule concept — every note stands alone).
+	let creatingWeeklyNote = $state(false);
+	let editingWeeklyNoteId = $state<string | null>(null);
+	let weeklyNoteTitleDraft = $state('');
+	let weeklyNoteDateDraft = $state('');
+	let weeklyNoteBodyDraft = $state('');
+	let savingWeeklyNoteEdit = $state(false);
+	let confirmingDeleteWeeklyNoteId = $state<string | null>(null);
 	// Info/About tab: the admin's description editor.
 	let editingDescription = $state(false);
 	let descriptionDraft = $state(data.group.description ?? '');
@@ -124,11 +135,12 @@
 	const PAGE_LABELS: Record<GroupPage, string> = {
 		homework: 'Homework',
 		tracks: 'Rehearsal Tracks',
+		weekly_notes: 'Weekly Notes',
 		members: 'Members',
 		about: 'About',
 		responsibilities: 'Responsibilities'
 	};
-	const PAGE_ORDER: GroupPage[] = ['homework', 'tracks', 'members', 'about', 'responsibilities'];
+	const PAGE_ORDER: GroupPage[] = ['homework', 'tracks', 'weekly_notes', 'members', 'about', 'responsibilities'];
 	// Real two-way local state for the page-visibility form (matching the
 	// tabs' order, not the Backend's alphabetical one) — a plain one-way
 	// `checked={...}`/`selected={...}` binding here was the actual bug
@@ -153,6 +165,15 @@
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 
+	// Weekly Notes' `note_date` has no time-of-day meaning (see the
+	// create/update actions' UTC-midnight round trip) — formatting it with
+	// `formatDate`'s local-time conversion rolls it back a calendar day in
+	// any timezone behind UTC (caught live: a Sept 1 note showed "Aug 31").
+	// Pinning the display to UTC keeps it matching the date the admin typed.
+	function formatNoteDate(iso: string): string {
+		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+	}
+
 	function formatDateTime(iso: string) {
 		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 	}
@@ -164,6 +185,17 @@
 		const d = new Date(iso);
 		const pad = (n: number) => String(n).padStart(2, '0');
 		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+	}
+
+	// Same idea as `toDatetimeLocalValue`, for a plain `<input type="date">`
+	// (Weekly Notes' `note_date` has no time-of-day meaning) — uses UTC
+	// getters since `note_date` round-trips through `new Date(...).toISOString()`
+	// as UTC midnight (see the create/update actions), so reading it back
+	// with local getters could roll the date a day off in a UTC-behind zone.
+	function toDateInputValue(iso: string): string {
+		const d = new Date(iso);
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 	}
 
 	function coverageLabel(status: string) {
@@ -214,6 +246,7 @@
 			<button class="tab" class:active={tab === t} onclick={() => (tab = t)}>
 				{#if t === 'primary'}{mode === 'admin' ? 'Assignments' : 'Homework'}
 				{:else if t === 'tracks'}{mode === 'admin' ? 'Tracks' : 'Rehearsal Tracks'}
+				{:else if t === 'weeklyNotes'}Weekly Notes
 				{:else if t === 'members'}Members
 				{:else if t === 'responsibilities'}Responsibilities
 				{:else}{mode === 'admin' ? 'Settings' : 'Info'}{/if}
@@ -340,6 +373,139 @@
 				Upload a piece via the Backend's `/library/pieces` upload endpoint, then distribute it to
 				this group — no in-app upload UI yet.
 			</p>
+		{/if}
+	{:else if tab === 'weeklyNotes'}
+		{#if mode === 'admin'}
+			<section class="card">
+				<p class="card-eyebrow">New note</p>
+				<form
+					method="POST"
+					action="?/createWeeklyNote"
+					use:enhance={() => {
+						creatingWeeklyNote = true;
+						return async ({ update }) => {
+							creatingWeeklyNote = false;
+							await update();
+						};
+					}}
+				>
+					<label class="field">
+						<span>Title</span>
+						<input name="title" placeholder="Week of Sept 1" required />
+					</label>
+					<label class="field">
+						<span>Week of</span>
+						<input type="date" name="noteDate" required />
+					</label>
+					<label class="field">
+						<span>Note</span>
+						<textarea name="body" placeholder="Optional"></textarea>
+					</label>
+					{#if form?.form === 'createWeeklyNote' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
+					<button class="btn btn-primary btn-block" type="submit" disabled={creatingWeeklyNote}>
+						{creatingWeeklyNote ? 'Posting…' : 'Post note'}
+					</button>
+				</form>
+			</section>
+		{/if}
+
+		{#if data.weeklyNotes.length === 0}
+			<p class="empty">No weekly notes posted yet.</p>
+		{:else}
+			{#each data.weeklyNotes as n (n.id)}
+				<section class="card">
+					{#if editingWeeklyNoteId === n.id}
+						<form
+							method="POST"
+							action="?/updateWeeklyNote"
+							use:enhance={() => {
+								savingWeeklyNoteEdit = true;
+								return async ({ update }) => {
+									savingWeeklyNoteEdit = false;
+									editingWeeklyNoteId = null;
+									await update();
+								};
+							}}
+						>
+							<input type="hidden" name="noteId" value={n.id} />
+							<label class="field">
+								<span>Title</span>
+								<input name="title" bind:value={weeklyNoteTitleDraft} required />
+							</label>
+							<label class="field">
+								<span>Week of</span>
+								<input type="date" name="noteDate" bind:value={weeklyNoteDateDraft} required />
+							</label>
+							<label class="field">
+								<span>Note</span>
+								<textarea name="body" bind:value={weeklyNoteBodyDraft}></textarea>
+							</label>
+							{#if form?.form === 'editWeeklyNote' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+							<div class="btn-row">
+								<button type="button" class="btn btn-outline" onclick={() => (editingWeeklyNoteId = null)}>
+									Cancel
+								</button>
+								<button type="submit" class="btn btn-primary" disabled={savingWeeklyNoteEdit}>
+									{savingWeeklyNoteEdit ? 'Saving…' : 'Save'}
+								</button>
+							</div>
+						</form>
+					{:else}
+						<p class="card-eyebrow">Week of {formatNoteDate(n.note_date)}</p>
+						<p class="card-title">{n.title}</p>
+						{#if n.body}
+							<p class="card-note">{n.body}</p>
+						{/if}
+					{/if}
+					{#if mode === 'admin' && editingWeeklyNoteId !== n.id}
+						<div class="btn-row">
+							<button
+								type="button"
+								class="btn btn-outline"
+								onclick={() => {
+									weeklyNoteTitleDraft = n.title;
+									weeklyNoteDateDraft = toDateInputValue(n.note_date);
+									weeklyNoteBodyDraft = n.body;
+									editingWeeklyNoteId = n.id;
+								}}
+							>
+								Edit
+							</button>
+						</div>
+						{#if confirmingDeleteWeeklyNoteId === n.id}
+							<div class="btn-row">
+								<span class="dim">Delete this note?</span>
+								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteWeeklyNoteId = null)}>
+									Cancel
+								</button>
+								<form
+									method="POST"
+									action="?/deleteWeeklyNote"
+									use:enhance={() => async ({ update }) => {
+										confirmingDeleteWeeklyNoteId = null;
+										await update();
+									}}
+								>
+									<input type="hidden" name="noteId" value={n.id} />
+									<button type="submit" class="btn btn-danger">Delete</button>
+								</form>
+							</div>
+						{:else}
+							<button
+								type="button"
+								class="text-link text-link--danger"
+								onclick={() => (confirmingDeleteWeeklyNoteId = n.id)}
+							>
+								Delete note
+							</button>
+						{/if}
+					{/if}
+				</section>
+			{/each}
 		{/if}
 	{:else if tab === 'members'}
 		<section class="card">
@@ -886,7 +1052,19 @@
 					savingPageSettings = true;
 					return async ({ update }) => {
 						savingPageSettings = false;
-						await update();
+						// SvelteKit's default `update()` calls the native
+						// `form.reset()` on success — fine for a one-shot
+						// "type something, submit, clear it" form, but wrong
+						// here: this form stays visible after saving, and a
+						// native reset snaps every checkbox/select back to
+						// its bare-markup default (unchecked / first option)
+						// since `bind:` values aren't written as literal
+						// `checked`/`selected` attributes. The real
+						// `pageSettingsDraft` state (and the actual saved
+						// data) is untouched either way — this was a purely
+						// visual "my toggles reset" bug. `reset: false` is
+						// SvelteKit's own escape hatch for exactly this.
+						await update({ reset: false });
 					};
 				}}
 			>

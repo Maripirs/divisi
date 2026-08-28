@@ -9,7 +9,8 @@ import type {
 	LibraryEntryOut,
 	PageAudience,
 	ResponsibilityDateOut,
-	ResponsibilityScheduleOut
+	ResponsibilityScheduleOut,
+	WeeklyNoteOut
 } from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -45,14 +46,15 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homeworkResult, membersResult, library, responsibilitiesResult] = await Promise.all([
+		const [homeworkResult, membersResult, library, responsibilitiesResult, weeklyNotesResult] = await Promise.all([
 			fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
 			fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
 			backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch),
 			fetchPageOrDisabled(
 				backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
 				[]
-			)
+			),
+			fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), [])
 		]);
 
 		// Admin-only management data — these two endpoints 403 for a
@@ -87,6 +89,8 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 			membersEnabled: membersResult.enabled,
 			responsibilities: responsibilitiesResult.data,
 			responsibilitiesEnabled: responsibilitiesResult.enabled,
+			weeklyNotes: weeklyNotesResult.data,
+			weeklyNotesEnabled: weeklyNotesResult.enabled,
 			schedules,
 			pageSettings
 		};
@@ -136,7 +140,7 @@ export const actions: Actions = {
 	// Backend endpoint itself supports one.
 	updatePageSettings: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
-		const pages: GroupPage[] = ['homework', 'tracks', 'members', 'about', 'responsibilities'];
+		const pages: GroupPage[] = ['homework', 'tracks', 'members', 'about', 'responsibilities', 'weekly_notes'];
 		const updates = pages.map((page) => ({
 			page,
 			enabled: form.get(`enabled_${page}`) === 'on',
@@ -545,5 +549,66 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'signUp' };
+	},
+
+	// Admin-only: a dated bulletin entry (title/body/note_date). `note_date`
+	// arrives as a plain `<input type="date">` value ("YYYY-MM-DD"), which
+	// `new Date(...)` parses as UTC midnight — good enough for a "week of"
+	// date with no time-of-day meaning.
+	createWeeklyNote: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const title = String(form.get('title') ?? '').trim();
+		const body = String(form.get('body') ?? '').trim();
+		const noteDateInput = String(form.get('noteDate') ?? '');
+		if (!title || !noteDateInput) return fail(400, { error: 'Enter a title and date', form: 'createWeeklyNote' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/weekly-notes`,
+				{ method: 'POST', body: JSON.stringify({ title, body, note_date: new Date(noteDateInput).toISOString() }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'createWeeklyNote' });
+			throw err;
+		}
+		return { success: true, form: 'createWeeklyNote' };
+	},
+
+	updateWeeklyNote: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const noteId = String(form.get('noteId') ?? '');
+		const title = String(form.get('title') ?? '').trim();
+		const body = String(form.get('body') ?? '').trim();
+		const noteDateInput = String(form.get('noteDate') ?? '');
+		if (!noteId || !title || !noteDateInput) return fail(400, { error: 'Enter a title and date', form: 'editWeeklyNote' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/weekly-notes/${noteId}`,
+				{ method: 'PUT', body: JSON.stringify({ title, body, note_date: new Date(noteDateInput).toISOString() }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editWeeklyNote' });
+			throw err;
+		}
+		return { success: true, form: 'editWeeklyNote' };
+	},
+
+	deleteWeeklyNote: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const noteId = String(form.get('noteId') ?? '');
+		if (!noteId) return fail(400, { error: 'Missing note', form: 'editWeeklyNote' });
+
+		try {
+			await backendFetch(locals.token, `/weekly-notes/${noteId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editWeeklyNote' });
+			throw err;
+		}
+		return { success: true, form: 'editWeeklyNote' };
 	}
 };

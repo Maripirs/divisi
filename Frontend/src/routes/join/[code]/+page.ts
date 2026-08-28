@@ -4,9 +4,11 @@ import {
 	JoinCodeNotFoundError,
 	listGuestHomework,
 	listGuestResponsibilityDates,
+	listGuestWeeklyNotes,
 	resolveJoinCode,
 	type GuestHomework,
-	type GuestResponsibilityDate
+	type GuestResponsibilityDate,
+	type GuestWeeklyNote
 } from '$lib/api/guest';
 import type { PageLoad } from './$types';
 
@@ -51,7 +53,29 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
 		}
 
-		return { code, password, group, homework, homeworkVisible, responsibilities, responsibilitiesVisible, error: null };
+		// Same optional-page shape again — a 404 here means this group hasn't
+		// opted `weekly_notes` into guest visibility (members-only default).
+		let weeklyNotes: GuestWeeklyNote[] = [];
+		let weeklyNotesVisible = false;
+		try {
+			weeklyNotes = await listGuestWeeklyNotes(code, { password, fetchFn: fetch });
+			weeklyNotesVisible = true;
+		} catch (err) {
+			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
+		}
+
+		return {
+			code,
+			password,
+			group,
+			homework,
+			homeworkVisible,
+			responsibilities,
+			responsibilitiesVisible,
+			weeklyNotes,
+			weeklyNotesVisible,
+			error: null
+		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) {
 			return {
@@ -62,6 +86,8 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 				homeworkVisible: false,
 				responsibilities: [],
 				responsibilitiesVisible: false,
+				weeklyNotes: [],
+				weeklyNotesVisible: false,
 				error: 'not-found' as const
 			};
 		}
@@ -74,6 +100,8 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 				homeworkVisible: false,
 				responsibilities: [],
 				responsibilitiesVisible: false,
+				weeklyNotes: [],
+				weeklyNotesVisible: false,
 				error: 'password-required' as const
 			};
 		}
@@ -86,6 +114,8 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 				homeworkVisible: false,
 				responsibilities: [],
 				responsibilitiesVisible: false,
+				weeklyNotes: [],
+				weeklyNotesVisible: false,
 				error: 'server' as const
 			};
 		}

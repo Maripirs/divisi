@@ -349,6 +349,75 @@ both over.
   admin/guest) and confirm the UI reads right — no live-app walkthrough done this
   pass, `npm run check`/`build` only
 
+### F7 — Weekly Notes tab + guest sign-in banner [?]
+
+Two asks direct from the human: (1) a 6th group page, "Weekly Notes" — dated
+bulletin entries (title/body/"week of" date) admins post, members read, with
+full history rather than one running note; (2) a dismissible banner on
+`/join/[code]` nudging anonymous guests to sign in. Weekly Notes reuses B12's
+per-page `enabled`/`audience` machinery exactly (see F6) — same default
+(members-only, admin can open to guests), same guest-route "404 means not
+exposed" convention.
+
+**Acceptance criteria:**
+- [x] Group admin can post/edit/delete dated notes from a new "Weekly Notes"
+  tab; members see them read-only, newest first
+- [x] The new page shows up in the admin Settings page-visibility grid
+  alongside the other 5, independently enabled/audience-controlled
+- [x] Guests (`/join/[code]`) see a read-only Weekly Notes tab only when the
+  admin opted it into `audience: everyone`
+- [x] `/join/[code]` shows a dismissible banner (guests only) pointing at
+  `/login?redirectTo=/join/{code}`; dismissal doesn't persist (guests aren't
+  tracked, so it reappears each visit, per the human's explicit call)
+- [x] `npm run check`/`build` clean; verified live via Playwright (human was
+  away from their computer and explicitly authorized it for this session —
+  not this project's default, see memory)
+
+**Tasks — Claude:**
+- [x] Backend: `WeeklyNote` model + migration (chains off `a7e2c9f4b3d8`,
+  seeds a `weekly_notes` `GroupPageSettings` row per existing group);
+  `GroupPage.weekly_notes` added to `DEFAULT_AUDIENCE`; new
+  `app/api/routes/weekly_notes.py` (create/list/edit/delete, mirrors
+  `homework.py` + `groups.py`'s `update_description` full-replace shape for
+  the PUT homework never needed); guest route on `guest.py`. 120/120
+  `pytest`; `alembic upgrade head`/`downgrade -1`/`upgrade head` clean
+  against the real Postgres container; a live curl round trip against the
+  running local Backend (create → member 403 → list → guest 404-by-default →
+  guest visible after toggle → edit → delete).
+- [x] Frontend: `backendTypes.ts`/`$lib/api/guest.ts` gained `WeeklyNoteOut`/
+  `GuestWeeklyNote`; `/groups/[id]/+page.server.ts` + `+page.svelte`: 6th tab,
+  three new actions, `PAGE_LABELS`/`PAGE_ORDER` extended; `/join/[code]`:
+  guest tab + the sign-in banner (no new component — `.card.card--highlight`,
+  matching the codebase's existing inline-`$state` convention over
+  componentizing one-off UI).
+- [x] Two real bugs caught live via Playwright, not just `npm run check`
+  (neither would have been caught by type-checking or a code read):
+  1. **Page-visibility toggles visually "reset" after saving, for real this
+     time.** A prior session (see this file's own 2026-08-28 log entry
+     below) found and fixed *one* real cause (`bind:` vs a one-way
+     `checked={...}`) but a second, independent cause was still live in
+     production: SvelteKit's `use:enhance` default `update()` behavior
+     calls the native `form.reset()` on every successful submit — harmless
+     for a "type something, submit, clear it" form, but wrong for this one,
+     which stays visible after saving. A native reset snaps every
+     checkbox/select back to its bare-markup default (unchecked / first
+     option) without going through Svelte's own reactivity (`bind:` never
+     fires, so `pageSettingsDraft` itself — and the actually-saved data —
+     was never wrong, only the display). Confirmed via the Backend's own
+     `GET /page-settings` mid-repro: real data was correct throughout, this
+     was 100% a display bug. Fixed with `update({ reset: false })`.
+  2. **`note_date` displayed a day early.** `formatDate` converts to local
+     time; `note_date` is a date-only value with no time-of-day meaning,
+     round-tripped as UTC midnight — any timezone behind UTC rolled the
+     display back a calendar day (a Sept 1 note showed "Aug 31"). New
+     `formatNoteDate` pins the display to UTC (`Intl`'s `timeZone: 'UTC'`
+     option) instead.
+- [x] Local dev fix, unrelated to the feature itself but blocking testing
+  it: `Frontend/.env`'s `PUBLIC_API_BASE_URL` was `http://localhost:8000`
+  while the locally-running Backend `uvicorn` is HTTPS-only
+  (`.certs/dev-*.pem`) — the dev frontend genuinely couldn't reach the
+  Backend at all. Fixed to `https://localhost:8000`.
+
 ## Backlog
 
 - **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
@@ -402,6 +471,7 @@ accounts.
 
 ## Log
 
+- 2026-08-28: Built F7 (Weekly Notes tab + guest sign-in banner), the human's live requests this session. Full detail in the milestone's own section above — reuses B12's page-settings machinery exactly (see F6), Backend+Frontend both done, real E2E curl round trip on the Backend side. Verified live in a real browser via Playwright — the human was away from their computer and explicitly said to go ahead and use it for this session (not this project's usual convention; noted in memory as a per-instance exception, not a changed default). That live pass caught two real bugs no amount of `npm run check`/code reading would have: the page-visibility toggles' "resets after saving" report turned out to have a second, independent cause beyond the one a prior session already fixed (SvelteKit's `use:enhance` default `update()` calls a native `form.reset()`, wrong for a form that stays visible after saving — `pageSettingsDraft` state and the actual saved data were never wrong, only the display); and `note_date` displaying a day early in any UTC-behind timezone (local-time formatting on a value with no time-of-day meaning). Both fixed and reverified live. Also fixed a local-dev-only blocker found along the way: `Frontend/.env`'s `PUBLIC_API_BASE_URL` pointed at plain `http://localhost:8000` while the locally-running Backend is HTTPS-only, so the dev Frontend couldn't reach it at all — retargeted to `https://localhost:8000`. `npm run check`/`build` clean throughout. All Playwright-created test data deleted from the local dev DB afterward.
 - 2026-08-28: Deploying tonight's batch to production, closing out `HANDOFF.md`'s two open bugs (now deleted) plus a round of live-testing fixes on top. Account: Settings drawer gained inline "Edit" name and a "Delete account" click-to-confirm (now living directly under Log out, small/underlined/not bold, rather than up in the Account section where it read as easy to miss), both posting to a new `src/routes/settings/+page.server.ts`. Tempo defaults: the group Tracks admin UI can now set a piece's default tempo (`PUT /library/pieces/{id}/default-tempo`), and the practice link carries `?defaultTempo=` through to the player, which seeds its starting tempo and shows "Reset to default". `ScoreView.svelte`'s two HANDOFF bugs: (1) the current-note accent color was landing on VexFlow's wrapping `<g>` groups instead of the actual painted leaf shapes inside them (confirmed live: noteheads/flags/accidentals/dots stayed unpainted while stems — whose own getter already drilled to the leaf — worked) — `paintableLeaves()` now drills into every one of them (noteheads, stems, flags, and the shared modifiers group covering accidentals/dots/articulations). (2) cursor-follow was scrolling `.score-container`, which only actually scrolls horizontally — vertical scroll lives on an ancestor (`.score-area`) — rewritten to walk up to whichever ancestor actually scrolls per axis, and to recenter on every new system (via OSMD's own scroll-independent `cursorElement.style.top`, constant within a system) rather than only once the cursor visually left the viewport, per the human's live-testing ask. Also fixed while testing: zoom controls now `position: sticky` so they stay anchored at the top instead of scrolling away with the score; `PdfView` retries its layout-dependent base-scale calc a few animation frames if the container's width isn't ready yet (a reload-specific race — fast enough, e.g. served from cache, to run before the page's own layout settles, unlike a plain navigation's slower fetch); and a real concurrent-render bug where zoom/resize/load could all trigger `page.render()` on the same canvas at once — pdf.js throws on that, silently aborting everything after whichever page was mid-render ("only the first page shows and stays that way") — fixed by tracking and cancelling any in-flight `RenderTask` per canvas before starting a new one, rather than just the existing after-the-fact `renderToken` check (which only ever runs between pages, not during one). Global: added a mobile-only `app.css` rule forcing text-entry fields to `font-size: 16px` — the actual iOS Safari zoom-on-focus trigger, so this covers every current and future component's inputs in one place instead of per-component. `/settings/more` copy rewritten to the human's supplied text (about/creating-a-group sections, "Built by Maripi" as the portfolio link itself rather than a separate line). `npm run check`/`build` clean throughout; `ScoreView`/`PdfView` fixes verified live by the human (not Playwright, per this project's own convention), not just statically reasoned from the OSMD/pdf.js bundle source.
 - **2026-08-28, morning summary (read this first):** overnight, unsupervised, per explicit direction before bed. Frontend half of B14 (register now requires the password twice, new `/forgot-password` + `/reset-password` pages, `/login/oauth-callback`, conditional OAuth buttons) is live in production — see `Backend/plan.md`'s matching morning-summary entry for the fuller picture and what needs you specifically (an env var, an email provider, OAuth credentials). Repo cleanup: this file gained a "UI/UX conventions" reference section and an "iOS app (paused)" section, both condensed from three now-deleted root-level docs so nothing was actually lost. Two things flagged for you rather than acted on: `ScoreView`'s zoom-loses-scroll-position bug got a real fix (see below), but "cursor following is not quite working" had no specifics to safely act on — needs a repro next session; and `groups/[id]/+page.svelte` (1000+ lines, 6 tabs in one component) is a real modularization candidate, deliberately not attempted blind overnight with no way to visually verify a live-`$state` refactor — see Backlog.
 - 2026-08-28: Frontend half of Backend B14 (account security), working autonomously overnight per the human's direction before bed. `/login`'s register mode now requires the password twice (client-side match check disables the submit button; the `register` action re-checks server-side too, since the Backend's `UserCreate` only ever takes one password field). New `/forgot-password` (email → generic "check your email" response either way) and `/reset-password?token=...` (new password + confirm, redirects to `/login?reset=1` on success) pages. New `/login/oauth-callback`: moves the JWT the Backend's OAuth callback redirects back with into the same httpOnly session cookie `/login` itself sets — `/login`'s own load now fetches `GET /auth/oauth/providers` and only renders a "Continue with Google/Apple" button when that provider is actually configured (neither is, tonight, so neither shows — verified, not just assumed). Also, separate from B14 entirely: the human flagged the player's zoom losing their scroll position ("zoom level should stay anchored, not get lost when scrolling") — `ScoreView`'s zoom re-render now measures the viewport's vertical-center position as a fraction of content height before `osmd.render()` and restores it after, so zooming keeps roughly the same music in view instead of jumping back near the top. Their other note ("cursor following is not quite working as I would like") had no specifics to act on — left alone rather than guessing at changes to code with a real history of cursor-sync bugs (see F1's log); needs a repro/more detail next session. `npm run check`/`build` clean; the full forgot/reset-password round trip verified for real through the actual running dev server's form actions (not just curl-to-Backend), including the password-mismatch and oauth-callback-with-no-token paths.

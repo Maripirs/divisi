@@ -54,6 +54,17 @@ export interface GuestResponsibilityDate {
 	roles: GuestResponsibilityRoleCoverage[];
 }
 
+/** Mirrors the Backend's `WeeklyNoteOut`, as seen via the guest
+ * `/guest/{code}/weekly-notes` route — a history feed, not a single running
+ * note. Only returned at all when the group's admin has enabled the
+ * `weekly_notes` page for guests, same B12 mechanism as homework above. */
+export interface GuestWeeklyNote {
+	id: string;
+	title: string;
+	body: string;
+	noteDate: string;
+}
+
 export class JoinCodeNotFoundError extends Error {
 	constructor(code: string) {
 		super(`No group found for join code "${code}"`);
@@ -122,6 +133,13 @@ interface GuestResponsibilityDateResponse {
 	locked: boolean;
 	canceled: boolean;
 	roles: GuestResponsibilityRoleCoverageResponse[];
+}
+
+interface GuestWeeklyNoteResponse {
+	id: string;
+	title: string;
+	body: string;
+	note_date: string;
 }
 
 interface GuestRequestOptions {
@@ -212,5 +230,27 @@ export async function listGuestResponsibilityDates(
 			activeCount: r.active_count,
 			status: r.status
 		}))
+	}));
+}
+
+/** A group's weekly notes, guest-visible only when its admin has enabled the
+ * `weekly_notes` page for guests (B12's per-page settings). Same "only call
+ * after `resolveJoinCode` confirmed the code/password" convention as
+ * `listGuestHomework` — a 404 here means "this group doesn't expose weekly
+ * notes to guests", not a real error. */
+export async function listGuestWeeklyNotes(
+	code: string,
+	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestWeeklyNote[]> {
+	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, password));
+	if (res.status === 401) throw new GuestPasswordRequiredError();
+	if (!res.ok) throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+
+	const body: GuestWeeklyNoteResponse[] = await res.json();
+	return body.map((n) => ({
+		id: n.id,
+		title: n.title,
+		body: n.body,
+		noteDate: n.note_date
 	}));
 }
