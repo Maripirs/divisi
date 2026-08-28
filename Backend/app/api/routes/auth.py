@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import (
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
     ResetPasswordRequest,
@@ -94,6 +95,22 @@ def update_me(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+
+@router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Requires the current password, unlike `reset_password`'s token flow
+    — a valid session alone isn't proof enough to change the one thing
+    that would otherwise let the real owner lock out an attacker who
+    stole the session, or vice versa."""
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)

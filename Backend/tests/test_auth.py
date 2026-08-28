@@ -56,6 +56,50 @@ def test_update_me_changes_name(client):
     assert client.get("/auth/me", headers=headers).json()["name"] == "New Name"
 
 
+def test_change_password_with_correct_current_password(client):
+    email = "changepw1@example.com"
+    headers = _register_and_login(client, email)
+    res = client.put(
+        "/auth/me/password",
+        json={"current_password": "hunter22", "new_password": "newhunter22"},
+        headers=headers,
+    )
+    assert res.status_code == 204
+
+    # Old password no longer works, new one does.
+    assert client.post("/auth/login", json={"email": email, "password": "hunter22"}).status_code == 401
+    relogin = client.post("/auth/login", json={"email": email, "password": "newhunter22"})
+    assert relogin.status_code == 200
+
+
+def test_change_password_wrong_current_password_rejected(client):
+    email = "changepw2@example.com"
+    headers = _register_and_login(client, email)
+    res = client.put(
+        "/auth/me/password",
+        json={"current_password": "wrongpassword", "new_password": "newhunter22"},
+        headers=headers,
+    )
+    assert res.status_code == 400
+    # Original password still works — the failed attempt didn't change anything.
+    assert client.post("/auth/login", json={"email": email, "password": "hunter22"}).status_code == 200
+
+
+def test_change_password_rejects_short_new_password(client):
+    headers = _register_and_login(client, "changepw3@example.com")
+    res = client.put(
+        "/auth/me/password",
+        json={"current_password": "hunter22", "new_password": "short"},
+        headers=headers,
+    )
+    assert res.status_code == 422
+
+
+def test_change_password_requires_auth(client):
+    res = client.put("/auth/me/password", json={"current_password": "hunter22", "new_password": "newhunter22"})
+    assert res.status_code == 401
+
+
 def test_delete_account_removes_personal_data_and_the_account(client):
     headers = _register_and_login(client, "deleteme@example.com")
 

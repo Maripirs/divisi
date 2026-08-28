@@ -69,6 +69,24 @@ class UserUpdate(BaseModel):
     name: str
 
 
+class ChangePasswordRequest(BaseModel):
+    """Password change for an already-logged-in user — distinct from
+    `ResetPasswordRequest`'s token-based flow (that one's for someone who
+    can't log in at all). Requires the current password rather than just
+    trusting the session token alone, so a hijacked-but-not-yet-logged-out
+    session can't silently lock the real owner out by changing it."""
+
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_min_length(cls, value: str) -> str:
+        if len(value) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+        return value
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

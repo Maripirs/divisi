@@ -13,6 +13,7 @@ from app.api.schemas.annotations import (
 )
 from app.api.schemas.auth import (
     MIN_PASSWORD_LENGTH,
+    ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
     ResetPasswordRequest,
@@ -74,6 +75,7 @@ __all__ = [
     "AnnotationShareCreate",
     "AnnotationShareOut",
     "AnnotationUpdate",
+    "ChangePasswordRequest",
     "DistributionOut",
     "ForgotPasswordRequest",
     "GroupCreate",
