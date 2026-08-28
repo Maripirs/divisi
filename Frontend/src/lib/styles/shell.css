@@ -342,6 +342,26 @@
 
 /* ---------- Form fields ---------- */
 
+/* Every plain `<form>` stacks its fields/notes/button with real spacing
+   between them, same as `.card`'s own gap for its direct children — without
+   this, a submit button (or anything else) sitting right after a `.field`
+   or a `<p>` with no bottom margin has zero breathing room above it.
+
+   A form styled as a row instead (`.inline-edit-row`, `.assign-row`, ...)
+   MUST set its own `flex-direction: row` explicitly, not just `display:
+   flex` — CSS cascades per property, not per rule, so a class selector
+   that never declares `flex-direction` doesn't "win" over this one just
+   because it's more specific; this rule's `column` is simply the only
+   declaration for that property and applies regardless. (Real bug this
+   caused once already: an inline row of fields+button rendered as a
+   centered vertical stack because its own rule only set `display`/
+   `align-items`, never `flex-direction`.) */
+form {
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+}
+
 .field {
 	display: flex;
 	flex-direction: column;

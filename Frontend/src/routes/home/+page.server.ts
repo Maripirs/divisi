@@ -47,17 +47,29 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 		})
 		.map((hw) => ({ ...hw, groupName: groupNameById.get(hw.group_id) ?? 'Unknown group' }));
 
-	// Only upcoming, still-active dates — a past or canceled one isn't
-	// something to surface on Home. Earliest-first, same convention as
-	// homework above (the Backend already orders each group's own list
-	// this way). `ResponsibilityDateOut` carries no `group_id` of its own
-	// (only `schedule_id`/`schedule_name`), so the group is attached here
-	// from which per-group fetch produced it, not looked up afterward.
+	// Only upcoming, still-active dates that are actually relevant to this
+	// member: either they're already signed up for something on it, or it
+	// still needs volunteers — a date every role of which is already
+	// covered by other people isn't something to surface on Home. A past
+	// or canceled date is never relevant either way. Earliest-first, same
+	// convention as homework above (the Backend already orders each
+	// group's own list that way). `ResponsibilityDateOut` carries no
+	// `group_id` of its own (only `schedule_id`/`schedule_name`), so the
+	// group is attached here from which per-group fetch produced it, not
+	// looked up afterward.
 	const now = new Date();
 	const responsibilities = responsibilitiesByGroup
 		.flatMap((dates, i) => dates.map((d) => ({ ...d, groupId: groups[i].id, groupName: groups[i].name })))
 		.filter((d) => !d.canceled && new Date(d.date) >= now)
-		.sort((a, b) => a.date.localeCompare(b.date));
+		.filter(
+			(d) =>
+				d.roles.some((r) => r.status === 'underfilled') ||
+				d.roles.some((r) => r.signups.some((s) => s.user_id === user.id))
+		)
+		.sort((a, b) => a.date.localeCompare(b.date))
+		// Capped to the soonest few — an admin planning ahead (dates months
+		// out) shouldn't turn this into a second homework list.
+		.slice(0, 3);
 
 	return {
 		groups: groups.map((g, i) => ({ ...g, homeworkCount: homeworkByGroup[i].length })),

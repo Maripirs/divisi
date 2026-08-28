@@ -346,6 +346,24 @@ def update_date(
     return _date_out(date, schedule, db)
 
 
+@router.delete("/responsibilities/dates/{date_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_date(
+    date_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Admin-only, a real delete — distinct from `canceled` (a status flip
+    that keeps the date and its signup history around). Cleans up its
+    signups first (no FK cascade at the DB level, same as schedule/role
+    deletion above)."""
+    date = _get_date_or_404(date_id, db)
+    schedule = _get_schedule_or_404(date.schedule_id, db)
+    _require_admin(schedule.group_id, current_user, db)
+    db.query(ResponsibilitySignup).filter(ResponsibilitySignup.date_id == date_id).delete(synchronize_session=False)
+    db.delete(date)
+    db.commit()
+
+
 @router.get("/groups/{group_id}/responsibilities/dates", response_model=list[ResponsibilityDateOut])
 def list_group_dates(
     group_id: str,

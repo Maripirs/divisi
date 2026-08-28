@@ -75,6 +75,13 @@
 	// Responsibilities admin panel: same click-to-confirm pattern, keyed by
 	// schedule id, for the destructive "Delete responsibility" action.
 	let confirmingDeleteScheduleId = $state<string | null>(null);
+	// Same two patterns, one level down — per responsibility date rather
+	// than per responsibility.
+	let editingDateId = $state<string | null>(null);
+	let dateEditDraft = $state('');
+	let notesEditDraft = $state('');
+	let savingDateEdit = $state(false);
+	let confirmingDeleteDateId = $state<string | null>(null);
 	// Info/About tab: the admin's description editor.
 	let editingDescription = $state(false);
 	let descriptionDraft = $state(data.group.description ?? '');
@@ -117,6 +124,15 @@
 
 	function formatDateTime(iso: string) {
 		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+	}
+
+	// `<input type="datetime-local">` wants "YYYY-MM-DDTHH:mm" in the
+	// browser's local time, not the ISO string's own UTC offset — used to
+	// prefill the responsibility date editor with its current value.
+	function toDatetimeLocalValue(iso: string): string {
+		const d = new Date(iso);
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 	}
 
 	function coverageLabel(status: string) {
@@ -266,7 +282,7 @@
 							>
 								<input type="hidden" name="userId" value={member.user_id} />
 								<input name="title" bind:value={titleDraft} placeholder="e.g. Soprano 2 — Section leader" />
-								<button type="submit" class="text-link" disabled={savingTitle}>Save</button>
+								<button type="submit" class="btn btn-outline" disabled={savingTitle}>Save</button>
 								<button type="button" class="text-link" onclick={() => (editingTitleUserId = null)}>Cancel</button>
 							</form>
 						{:else}
@@ -373,7 +389,7 @@
 					<form method="POST" action="?/updateResponsibilitySchedule" use:enhance class="inline-edit-row">
 						<input type="hidden" name="scheduleId" value={schedule.id} />
 						<input name="name" value={schedule.name} required />
-						<button type="submit" class="text-link">Save</button>
+						<button type="submit" class="btn btn-outline">Save</button>
 					</form>
 
 					{#each schedule.roles as role (role.id)}
@@ -381,7 +397,7 @@
 							<input type="hidden" name="roleId" value={role.id} />
 							<input name="name" value={role.name} placeholder="Role" required />
 							<input name="neededCount" type="number" min="1" value={role.needed_count} />
-							<button type="submit" class="text-link">Save</button>
+							<button type="submit" class="btn btn-outline">Save</button>
 							<button type="submit" formaction="?/deleteResponsibilityRole" class="text-link text-link--danger">
 								Remove
 							</button>
@@ -391,7 +407,7 @@
 						<input type="hidden" name="scheduleId" value={schedule.id} />
 						<input name="name" placeholder="New role" />
 						<input name="neededCount" type="number" min="1" value="1" />
-						<button type="submit" class="text-link">+ Add role</button>
+						<button type="submit" class="btn btn-outline">+ Add role</button>
 					</form>
 
 					{#if form?.form === 'editSchedule' && form?.error}
@@ -511,12 +527,48 @@
 		{:else}
 			{#each data.responsibilities as d (d.id)}
 				<section class="card">
-					<p class="card-eyebrow">
-						{formatDateTime(d.date)}{#if d.canceled} · Canceled{:else if d.locked} · Locked{/if}
-					</p>
-					<p class="card-title">{d.schedule_name}</p>
-					{#if d.notes}
-						<p class="card-note">{d.notes}</p>
+					{#if editingDateId === d.id}
+						<form
+							method="POST"
+							action="?/updateResponsibilityDate"
+							use:enhance={() => {
+								savingDateEdit = true;
+								return async ({ update }) => {
+									savingDateEdit = false;
+									editingDateId = null;
+									await update();
+								};
+							}}
+						>
+							<input type="hidden" name="dateId" value={d.id} />
+							<label class="field">
+								<span>Date &amp; time</span>
+								<input type="datetime-local" name="date" bind:value={dateEditDraft} required />
+							</label>
+							<label class="field">
+								<span>Notes</span>
+								<input name="notes" bind:value={notesEditDraft} placeholder="Optional" />
+							</label>
+							{#if form?.form === 'editDate' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+							<div class="btn-row">
+								<button type="button" class="btn btn-outline" onclick={() => (editingDateId = null)}>
+									Cancel
+								</button>
+								<button type="submit" class="btn btn-primary" disabled={savingDateEdit}>
+									{savingDateEdit ? 'Saving…' : 'Save'}
+								</button>
+							</div>
+						</form>
+					{:else}
+						<p class="card-eyebrow">
+							{formatDateTime(d.date)}{#if d.canceled} · Canceled{:else if d.locked} · Locked{/if}
+						</p>
+						<p class="card-title">{d.schedule_name}</p>
+						{#if d.notes}
+							<p class="card-note">{d.notes}</p>
+						{/if}
 					{/if}
 					{#each d.roles as role (role.role_id)}
 						{@const alreadySignedUp = role.signups.some((s) => s.user_id === data.user.id)}
@@ -546,7 +598,7 @@
 									{/if}
 								</div>
 							{/each}
-							{#if mode === 'admin'}
+							{#if mode === 'admin' && role.status === 'underfilled'}
 								<div class="assign-group">
 									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
 										<input type="hidden" name="dateId" value={d.id} />
@@ -554,7 +606,7 @@
 										<select name="userId">
 											{#each data.members as m (m.user_id)}<option value={m.user_id}>{m.name}</option>{/each}
 										</select>
-										<button type="submit" class="text-link">Assign</button>
+										<button type="submit" class="btn btn-outline">Assign</button>
 									</form>
 									<!-- For someone who isn't (and may never be) a group
 									     member — a name only, no account. See the Backend's
@@ -565,10 +617,10 @@
 										<input type="hidden" name="dateId" value={d.id} />
 										<input type="hidden" name="roleId" value={role.role_id} />
 										<input name="name" placeholder="Or type a name" />
-										<button type="submit" class="text-link">Assign</button>
+										<button type="submit" class="btn btn-outline">Assign</button>
 									</form>
 								</div>
-							{:else if !alreadySignedUp && !d.locked && !d.canceled}
+							{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
 								<form method="POST" action="?/signUpResponsibility" use:enhance>
 									<input type="hidden" name="dateId" value={d.id} />
 									<input type="hidden" name="roleId" value={role.role_id} />
@@ -577,8 +629,19 @@
 							{/if}
 						</div>
 					{/each}
-					{#if mode === 'admin'}
+					{#if mode === 'admin' && editingDateId !== d.id}
 						<div class="btn-row">
+							<button
+								type="button"
+								class="btn btn-outline"
+								onclick={() => {
+									dateEditDraft = toDatetimeLocalValue(d.date);
+									notesEditDraft = d.notes;
+									editingDateId = d.id;
+								}}
+							>
+								Edit
+							</button>
 							<form method="POST" action="?/updateResponsibilityDate" use:enhance>
 								<input type="hidden" name="dateId" value={d.id} />
 								<input type="hidden" name="locked" value={d.locked ? 'false' : 'true'} />
@@ -590,6 +653,33 @@
 								<button type="submit" class="btn btn-outline">{d.canceled ? 'Reinstate' : 'Cancel'}</button>
 							</form>
 						</div>
+						{#if confirmingDeleteDateId === d.id}
+							<div class="btn-row">
+								<span class="dim">Delete this date?</span>
+								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteDateId = null)}>
+									Cancel
+								</button>
+								<form
+									method="POST"
+									action="?/deleteResponsibilityDate"
+									use:enhance={() => async ({ update }) => {
+										confirmingDeleteDateId = null;
+										await update();
+									}}
+								>
+									<input type="hidden" name="dateId" value={d.id} />
+									<button type="submit" class="btn btn-danger">Delete</button>
+								</form>
+							</div>
+						{:else}
+							<button
+								type="button"
+								class="text-link text-link--danger"
+								onclick={() => (confirmingDeleteDateId = d.id)}
+							>
+								Delete date
+							</button>
+						{/if}
 					{/if}
 				</section>
 			{/each}
@@ -874,6 +964,8 @@
 
 	.inline-edit-row {
 		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem;
 	}
@@ -887,7 +979,7 @@
 		background: var(--surface);
 		color: var(--text);
 		border-radius: var(--radius-md);
-		padding: 0.4rem 0.55rem;
+		padding: 0.5rem 0.6rem;
 	}
 
 	.inline-edit-row input[type='number'] {
@@ -898,7 +990,7 @@
 		background: var(--surface);
 		color: var(--text);
 		border-radius: var(--radius-md);
-		padding: 0.4rem 0.55rem;
+		padding: 0.5rem 0.6rem;
 	}
 
 	.track-card {
@@ -992,6 +1084,8 @@
 
 	.assign-row {
 		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
 		align-items: center;
 		justify-content: flex-end;
 		gap: 0.5rem;
@@ -1007,7 +1101,7 @@
 		background: var(--surface);
 		color: var(--text);
 		border-radius: var(--radius-md);
-		padding: 0.4rem 0.55rem;
+		padding: 0.5rem 0.6rem;
 	}
 
 	.badge {

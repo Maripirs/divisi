@@ -430,25 +430,49 @@ export const actions: Actions = {
 		return { success: true, form: 'addDate' };
 	},
 
-	// B13, admin-only: covers lock/unlock and cancel/reinstate — each button
-	// below submits just the one field it's toggling, so this only ever
-	// patches the field that's actually present.
+	// B13, admin-only: covers edit (date/notes), lock/unlock, and cancel/
+	// reinstate all in one partial-patch action — each caller only submits
+	// the field(s) it's actually changing, so this only ever patches what's
+	// present in the form.
 	updateResponsibilityDate: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const dateId = RESPONSIBILITY_DATE_ID(form);
 		if (!dateId) return fail(400, { error: 'Missing date' });
 
-		const body: { locked?: boolean; canceled?: boolean } = {};
+		const body: { date?: string; notes?: string; locked?: boolean; canceled?: boolean } = {};
+		if (form.has('date')) {
+			const dateInput = String(form.get('date') ?? '');
+			if (!dateInput) return fail(400, { error: 'Choose a date', form: 'editDate' });
+			body.date = new Date(dateInput).toISOString();
+		}
+		if (form.has('notes')) body.notes = String(form.get('notes') ?? '').trim();
 		if (form.has('locked')) body.locked = form.get('locked') === 'true';
 		if (form.has('canceled')) body.canceled = form.get('canceled') === 'true';
 
 		try {
 			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch);
 		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message });
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editDate' });
 			throw err;
 		}
-		return { success: true, form: 'updateDate' };
+		return { success: true, form: 'editDate' };
+	},
+
+	// Admin-only, a real delete (its signups go with it) — distinct from
+	// "Cancel", which just flips a status flag and keeps the date + its
+	// signup history around. Confirm step lives entirely in the UI.
+	deleteResponsibilityDate: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const dateId = RESPONSIBILITY_DATE_ID(form);
+		if (!dateId) return fail(400, { error: 'Missing date' });
+
+		try {
+			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editDate' });
+			throw err;
+		}
+		return { success: true, form: 'editDate' };
 	},
 
 	// B13: no `userId`/`name` in the form means "sign myself up" (member
