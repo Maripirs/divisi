@@ -43,6 +43,28 @@ class Settings(BaseSettings):
     audiveris_bin: str = "audiveris"
     oemer_bin: str = "oemer"
 
+    # Where a password-reset link points — the deployed Frontend origin in
+    # production (set via Render env var), the local dev server otherwise.
+    frontend_base_url: str = "http://localhost:5173"
+
+    # OAuth app credentials (Google/Apple Sign-In) — empty by default, which
+    # is exactly what makes `/auth/oauth/*` report each provider as
+    # unconfigured (501) instead of attempting a real handshake it can't
+    # complete. Real values are a human step (create the app in Google
+    # Cloud Console / Apple Developer, paste the id/secret in as env vars)
+    # — see Backend/plan.md's Backlog.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    apple_client_id: str = ""
+    apple_client_secret: str = ""
+
+    @property
+    def oauth_configured(self) -> dict[str, bool]:
+        return {
+            "google": bool(self.google_client_id and self.google_client_secret),
+            "apple": bool(self.apple_client_id and self.apple_client_secret),
+        }
+
 
 @lru_cache
 def get_settings() -> Settings:

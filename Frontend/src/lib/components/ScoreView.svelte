@@ -248,6 +248,25 @@
 		setCursorTimestamp(positionWholeNotes);
 	});
 
+	/** OSMD's `render()` rebuilds the whole graphical sheet from scratch —
+	 * the container's content height changes (zoom) or reflows (display
+	 * mode), so a plain `scrollTop` left untouched no longer points at the
+	 * same music: zooming in, in particular, was throwing away whatever
+	 * the singer had scrolled to and dropping them back near the top.
+	 * Anchors on the vertical *center* of the viewport as a fraction of
+	 * total content height, measured before the re-render and restored
+	 * right after — an approximation (it doesn't track a specific note),
+	 * but keeps "roughly what I was looking at" roughly in view instead of
+	 * losing your place on every zoom step. */
+	function renderPreservingScroll(): void {
+		if (!osmd) return;
+		const oldHeight = container.scrollHeight;
+		const anchor = oldHeight > 0 ? (container.scrollTop + container.clientHeight / 2) / oldHeight : 0;
+		osmd.render();
+		const newHeight = container.scrollHeight;
+		container.scrollTop = anchor * newHeight - container.clientHeight / 2;
+	}
+
 	// Re-renders at the new zoom level and re-shows the cursor — OSMD
 	// rebuilds the whole graphical sheet (including the cursor element) on
 	// render(), so the cursor has to be told to reappear at its current
@@ -256,7 +275,7 @@
 		const level = zoom;
 		if (!osmd || !cursorReady) return;
 		osmd.Zoom = level;
-		osmd.render();
+		renderPreservingScroll();
 		applyScoreTreatments();
 	});
 

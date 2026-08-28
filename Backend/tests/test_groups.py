@@ -1,4 +1,4 @@
-def _register_and_login(client, email, name="Name", password="hunter2"):
+def _register_and_login(client, email, name="Name", password="hunter22"):
     client.post("/auth/register", json={"email": email, "name": name, "password": password})
     login = client.post("/auth/login", json={"email": email, "password": password})
     token = login.json()["access_token"]

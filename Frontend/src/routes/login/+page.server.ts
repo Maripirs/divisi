@@ -1,7 +1,28 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { setSessionCookie } from '$lib/server/session';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+
+interface OAuthProviders {
+	google: boolean;
+	apple: boolean;
+}
+
+/** Which "Continue with X" buttons actually work right now — both report
+ * `false` until real OAuth app credentials exist (see Backend/plan.md's
+ * Backlog), so the buttons themselves just don't render rather than
+ * offering something that would 501. Falls back to both-off rather than
+ * failing the whole page if the Backend call itself fails. */
+export const load: PageServerLoad = async ({ fetch }) => {
+	let oauthProviders: OAuthProviders = { google: false, apple: false };
+	try {
+		const res = await fetch(`${PUBLIC_API_BASE_URL}/auth/oauth/providers`);
+		if (res.ok) oauthProviders = await res.json();
+	} catch {
+		// Backend unreachable — same fallback as a clean "not configured".
+	}
+	return { oauthProviders, apiBaseUrl: PUBLIC_API_BASE_URL };
+};
 
 async function errorDetail(res: Response): Promise<string> {
 	try {
@@ -60,7 +81,16 @@ export const actions: Actions = {
 		const email = String(form.get('email') ?? '');
 		const name = String(form.get('name') ?? '');
 		const password = String(form.get('password') ?? '');
+		const passwordConfirm = String(form.get('passwordConfirm') ?? '');
 		const redirectTo = safeRedirectTarget(form.get('redirectTo'));
+
+		// The Backend's `UserCreate` only ever takes one `password` field —
+		// the match check is purely this form's own safeguard against a
+		// typo, so it happens here rather than needing a second field on
+		// the Backend's own schema.
+		if (password !== passwordConfirm) {
+			return fail(400, { error: "Passwords don't match", mode: 'register' as const });
+		}
 
 		const registerRes = await fetch(`${PUBLIC_API_BASE_URL}/auth/register`, {
 			method: 'POST',

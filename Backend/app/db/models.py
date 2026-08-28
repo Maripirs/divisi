@@ -33,6 +33,51 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class PasswordResetToken(Base):
+    """A single-use, time-limited "forgot password" token. Only
+    `token_hash` (SHA-256 of the raw token) is ever stored — the raw token
+    itself only exists in the reset link (currently just logged
+    server-side, no email provider wired up yet, see `Backend/plan.md`).
+    `used_at` set means the token's been spent; a null `used_at` past
+    `expires_at` just means it expired unused. Old rows are never cleaned
+    up (no scheduled-job runner exists in this backend yet) — an accepted
+    gap, not a correctness issue, since `reset_password` re-checks
+    `expires_at`/`used_at` on every attempt regardless of row age."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class OAuthProvider(str, enum.Enum):
+    google = "google"
+    apple = "apple"
+
+
+class OAuthAccount(Base):
+    """Links a `User` to a third-party identity (Google/Apple Sign-In) —
+    scaffolded ahead of real OAuth app credentials existing (see
+    `Backend/plan.md`'s Backlog): the routes that create these rows report
+    themselves unconfigured/501 until `Settings.google_client_id`/
+    `apple_client_id` are actually set, so this table stays empty in
+    practice until then. A `User` can have both a password and one or more
+    of these — sign-in method is additive, not exclusive."""
+
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (UniqueConstraint("provider", "provider_user_id", name="uq_oauth_identity"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    provider: Mapped[OAuthProvider] = mapped_column(SAEnum(OAuthProvider, native_enum=False), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class GroupRole(str, enum.Enum):
     admin = "admin"
     member = "member"

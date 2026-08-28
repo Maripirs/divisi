@@ -1,5 +1,7 @@
 """JWT + password hashing helpers."""
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -14,6 +16,19 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def generate_reset_token() -> tuple[str, str]:
+    """`(raw_token, token_hash)` — the raw token goes in the emailed/logged
+    link and is never stored; only its hash sits in the DB, same reasoning
+    as `hashed_password` (a DB leak alone shouldn't hand out usable reset
+    links)."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_reset_token(raw)
+
+
+def hash_reset_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def create_access_token(subject: str) -> str:

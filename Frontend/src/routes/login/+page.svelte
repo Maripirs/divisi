@@ -2,14 +2,23 @@
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import '$lib/styles/shell.css';
-	import type { ActionData } from './$types';
+	import type { ActionData, PageData } from './$types';
 
-	let { form }: { form: ActionData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let mode = $state<'login' | 'register'>(
 		form?.mode ?? (page.url.searchParams.get('mode') === 'register' ? 'register' : 'login')
 	);
 	let submitting = $state(false);
+	let password = $state('');
+	let confirmPassword = $state('');
+	// Client-side only — the real enforcement is server-side (both the
+	// match check in this route's `register` action and the length check
+	// in the Backend's own `UserCreate` validator) — this just avoids a
+	// round trip for the single most common typo.
+	let passwordMismatch = $derived(
+		mode === 'register' && confirmPassword.length > 0 && password !== confirmPassword
+	);
 	// Where to land after a successful login/register — set when a
 	// protected page redirected here (see e.g. `/home`'s `+page.server.ts`),
 	// so logging in from a deep link doesn't strand the user back at
@@ -21,6 +30,10 @@
 	<header class="shell-header">
 		<h1>{mode === 'login' ? 'Log in' : 'Create account'}</h1>
 	</header>
+
+	{#if page.url.searchParams.get('reset')}
+		<p class="success reset-success">Password updated — log in with your new one.</p>
+	{/if}
 
 	<div class="tabs" role="tablist">
 		<button type="button" class="tab" class:active={mode === 'login'} onclick={() => (mode = 'login')}>
@@ -59,20 +72,65 @@
 			<input
 				type="password"
 				name="password"
+				bind:value={password}
 				required
 				minlength="8"
 				autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
 			/>
 		</label>
+		{#if mode === 'register'}
+			<label class="field">
+				<span>Confirm password</span>
+				<input
+					type="password"
+					name="passwordConfirm"
+					bind:value={confirmPassword}
+					required
+					minlength="8"
+					autocomplete="new-password"
+				/>
+			</label>
+			{#if passwordMismatch}
+				<p class="error">Passwords don't match.</p>
+			{/if}
+		{/if}
+
+		{#if mode === 'login'}
+			<p class="forgot-link"><a href="/forgot-password">Forgot password?</a></p>
+		{/if}
 
 		{#if form?.error}
 			<p class="error">{form.error}</p>
 		{/if}
 
-		<button class="btn btn-primary btn-block" type="submit" disabled={submitting}>
+		<button
+			class="btn btn-primary btn-block"
+			type="submit"
+			disabled={submitting || (mode === 'register' && (passwordMismatch || confirmPassword.length === 0))}
+		>
 			{submitting ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
 		</button>
 	</form>
+
+	{#if data.oauthProviders.google || data.oauthProviders.apple}
+		<div class="oauth-row">
+			<span class="oauth-divider">or</span>
+			{#if data.oauthProviders.google}
+				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/google/start">
+					Continue with Google
+				</a>
+			{/if}
+			{#if data.oauthProviders.apple}
+				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/apple/start">
+					Continue with Apple
+				</a>
+			{/if}
+		</div>
+	{/if}
+
+	{#if page.url.searchParams.get('oauth_error')}
+		<p class="error oauth-error">That sign-in attempt didn't go through. Please try again.</p>
+	{/if}
 
 	<p class="note">
 		Browsing, playback, and joining a group with a code never require an account —
@@ -96,5 +154,44 @@
 
 	.note a {
 		color: var(--accent);
+	}
+
+	.forgot-link {
+		margin: -0.2rem 0 0;
+		text-align: right;
+		font-size: 0.8125rem;
+	}
+
+	.forgot-link a {
+		color: var(--accent);
+	}
+
+	.oauth-row {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.oauth-divider {
+		text-align: center;
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--text-muted);
+	}
+
+	.oauth-error {
+		text-align: center;
+	}
+
+	.success {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.reset-success {
+		text-align: center;
 	}
 </style>

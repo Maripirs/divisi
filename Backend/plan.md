@@ -15,6 +15,14 @@ human's listening / engine-install sign-offs; B9 (Homework/assignments) and B10
 candidates (B7/B8's human-only follow-through, Object Storage wiring, real
 job queue, Responsibilities' deferred recurrence/notifications/swap/approval).
 
+**Current milestone:** B14 (Account security) built 2026-08-28, working
+autonomously overnight per the human's explicit direction before they went to
+bed ("make account setup more robust/secure... consider incorporating
+google/apple log in") — see its own section below for the two judgment calls
+made on their behalf (log-the-link instead of a real email provider;
+Google gets a real implementation, Apple gets an honest placeholder). Pending
+their review in the morning, same as any other milestone.
+
 ## Domain model (agreed, informs B3–B5 below)
 
 ```
@@ -297,6 +305,110 @@ notifications/reminders — all deferred to Backlog below if actually needed lat
 - [x] Coverage computed server-side (`needed_count - active_signup_count` per role), returned on the list endpoint
 - [x] Tests: admin CRUD, member self-signup/remove + 403 for non-members, locked date blocks member writes but not admin, coverage math, guest route respects page settings
 
+### B14 — Account security (password strength/reset, OAuth scaffold) [?]
+
+Built autonomously overnight, per the human's direction before going to bed:
+"make account setup more robust/secure, consider incorporating google/apple
+log in. If not, require the password to be entered twice and match, plus a
+path to recovery." Two judgment calls made without them there to ask,
+recorded here rather than just done silently:
+
+1. **No email provider exists in this backend at all** (no SMTP, no
+   transactional-email account). A real "forgot password" needs to put a
+   link somewhere the user can reach — asked before they logged off, and
+   they picked "build the flow, log the link server-side for now" over
+   skipping recovery entirely. So `/auth/forgot-password` is fully real
+   (token generation, expiry, single-use), but the "send" step is
+   `logger.warning(...)`, readable via Render's own log viewer, not an
+   actual email. **Follow-up still needed, human step:** pick a
+   transactional email provider (e.g. Resend/Postmark), wire its API in
+   place of the log line — tracked in Backlog.
+2. **OAuth** needs real app credentials from Google Cloud Console / Apple
+   Developer that only the human can create — asked, and they picked
+   "scaffold it anyway" over skipping it. Google got a complete, real
+   implementation (`app/services/oauth.py`): it's just untestable
+   end-to-end until real credentials exist, and `oauth_configured`
+   reporting `False` keeps the routes 501/inert and the Frontend's button
+   hidden until then, so nothing is actually reachable tonight. Apple was
+   *not* scaffolded the same way — its real requirements (a JWT-signed
+   client secret built from a `.p8` private key + key id + team id, and a
+   POST/`form_post` callback rather than a plain redirect) go beyond a
+   static client secret, so a naive implementation would just be wrong,
+   not merely untested; its routes always 501 with an honest "not
+   implemented yet" rather than pretending a shortcut version works.
+
+**Acceptance criteria:**
+- [x] Registration requires a password of at least 8 characters (Backend
+  validator); the Frontend's register form requires typing it twice and
+  matching before it'll even submit
+- [x] A user can request a password reset by email; a single-use,
+  1-hour-expiring token lets them set a new password without knowing the
+  old one; the response is identical whether or not the email has an
+  account (no user-enumeration oracle)
+- [x] `GET /auth/oauth/providers` reports which sign-in providers are
+  actually configured; a "Continue with Google/Apple" button only
+  appears on the Frontend when its provider is
+- [x] Google Sign-In's authorization-code flow (start → Google consent →
+  callback → account creation/linking → session) is fully implemented,
+  gated entirely behind real credentials existing
+- [x] None of this breaks an existing user's ability to log in — the
+  length check only applies to registration/reset, never to login itself
+
+**Tasks — Claude:**
+- [x] `UserCreate.password`/`ResetPasswordRequest.new_password` Pydantic
+  validator, 8-char floor (`MIN_PASSWORD_LENGTH`, shared constant)
+- [x] `PasswordResetToken` model + migration (`e9c3b1a7d5f2`, chains off
+  B13's `d5a2c8e6f1b3`) — `token_hash` only (SHA-256), never the raw
+  token; `expires_at`/`used_at` enforced on every reset attempt regardless
+  of row age (no cleanup job exists, an accepted gap)
+- [x] `POST /auth/forgot-password` (generates + logs the link, generic
+  response), `POST /auth/reset-password` (validates, single-use, updates
+  `hashed_password`)
+- [x] `OAuthAccount` model (same migration) linking a `User` to a
+  provider identity — additive to password auth, not exclusive
+- [x] `Settings.google_client_id`/`*_secret`/`apple_*` (empty by default)
+  + `oauth_configured` property; `GET /auth/oauth/providers`,
+  `GET /auth/oauth/{provider}/start` (redirect + `state` cookie, CSRF
+  guard), `GET /auth/oauth/{provider}/callback` (code exchange, account
+  upsert linking by email, issues the same JWT `/auth/login` does)
+- [x] `app/services/oauth.py`: real Google authorization-URL builder +
+  code-exchange/userinfo fetch; Apple deliberately not implemented (see
+  above)
+- [x] Frontend: confirm-password field (register), `/forgot-password` +
+  `/reset-password?token=...` pages, `/login/oauth-callback` (moves the
+  Backend's redirect-borne JWT into the same httpOnly session cookie
+  `/login` itself sets), conditional OAuth buttons on `/login`
+- [x] Tests: password-too-short rejected, forgot-password's generic
+  response for an unknown email, the full reset round-trip (old password
+  stops working, new one works), single-use enforcement, short-new-
+  password rejected, unknown-token rejected, `oauth/providers` reporting
+  unconfigured, Google start/callback 501ing when unconfigured, Apple
+  always 501ing, unknown-provider 404
+- [x] Bumped every test fixture's password from `"hunter2"` (7 chars) to
+  `"hunter22"` (8) across the whole suite — the new length floor broke
+  every existing `_register_and_login` helper otherwise
+- [x] Real bug caught by the new tests, not just theoretical: comparing
+  `PasswordResetToken.expires_at` (naive when round-tripped through
+  SQLite, the test DB) against `datetime.now(timezone.utc)` (always
+  aware) raised `TypeError` — Postgres wouldn't have hit this, but the
+  fix (`_as_utc()`, normalizes before comparing) is correct either way
+
+**Tasks — Human:**
+- [ ] Set `FRONTEND_BASE_URL=https://divisi.maripi.net` in Render's
+  dashboard (divisi service → Environment) — defaults to
+  `http://localhost:5173` otherwise, which would make a *production*
+  password-reset link point at your laptop. Nothing breaks without this
+  (the link is only ever logged, never emailed, so only an admin reading
+  Render's logs could use it right now anyway) but it should still get
+  fixed before this is genuinely usable by anyone else.
+- [ ] Pick a transactional email provider and wire it in place of
+  `forgot_password`'s `logger.warning(...)` — the actual "send a real
+  email" step, still entirely unbuilt
+- [ ] If real Google/Apple sign-in is wanted: create the OAuth app(s) in
+  Google Cloud Console / Apple Developer, set
+  `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (and, once Apple's real flow
+  gets built, its own credentials) as Render env vars
+
 ## Backlog
 
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
@@ -310,6 +422,7 @@ notifications/reminders — all deferred to Backlog below if actually needed lat
 
 ## Log
 
+- 2026-08-28: Built B14 (account security) working autonomously overnight per the human's explicit direction before bed — see the milestone's own section for the two judgment calls made in their absence (log-the-reset-link instead of a real email provider; a real Google implementation vs. an honest Apple placeholder) and its Human task list for what's still needed from them. `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against a real Postgres container. Real end-to-end verification, not just `pytest`: registered a real account against the locally-running Backend, hit `/auth/forgot-password`, pulled the logged reset link from the server log, completed `/auth/reset-password`, confirmed the old password now 401s and the new one works — same round trip repeated through the actual Frontend dev server's form actions (not just curl-to-Backend) to catch wiring mistakes, which did catch one: none found this time, but worth noting the discipline. `pytest` — 103 passed (11 new), plus one real bug the new tests caught before it ever shipped: comparing a token's `expires_at` against `datetime.now(timezone.utc)` raised `TypeError` under SQLite (the test DB round-trips `DateTime(timezone=True)` as naive; Postgres wouldn't have hit this) — fixed with a small normalizing helper, correct either way.
 - 2026-08-28: Deployed two more live-testing additions to production: `ResponsibilitySignup.user_id` now nullable + a `guest_name` column, so an admin can cover a role with someone who has no Divisi account at all (name only) — `role_signups()`/`role_coverage()` switched from an inner join on `User` to an outer one so these don't vanish from coverage counts. `GroupMembership.title` (e.g. "Soprano 2 — Section leader"), admin-editable via `PUT /groups/{id}/members/{user_id}/title`. Same flow as the prior deploy: pushed to `main` + `backend/deploy`, Render auto-deployed (`live`), both new migrations confirmed run for real against Neon via the deploy logs, `/openapi.json` confirms the new routes. `pytest` 92/92 beforehand — same test-coverage gap as before, now covering three untested post-B13 endpoints (see Backlog).
 - 2026-08-28: Deployed tonight's work (new `Group.description` + its `PUT` endpoint, `PUT /groups/{id}/members/{user_id}/role`, `DELETE` for a responsibility schedule/role — added while wiring the Frontend up against B12/B13, see `Frontend/plan.md`'s F6) to production: committed to `frontend/guest-mode-polish`, pushed to `main` and `backend/deploy`. Render's auto-deploy (`commit` trigger on `backend/deploy`) built and went live (`dep-da8jqe3rjlhs73d42fi0`) — confirmed for real via the deploy logs, not just its `live` status: all three new migrations (`3d1749b04685`, `a1c4e8f2b6d9`, `b8f3a1d9c4e6`) ran cleanly against the real Neon DB. `GET /openapi.json` against `https://divisi.onrender.com` confirms every new route is live. `pytest` 92/92 beforehand. Not yet covered by a test file: the three endpoints added tonight (description, member-role, responsibility schedule/role delete) — they were exercised manually via `curl` against a local instance during development, but have no `pytest` regression coverage yet; worth closing before the next pass touches those routes.
 - 2026-08-28: B13 (Responsibilities) approved. No next B-milestone scoped yet — see Backlog for candidates.
