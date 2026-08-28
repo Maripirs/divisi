@@ -71,6 +71,11 @@ class GroupMembership(Base):
     role: Mapped[GroupRole] = mapped_column(
         SAEnum(GroupRole, native_enum=False), nullable=False, default=GroupRole.member
     )
+    # Free-text context shown next to this member on the group's Members
+    # page (e.g. "Soprano 2 — Section leader") — per-membership, not
+    # per-account, since the same person can hold a different role/section
+    # in a different group. Admin-editable, `None` means nothing set.
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -263,11 +268,21 @@ class ResponsibilityDate(Base):
 
 
 class ResponsibilitySignup(Base):
-    """One member covering one role on one date. Unique per (date, role,
-    user) so re-signing up is a no-op collision rather than a duplicate row;
-    nothing stops the same user covering *different* roles on the same date,
-    or a role having more signups than `needed_count` (that's exactly what
-    "overfilled" coverage means)."""
+    """One member (or, admin-assigned only, one *named but unenrolled*
+    volunteer) covering one role on one date. Unique per (date, role, user)
+    so a real member re-signing up is a no-op collision rather than a
+    duplicate row; nothing stops the same user covering *different* roles on
+    the same date, or a role having more signups than `needed_count` (that's
+    exactly what "overfilled" coverage means).
+
+    `user_id`/`guest_name` are mutually exclusive: a self- or admin-signed-up
+    real member has `user_id` set and `guest_name` null; an admin covering a
+    slot with someone who isn't a group member at all (a parent, a hired
+    accompanist, ...) has `user_id` null and `guest_name` set instead — no
+    account required. The unique constraint above only ever fires for the
+    `user_id` case (Postgres treats NULLs as distinct), so nothing stops two
+    identical `guest_name`s on the same (date, role) — an accepted gap, not
+    worth a name-collision check for what's just a display label."""
 
     __tablename__ = "responsibility_signups"
     __table_args__ = (
@@ -277,7 +292,8 @@ class ResponsibilitySignup(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     date_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_dates.id"), nullable=False)
     role_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_roles.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    guest_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

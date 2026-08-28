@@ -16,6 +16,7 @@ from app.api.schemas import (
     GroupMemberAdd,
     GroupMemberOut,
     GroupMemberRoleUpdate,
+    GroupMemberTitleUpdate,
     GroupOut,
     GroupPageSettingOut,
     GroupPageSettingsUpdate,
@@ -229,12 +230,15 @@ def list_members(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
     require_member_page_access(group_id, GroupPage.members, current_user.id, db)
     rows = (
-        db.query(User, GroupMembership.role)
+        db.query(User, GroupMembership.role, GroupMembership.title)
         .join(GroupMembership, GroupMembership.user_id == User.id)
         .filter(GroupMembership.group_id == group_id)
         .all()
     )
-    return [GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=role) for user, role in rows]
+    return [
+        GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=role, title=title)
+        for user, role, title in rows
+    ]
 
 
 @router.post("/{group_id}/members", response_model=GroupMemberOut, status_code=status.HTTP_201_CREATED)
@@ -300,4 +304,26 @@ def update_member_role(
     db.commit()
     user = db.get(User, user_id)
     assert user is not None
-    return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role)
+    return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role, title=membership.title)
+
+
+@router.put("/{group_id}/members/{user_id}/title", response_model=GroupMemberOut)
+def update_member_title(
+    group_id: str,
+    user_id: str,
+    payload: GroupMemberTitleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupMemberOut:
+    """Admin-only, full replace — free-text context shown next to this
+    member on the Members page (e.g. "Soprano 2 — Section leader")."""
+    _get_group_or_404(group_id, db)
+    _require_admin(group_id, current_user, db)
+    membership = _get_membership(group_id, user_id, db)
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a member")
+    membership.title = payload.title
+    db.commit()
+    user = db.get(User, user_id)
+    assert user is not None
+    return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role, title=membership.title)

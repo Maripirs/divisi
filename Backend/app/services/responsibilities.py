@@ -22,19 +22,22 @@ def _coverage_status(needed_count: int, active_count: int) -> str:
     return "covered"
 
 
-def role_signups(date_id: str, role_id: str, db: Session) -> list[tuple[ResponsibilitySignup, User]]:
-    """Every signup for one (date, role) pair, with the signed-up user,
-    oldest first."""
+def role_signups(date_id: str, role_id: str, db: Session) -> list[tuple[ResponsibilitySignup, User | None]]:
+    """Every signup for one (date, role) pair, with its signed-up user if it
+    has one, oldest first. An outer join, not an inner one — a
+    `guest_name`-only signup (an admin-assigned, unenrolled volunteer) has
+    no `user_id` at all, and an inner join would silently drop it from both
+    the signups list and the coverage count."""
     return (
         db.query(ResponsibilitySignup, User)
-        .join(User, ResponsibilitySignup.user_id == User.id)
+        .outerjoin(User, ResponsibilitySignup.user_id == User.id)
         .filter(ResponsibilitySignup.date_id == date_id, ResponsibilitySignup.role_id == role_id)
         .order_by(ResponsibilitySignup.created_at.asc())
         .all()
     )
 
 
-def role_coverage(date_id: str, role: ResponsibilityRole, db: Session) -> tuple[int, str, list[tuple[ResponsibilitySignup, User]]]:
+def role_coverage(date_id: str, role: ResponsibilityRole, db: Session) -> tuple[int, str, list[tuple[ResponsibilitySignup, User | None]]]:
     """`(active_count, status, signups)` for one role on one date."""
     signups = role_signups(date_id, role.id, db)
     active_count = len(signups)

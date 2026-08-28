@@ -119,6 +119,18 @@ def _schedule_out(schedule: ResponsibilitySchedule, db: Session) -> Responsibili
     )
 
 
+def _signup_out(signup: ResponsibilitySignup, user: User | None) -> ResponsibilitySignupOut:
+    """A signup either belongs to a real member (`user` set) or is an
+    admin-assigned name with no account at all (`user` `None`, display name
+    comes from `signup.guest_name` instead) — see `ResponsibilitySignup`'s
+    own docstring for why those two are mutually exclusive."""
+    if user is not None:
+        return ResponsibilitySignupOut(id=signup.id, user_id=user.id, name=user.name, email=user.email, created_at=signup.created_at)
+    return ResponsibilitySignupOut(
+        id=signup.id, user_id=None, name=signup.guest_name or "Unnamed", email=None, created_at=signup.created_at
+    )
+
+
 def _date_out(date: ResponsibilityDate, schedule: ResponsibilitySchedule, db: Session) -> ResponsibilityDateOut:
     role_outs: list[ResponsibilityRoleCoverageOut] = []
     for role in _roles_for_schedule(schedule.id, db):
@@ -130,10 +142,7 @@ def _date_out(date: ResponsibilityDate, schedule: ResponsibilitySchedule, db: Se
                 needed_count=role.needed_count,
                 active_count=active_count,
                 status=coverage_status,
-                signups=[
-                    ResponsibilitySignupOut(id=s.id, user_id=u.id, name=u.name, email=u.email, created_at=s.created_at)
-                    for s, u in signups
-                ],
+                signups=[_signup_out(s, u) for s, u in signups],
             )
         )
     return ResponsibilityDateOut(
@@ -367,9 +376,10 @@ def create_signup(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ResponsibilitySignupOut:
-    """No `user_id` in the body means "sign myself up" (blocked once the
-    date is locked or canceled); an explicit `user_id` for someone else is
-    an admin assignment, which bypasses the lock — matching B13's "admin can
+    """No `user_id`/`name` in the body means "sign myself up" (blocked once
+    the date is locked or canceled); an explicit `user_id` for someone else,
+    or a `name` with no `user_id` for someone with no account at all, is an
+    admin assignment, which bypasses the lock — matching B13's "admin can
     assign/remove any member's signup regardless of lock state"."""
     date = _get_date_or_404(date_id, db)
     schedule = _get_schedule_or_404(date.schedule_id, db)
@@ -381,6 +391,22 @@ def create_signup(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found for this date's schedule")
 
     is_admin = _is_admin(group_id, current_user, db)
+    guest_name = (payload.name or "").strip() or None
+
+    if guest_name is not None:
+        # Admin-only: a volunteer with no Divisi account at all — see
+        # `ResponsibilitySignup`'s own docstring for why this and `user_id`
+        # are mutually exclusive.
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to assign a name")
+        if payload.user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a member or a name, not both")
+        signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=None, guest_name=guest_name)
+        db.add(signup)
+        db.commit()
+        db.refresh(signup)
+        return _signup_out(signup, None)
+
     target_user_id = payload.user_id or current_user.id
     if target_user_id != current_user.id and not is_admin:
         raise HTTPException(
@@ -403,7 +429,7 @@ def create_signup(
     db.refresh(signup)
     user = db.get(User, target_user_id)
     assert user is not None
-    return ResponsibilitySignupOut(id=signup.id, user_id=user.id, name=user.name, email=user.email, created_at=signup.created_at)
+    return _signup_out(signup, user)
 
 
 @router.delete("/responsibilities/signups/{signup_id}", status_code=status.HTTP_204_NO_CONTENT)

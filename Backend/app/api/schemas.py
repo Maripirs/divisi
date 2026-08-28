@@ -99,11 +99,20 @@ class GroupMemberRoleUpdate(BaseModel):
     role: GroupRole
 
 
+class GroupMemberTitleUpdate(BaseModel):
+    """Admin-only, full replace — `None`/omitted clears it. E.g. "Soprano 2
+    — Section leader", shown next to the member on the group's Members
+    page."""
+
+    title: str | None = None
+
+
 class GroupMemberOut(BaseModel):
     user_id: str
     email: EmailStr
     name: str
     role: GroupRole
+    title: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -319,18 +328,22 @@ class ResponsibilityDateUpdate(BaseModel):
 
 
 class ResponsibilitySignupCreate(BaseModel):
-    """`user_id` omitted means "sign myself up"; an explicit `user_id` for
-    someone else requires the admin role (see the route)."""
+    """Exactly one of three shapes: both `user_id`/`name` omitted means "sign
+    myself up"; an explicit `user_id` assigns an existing group member
+    (admin-only); `name` with no `user_id` assigns someone with no account
+    at all — a name only, admin-only, for a volunteer who isn't (and may
+    never be) an enrolled member. See the route for the actual enforcement."""
 
     role_id: str
     user_id: str | None = None
+    name: str | None = None
 
 
 class ResponsibilitySignupOut(BaseModel):
     id: str
-    user_id: str
+    user_id: str | None
     name: str
-    email: str
+    email: str | None
     created_at: datetime
 
 
