@@ -51,16 +51,22 @@
 
 <style>
 	.welcome {
-		padding-bottom: 3rem;
+		/* `.shell`'s own padding (6.5rem top / 5.5rem bottom) reserves room
+		   for the fixed `AppHeader`/`BottomNav` every other page has —
+		   Welcome has neither, so inheriting that padding was the actual
+		   reason this page needed scrolling on a phone screen: ~190px of
+		   pure empty space top and bottom, not real content. */
+		padding-top: calc(1.25rem + env(safe-area-inset-top, 0px));
+		padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+		gap: 0.85rem;
 	}
 
 	.hero {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.3rem;
 		text-align: center;
-		padding-top: 0.5rem;
 	}
 
 	.hero h1 {
@@ -78,10 +84,10 @@
 	}
 
 	.pitch {
-		margin: 0.35rem 0 1rem;
+		margin: 0.35rem 0 0.75rem;
 		max-width: 30ch;
 		font-size: 0.9375rem;
-		line-height: 1.5;
+		line-height: 1.4;
 		color: var(--text);
 	}
 
@@ -95,7 +101,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.7rem;
+		gap: 0.55rem;
 	}
 
 	.steps li {
