@@ -46,11 +46,14 @@ export interface ResponsibilityScheduleOut {
 	roles: ResponsibilityRoleOut[];
 }
 
+/** `user_id`/`email` are null for a signup admin-assigned to someone with
+ * no Divisi account at all — `name` is always the display name either way
+ * (the real member's name, or the free-text name the admin typed). */
 export interface ResponsibilitySignupOut {
 	id: string;
-	user_id: string;
+	user_id: string | null;
 	name: string;
-	email: string;
+	email: string | null;
 	created_at: string;
 }
 
@@ -81,6 +84,9 @@ export interface GroupMemberOut {
 	email: string;
 	name: string;
 	role: GroupRole;
+	/** Free-text context shown next to this member on the Members page,
+	 * e.g. "Soprano 2 — Section leader" — admin-editable, null means unset. */
+	title: string | null;
 }
 
 export interface HomeworkOut {

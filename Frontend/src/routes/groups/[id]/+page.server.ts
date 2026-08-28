@@ -249,6 +249,28 @@ export const actions: Actions = {
 		return { success: true, form: 'updateMemberRole' };
 	},
 
+	// Admin-only, full replace — free-text context next to a member on the
+	// Members page (e.g. "Soprano 2 — Section leader").
+	updateMemberTitle: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		const title = String(form.get('title') ?? '').trim();
+		if (!userId) return fail(400, { error: 'Missing member', form: 'updateMemberTitle' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/members/${userId}/title`,
+				{ method: 'PUT', body: JSON.stringify({ title: title || null }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'updateMemberTitle' });
+			throw err;
+		}
+		return { success: true, form: 'updateMemberTitle' };
+	},
+
 	// Any member (including an admin, as long as they're not the last one
 	// — the Backend's own 409 covers that) can leave a group they belong
 	// to. Redirects to `/home` on success since staying on this page no
@@ -429,21 +451,27 @@ export const actions: Actions = {
 		return { success: true, form: 'updateDate' };
 	},
 
-	// B13: no `userId` in the form means "sign myself up" (member
-	// self-signup); an explicit `userId` is an admin assigning someone else
-	// (the Backend route enforces the admin check server-side either way).
+	// B13: no `userId`/`name` in the form means "sign myself up" (member
+	// self-signup); an explicit `userId` is an admin assigning an existing
+	// member; a `name` with no `userId` is an admin assigning someone with
+	// no Divisi account at all (the Backend route enforces both admin
+	// checks server-side either way).
 	signUpResponsibility: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const dateId = String(form.get('dateId') ?? '');
 		const roleId = String(form.get('roleId') ?? '');
 		const userId = String(form.get('userId') ?? '').trim();
+		const name = String(form.get('name') ?? '').trim();
 		if (!dateId || !roleId) return fail(400, { error: 'Missing date or role' });
 
 		try {
 			await backendFetch(
 				locals.token,
 				`/responsibilities/dates/${dateId}/signups`,
-				{ method: 'POST', body: JSON.stringify({ role_id: roleId, user_id: userId || undefined }) },
+				{
+					method: 'POST',
+					body: JSON.stringify({ role_id: roleId, user_id: userId || undefined, name: name || undefined })
+				},
 				fetch
 			);
 		} catch (err) {

@@ -67,6 +67,11 @@
 	// Members tab: which member's row (by id) has its "Remove" button
 	// expanded into a confirm/cancel pair — at most one at a time.
 	let confirmingRemoveMemberId = $state<string | null>(null);
+	// Members tab: which member's row (by id) has its title swapped for the
+	// inline edit form — at most one at a time, same pattern as above.
+	let editingTitleUserId = $state<string | null>(null);
+	let titleDraft = $state('');
+	let savingTitle = $state(false);
 	// Responsibilities admin panel: same click-to-confirm pattern, keyed by
 	// schedule id, for the destructive "Delete responsibility" action.
 	let confirmingDeleteScheduleId = $state<string | null>(null);
@@ -245,7 +250,43 @@
 				<div class="member-row">
 					<div class="member-identity">
 						<span>{member.name}{member.role === 'admin' ? ' (Admin)' : ''}</span>
-						<span class="dim">{member.email}</span>
+						{#if editingTitleUserId === member.user_id}
+							<form
+								method="POST"
+								action="?/updateMemberTitle"
+								use:enhance={() => {
+									savingTitle = true;
+									return async ({ update }) => {
+										savingTitle = false;
+										editingTitleUserId = null;
+										await update();
+									};
+								}}
+								class="inline-edit-row"
+							>
+								<input type="hidden" name="userId" value={member.user_id} />
+								<input name="title" bind:value={titleDraft} placeholder="e.g. Soprano 2 — Section leader" />
+								<button type="submit" class="text-link" disabled={savingTitle}>Save</button>
+								<button type="button" class="text-link" onclick={() => (editingTitleUserId = null)}>Cancel</button>
+							</form>
+						{:else}
+							{#if member.title}
+								<span class="dim">{member.title}</span>
+							{/if}
+							<span class="dim">{member.email}</span>
+							{#if mode === 'admin'}
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => {
+										titleDraft = member.title ?? '';
+										editingTitleUserId = member.user_id;
+									}}
+								>
+									{member.title ? 'Edit title' : '+ Add title'}
+								</button>
+							{/if}
+						{/if}
 					</div>
 					{#if mode === 'admin' && member.user_id !== data.user.id}
 						{#if confirmingRemoveMemberId === member.user_id}
@@ -287,6 +328,9 @@
 				<p class="error">{form.error}</p>
 			{/if}
 			{#if form?.form === 'updateMemberRole' && form?.error}
+				<p class="error">{form.error}</p>
+			{/if}
+			{#if form?.form === 'updateMemberTitle' && form?.error}
 				<p class="error">{form.error}</p>
 			{/if}
 		</section>
@@ -503,14 +547,27 @@
 								</div>
 							{/each}
 							{#if mode === 'admin'}
-								<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
-									<input type="hidden" name="dateId" value={d.id} />
-									<input type="hidden" name="roleId" value={role.role_id} />
-									<select name="userId">
-										{#each data.members as m (m.user_id)}<option value={m.user_id}>{m.name}</option>{/each}
-									</select>
-									<button type="submit" class="text-link">Assign</button>
-								</form>
+								<div class="assign-group">
+									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
+										<input type="hidden" name="dateId" value={d.id} />
+										<input type="hidden" name="roleId" value={role.role_id} />
+										<select name="userId">
+											{#each data.members as m (m.user_id)}<option value={m.user_id}>{m.name}</option>{/each}
+										</select>
+										<button type="submit" class="text-link">Assign</button>
+									</form>
+									<!-- For someone who isn't (and may never be) a group
+									     member — a name only, no account. See the Backend's
+									     `ResponsibilitySignup` docstring for why this and the
+									     member picker above are two separate forms rather
+									     than one with both fields, which the Backend rejects. -->
+									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
+										<input type="hidden" name="dateId" value={d.id} />
+										<input type="hidden" name="roleId" value={role.role_id} />
+										<input name="name" placeholder="Or type a name" />
+										<button type="submit" class="text-link">Assign</button>
+									</form>
+								</div>
 							{:else if !alreadySignedUp && !d.locked && !d.canceled}
 								<form method="POST" action="?/signUpResponsibility" use:enhance>
 									<input type="hidden" name="dateId" value={d.id} />
@@ -927,6 +984,12 @@
 		padding-top: 0;
 	}
 
+	.assign-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
 	.assign-row {
 		display: flex;
 		align-items: center;
@@ -934,7 +997,10 @@
 		gap: 0.5rem;
 	}
 
-	.assign-row select {
+	.assign-row select,
+	.assign-row input {
+		flex: 1 1 auto;
+		min-width: 0;
 		font: inherit;
 		font-size: 0.875rem;
 		border: 1px solid var(--border);
