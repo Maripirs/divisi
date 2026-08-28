@@ -7,8 +7,9 @@ import {
 	type MIDILyricEvent,
 	type MIDINote,
 	type MIDITimeSignature,
+	type MixPart,
 	type ParsedMIDI,
-	type VoicePart
+	type VoicePartInfo
 } from './types.ts';
 
 /**
@@ -44,32 +45,38 @@ export function parseMidiFile(bytes: ArrayLike<number>): ParsedMIDI {
 	const tickToMs = makeTickToMsConverter(tempoChanges, ticksPerBeat);
 
 	const rawTracks = noteTrackEventLists.map(readTrack);
-	const assignments = assignVoiceParts(
+	const { trackParts, parts } = assignVoiceParts(
 		rawTracks.map((t) => ({ name: t.name, pitches: t.notes.map((n) => n.pitch) }))
 	);
+	// Accompaniment is always a single, unsplit bucket for everything
+	// `assignVoiceParts` didn't confidently map to a voice — present even
+	// when no track ends up backing, so the mixer always has an
+	// accompaniment row.
+	const accompanimentPart: VoicePartInfo = { id: 'accompaniment', base: 'accompaniment', label: 'Accompaniment' };
+	const allParts = [...parts, accompanimentPart];
 
 	const notes: MIDINote[] = [];
 	const backingNotes: BackingNote[] = [];
 	const lyrics: MIDILyricEvent[] = [];
-	const voicePartChannels: Partial<Record<VoicePart, number[]>> = {};
+	const voicePartChannels: Partial<Record<MixPart, number[]>> = {};
 	for (const [index, raw] of rawTracks.entries()) {
-		const voicePart = assignments[index];
+		const partId = trackParts[index];
 		for (const note of raw.notes) {
 			const startMs = tickToMs(note.startTick);
 			const endMs = tickToMs(note.endTick);
 			const durationMs = Math.max(0, endMs - startMs);
-			if (voicePart) {
-				notes.push({ pitch: note.pitch, startMs, durationMs, voicePart });
+			if (partId) {
+				notes.push({ pitch: note.pitch, startMs, durationMs, partId });
 			} else {
 				backingNotes.push({ pitch: note.pitch, startMs, durationMs });
 			}
 		}
-		if (voicePart) {
+		if (partId) {
 			for (const lyric of raw.lyrics) {
-				lyrics.push({ text: lyric.text, timeMs: tickToMs(lyric.tick), voicePart });
+				lyrics.push({ text: lyric.text, timeMs: tickToMs(lyric.tick), partId });
 			}
-			const existing = voicePartChannels[voicePart] ?? [];
-			voicePartChannels[voicePart] = [...new Set([...existing, ...raw.channels])];
+			const existing = voicePartChannels[partId] ?? [];
+			voicePartChannels[partId] = [...new Set([...existing, ...raw.channels])];
 		}
 	}
 	notes.sort((a, b) => a.startMs - b.startMs);
@@ -88,7 +95,8 @@ export function parseMidiFile(bytes: ArrayLike<number>): ParsedMIDI {
 		tempoBPM: bpm,
 		timeSignature,
 		keySignatureFifths,
-		trackVoiceParts: assignments,
+		parts: allParts,
+		trackParts,
 		voicePartChannels
 	};
 }

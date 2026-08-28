@@ -1,13 +1,13 @@
-import {
-	MIX_PARTS,
-	VOICE_PARTS,
-	type MIDILyricEvent,
-	type MIDINote,
-	type MIDITimeSignature,
-	type MixPart,
-	type ParsedMIDI,
-	type VisualState,
-	type VoicePart
+import type {
+	MIDILyricEvent,
+	MIDINote,
+	MIDITimeSignature,
+	MixBase,
+	MixPart,
+	ParsedMIDI,
+	VisualState,
+	VoicePart,
+	VoicePartInfo
 } from './types.ts';
 
 /**
@@ -30,8 +30,8 @@ import {
  * concert-hall-accurate.
  */
 export class NoNotesForVoicePartError extends Error {
-	constructor(voicePart: VoicePart) {
-		super(`No notes for voice part: ${voicePart}`);
+	constructor(part: MixPart) {
+		super(`No notes for voice part: ${part}`);
 	}
 }
 
@@ -57,37 +57,40 @@ export interface ConvertResult {
  * `noteXML`). Callers can override it to match the active app theme. */
 export const MUTED_NOTE_COLOR = '#686b7a';
 
-export function convert(parsed: ParsedMIDI, voicePart: VoicePart): ConvertResult {
-	if (notesFor(parsed, voicePart).length === 0) throw new NoNotesForVoicePartError(voicePart);
+export function convert(parsed: ParsedMIDI, partId: MixPart): ConvertResult {
+	const info = parsed.parts.find((p) => p.id === partId);
+	if (!info || notesForId(parsed, partId).length === 0) throw new NoNotesForVoicePartError(partId);
 
 	const unitMs = msPerUnit(parsed.tempoBPM);
 	const unitsPerMeasure = unitsPerMeasureFor(parsed.timeSignature);
-	const notes = notesForPart(parsed, voicePart, unitMs);
+	const notes = notesForPart(parsed, info, unitMs);
 	const measureUnitSpans = measuresFor(notes, unitMs, unitsPerMeasure);
 	const useFlats = parsed.keySignatureFifths < 0;
-	const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, voicePart);
+	const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, info.base);
 
 	const body = bodyXML(measureUnitSpans, useFlats, attributes);
-	const xml = scoreXML([{ id: 'P1', name: capitalize(voicePart), body }]);
+	const xml = scoreXML([{ id: 'P1', name: info.label, body }]);
 	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE };
 }
 
 /**
- * Converts all four voice parts into one multi-part score, one `<part>` per
- * voice in SATB order, all padded to the same shared measure count so
- * barlines line up vertically across staves — needed for the flat and
- * highlighted display modes, where every part is visible at once. A part
- * with no notes at all in the file still gets its full share of rest-only
- * measures rather than being omitted, so every mode shows a consistent SATB
- * grid regardless of what a given file actually uses. `convertAllParts`
- * is now a preset wrapper around `convertVisualParts`, which can omit
- * hidden voices and tint muted voices with the active theme color.
- */
+ * Converts every voice part into one multi-part score, one `<part>` per
+ * mixer bucket in `parsed.parts` order, all padded to the same shared
+ * measure count so barlines line up vertically across staves — needed for
+ * the flat and highlighted display modes, where every part is visible at
+ * once. A part with no notes at all in the file still gets its full share
+ * of rest-only measures rather than being omitted, so every mode shows a
+ * consistent grid regardless of what a given file actually uses.
+ * `convertAllParts` is now a preset wrapper around `convertVisualParts`,
+ * which can omit hidden voices and tint muted voices with the active theme
+ * color. `highlightedPart` is base-level — every desk of a split voice
+ * highlights together, since "my part" is a file-independent choice (see
+ * `+page.svelte`'s mix presets, which follow the same rule). */
 export function convertAllParts(parsed: ParsedMIDI, highlightedPart?: VoicePart, mutedNoteColor = MUTED_NOTE_COLOR): ConvertResult {
 	const visualStates = Object.fromEntries(
-		MIX_PARTS.map((voicePart) => [
-			voicePart,
-			highlightedPart && voicePart !== highlightedPart ? 'muted' : 'active'
+		parsed.parts.map((part) => [
+			part.id,
+			highlightedPart && part.base !== highlightedPart ? 'muted' : 'active'
 		])
 	) as Record<MixPart, VisualState>;
 	return convertVisualParts(parsed, visualStates, mutedNoteColor);
@@ -101,14 +104,14 @@ export function convertVisualParts(
 	const unitMs = msPerUnit(parsed.tempoBPM);
 	const unitsPerMeasure = unitsPerMeasureFor(parsed.timeSignature);
 	const useFlats = parsed.keySignatureFifths < 0;
-	const visibleParts = MIX_PARTS.filter((part) => visualStates[part] !== 'off');
+	const visibleParts = parsed.parts.filter((part) => visualStates[part.id] !== 'off');
 
 	if (visibleParts.length === 0) throw new Error('No visible voice parts selected.');
 
 	const measureUnitSpansByPart = new Map<MixPart, MeasurePiece[][]>();
 	for (const part of visibleParts) {
 		const notes = notesForPart(parsed, part, unitMs);
-		measureUnitSpansByPart.set(part, measuresFor(notes, unitMs, unitsPerMeasure));
+		measureUnitSpansByPart.set(part.id, measuresFor(notes, unitMs, unitsPerMeasure));
 	}
 
 	const sharedMeasureCount = Math.max(1, ...[...measureUnitSpansByPart.values()].map((m) => m.length));
@@ -116,22 +119,22 @@ export function convertVisualParts(
 		{ durationUnits: unitsPerMeasure, pitches: null, lyric: null, continuesFromPrevious: false, continuesToNext: false }
 	];
 	for (const part of visibleParts) {
-		const spans = measureUnitSpansByPart.get(part)!;
+		const spans = measureUnitSpansByPart.get(part.id)!;
 		while (spans.length < sharedMeasureCount) spans.push(restMeasure);
 	}
 
 	const parts = visibleParts.map((part, index) => {
-		const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, part);
-		const color = visualStates[part] === 'muted' ? mutedNoteColor : undefined;
-		const body = bodyXML(measureUnitSpansByPart.get(part)!, useFlats, attributes, color);
-		return { id: `P${index + 1}`, name: partLabel(part), body };
+		const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, part.base);
+		const color = visualStates[part.id] === 'muted' ? mutedNoteColor : undefined;
+		const body = bodyXML(measureUnitSpansByPart.get(part.id)!, useFlats, attributes, color);
+		return { id: `P${index + 1}`, name: part.label, body };
 	});
 
 	return { xml: scoreXML(parts), msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE };
 }
 
-function notesFor(parsed: ParsedMIDI, voicePart: VoicePart): MIDINote[] {
-	return parsed.notes.filter((n) => n.voicePart === voicePart).sort((a, b) => a.startMs - b.startMs);
+function notesForId(parsed: ParsedMIDI, partId: MixPart): MIDINote[] {
+	return parsed.notes.filter((n) => n.partId === partId).sort((a, b) => a.startMs - b.startMs);
 }
 
 type TimedNote = Pick<MIDINote, 'pitch' | 'startMs' | 'durationMs'> & { lyric: string | null };
@@ -139,13 +142,13 @@ type TimedNote = Pick<MIDINote, 'pitch' | 'startMs' | 'durationMs'> & { lyric: s
 /** Accompaniment has no lyrics of its own (see `MIDILyricEvent`, which is
  * always attached to a voice part), so its notes pass through untouched;
  * named voice parts get theirs paired up by `attachLyrics`. */
-function notesForPart(parsed: ParsedMIDI, part: MixPart, unitMs: number): TimedNote[] {
-	if (part === 'accompaniment') return parsed.backingNotes.map((n) => ({ ...n, lyric: null }));
-	return attachLyrics(notesFor(parsed, part), lyricsFor(parsed, part), unitMs);
+function notesForPart(parsed: ParsedMIDI, part: VoicePartInfo, unitMs: number): TimedNote[] {
+	if (part.base === 'accompaniment') return parsed.backingNotes.map((n) => ({ ...n, lyric: null }));
+	return attachLyrics(notesForId(parsed, part.id), lyricsForId(parsed, part.id), unitMs);
 }
 
-function lyricsFor(parsed: ParsedMIDI, voicePart: VoicePart): MIDILyricEvent[] {
-	return parsed.lyrics.filter((l) => l.voicePart === voicePart);
+function lyricsForId(parsed: ParsedMIDI, partId: MixPart): MIDILyricEvent[] {
+	return parsed.lyrics.filter((l) => l.partId === partId);
 }
 
 /**
@@ -192,15 +195,6 @@ function unitsPerMeasureFor(timeSignature: MIDITimeSignature): number {
 function measuresFor(notes: TimedNote[], unitMs: number, unitsPerMeasure: number): MeasurePiece[][] {
 	const timeline = buildTimeline(notes, unitMs, unitsPerMeasure);
 	return splitAtMeasureBoundaries(timeline, unitsPerMeasure);
-}
-
-function partLabel(part: MixPart): string {
-	if (part === 'accompaniment') return 'Accomp.';
-	return capitalize(part);
-}
-
-function capitalize(s: string): string {
-	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // MARK: - Grid quantization
@@ -391,11 +385,11 @@ function decompose(units: number): Chunk[] {
 
 // MARK: - XML emission
 
-function attributesXML(timeSignature: MIDITimeSignature, keySignatureFifths: number, part: MixPart): string {
+function attributesXML(timeSignature: MIDITimeSignature, keySignatureFifths: number, base: MixBase): string {
 	let clefSign: string;
 	let clefLine: number;
 	let clefOctaveChange: number | null;
-	switch (part) {
+	switch (base) {
 		case 'soprano':
 		case 'alto':
 			clefSign = 'G';

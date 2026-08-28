@@ -52,7 +52,10 @@ export const PIECES: Piece[] = [
 		composer: 'Brahms',
 		collection: 'sfcc',
 		pdfUrl: '/fixtures/SFCC/Brahms_Der_Abend.pdf',
-		load: () => loadMusicXml('/fixtures/SFCC/Brahms_Der_Abend.musicxml')
+		// No <sound tempo> in this export. Printed marking "Ruhig", ♩ = 56-62;
+		// concert timings run 4:30-5:00 and spacious/soloistic — using the
+		// low end.
+		load: () => loadMusicXml('/fixtures/SFCC/Brahms_Der_Abend.musicxml', 58)
 	},
 	{
 		id: 'proserpine',
@@ -60,7 +63,10 @@ export const PIECES: Piece[] = [
 		composer: 'Coleridge-Taylor',
 		collection: 'sfcc',
 		pdfUrl: '/fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf',
-		load: () => loadMusicXml('/fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.musicxml')
+		// No <sound tempo> in this export and no printed number found. ♩ =
+		// 76-84 estimated from recordings (2:29-4:00 range); midpoint lines
+		// up with a ~2:45 concert target.
+		load: () => loadMusicXml('/fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.musicxml', 80)
 	},
 	{
 		id: 'les-djinns',
@@ -68,7 +74,9 @@ export const PIECES: Piece[] = [
 		composer: 'Fauré',
 		collection: 'sfcc',
 		pdfUrl: '/fixtures/SFCC/Faure__-_Les_djinns__Op._12.pdf',
-		load: () => loadMusicXml('/fixtures/SFCC/Faure__-_Les_djinns__Op._12.musicxml')
+		// No <sound tempo> in this export. ♩ = 138 per the Mutopia MIDI
+		// source, consistent with the ~4:05 Plasson recording.
+		load: () => loadMusicXml('/fixtures/SFCC/Faure__-_Les_djinns__Op._12.musicxml', 138)
 	},
 	{
 		id: 'eglamore',
@@ -76,7 +84,11 @@ export const PIECES: Piece[] = [
 		composer: 'Gardiner',
 		collection: 'sfcc',
 		pdfUrl: '/fixtures/SFCC/GARDINER_Eglamore.pdf',
-		load: () => loadMusicXml('/fixtures/SFCC/GARDINER_Eglamore.musicxml')
+		// No <sound tempo> in this export. Printed marking is dotted-quarter
+		// = 88-96 (6/8); MusicXML tempo is always quarter-notes/min, so
+		// ×1.5 → 132-144. Leaned toward the faster/jaunty end per the
+		// source ballad's character.
+		load: () => loadMusicXml('/fixtures/SFCC/GARDINER_Eglamore.musicxml', 141)
 	},
 	{
 		id: 'the-fays-song',
@@ -84,13 +96,31 @@ export const PIECES: Piece[] = [
 		composer: 'Massi',
 		collection: 'sfcc',
 		pdfUrl: '/fixtures/SFCC/The_Fay_s_Song_Massi.pdf',
-		load: () => loadMusicXml('/fixtures/SFCC/The_Fay_s_Song_Massi.musicxml')
+		// No <sound tempo> in this export and no printed number/recording
+		// found. ♩ = 92-104 estimated; leaned forward, light character.
+		load: () => loadMusicXml('/fixtures/SFCC/The_Fay_s_Song_Massi.musicxml', 100)
 	}
 ];
 
-export const DEMO_PIECES = PIECES.filter((piece) => piece.collection === 'demo');
+// Lacrymosa hidden from the library listing (still reachable by direct URL
+// via `getPiece`) — temporarily pulled from view.
+export const DEMO_PIECES = PIECES.filter(
+	(piece) => piece.collection === 'demo' && piece.id !== 'lacrymosa'
+);
 export const SFCC_PIECES = PIECES.filter((piece) => piece.collection === 'sfcc');
 
 export function getPiece(id: string): Piece | undefined {
 	return PIECES.find((p) => p.id === id);
+}
+
+/** Matches a real Backend `Piece.title` (a group's rehearsal track, from
+ * `/library/pieces`) against this bundled registry by title, so a track
+ * that happens to be one of these pieces gets a working Practice button
+ * instead of the "not wired up yet" note — see Frontend/plan.md's backlog
+ * item on wiring the player to real Backend pieces generally, which this
+ * doesn't attempt (still the bundled fixture, not the Backend's own
+ * uploaded file). Case-sensitive exact match is enough for now; nothing
+ * upstream normalizes titles otherwise. */
+export function getPieceByTitle(title: string): Piece | undefined {
+	return PIECES.find((p) => p.title === title);
 }

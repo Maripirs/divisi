@@ -1,0 +1,387 @@
+/* Shared layout/component classes for the non-player "app shell" screens
+   (home, groups, homework, settings, admin). Kept separate from the global
+   `app.css` reset+tokens so the already-shipped player/library pages don't
+   pick up styles they never asked for — this file is opt-in per route via
+   `import '$lib/styles/shell.css'`. Everything here reads from app.css's
+   tokens, nothing here defines a color/radius/shadow of its own. */
+
+.shell {
+	width: 100%;
+	max-width: 640px;
+	margin: 0 auto;
+	padding: calc(6.5rem + env(safe-area-inset-top)) 1.1rem calc(5.5rem + env(safe-area-inset-bottom));
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+}
+
+.shell-header {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+}
+
+.shell-header h1 {
+	margin: 0;
+	font-size: 1.375rem;
+	font-weight: 800;
+	color: var(--text);
+}
+
+/* ---------- App shell header (AppHeader.svelte) ---------- */
+/* Divisi brand top-left + Settings top-right, page title below — see
+   UX_WIREFRAME.md's "Navigation And Brand" direction. Used in place of
+   `.shell-header` on the bottom-nav screens (Home/Library/Groups/a
+   group's own page/Settings). */
+
+.app-shell-header {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 10;
+	background: var(--surface);
+	border-bottom: 1px solid var(--border);
+	box-shadow: var(--shadow);
+}
+
+.app-shell-header-inner {
+	max-width: 640px;
+	margin: 0 auto;
+	padding: calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.75rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.brand-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.brand,
+.settings-link {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+	color: var(--text-muted);
+	text-decoration: none;
+	font-size: 0.8125rem;
+	font-weight: 700;
+}
+
+.brand {
+	color: var(--text);
+}
+
+.brand span {
+	font-size: 0.9375rem;
+	font-weight: 800;
+}
+
+.settings-link:hover,
+.brand:hover {
+	color: var(--accent);
+}
+
+.settings-link svg {
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.page-title {
+	margin: 0;
+	font-size: 1.375rem;
+	font-weight: 800;
+	color: var(--text);
+}
+
+.crumbs {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--text-muted);
+}
+
+.crumbs a {
+	color: inherit;
+	text-decoration: none;
+}
+
+.crumbs a:hover {
+	color: var(--accent);
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow);
+	padding: 0.9rem 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.card--highlight {
+	background: var(--surface-2);
+	border-color: var(--accent);
+}
+
+.card-eyebrow {
+	margin: 0;
+	font-size: 0.6875rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.card-title {
+	margin: 0;
+	font-size: 1rem;
+	font-weight: 700;
+	color: var(--text);
+}
+
+.card-meta {
+	margin: 0;
+	font-size: 0.8125rem;
+	color: var(--text-muted);
+}
+
+.card-note {
+	margin: 0;
+	font-size: 0.8125rem;
+	font-style: italic;
+	color: var(--text-muted);
+}
+
+/* ---------- Buttons ---------- */
+
+.btn-row {
+	display: flex;
+	gap: 0.5rem;
+	flex-wrap: wrap;
+}
+
+.btn {
+	min-height: 2.25rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.4rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-full);
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	font-size: 0.8125rem;
+	font-weight: 700;
+	text-decoration: none;
+	padding: 0 0.9rem;
+	cursor: pointer;
+}
+
+.btn:hover {
+	border-color: var(--accent);
+	background: var(--surface-2);
+}
+
+.btn-primary {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-contrast);
+}
+
+.btn-primary:hover {
+	background: var(--accent-hover);
+	border-color: var(--accent-hover);
+}
+
+.btn-danger {
+	color: var(--danger);
+	border-color: var(--danger);
+	background: transparent;
+}
+
+.btn-danger:hover {
+	background: color-mix(in srgb, var(--danger) 12%, var(--surface) 88%);
+	border-color: var(--danger);
+}
+
+.btn-block {
+	width: 100%;
+}
+
+/* ---------- Tabs / segmented pickers ---------- */
+
+.tabs {
+	display: flex;
+	gap: 0.4rem;
+	flex-wrap: wrap;
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 0.6rem;
+}
+
+.tab {
+	border: 1px solid var(--border);
+	border-radius: var(--radius-full);
+	background: transparent;
+	color: var(--text-muted);
+	font: inherit;
+	font-size: 0.8125rem;
+	font-weight: 700;
+	padding: 0.3rem 0.75rem;
+	cursor: pointer;
+}
+
+.tab.active {
+	background: var(--surface-2);
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+/* ---------- Lists ---------- */
+
+.list-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.5rem;
+	padding: 0.4rem 0;
+	border-bottom: 1px solid var(--border);
+	font-size: 0.875rem;
+	color: var(--text);
+}
+
+.list-row:last-child {
+	border-bottom: none;
+}
+
+.list-row .dim {
+	color: var(--text-muted);
+	font-size: 0.8125rem;
+	white-space: nowrap;
+}
+
+.list-row-link {
+	color: inherit;
+	text-decoration: none;
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.5rem;
+	flex: 1;
+}
+
+.list-row-link:hover {
+	color: var(--accent);
+}
+
+/* ---------- Form fields ---------- */
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.field label {
+	font-size: 0.6875rem;
+	font-weight: 700;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.field select,
+.field input,
+.field textarea {
+	font: inherit;
+	font-size: 0.875rem;
+	border: 1px solid var(--border);
+	background: var(--surface);
+	color: var(--text);
+	border-radius: var(--radius-md);
+	padding: 0.5rem 0.6rem;
+}
+
+.field textarea {
+	resize: vertical;
+	min-height: 4.5rem;
+}
+
+.checkline {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-size: 0.875rem;
+	color: var(--text);
+	padding: 0.2rem 0;
+	cursor: pointer;
+}
+
+.checkline input {
+	width: 16px;
+	height: 16px;
+	accent-color: var(--accent);
+}
+
+/* ---------- Bottom nav ---------- */
+
+.bottom-nav {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	justify-content: space-around;
+	background: var(--surface);
+	border-top: 1px solid var(--border);
+	padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom));
+	z-index: 10;
+}
+
+.bottom-nav a {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.2rem;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-decoration: none;
+	padding: 0.2rem 0.6rem;
+}
+
+.bottom-nav a svg {
+	width: 20px;
+	height: 20px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.bottom-nav a.active {
+	color: var(--accent);
+}
+
+/* ---------- Empty state ---------- */
+
+.empty {
+	text-align: center;
+	color: var(--text-muted);
+	font-size: 0.875rem;
+	padding: 1.5rem 1rem;
+}

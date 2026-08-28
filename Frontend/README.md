@@ -64,7 +64,7 @@ npx wrangler deploy
 ```
 
 `wrangler deploy` does not build for you — it just uploads whatever is
-already in `.svelte-kit/cloudflare`, so always run `npm run build`
+already in `.svelte-kit/cloudflare`, so alwais ys run `npm run build`
 immediately before it to avoid shipping a stale build. First-time setup on
 a new machine needs `npx wrangler login` (opens a
 browser OAuth flow) — `wrangler whoami` confirms you're authenticated.

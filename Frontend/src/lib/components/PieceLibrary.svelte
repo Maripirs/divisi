@@ -20,21 +20,19 @@
 				<h2>{piece.title}</h2>
 				<p>{piece.composer}</p>
 			</div>
-			<div class="piece-actions">
-				<button class="piece-action piece-action--primary" onclick={() => openPlayer(piece.id)}>
-					<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-						<path d="M8 5v14l11-7z" />
-					</svg>
-					<span>Player</span>
-				</button>
-				<a class="piece-action" href={piece.pdfUrl} target="_blank" rel="noreferrer">
-					<svg viewBox="0 0 24 24" aria-hidden="true">
-						<path d="M7 3h7l5 5v13H7z" />
-						<path d="M14 3v5h5" />
-					</svg>
-					<span>PDF</span>
-				</a>
-			</div>
+			<!-- No separate PDF action here — the player itself has a
+			     PDF-vs-score view toggle (Practice Setup > View), so a
+			     second PDF entry point on the library card was
+			     redundant. -->
+			<button
+				class="piece-action piece-action--primary"
+				onclick={() => openPlayer(piece.id)}
+				aria-label="Open player"
+			>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M8 5v14l11-7z" />
+				</svg>
+			</button>
 		</li>
 	{/each}
 </ul>
@@ -56,7 +54,9 @@
 		box-shadow: var(--shadow);
 		padding: 1.1rem;
 		display: flex;
-		flex-direction: column;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
 		gap: 1rem;
 	}
 
@@ -79,25 +79,18 @@
 		color: var(--text-muted);
 	}
 
-	.piece-actions {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.5rem;
-	}
-
 	.piece-action {
-		min-height: 2.25rem;
+		flex: 0 0 auto;
+		width: 2.25rem;
+		height: 2.25rem;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.4rem;
 		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
+		border-radius: 50%;
 		background: var(--surface);
 		color: var(--text);
 		font: inherit;
-		font-size: 0.8125rem;
-		font-weight: 700;
 		text-decoration: none;
 		cursor: pointer;
 	}
@@ -118,16 +111,9 @@
 	}
 
 	.piece-action svg {
-		width: 16px;
-		height: 16px;
+		width: 20px;
+		height: 20px;
 		flex: 0 0 auto;
-	}
-
-	.piece-action:not(.piece-action--primary) svg {
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2;
-		stroke-linecap: round;
-		stroke-linejoin: round;
+		margin-left: -0.1rem;
 	}
 </style>

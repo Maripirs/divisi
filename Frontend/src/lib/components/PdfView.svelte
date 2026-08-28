@@ -18,10 +18,20 @@
 	 */
 	let {
 		pdfUrl,
-		zoom = $bindable(1)
+		zoom = $bindable(1),
+		active = true
 	}: {
 		pdfUrl: string;
 		zoom?: number;
+		/** Whether this view is the one currently shown (vs. sitting behind a
+		 * `display: none` sibling pane, per the parent route's "both panes
+		 * stay mounted" comment). A `ResizeObserver` never delivers an entry
+		 * for a target with no box while hidden, so if this loads while the
+		 * PDF pane isn't the active tab, `container.clientWidth` is 0 and
+		 * `computeBaseScaleAndRender` bails out — nothing else would ever
+		 * retry it once the tab is switched. Re-checking on the `false` ->
+		 * `true` transition covers that case. */
+		active?: boolean;
 	} = $props();
 
 	const MIN_ZOOM = 0.5;
@@ -95,11 +105,17 @@
 			doc = loaded;
 			pageCount = loaded.numPages;
 			canvasRefs = [];
-			// Wait for the {#each} below to actually create the <canvas>
-			// elements before rendering into them.
+			// The {#each} that creates the <canvas> elements only mounts once
+			// `loading` is false (see the template's {#if loading}/{:else}) —
+			// so `loading` has to flip first, then `tick()` waits for that DOM
+			// update to actually land, before `canvasRefs` has anything real
+			// in it to render into. Doing this in the other order (as before)
+			// left every page's `canvasRefs[i]` undefined on first load, so
+			// `renderAllPages` silently skipped all of them and the PDF only
+			// appeared once some later action (e.g. a zoom click) re-ran it.
+			loading = false;
 			await tick();
 			await computeBaseScaleAndRender(loaded);
-			loading = false;
 		} catch (e) {
 			loadError = String(e);
 			loading = false;
@@ -136,6 +152,21 @@
 		level;
 		if (!doc || loading) return;
 		void renderAllPages(doc);
+	});
+
+	// See the `active` prop doc above: retry the layout-dependent
+	// computation on the `false` -> `true` transition, since a load that
+	// finished while this pane was hidden never got a real width to work
+	// with. `wasActive` is plain (not `$state`) bookkeeping, not something
+	// this effect should itself re-run on.
+	// svelte-ignore state_referenced_locally
+	let wasActive = active;
+	$effect(() => {
+		const isActive = active;
+		if (isActive && !wasActive && doc && !loading) {
+			void computeBaseScaleAndRender(doc);
+		}
+		wasActive = isActive;
 	});
 
 	function zoomBy(delta: number): void {

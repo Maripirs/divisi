@@ -9,11 +9,40 @@
 export const VOICE_PARTS = ['soprano', 'alto', 'tenor', 'bass'] as const;
 export type VoicePart = (typeof VOICE_PARTS)[number];
 
-/** Mixer buckets. The four SATB parts stay individually controllable, while
- * anything that is not a vocal staff/track is collapsed into one
- * accompaniment bucket. */
+/** The five *base* mixer buckets every parsed piece is built from before any
+ * divisi-desk splitting: the four SATB voices plus one collapsed
+ * accompaniment bucket for anything that is not a vocal staff/track. Fixed
+ * and file-independent — this is what account-wide state
+ * (`playerDefaults.ts`, the Settings page's default-voice picker) is keyed
+ * by, since "I sing soprano" doesn't depend on which file is open. Contrast
+ * with `MixPart` below, which is the per-file, possibly-split id a specific
+ * piece actually mixes by. */
 export const MIX_PARTS = [...VOICE_PARTS, 'accompaniment'] as const;
-export type MixPart = (typeof MIX_PARTS)[number];
+export type MixBase = (typeof MIX_PARTS)[number];
+
+/** A mixer bucket's identity within one *parsed* piece. Not a fixed set —
+ * `'soprano'` for a file that doesn't split that voice, `'soprano-1'`/
+ * `'soprano-2'` for one that does (see `notation/voicePartAssignment.ts`),
+ * or `'accompaniment'`. `ParsedMIDI.parts` is the source of truth for which
+ * ids exist in a given piece; this alias just makes `Record<MixPart, X>`
+ * read clearly at the (many) call sites keyed by mixer bucket. */
+export type MixPart = string;
+
+/** One mixer bucket's fixed metadata for one parsed piece: which base voice
+ * it belongs to, its divisi-desk number when the file splits that voice,
+ * and the label to show in the UI. Always present, even for a file that
+ * splits nothing — then every base has exactly one `VoicePartInfo` with
+ * `subIndex` undefined and `id === base`, so an unsplit file's mixer looks
+ * identical to how it did before divisi-desk detection existed.
+ * `ParsedMIDI.parts` orders these canonically: S->A->T->B, ascending desk
+ * number within a voice, accompaniment last — UI iterates it directly for
+ * mixer-row order instead of re-sorting. */
+export interface VoicePartInfo {
+	id: MixPart;
+	base: MixBase;
+	subIndex?: number;
+	label: string;
+}
 
 /** How the score view presents the four voice parts relative to whichever
  * one is currently chosen. Independent of what audio plays — playback
@@ -25,13 +54,20 @@ export type DisplayMode = (typeof DISPLAY_MODES)[number];
 export const VISUAL_STATES = ['off', 'muted', 'active'] as const;
 export type VisualState = (typeof VISUAL_STATES)[number];
 
-/** A single sung note, already resolved to a voice part and to milliseconds
- * (tempo-map applied — see `parser.ts`). */
+/** How the four mixer buckets are balanced against each other for
+ * *playback* — the audio counterpart to `DisplayMode`. `'custom'` is the
+ * only mode where the per-part volume sliders are shown; the other three
+ * are one-tap presets that set every bucket's volume at once. */
+export const MIX_MODES = ['everyone', 'minusMe', 'myPart', 'custom'] as const;
+export type MixMode = (typeof MIX_MODES)[number];
+
+/** A single sung note, already resolved to a mixer bucket and to
+ * milliseconds (tempo-map applied — see `parser.ts`). */
 export interface MIDINote {
 	pitch: number; // MIDI note number, 0-127
 	startMs: number;
 	durationMs: number;
-	voicePart: VoicePart;
+	partId: MixPart;
 }
 
 /** A note that belongs to accompaniment or another non-SATB source. These
@@ -47,7 +83,7 @@ export interface BackingNote {
 export interface MIDILyricEvent {
 	text: string;
 	timeMs: number;
-	voicePart: VoicePart;
+	partId: MixPart;
 }
 
 /** A MIDI time-signature meta-event's payload: `numerator` beats of
@@ -83,15 +119,20 @@ export interface ParsedMIDI {
 	/** Signed count of sharps (positive) or flats (negative) in the initial
 	 * key signature. 0 (C major/A minor) when absent. */
 	keySignatureFifths: number;
-	/** Regular MIDI track index -> SATB voice part, using the same mapping
-	 * that produced `notes`/`lyrics`. */
-	trackVoiceParts: Record<number, VoicePart>;
-	/** SATB voice part -> the MIDI channel number(s) its notes were on
+	/** Every mixer bucket this piece resolved to, canonically ordered — see
+	 * `VoicePartInfo`. The source of truth for how many rows the mixer UI
+	 * shows and what each is called; always includes exactly one
+	 * accompaniment entry, even when `backingNotes` is empty. */
+	parts: VoicePartInfo[];
+	/** Regular MIDI track index -> the `VoicePartInfo.id` its notes were
+	 * resolved to, using the same mapping that produced `notes`/`lyrics`. */
+	trackParts: Record<number, MixPart>;
+	/** Mixer-bucket id -> the MIDI channel number(s) its notes were on
 	 * (almost always exactly one, but a part could in principle span more
 	 * than one channel). The audio player uses this to send a live CC7
 	 * (channel volume) message to the right channel(s) for the balance
 	 * slider — the synth plays the whole file as one unit (accurate,
 	 * sample-scheduled by FluidSynth itself), so per-part volume has to be
 	 * a live MIDI control message rather than a separate mixer node. */
-	voicePartChannels: Partial<Record<VoicePart, number[]>>;
+	voicePartChannels: Partial<Record<MixPart, number[]>>;
 }

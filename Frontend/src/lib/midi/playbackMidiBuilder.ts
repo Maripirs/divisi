@@ -1,20 +1,13 @@
 import { writeMidi } from 'midi-file';
 import type { MidiData, MidiEvent } from 'midi-file';
-import {
-	MIX_PARTS,
-	VOICE_PARTS,
-	type BackingNote,
-	type MIDINote,
-	type MixPart,
-	type ParsedMIDI
-} from './types.ts';
+import type { BackingNote, MIDINote, MixPart, ParsedMIDI } from './types.ts';
 
 const TICKS_PER_BEAT = 480;
 
 export interface PlaybackMidi {
 	bytes: Uint8Array;
-	/** Mixer bucket -> the MIDI channel it was placed on in `bytes`
-	 * (S/A/T/B/accompaniment => 0/1/2/3/4, assigned by this builder) — use this with the
+	/** Mixer bucket id -> the MIDI channel it was placed on in `bytes`,
+	 * assigned by this builder in `parsed.parts` order — use this with the
 	 * synth's live `midiControl(channel, 7, volume)` for the balance
 	 * slider. */
 	channelForPart: Record<MixPart, number>;
@@ -22,27 +15,28 @@ export interface PlaybackMidi {
 
 /**
  * Builds a fresh, minimal Standard MIDI File from already-parsed notes,
- * with one channel per mixer bucket (0=soprano, 1=alto, 2=tenor, 3=bass,
- * 4=accompaniment) — regardless of what channels the *original* file
- * happened to use.
+ * with one channel per mixer bucket in `parsed.parts` order — regardless of
+ * what channels the *original* file happened to use.
  *
  * This sidesteps a real inconsistency found while wiring this up: some
  * exports (including this project's own synthetic dev fixtures, generated
  * by `Fixtures/generate.py`) put every track on MIDI channel 0, which would
  * make live per-part volume control (a CC7 message sent to a specific
  * channel) impossible to target correctly. Rebuilding the playback file
- * from `ParsedMIDI.notes` — which are already correctly resolved to a voice
- * part regardless of the source channel layout — makes the live-balance
- * feature work for any input file, not just well-behaved ones.
+ * from `ParsedMIDI.notes` — which are already correctly resolved to a
+ * mixer bucket regardless of the source channel layout — makes the
+ * live-balance feature work for any input file, not just well-behaved
+ * ones.
  *
- * SATB parts stay separately controllable, while unassigned/accompaniment
- * material is collapsed into one backing channel.
+ * Every voice part (and divisi desk, when a file splits one) stays
+ * separately controllable, while unassigned/accompaniment material is
+ * collapsed into one backing channel.
  */
 export function buildPlaybackMidi(parsed: ParsedMIDI): PlaybackMidi {
 	const msPerTick = 60_000 / parsed.tempoBPM / TICKS_PER_BEAT;
 	const msToTick = (ms: number) => Math.round(ms / msPerTick);
 
-	const channelForPart = Object.fromEntries(MIX_PARTS.map((part, i) => [part, i])) as Record<MixPart, number>;
+	const channelForPart = Object.fromEntries(parsed.parts.map((part, i) => [part.id, i])) as Record<MixPart, number>;
 
 	const tempoTrack: MidiEvent[] = [
 		{
@@ -63,14 +57,16 @@ export function buildPlaybackMidi(parsed: ParsedMIDI): PlaybackMidi {
 		{ deltaTime: 0, type: 'endOfTrack', meta: true }
 	];
 
-	const partTracks = VOICE_PARTS.map((voicePart) =>
+	const vocalParts = parsed.parts.filter((part) => part.base !== 'accompaniment');
+	const partTracks = vocalParts.map((part) =>
 		buildTrack(
-			parsed.notes.filter((note) => note.voicePart === voicePart),
-			channelForPart[voicePart],
+			parsed.notes.filter((note) => note.partId === part.id),
+			channelForPart[part.id],
 			msToTick
 		)
 	);
-	const backingTrack = buildTrack(parsed.backingNotes, channelForPart.accompaniment, msToTick);
+	const accompanimentId = parsed.parts.find((part) => part.base === 'accompaniment')!.id;
+	const backingTrack = buildTrack(parsed.backingNotes, channelForPart[accompanimentId], msToTick);
 
 	const midiData: MidiData = {
 		header: { format: 1, numTracks: 1 + partTracks.length + 1, ticksPerBeat: TICKS_PER_BEAT },

@@ -1,21 +1,27 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick as svelteTick } from 'svelte';
+	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
+	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type ViewMode } from '$lib/playerDefaults';
 	import {
 		DISPLAY_MODES,
+		MIX_MODES,
 		MIX_PARTS,
 		VOICE_PARTS,
 		VISUAL_STATES,
 		type DisplayMode,
+		type MixBase,
+		type MixMode,
 		type MixPart,
 		type ParsedMIDI,
 		type VisualState,
 		type VoicePart
 	} from '$lib/midi/types';
 	import { getPiece } from '$lib/pieces/registry';
-	import { THEME_MODES, highlightedMutedInk, resolvedTheme, setThemeMode, themeMode, type ThemeMode } from '$lib/theme';
+	import { highlightedMutedInk, resolvedTheme } from '$lib/theme';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 
@@ -25,11 +31,40 @@
 	// svelte-ignore state_referenced_locally
 	const piece = getPiece(data.id);
 
+	// Reached via a join-code link (`routes/join/[code]`) rather than a
+	// logged-in dashboard — same player, same "Make this my default" (per
+	// `playerDefaults.ts`, that's `localStorage`-only for everyone already,
+	// nothing Backend-bound to restrict for a guest). Only set for a guest
+	// who came from a specific group's join link (as opposed to the
+	// guest-accessible demo library), so "back" can return there instead of
+	// the generic library.
+	const guestJoinCode = page.url.searchParams.get('code');
+
+	// Singer-facing labels per UX_WIREFRAME.md's "Practice View Labels" —
+	// these are the same DisplayMode values (flat/highlighted/solo/custom)
+	// the converter/mixer logic already uses, just relabeled in the UI.
 	const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
-		flat: 'Full score',
-		highlighted: 'Highlighted',
-		solo: 'Solo',
+		flat: 'Everyone',
+		highlighted: 'My part + others',
+		solo: 'My part',
 		custom: 'Custom'
+	};
+
+	// Names for the audio-balance presets — the "Minus Me" one is the
+	// standard rehearsal/karaoke term for a track missing just one part.
+	const MIX_MODE_LABELS: Record<MixMode, string> = {
+		everyone: 'Everyone',
+		minusMe: 'Minus Me',
+		myPart: 'My Part',
+		custom: 'Custom'
+	};
+
+	// Same labels/pattern as the Settings page's "Default voice" dropdown.
+	const VOICE_PART_LABELS: Record<VoicePart, string> = {
+		soprano: 'Soprano',
+		alto: 'Alto',
+		tenor: 'Tenor',
+		bass: 'Bass'
 	};
 
 	const VISUAL_STATE_LABELS: Record<VisualState, string> = {
@@ -38,14 +73,6 @@
 		active: 'Active'
 	};
 
-	const THEME_LABELS: Record<ThemeMode, string> = {
-		system: 'System',
-		light: 'Light',
-		dark: 'Dark'
-	};
-
-	type ViewMode = 'player' | 'pdf';
-	const VIEW_MODES: ViewMode[] = ['player', 'pdf'];
 	const VIEW_MODE_LABELS: Record<ViewMode, string> = {
 		player: 'Player',
 		pdf: 'PDF'
@@ -63,39 +90,59 @@
 	let parsed: ParsedMIDI | undefined;
 	let player: MidiPlayer | undefined;
 
-	let voicePart = $state<VoicePart>('soprano');
-	let displayMode = $state<DisplayMode>('solo');
-	let visualStates = $state<Record<MixPart, VisualState>>({
-		soprano: 'active',
-		alto: 'off',
-		tenor: 'off',
-		bass: 'off',
-		accompaniment: 'off'
-	});
+	// Seeded from the account-wide "Practice defaults" (Settings page, and
+	// each section's own "Make this my default" below), not hardcoded — a
+	// piece opened for the first time starts here; one opened before
+	// overrides it in `bootstrap()` with its own saved settings.
+	const initialDefaults = get(playerDefaults);
+	let voicePart = $state<VoicePart>(initialDefaults.voicePart);
+	// Which desk of `voicePart` is "mine" when this piece splits it (e.g.
+	// "Soprano 2") — `null` means "all of them" (the usual, unsplit case).
+	// File-specific by nature (a desk id only means anything for the piece
+	// that split it), so unlike `voicePart` this has no account-wide default
+	// and isn't seeded from `playerDefaults` — every piece starts at `null`
+	// until `bootstrap()` restores its own saved pick, if any.
+	let subPart = $state<MixPart | null>(null);
+	let displayMode = $state<DisplayMode>(initialDefaults.displayMode);
+	let mixMode = $state<MixMode>(initialDefaults.mixMode);
+	let visualStates = $state<Record<MixPart, VisualState>>(initialDefaults.mix.visualStates);
 	let xml = $state('');
 	let msPerWholeNote = $state(0);
 	let positionMs = $state(0);
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
-	let viewMode = $state<ViewMode>('player');
+	let viewMode = $state<ViewMode>(initialDefaults.viewMode);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
-	let balance = $state<Record<MixPart, number>>({
-		soprano: 0.5,
-		alto: 0.5,
-		tenor: 0.5,
-		bass: 0.5,
-		accompaniment: 0.5
-	});
+	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
 
 	let scoreView: ScoreView | undefined = $state();
 
 	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
-	let visibleMixParts = $derived(MIX_PARTS.filter((part) => visualStates[part] !== 'off'));
+	// `parsed` isn't `$state` (it's set once, imperatively, in `bootstrap()`
+	// before anything reads it), so this derived's only *tracked* dependency
+	// is `visualStates` — which is exactly what needs to invalidate it, since
+	// `parsed.parts` never changes again after that initial assignment.
+	let visibleMixParts = $derived((parsed?.parts ?? []).filter((part) => visualStates[part.id] !== 'off').map((part) => part.id));
 	let visibleStaffStates = $derived(visibleMixParts.map((part) => visualStates[part]));
+	// Every desk `voicePart` splits into, in this piece — length <= 1 means
+	// it isn't split here, which is when the desk picker stays hidden.
+	let desksForFocus = $derived((parsed?.parts ?? []).filter((part) => part.base === voicePart));
+
+	// Each "Make this my default" link only makes sense to show when there's
+	// actually a change to promote — otherwise it's just always-on clutter.
+	let viewMatchesDefault = $derived(viewMode === $playerDefaults.viewMode);
+	let displayMatchesDefault = $derived(
+		displayMode === $playerDefaults.displayMode && voicePart === $playerDefaults.voicePart
+	);
+	let mixMatchesDefault = $derived(
+		parsed !== undefined &&
+			sameBalances(balance, expandBaseRecord(parsed.parts, $playerDefaults.mix.balance)) &&
+			sameVisualStates(visualStates, expandBaseRecord(parsed.parts, $playerDefaults.mix.visualStates))
+	);
 	let rafHandle: number;
 	let destroyed = false;
 
@@ -112,12 +159,38 @@
 		clearMediaSession();
 	});
 
+	// Expands a record keyed by the 5 base buckets into one with exactly the
+	// ids this piece's `parsed.parts` uses — every desk of a base starts out
+	// inheriting that base's value.
+	function expandBaseRecord<T>(parts: ParsedMIDI['parts'], baseDefaults: Record<MixBase, T>): Record<MixPart, T> {
+		return Object.fromEntries(parts.map((part) => [part.id, baseDefaults[part.base]])) as Record<MixPart, T>;
+	}
+
+	// Same idea, but `current` (a piece's own, possibly-persisted ids) is
+	// checked first so a persisted per-piece choice always wins; only a
+	// divisi desk with no id-specific entry yet — a brand-new split, or a
+	// stale value left over from before this file happened to split —
+	// inherits its base voice's value instead of coming up empty.
+	function materializePartRecord<T>(
+		parts: ParsedMIDI['parts'],
+		current: Record<MixPart, T>,
+		baseDefaults: Record<MixBase, T>
+	): Record<MixPart, T> {
+		const expanded = expandBaseRecord(parts, baseDefaults);
+		return Object.fromEntries(parts.map((part) => [part.id, current[part.id] ?? expanded[part.id]])) as Record<
+			MixPart,
+			T
+		>;
+	}
+
 	async function bootstrap() {
 		if (!piece) return;
 		const stored = loadPersistedSettings(piece.id);
 		if (stored.voicePart) voicePart = stored.voicePart;
+		if (stored.subPart !== undefined) subPart = stored.subPart;
 		if (stored.displayMode) displayMode = stored.displayMode;
 		if (stored.visualStates) visualStates = stored.visualStates;
+		if (stored.mixMode) mixMode = stored.mixMode;
 		if (stored.balance) balance = stored.balance;
 		if (stored.viewMode) viewMode = stored.viewMode;
 		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
@@ -130,6 +203,24 @@
 			}
 			player = fetchedPlayer;
 			parsed = loadedPiece;
+			// A stored desk pick only means something if this piece still
+			// splits `voicePart` into that exact desk — stale otherwise (the
+			// file changed, or `voicePart` itself was restored to something
+			// that desk doesn't belong to).
+			if (subPart && !parsed.parts.some((p) => p.id === subPart)) subPart = null;
+			// First time this piece has ever been opened (no stored desk pick
+			// either way) — seed from the account-wide "Split part" default
+			// (Settings), same seed-once-then-persisted-per-piece treatment as
+			// `voicePart`/`displayMode`/etc. above. A no-op unless this piece
+			// actually splits `voicePart` into a desk numbered to match.
+			if (subPart === null && stored.subPart === undefined && initialDefaults.voiceDesk !== null) {
+				const preferred = parsed.parts.find(
+					(p) => p.base === voicePart && p.subIndex === initialDefaults.voiceDesk
+				);
+				if (preferred) subPart = preferred.id;
+			}
+			balance = materializePartRecord(parsed.parts, balance, initialDefaults.mix.balance);
+			visualStates = materializePartRecord(parsed.parts, visualStates, initialDefaults.mix.visualStates);
 			await player.load(parsed);
 			if (destroyed) {
 				player.destroy();
@@ -144,7 +235,7 @@
 			} else {
 				tempoBpm = player.tempoBPM;
 			}
-			for (const part of MIX_PARTS) player.setPartVolume(part, balance[part]);
+			for (const part of parsed.parts) player.setPartVolume(part.id, balance[part.id]);
 			render();
 			setupMediaSession();
 		} catch (e) {
@@ -195,7 +286,9 @@
 	}
 
 	function setBalance(part: MixPart, value: number) {
-		balance = { ...balance, [part]: value };
+		const nextBalance = { ...balance, [part]: value };
+		balance = nextBalance;
+		mixMode = matchingMixMode(nextBalance, voicePart);
 		player?.setPartVolume(part, value);
 		persistSettings();
 	}
@@ -207,8 +300,10 @@
 	interface PersistedSettings {
 		tempoBpm: number;
 		voicePart: VoicePart;
+		subPart: MixPart | null;
 		displayMode: DisplayMode;
 		visualStates: Record<MixPart, VisualState>;
+		mixMode: MixMode;
 		balance: Record<MixPart, number>;
 		viewMode: ViewMode;
 		zoomLevel: number;
@@ -234,8 +329,10 @@
 		const settings: PersistedSettings = {
 			tempoBpm,
 			voicePart,
+			subPart,
 			displayMode,
 			visualStates,
+			mixMode,
 			balance,
 			viewMode,
 			zoomLevel,
@@ -265,12 +362,26 @@
 		}
 	}
 
-	function setFocus(part: MixPart) {
-		if (part === 'accompaniment') return;
+	function setFocus(part: VoicePart) {
 		voicePart = part;
+		// A desk pick only makes sense for the voice it was made under.
+		subPart = null;
 		if (displayMode === 'highlighted' || displayMode === 'solo') {
 			visualStates = presetVisualStates(displayMode, part);
 		}
+		if (mixMode !== 'custom') applyMixPreset(mixMode, part);
+		persistSettings();
+	}
+
+	/** "Do you sing a specific desk?" — only meaningful once `voicePart` is
+	 * split in this piece (see `desksForFocus`). `null` reverts to treating
+	 * every desk of `voicePart` as "mine", same as before this existed. */
+	function setSubPart(id: MixPart | null) {
+		subPart = id;
+		if (displayMode === 'highlighted' || displayMode === 'solo') {
+			visualStates = presetVisualStates(displayMode, voicePart);
+		}
+		if (mixMode !== 'custom') applyMixPreset(mixMode, voicePart);
 		persistSettings();
 	}
 
@@ -280,14 +391,77 @@
 		persistSettings();
 	}
 
+	function setMixMode(mode: MixMode) {
+		mixMode = mode;
+		if (mode !== 'custom') applyMixPreset(mode, voicePart);
+		persistSettings();
+	}
+
+	/** Pushes a mix preset's volumes into both `balance` (so the UI reflects
+	 * it) and the live player (so it's heard immediately, no restart). */
+	function applyMixPreset(mode: Exclude<MixMode, 'custom'>, focusPart: VoicePart) {
+		balance = presetBalances(mode, focusPart);
+		for (const part of parsed?.parts ?? []) player?.setPartVolume(part.id, balance[part.id]);
+	}
+
+	// "Make this my default" (UX_WIREFRAME.md's Track Settings vs App
+	// Settings section): promotes the current per-piece View/Display/Mix
+	// choice to the account-wide starting point new pieces seed from. Each
+	// menu section promotes only its own slice, spread on top of whatever
+	// defaults already exist for the others. `defaultFlash` is a brief
+	// per-section confirmation, not persisted state.
+	let defaultFlash = $state({ view: false, display: false, mix: false });
+
+	function flashDefault(key: keyof typeof defaultFlash) {
+		defaultFlash = { ...defaultFlash, [key]: true };
+		setTimeout(() => {
+			defaultFlash = { ...defaultFlash, [key]: false };
+		}, 1500);
+	}
+
+	function saveViewAsDefault() {
+		setPlayerDefaults({ ...get(playerDefaults), viewMode });
+		flashDefault('view');
+	}
+
+	function saveDisplayAsDefault() {
+		if (displayMode === 'custom') return;
+		setPlayerDefaults({ ...get(playerDefaults), voicePart, displayMode });
+		flashDefault('display');
+	}
+
+	function saveMixAsDefault() {
+		if (!parsed) return;
+		setPlayerDefaults({
+			...get(playerDefaults),
+			mix: {
+				balance: collapseToBaseRecord(parsed.parts, balance),
+				visualStates: collapseToBaseRecord(parsed.parts, visualStates)
+			},
+			...(mixMode !== 'custom' ? { mixMode } : {})
+		});
+		flashDefault('mix');
+	}
+
+	// Presets below all key off `isFocusPart`, not a bare `part.base`
+	// comparison — "my part"/"highlighted" is a file-independent choice (see
+	// `VoicePart` vs `MixPart` in `midi/types.ts`), so every desk of a split
+	// voice moves together under a preset *unless* `subPart` narrows it down
+	// to one specific desk. Individual desks only diverge on their own once
+	// the user switches to Custom mode and adjusts one directly.
+	function isFocusPart(part: { id: MixPart; base: MixBase }, focusPart: VoicePart): boolean {
+		if (part.base !== focusPart) return false;
+		return subPart === null || part.id === subPart;
+	}
+
 	function presetVisualStates(mode: DisplayMode, focusPart: VoicePart): Record<MixPart, VisualState> {
 		return Object.fromEntries(
-			MIX_PARTS.map((part) => {
+			(parsed?.parts ?? []).map((part) => {
 				let state: VisualState;
 				if (mode === 'flat' || mode === 'custom') state = 'active';
-				else if (mode === 'highlighted') state = part === focusPart ? 'active' : 'muted';
-				else state = part === focusPart ? 'active' : 'off';
-				return [part, state];
+				else if (mode === 'highlighted') state = isFocusPart(part, focusPart) ? 'active' : 'muted';
+				else state = isFocusPart(part, focusPart) ? 'active' : 'off';
+				return [part.id, state];
 			})
 		) as Record<MixPart, VisualState>;
 	}
@@ -307,7 +481,44 @@
 	}
 
 	function sameVisualStates(a: Record<MixPart, VisualState>, b: Record<MixPart, VisualState>): boolean {
-		return MIX_PARTS.every((part) => a[part] === b[part]);
+		return (parsed?.parts ?? []).every((part) => a[part.id] === b[part.id]);
+	}
+
+	// 0.5 is this app's "normal" per-part volume (see `describeBalance`,
+	// which labels it "Even") — so "Everyone" leaves every bucket there,
+	// and the other two presets just cut the non-focus or focus buckets to
+	// silence rather than boosting anything above normal.
+	function presetBalances(mode: Exclude<MixMode, 'custom'>, focusPart: VoicePart): Record<MixPart, number> {
+		return Object.fromEntries(
+			(parsed?.parts ?? []).map((part) => {
+				let value: number;
+				if (mode === 'everyone') value = 0.5;
+				else if (mode === 'minusMe') value = isFocusPart(part, focusPart) ? 0 : 0.5;
+				else value = isFocusPart(part, focusPart) ? 0.5 : 0; // myPart
+				return [part.id, value];
+			})
+		) as Record<MixPart, number>;
+	}
+
+	function matchingMixMode(balances: Record<MixPart, number>, focusPart: VoicePart): MixMode {
+		const presetModes: Exclude<MixMode, 'custom'>[] = ['everyone', 'minusMe', 'myPart'];
+		return presetModes.find((mode) => sameBalances(balances, presetBalances(mode, focusPart))) ?? 'custom';
+	}
+
+	function sameBalances(a: Record<MixPart, number>, b: Record<MixPart, number>): boolean {
+		return (parsed?.parts ?? []).every((part) => a[part.id] === b[part.id]);
+	}
+
+	// Collapses a per-piece, possibly-split record down to the 5 base
+	// buckets `playerDefaults.ts` stores — "Make this my default" promotes
+	// the *voice's* balance, not a specific file's desk numbering. Presets
+	// keep every desk of a base in lockstep (see above), so this is lossless
+	// for anything but a Custom mix with desks pulled apart on purpose, where
+	// it keeps the first desk's value as the base's representative.
+	function collapseToBaseRecord<T>(parts: ParsedMIDI['parts'], record: Record<MixPart, T>): Record<MixBase, T> {
+		return Object.fromEntries(
+			MIX_PARTS.map((base) => [base, record[parts.find((p) => p.base === base)!.id]])
+		) as Record<MixBase, T>;
 	}
 
 	function handleGlobalKeydown(event: KeyboardEvent) {
@@ -407,7 +618,8 @@
 	}
 
 	function mixLabel(part: MixPart): string {
-		return part === 'accompaniment' ? 'Accomp.' : part;
+		if (part === 'accompaniment') return 'Accomp.';
+		return parsed?.parts.find((p) => p.id === part)?.label ?? part;
 	}
 
 	function visualStateFor(part: MixPart): VisualState {
@@ -416,7 +628,17 @@
 
 	function hasNotesForPart(piece: ParsedMIDI, part: MixPart): boolean {
 		if (part === 'accompaniment') return piece.backingNotes.length > 0;
-		return piece.notes.some((note) => note.voicePart === part);
+		return piece.notes.some((note) => note.partId === part);
+	}
+
+	// Root `+page.server.ts` redirects a logged-out, non-guest hit on `/` to
+	// `/welcome` — a bare `goto('/')` would bounce a guest who opened the
+	// player straight there instead of back to where they came from. A guest
+	// who arrived via a specific group's join code (`guestJoinCode` set) goes
+	// back to that group's page, not the unrelated demo library.
+	function backToLibrary() {
+		if (guestJoinCode) goto(`/join/${encodeURIComponent(guestJoinCode)}`);
+		else goto(page.data.user ? '/' : '/?guest=1');
 	}
 </script>
 
@@ -425,7 +647,7 @@
 {#key data.id}
 	<div class="player-shell">
 		<header class="top-bar">
-			<button class="icon-btn" onclick={() => goto('/')} aria-label="Back to library">
+			<button class="icon-btn" onclick={backToLibrary} aria-label="Back to library">
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M15 18l-6-6 6-6" />
 				</svg>
@@ -446,7 +668,7 @@
 					loadState.kind !== 'noVisibleTracks'
 				}
 				onclick={() => (menuOpen = true)}
-				aria-label="Open settings"
+				aria-label="Open Practice Setup"
 			>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M4 7h16M4 12h16M4 17h16" />
@@ -471,7 +693,7 @@
 				{:else if loadState.kind === 'notFound'}
 					<div class="status-card status-card--error">
 						<p>No piece found with that id.</p>
-						<button class="text-link" onclick={() => goto('/')}>Back to library</button>
+						<button class="text-link" onclick={backToLibrary}>Back to library</button>
 					</div>
 				{:else if loadState.kind === 'error'}
 					<div class="status-card status-card--error">
@@ -500,7 +722,7 @@
 			{#if piece}
 				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
 					<div class="pdf-card">
-						<PdfView pdfUrl={piece.pdfUrl} bind:zoom={pdfZoomLevel} />
+						<PdfView pdfUrl={piece.pdfUrl} bind:zoom={pdfZoomLevel} active={viewMode === 'pdf'} />
 					</div>
 				</div>
 			{/if}
@@ -549,49 +771,20 @@
 		{/if}
 
 		{#if menuOpen}
-			<button class="menu-backdrop" onclick={() => (menuOpen = false)} aria-label="Close settings"></button>
-			<aside class="menu-drawer" aria-label="Settings">
+			<!-- Named "Practice Setup", not "Settings" — this drawer only
+			     applies to the current piece, per UX_WIREFRAME.md's
+			     Redundancy Rules ("Do not call the player drawer Settings").
+			     The account-wide screen keeps the "Settings" name. -->
+			<button class="menu-backdrop" onclick={() => (menuOpen = false)} aria-label="Close Practice Setup"></button>
+			<aside class="menu-drawer" aria-label="Practice Setup">
 				<header class="menu-header">
-					<h2>Settings</h2>
-					<button class="icon-btn" onclick={() => (menuOpen = false)} aria-label="Close settings">
+					<h2>Practice Setup</h2>
+					<button class="icon-btn" onclick={() => (menuOpen = false)} aria-label="Close Practice Setup">
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<path d="M18 6 6 18M6 6l12 12" />
 						</svg>
 					</button>
 				</header>
-
-				<section class="menu-section">
-					<h3>View</h3>
-					<div class="segmented" role="group" aria-label="View">
-						{#each VIEW_MODES as mode (mode)}
-							<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
-								{VIEW_MODE_LABELS[mode]}
-							</button>
-						{/each}
-					</div>
-				</section>
-
-				<section class="menu-section">
-					<h3>Display</h3>
-					<div class="segmented" role="group" aria-label="Display mode">
-						{#each DISPLAY_MODES as mode (mode)}
-							<button class:active={displayMode === mode} onclick={() => setDisplayMode(mode)}>
-								{DISPLAY_MODE_LABELS[mode]}
-							</button>
-						{/each}
-					</div>
-				</section>
-
-				<section class="menu-section">
-					<h3>Theme</h3>
-					<div class="segmented" role="group" aria-label="Theme">
-						{#each THEME_MODES as mode (mode)}
-							<button class:active={$themeMode === mode} onclick={() => setThemeMode(mode)}>
-								{THEME_LABELS[mode]}
-							</button>
-						{/each}
-					</div>
-				</section>
 
 				<section class="menu-section">
 					<h3>Tempo</h3>
@@ -623,54 +816,123 @@
 				</section>
 
 				<section class="menu-section">
-					<h3>Mix</h3>
-					<div class="balances">
-						{#each MIX_PARTS as part (part)}
-							<div class="balance-row">
-								<button
-									type="button"
-									class="visual-state-btn"
-									class:visual-state-btn--off={visualStateFor(part) === 'off'}
-									class:visual-state-btn--muted={visualStateFor(part) === 'muted'}
-									class:visual-state-btn--active={visualStateFor(part) === 'active'}
-									aria-label={`${mixLabel(part)} visual state: ${VISUAL_STATE_LABELS[visualStateFor(part)]}`}
-									title={VISUAL_STATE_LABELS[visualStateFor(part)]}
-									onclick={() => cycleVisualState(part)}
-								>
-									<svg viewBox="0 0 24 24" aria-hidden="true">
-										<path d="M9 18h6" />
-										<path d="M10 22h4" />
-										<path
-											d="M8.3 14.8A6.5 6.5 0 1 1 15.7 14.8c-.9.6-1.2 1.4-1.2 2.2h-5c0-.8-.3-1.6-1.2-2.2Z"
-										/>
-									</svg>
+					<h3>Your Part</h3>
+					<select
+						class="your-part-select"
+						aria-label="Your part"
+						value={voicePart}
+						onchange={(e) => setFocus((e.target as HTMLSelectElement).value as VoicePart)}
+					>
+						{#each VOICE_PARTS as part (part)}
+							<option value={part}>{VOICE_PART_LABELS[part]}</option>
+						{/each}
+					</select>
+					{#if desksForFocus.length > 1}
+						<p class="subsection-hint">Do you sing a specific desk?</p>
+						<div class="segmented" role="group" aria-label="Desk">
+							<button class:active={subPart === null} onclick={() => setSubPart(null)}>All</button>
+							{#each desksForFocus as desk (desk.id)}
+								<button class:active={subPart === desk.id} onclick={() => setSubPart(desk.id)}>
+									{desk.label}
 								</button>
-								{#if part === 'accompaniment'}
-									<span class="balance-label">{mixLabel(part)}</span>
-								{:else}
+							{/each}
+						</div>
+					{/if}
+				</section>
+
+				<section class="menu-section">
+					<h3>View</h3>
+					<div class="segmented" role="group" aria-label="View">
+						{#each VIEW_MODES as mode (mode)}
+							<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
+								{VIEW_MODE_LABELS[mode]}
+							</button>
+						{/each}
+					</div>
+					{#if !viewMatchesDefault}
+						<button type="button" class="text-link default-link" onclick={saveViewAsDefault}>
+							{defaultFlash.view ? 'Saved as default ✓' : 'Make this my default'}
+						</button>
+					{/if}
+				</section>
+
+				{#if viewMode === 'player'}
+					<section class="menu-section">
+						<h3>Display</h3>
+						<div class="segmented" role="group" aria-label="Display mode">
+							{#each DISPLAY_MODES as mode (mode)}
+								<button class:active={displayMode === mode} onclick={() => setDisplayMode(mode)}>
+									{DISPLAY_MODE_LABELS[mode]}
+								</button>
+							{/each}
+						</div>
+						{#if displayMode !== 'custom' && !displayMatchesDefault}
+							<button type="button" class="text-link default-link" onclick={saveDisplayAsDefault}>
+								{defaultFlash.display ? 'Saved as default ✓' : 'Make this my default'}
+							</button>
+						{/if}
+					</section>
+				{/if}
+
+				<!-- Theme is app-wide, not per-piece — lives in Settings, not
+				     here (see UX_WIREFRAME.md's Track Settings vs App
+				     Settings). -->
+
+				<section class="menu-section">
+					<h3>Mix</h3>
+					<div class="segmented" role="group" aria-label="Mix mode">
+						{#each MIX_MODES as mode (mode)}
+							<button class:active={mixMode === mode} onclick={() => setMixMode(mode)}>
+								{MIX_MODE_LABELS[mode]}
+							</button>
+						{/each}
+					</div>
+					{#if displayMode === 'custom' || mixMode === 'custom'}
+					<div class="balances">
+						{#each parsed?.parts ?? [] as part (part.id)}
+							<div class="balance-row">
+								{#if displayMode === 'custom'}
 									<button
 										type="button"
-										class="balance-label balance-label-button"
-										class:active={voicePart === part}
-										aria-label="Focus {part}"
-										onclick={() => setFocus(part)}
+										class="visual-state-btn"
+										class:visual-state-btn--off={visualStateFor(part.id) === 'off'}
+										class:visual-state-btn--muted={visualStateFor(part.id) === 'muted'}
+										class:visual-state-btn--active={visualStateFor(part.id) === 'active'}
+										aria-label={`${part.label} visual state: ${VISUAL_STATE_LABELS[visualStateFor(part.id)]}`}
+										title={VISUAL_STATE_LABELS[visualStateFor(part.id)]}
+										onclick={() => cycleVisualState(part.id)}
 									>
-										{mixLabel(part)}
+										<svg viewBox="0 0 24 24" aria-hidden="true">
+											<path d="M9 18h6" />
+											<path d="M10 22h4" />
+											<path
+												d="M8.3 14.8A6.5 6.5 0 1 1 15.7 14.8c-.9.6-1.2 1.4-1.2 2.2h-5c0-.8-.3-1.6-1.2-2.2Z"
+											/>
+										</svg>
 									</button>
 								{/if}
-								<input
-									type="range"
-									min="0"
-									max="1"
-									step="0.01"
-									value={balance[part]}
-									aria-label="{part} balance"
-									oninput={(e) => setBalance(part, Number((e.target as HTMLInputElement).value))}
-								/>
-								<span class="balance-value">{describeBalance(balance[part])}</span>
+								<span class="balance-label" class:active={voicePart === part.base}>{part.label}</span>
+								{#if mixMode === 'custom'}
+									<input
+										type="range"
+										min="0"
+										max="1"
+										step="0.01"
+										value={balance[part.id]}
+										aria-label="{part.label} balance"
+										oninput={(e) => setBalance(part.id, Number((e.target as HTMLInputElement).value))}
+									/>
+									<span class="balance-value">{describeBalance(balance[part.id])}</span>
+								{/if}
 							</div>
 						{/each}
 					</div>
+					{/if}
+					{#if !mixMatchesDefault}
+						<button type="button" class="text-link default-link" onclick={saveMixAsDefault}>
+							{defaultFlash.mix ? 'Saved as default ✓' : 'Make this my default'}
+						</button>
+					{/if}
 				</section>
 			</aside>
 		{/if}
@@ -803,6 +1065,11 @@
 		font-weight: 650;
 		cursor: pointer;
 		padding: 0;
+	}
+
+	.default-link {
+		display: block;
+		margin-top: 0.5rem;
 	}
 
 	.status-card {
@@ -996,6 +1263,24 @@
 		text-transform: uppercase;
 	}
 
+	.your-part-select {
+		width: 100%;
+		font: inherit;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-md);
+		padding: 0.55rem 0.7rem;
+	}
+
+	.subsection-hint {
+		margin: 0.6rem 0 0.4rem;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
 	.tempo-row {
 		display: flex;
 		align-items: center;
@@ -1059,6 +1344,26 @@
 		padding: 0.4rem 0;
 	}
 
+	/* Explicit tracks so each piece stays aligned across rows even when the
+	   icon (Display=Custom only) or slider/value (Mix=Custom only) aren't
+	   rendered at all — grid auto-placement would otherwise shift everything
+	   left into the gap. */
+	.visual-state-btn {
+		grid-column: 1;
+	}
+
+	.balance-label {
+		grid-column: 2;
+	}
+
+	.balance-row input[type='range'] {
+		grid-column: 3;
+	}
+
+	.balance-value {
+		grid-column: 4;
+	}
+
 	.visual-state-btn {
 		width: 1.85rem;
 		height: 1.85rem;
@@ -1110,23 +1415,13 @@
 		font-size: 0.8125rem;
 		font-weight: 600;
 		text-transform: capitalize;
+		color: var(--text-muted);
 	}
 
-	.balance-label-button {
-		border: 1px solid transparent;
-		background: transparent;
-		color: var(--text);
-		text-align: left;
-		border-radius: var(--radius-full);
-		padding: 0.25rem 0.45rem;
-		margin-left: -0.45rem;
-		cursor: pointer;
-	}
-
-	.balance-label-button.active {
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 16%, transparent);
-		color: var(--text);
+	/* Highlights whichever row is "Your Part" — the part itself is now
+	   changed up in the Your Part section, not from here. */
+	.balance-label.active {
+		color: var(--accent);
 	}
 
 	.balance-value {

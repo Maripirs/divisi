@@ -5,7 +5,8 @@ import {
 	type MIDILyricEvent,
 	type MIDINote,
 	type MIDITimeSignature,
-	type ParsedMIDI
+	type ParsedMIDI,
+	type VoicePartInfo
 } from '../midi/types.ts';
 
 const STEP_SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -63,16 +64,22 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	const candidates = rawParts.map((part) =>
 		part.staffCount > 1 ? { name: null, pitches: [] } : { name: part.name, pitches: part.notes.map((n) => n.pitch) }
 	);
-	const assignments = assignVoiceParts(candidates);
+	const { trackParts, parts } = assignVoiceParts(candidates);
+	// Accompaniment is always a single, unsplit bucket for everything
+	// `assignVoiceParts` didn't confidently map to a voice — present even
+	// when nothing ends up backing, so the mixer always has an
+	// accompaniment row.
+	const accompanimentPart: VoicePartInfo = { id: 'accompaniment', base: 'accompaniment', label: 'Accompaniment' };
+	const allParts = [...parts, accompanimentPart];
 
 	const notes: MIDINote[] = [];
 	const backingNotes: BackingNote[] = [];
 	const lyrics: MIDILyricEvent[] = [];
 	for (const [index, raw] of rawParts.entries()) {
-		const voicePart = assignments[index];
-		if (voicePart) {
-			for (const note of raw.notes) notes.push({ ...note, voicePart });
-			for (const lyric of raw.lyrics) lyrics.push({ ...lyric, voicePart });
+		const partId = trackParts[index];
+		if (partId) {
+			for (const note of raw.notes) notes.push({ ...note, partId });
+			for (const lyric of raw.lyrics) lyrics.push({ ...lyric, partId });
 		} else {
 			for (const note of raw.notes) backingNotes.push(note);
 		}
@@ -98,7 +105,8 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 		tempoBPM,
 		timeSignature,
 		keySignatureFifths,
-		trackVoiceParts: assignments,
+		parts: allParts,
+		trackParts,
 		voicePartChannels: {}
 	};
 }
