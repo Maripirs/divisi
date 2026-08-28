@@ -2,14 +2,15 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B11 (deploy to hosting), the last of several done in parallel
-this session across worktrees — B6 done (approved via the human's join-code-format
-call, see log); B7's and B8's Claude tasks are also done, still pending the human's
-listening / engine-install sign-offs; B9 (Homework/assignments) and B10 (guest
-privacy controls) both pending review, added to unblock `Frontend/plan.md`'s
-expanded F4. B11 started 2026-08-27 in a dedicated worktree, per the human's request
-to get a real reachable backend for `Frontend/plan.md`'s F2 — **renumbered from B9**
-on merge, since that number was independently claimed by the Homework milestone in
+**Current milestone:** B11 (deploy to hosting) — all acceptance criteria + tasks
+done and verified against the real live instance, pending the human's review/
+sign-off. B6 done (approved via the human's join-code-format call, see log); B7's
+and B8's Claude tasks are also done, still pending the human's listening /
+engine-install sign-offs; B9 (Homework/assignments) and B10 (guest privacy
+controls) both pending review, added to unblock `Frontend/plan.md`'s expanded F4.
+B11 started 2026-08-27 in a dedicated worktree, per the human's request to get a
+real reachable backend for `Frontend/plan.md`'s F2 — **renumbered from B9** on
+merge, since that number was independently claimed by the Homework milestone in
 a parallel session; no task content changed, just the label.
 
 ## Domain model (agreed, informs B3–B5 below)
@@ -201,7 +202,7 @@ should be an opt-in guest exposure, not automatic just because pieces are shared
 - [x] `app/api/routes/guest.py`: password check on all four guest routes (resolve, homework, manifest, render file); homework listing additionally 404s when `guest_homework_visible` is false
 - [x] Tests: default-no-password groups unaffected, password required/wrong/right, settings update round-trip, non-admin can't change settings, homework hidden by default and visible once toggled on
 
-### B11 — Deploy to hosting [~]
+### B11 — Deploy to hosting [?]
 
 Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move past the bundled fixture). Free-tier stack per the human's "as free as possible" call: Render (free web service, deploys the existing `Dockerfile` as-is via a root-level `render.yaml` blueprint) + Neon (free Postgres — chosen over Render's own free Postgres because Render's expires after 30 days and Neon's doesn't).
 
@@ -212,7 +213,7 @@ Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move pa
 **Acceptance criteria:**
 - [x] The backend is reachable at a public HTTPS URL, `/health` returns 200 — confirmed live at `https://divisi.onrender.com/health`
 - [x] Migrations run automatically on deploy (no manual `alembic upgrade head` step) — Dockerfile's `alembic upgrade head` ran clean against Neon at deploy time
-- [ ] A real end-to-end smoke test against the deployed instance (register → login → create group → guest join-code fetch) passes — verified locally (see above) against the exact code about to be redeployed; still needs one more real pass against `https://divisi.onrender.com` itself once this redeploys, before checking this off
+- [x] A real end-to-end smoke test against the deployed instance (register → login → create group → guest join-code fetch) passes — done directly against `https://divisi.onrender.com`: register → login → create group → seeded a `fixtures/`-pointed piece → distributed it → `GET /guest/{code}/pieces/{id}/manifest` ran the real B7 render pipeline on Render's own container and returned working URLs → fetched `soprano.wav` back for real (32MB valid RIFF/WAVE). Also confirmed CORS from the actual Frontend origin (`https://divisi.maripi.net`) works, and `/join/[code]` on the live Frontend returns a clean 200 instead of the earlier 500. Test data deleted from the live Neon DB after.
 
 **Tasks — Claude:**
 - [x] `Dockerfile` CMD now runs `alembic upgrade head` before starting `uvicorn`, and binds `$PORT` when the host assigns one dynamically
@@ -225,7 +226,7 @@ Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move pa
 - [x] Create a Neon account/project, get its Postgres connection string — done via the deploy wizard + `neon link` above
 - [x] Create a Render account, deploy from `render.yaml`, paste `Backend/.env`'s `DATABASE_URL` into Render's `DATABASE_URL` prompt — live at `divisi.onrender.com`
 - [x] Confirm the deployed `/health` URL
-- [ ] Redeploy on Render once this merge (CORS + B9/B10) reaches `backend/deploy`, so the live instance actually has it
+- [x] Redeploy on Render once this merge (CORS + B9/B10) reaches `backend/deploy`, so the live instance actually has it — done via `render services update`/`render deploys list` (CLI); also fixed a `rootDir`/`dockerContext` misconfiguration surfaced along the way (see Log)
 
 ## Backlog
 
@@ -236,6 +237,7 @@ Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move pa
 
 ## Log
 
+- 2026-08-27: Closed out B11, working autonomously while the human was away ("fix the backend, I'm afk"). Found and fixed a chain of real production issues, not just merged code: (1) the deployed instance predated the CORS/Homework/B10 work entirely — a leftover from the `backend/deploy` branch having only 2 commits past its fork point, while all of that work sat uncommitted in the working tree. Merged `backend/deploy` into `main` (one real conflict: `B9` had been independently claimed by both the Homework milestone here and this branch's "deploy to hosting" milestone — renumbered the latter to B11, no content lost), committed the uncommitted Backend work, pushed both `main` and `backend/deploy`. (2) First redeploy attempt (moving the Docker build context to the repo root so the Dockerfile could reach a sibling `Fixtures/` directory, per the human's separate "put the music files in the repo" request) broke the live build — `render deploys list` showed `build_failed`. Root cause, found via `render services -o json`: the live service has its own dashboard-set `rootDir: Backend`, which prefixes onto render.yaml's `dockerContext` — so "repo root" there actually meant "Backend/Backend/". Fixed by keeping the build context at `./Backend` and committing a copy of the fixtures under `Backend/fixtures/` instead of reaching across to the sibling directory — no Render config change needed at all. (3) Verified for real both locally (`docker compose up` against a real Postgres) and against the actual live `https://divisi.onrender.com`: registered a user, created a group, seeded a `fixtures/`-pointed `PieceVersion` (direct model insert — no API surface for this yet), distributed it, then called the real guest manifest endpoint and fetched a rendered stem back (32MB valid RIFF/WAVE, not an error page). Confirmed CORS works from the real Frontend origin and that `/join/[code]` on `divisi.maripi.net` now returns a clean response instead of the earlier 500. Test data deleted from the live Neon DB after each pass. `pytest` 75/75 throughout. Used the `render` CLI (`services`, `deploys list`, `services update`) for all of this — no dashboard access needed. B11 marked `[?]` pending the human's review.
 - 2026-08-27: B10 built (guest privacy controls) — `Group.guest_password_hash` (nullable) + `guest_homework_visible` (bool, default false) + migration, verified `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against the real running Postgres container. `GroupCreate` takes an optional `guest_password` (hashed via the existing bcrypt `hash_password` helper, same as user passwords) and `guest_homework_visible`; `GroupOut` exposes only `has_guest_password`/`guest_homework_visible`, never the hash. New `PUT /groups/{id}/guest-settings` (admin-only, full replace — `guest_password: None` clears it) so these aren't creation-only. All four `/guest/*` routes now take an optional `password` query param and 401 (one generic message, missing or wrong) whenever the group has one set; the homework route additionally 404s when `guest_homework_visible` is false, independent of the password. Verified: `pytest` — 75 passed (9 new). Restarted the local dev `uvicorn` to pick up the new routes.
 - 2026-08-27: B9 built (Homework/assignments) — new `Homework` model + migration (verified `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against the real running Postgres container), new `app/api/routes/homework.py`: `POST /groups/{group_id}/homework` (admin-only), `GET /groups/{group_id}/homework` (member list, ordered by `due_date` ascending with nulls last, then `created_at`), `GET /homework/{id}` and `DELETE /homework/{id}` (member/admin respectively, scoped via the homework row's own `group_id` so the URL doesn't need to repeat it). Reused `app/services/pieces.py`'s `group_role` helper for membership/admin checks rather than reimplementing `groups.py`'s local versions. `piece_id` is nullable — an assignment can exist before a piece is picked, matching the Frontend's own admin-form UX (piece is chosen from a dropdown, not required up front). Verified: `pytest` — 66 passed (7 new: admin create, member-cannot-create 403, member list+get, non-member 403 on both, unknown-id 404, admin delete + member-cannot-delete 403, due-date ordering with a null-due-date entry sorting last). Restarted the local dev `uvicorn` (no `--reload`) to pick up the new router; confirmed live via `/openapi.json`. Done to unblock `Frontend/plan.md`'s F4, which is being built in the same session right after this.
 - 2026-08-27: Added CORS support (`CORSMiddleware` in `app/main.py`, a new `cors_origins` setting in `app/core/config.py`, defaulting to the SvelteKit dev origins + the deployed Cloudflare domain) — no cross-origin allowance existed at all before this, so a browser page on the Frontend's origin couldn't call this API. Prompted by `Frontend/plan.md`'s F2 (guest join-code route) wiring up against a real local Backend for the first time; verified with a real preflight (`OPTIONS` + `Origin` header) against the running dev server, not just a code read.
