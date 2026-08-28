@@ -17,9 +17,10 @@ export interface GuestGroup {
 	pieces: GuestPiece[];
 }
 
-/** Mirrors the Backend's `HomeworkOut` (B9), as seen via the guest B10
+/** Mirrors the Backend's `HomeworkOut` (B9), as seen via the guest
  * `/guest/{code}/homework` route — only returned at all when the group's
- * admin opted into `guest_homework_visible`. */
+ * admin has enabled the `homework` page for guests (B12's per-page
+ * settings, superseding B10's original `guest_homework_visible` flag). */
 export interface GuestHomework {
 	id: string;
 	pieceId: string | null;
@@ -27,6 +28,30 @@ export interface GuestHomework {
 	range: string;
 	instructions: string;
 	dueDate: string | null;
+}
+
+/** Mirrors the Backend's `ResponsibilityGuestRoleCoverageOut`/
+ * `ResponsibilityGuestDateOut` (B13), as seen via the guest
+ * `/guest/{code}/responsibilities/dates` route — coverage numbers only, no
+ * signup identities (see the Backend route's own note on why). Only
+ * returned at all when the group's admin has enabled the `responsibilities`
+ * page for guests, same B12 mechanism as homework above. */
+export interface GuestResponsibilityRoleCoverage {
+	roleId: string;
+	roleName: string;
+	neededCount: number;
+	activeCount: number;
+	status: string;
+}
+
+export interface GuestResponsibilityDate {
+	id: string;
+	scheduleName: string;
+	date: string;
+	notes: string;
+	locked: boolean;
+	canceled: boolean;
+	roles: GuestResponsibilityRoleCoverage[];
 }
 
 export class JoinCodeNotFoundError extends Error {
@@ -81,6 +106,24 @@ interface GuestHomeworkResponse {
 	due_date: string | null;
 }
 
+interface GuestResponsibilityRoleCoverageResponse {
+	role_id: string;
+	role_name: string;
+	needed_count: number;
+	active_count: number;
+	status: string;
+}
+
+interface GuestResponsibilityDateResponse {
+	id: string;
+	schedule_name: string;
+	date: string;
+	notes: string;
+	locked: boolean;
+	canceled: boolean;
+	roles: GuestResponsibilityRoleCoverageResponse[];
+}
+
 interface GuestRequestOptions {
 	password?: string;
 	fetchFn?: typeof fetch;
@@ -118,8 +161,9 @@ export async function resolveJoinCode(code: string, { password, fetchFn = fetch 
 	};
 }
 
-/** B10: a group's homework, guest-visible only when its admin opted into
- * `guest_homework_visible`. Only call this after `resolveJoinCode` has
+/** A group's homework, guest-visible only when its admin has enabled the
+ * `homework` page for guests (B12's per-page settings). Only call this
+ * after `resolveJoinCode` has
  * already confirmed the code (and password, if any) are good — a 404 here
  * means "this group doesn't expose homework to guests" (a `GuestApiError`
  * with `status === 404`), which callers should treat as "no homework tab"
@@ -137,5 +181,36 @@ export async function listGuestHomework(code: string, { password, fetchFn = fetc
 		range: hw.range,
 		instructions: hw.instructions,
 		dueDate: hw.due_date
+	}));
+}
+
+/** B13: a group's responsibility dates + per-role coverage, guest-visible
+ * only when its admin opted the `responsibilities` page into B12's
+ * `audience: everyone`. Same "only call after `resolveJoinCode` confirmed
+ * the code/password" convention as `listGuestHomework` — a 404 here means
+ * "this group doesn't expose responsibilities to guests", not a real error. */
+export async function listGuestResponsibilityDates(
+	code: string,
+	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestResponsibilityDate[]> {
+	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, password));
+	if (res.status === 401) throw new GuestPasswordRequiredError();
+	if (!res.ok) throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+
+	const body: GuestResponsibilityDateResponse[] = await res.json();
+	return body.map((d) => ({
+		id: d.id,
+		scheduleName: d.schedule_name,
+		date: d.date,
+		notes: d.notes,
+		locked: d.locked,
+		canceled: d.canceled,
+		roles: d.roles.map((r) => ({
+			roleId: r.role_id,
+			roleName: r.role_name,
+			neededCount: r.needed_count,
+			activeCount: r.active_count,
+			status: r.status
+		}))
 	}));
 }

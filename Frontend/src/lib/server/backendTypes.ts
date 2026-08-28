@@ -14,7 +14,66 @@ export interface GroupOut {
 	join_code: string;
 	role: GroupRole;
 	has_guest_password: boolean;
-	guest_homework_visible: boolean;
+	description: string | null;
+}
+
+/** B12: per-(group, page) visibility, replacing the old single
+ * `guest_homework_visible` flag — one row per page, always all 5. */
+export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities';
+export type PageAudience = 'members' | 'everyone';
+
+export interface GroupPageSettingOut {
+	page: GroupPage;
+	enabled: boolean;
+	audience: PageAudience;
+}
+
+/** B13: a named volunteer program inside a group (e.g. "Snack and rehearsal
+ * support"), made up of reusable roles and concrete dates. */
+export interface ResponsibilityRoleOut {
+	id: string;
+	schedule_id: string;
+	name: string;
+	needed_count: number;
+}
+
+export interface ResponsibilityScheduleOut {
+	id: string;
+	group_id: string;
+	name: string;
+	created_by: string;
+	created_at: string;
+	roles: ResponsibilityRoleOut[];
+}
+
+export interface ResponsibilitySignupOut {
+	id: string;
+	user_id: string;
+	name: string;
+	email: string;
+	created_at: string;
+}
+
+export type ResponsibilityCoverageStatus = 'underfilled' | 'covered' | 'overfilled';
+
+export interface ResponsibilityRoleCoverageOut {
+	role_id: string;
+	role_name: string;
+	needed_count: number;
+	active_count: number;
+	status: ResponsibilityCoverageStatus;
+	signups: ResponsibilitySignupOut[];
+}
+
+export interface ResponsibilityDateOut {
+	id: string;
+	schedule_id: string;
+	schedule_name: string;
+	date: string;
+	notes: string;
+	locked: boolean;
+	canceled: boolean;
+	roles: ResponsibilityRoleCoverageOut[];
 }
 
 export interface GroupMemberOut {

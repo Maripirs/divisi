@@ -23,25 +23,19 @@
 		</p>
 	{:else}
 		{#each data.groupSections as { group, pieces } (group.id)}
+			<!-- Only pieces with a real practice file get shown here — a
+			     distributed track with nothing wired up yet has nothing this
+			     view could do with it, same call the group page's own Tracks
+			     tab makes for a member (as opposed to its admin view, which
+			     does list them so an admin knows what still needs fixing). -->
 			{@const playable = pieces.map((p) => getPieceByTitle(p.title)).filter((p) => p !== undefined)}
-			{@const notWired = pieces.filter((p) => !getPieceByTitle(p.title))}
 			<section class="library-section">
 				<div class="library-section-head">
 					<h2>{group.name}</h2>
 					<a class="section-link" href="/groups/{group.id}">Open group</a>
 				</div>
-				{#if pieces.length > 0}
-					{#if playable.length > 0}
-						<PieceLibrary pieces={playable} />
-					{/if}
-					{#each notWired as piece (piece.piece_id)}
-						<div class="piece-card--plain">
-							<div class="piece-info">
-								<h2>{piece.title}</h2>
-								<p>Status: {piece.version_status} · Practice not wired up yet</p>
-							</div>
-						</div>
-					{/each}
+				{#if playable.length > 0}
+					<PieceLibrary pieces={playable} />
 				{:else}
 					<p class="empty-note">No rehearsal tracks shared with this group yet.</p>
 				{/if}
@@ -99,29 +93,5 @@
 
 	.login-note a {
 		color: var(--accent);
-	}
-
-	.piece-card--plain {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md, 0.75rem);
-		padding: 0.85rem 1rem;
-		background: var(--surface);
-	}
-
-	.piece-card--plain + .piece-card--plain {
-		margin-top: 0.75rem;
-	}
-
-	.piece-info h2 {
-		margin: 0 0 0.15rem;
-		font-size: 1rem;
-		font-weight: 700;
-		color: var(--text);
-	}
-
-	.piece-info p {
-		margin: 0;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
 	}
 </style>

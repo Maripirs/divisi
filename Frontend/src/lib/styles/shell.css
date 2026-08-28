@@ -86,6 +86,17 @@
 	color: var(--accent);
 }
 
+/* `.settings-link` is a <button> (opens the Settings drawer in place,
+   nothing to navigate to) rather than an <a> like `.brand` — reset the
+   native button chrome so it still reads as the same plain icon link. */
+.settings-link {
+	background: none;
+	border: none;
+	padding: 0;
+	font-family: inherit;
+	cursor: pointer;
+}
+
 .settings-link svg {
 	width: 18px;
 	height: 18px;
@@ -273,18 +284,60 @@
 	white-space: nowrap;
 }
 
+/* Styled as an actual button, not a line of text with a hover color — a
+   sizable chunk of this app's real users are older singers, not people who
+   read "text turns blue-ish on hover" as "this is tappable". A visible
+   border/fill/shape reads as a control at a glance; a color-only affordance
+   doesn't, especially on a touch device where hover never happens anyway. */
 .list-row-link {
 	color: inherit;
 	text-decoration: none;
 	display: flex;
-	justify-content: space-between;
-	align-items: baseline;
+	align-items: center;
 	gap: 0.5rem;
-	flex: 1;
+	min-height: 2.75rem;
+	padding: 0.65rem 0.9rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--surface-2);
 }
 
-.list-row-link:hover {
-	color: var(--accent);
+.list-row-link > span:first-child {
+	flex: 1;
+	min-width: 0;
+}
+
+.list-row-link .dim {
+	color: var(--text-muted);
+	font-size: 0.8125rem;
+	white-space: nowrap;
+}
+
+/* Trailing chevron on top of the button styling above — belt and braces,
+   since "this whole shape is a button" and "there's more, tap through"
+   are two different pieces of information. */
+.list-row-link::after {
+	content: '';
+	flex: 0 0 auto;
+	width: 7px;
+	height: 7px;
+	border-top: 2px solid currentColor;
+	border-right: 2px solid currentColor;
+	transform: rotate(45deg);
+	opacity: 0.6;
+}
+
+.list-row-link:hover,
+.list-row-link:active {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--accent-contrast);
+}
+
+.list-row-link:hover .dim,
+.list-row-link:active .dim {
+	color: inherit;
+	opacity: 0.85;
 }
 
 /* ---------- Form fields ---------- */

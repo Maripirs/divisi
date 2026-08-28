@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import type { ActionData } from './$types';
 
@@ -10,8 +12,8 @@
 </script>
 
 <main class="shell">
+	<AppHeader title="Create group" />
 	<p class="crumbs"><a href="/home">Home</a> / Create group</p>
-	<h1 class="title">Create group</h1>
 
 	<form
 		method="POST"
@@ -41,14 +43,9 @@
 	</form>
 </main>
 
-<style>
-	.title {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 800;
-		color: var(--text);
-	}
+<BottomNav />
 
+<style>
 	.error {
 		margin: 0.5rem 0 0;
 		font-size: 0.8125rem;

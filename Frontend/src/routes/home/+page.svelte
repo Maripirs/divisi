@@ -4,7 +4,6 @@
 	import { getPiece } from '$lib/pieces/registry';
 	// Annotations are hidden app-wide for now (see Frontend/plan.md's F3 log) —
 	// not imported here.
-	import { CONTINUE_PRACTICE } from '$lib/fixtures/appData';
 	import '$lib/styles/shell.css';
 	import type { PageData } from './$types';
 
@@ -15,10 +14,6 @@
 	// bundled demo pieces (see Frontend/plan.md's backlog), so "Start" only
 	// shows up if this happens to line up with one; otherwise just "Details".
 	const nextBundledPiece = next?.piece_id ? getPiece(next.piece_id) : undefined;
-
-	// "Continue" stays on the existing bundled-demo fixture — no Backend
-	// concept for "last opened piece" exists yet (Frontend/plan.md's backlog).
-	const continuePiece = getPiece(CONTINUE_PRACTICE.pieceId);
 
 	function formatDate(iso: string | null) {
 		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No due date';
@@ -42,30 +37,37 @@
 		</section>
 	{/if}
 
-	{#if continuePiece}
-		<section class="card">
-			<p class="card-eyebrow">Continue</p>
-			<p class="card-title">{continuePiece.title}</p>
-			<p class="card-meta">{CONTINUE_PRACTICE.voiceView} · Last opened {CONTINUE_PRACTICE.lastOpened}</p>
-			<div class="btn-row">
-				<a class="btn btn-outline" href="/piece/{continuePiece.id}">Resume</a>
-			</div>
-		</section>
-	{/if}
+	<!-- "Continue" (a real "last opened piece" card) removed for now — it was
+	     a hardcoded fixture (always the same piece, always "20 min ago" for
+	     every user), and nothing tracks a real last-opened piece yet. See
+	     Frontend/plan.md's backlog for building it for real. -->
 
-	<section class="card">
-		<p class="card-eyebrow">Due soon</p>
-		{#if data.homework.length === 0}
-			<p class="empty">Nothing assigned yet.</p>
-		{:else}
+	{#if data.homework.length > 0}
+		<section class="card">
+			<p class="card-eyebrow">Due soon</p>
 			{#each data.homework as hw (hw.id)}
 				<a class="list-row-link" href="/groups/{hw.group_id}/homework/{hw.id}">
 					<span>{hw.title}, {hw.range}</span>
 					<span class="dim">{formatDate(hw.due_date)}</span>
 				</a>
 			{/each}
-		{/if}
-	</section>
+		</section>
+	{/if}
+
+	<!-- Only shown at all when there's something upcoming — unlike "Due soon"
+	     above, an empty-state card here would just be noise for the common
+	     case of a group with no responsibilities feature in use. -->
+	{#if data.responsibilities.length > 0}
+		<section class="card">
+			<p class="card-eyebrow">Upcoming responsibilities</p>
+			{#each data.responsibilities as r (r.id)}
+				<a class="list-row-link" href="/groups/{r.groupId}">
+					<span>{r.schedule_name} · {r.groupName}</span>
+					<span class="dim">{formatDate(r.date)}</span>
+				</a>
+			{/each}
+		</section>
+	{/if}
 
 	<section class="card">
 		<p class="card-eyebrow">My groups</p>
@@ -85,9 +87,6 @@
 		<a class="btn btn-outline btn-block join-group" href="/join">Join a group with a code</a>
 	</section>
 
-	<div class="btn-row">
-		<a class="btn btn-outline" href="/">Open library</a>
-	</div>
 </main>
 
 <BottomNav />

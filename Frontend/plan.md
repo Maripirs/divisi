@@ -248,6 +248,65 @@ where the source file came from.
 **Tasks — Human:**
 - [ ] Listen to a real distributed piece played through this path (both as a member and as a guest) and confirm it sounds right — should be indistinguishable from the bundled demo, since it's the exact same player
 
+### F6 — Group page settings + Responsibilities [?]
+
+**Backend-driven, independent of F5's in-progress work above** (different concern —
+group/admin surface, not the player) — the Backend's B12 (per-page group settings,
+replacing the old single `guest_homework_visible` flag) and B13 (Responsibilities:
+admin-run volunteer signup sheets) shipped with no Frontend wiring at all. Brings
+both over.
+
+**Acceptance criteria:**
+- [x] Group admin's Settings tab shows all 5 pages (Homework, Rehearsal Tracks,
+  Members, About, Responsibilities) with independent enabled/audience
+  (members-only vs. everyone) controls, replacing the old single "show homework to
+  guests" checkbox
+- [x] A member whose group has a page disabled just doesn't see that tab, instead of
+  the whole group page (or Home, which aggregates homework across groups) failing —
+  a real gap B12 introduced (its member-facing routes now 403 a non-admin once a
+  page's disabled, and neither `/groups/[id]` nor `/home` was written expecting
+  that)
+- [x] A group's Responsibilities tab lets a member see upcoming dates with per-role
+  coverage and sign up/remove their own signup (blocked once a date's locked or
+  canceled); an admin can additionally create schedules + roles, add dates,
+  lock/cancel dates, and assign/remove any member's signup
+- [x] Guests (via `/join/[code]`) see a read-only Responsibilities tab (coverage
+  only, no names) when a group's admin opted it into `audience: everyone` — same
+  shape as the existing guest Homework tab
+- [x] `npm run check` and `npm run build` both clean
+
+**Tasks — Claude:**
+- [x] `backendTypes.ts`: dropped `GroupOut.guest_homework_visible` (Backend removed
+  the column); added `GroupPage`/`PageAudience`/`GroupPageSettingOut` and the
+  `Responsibility*` types
+- [x] `$lib/api/guest.ts`: `listGuestResponsibilityDates()`, same
+  "404 means not exposed to guests" convention as `listGuestHomework`
+- [x] `/groups/[id]/+page.server.ts`: `fetchPageOrDisabled()` wraps the
+  homework/members/responsibilities fetches so a disabled page just hides its tab;
+  admin-only fetch of `page-settings` + `responsibilities/schedules`; new actions
+  `updatePageSettings`, `createResponsibilitySchedule`, `addResponsibilityDate`,
+  `updateResponsibilityDate` (lock/cancel), `signUpResponsibility`,
+  `removeResponsibilitySignup`; `updateGuestSettings` narrowed to just the password
+  now that visibility lives in `updatePageSettings`
+- [x] `/groups/[id]/+page.svelte`: 5th "Responsibilities" tab (member + admin
+  views); admin Settings tab's page-visibility grid; tab bar now filters to what's
+  actually visible per `data.*Enabled`
+- [x] `/home/+page.server.ts`: same disabled-page guard as the group page, since it
+  independently fetches each group's homework
+- [x] `/join/[code]/+page.ts` + `+page.svelte`: guest Responsibilities tab
+  (read-only coverage, no sign-up action — the guest route returns no signup
+  identities)
+- [x] Ad hoc fixes from live look at the group page: Rehearsal Tracks now uses the
+  same circle-play icon button as the personal Library instead of a text "Practice"
+  button, and hides version status from members (admin-only); the personal Library
+  now hides tracks with no practice file wired up instead of listing them as a dead
+  "not wired up" card, matching the group page's own member-view behavior
+
+**Tasks — Human:**
+- [ ] Look at the built pages (page-settings grid, Responsibilities tab as member/
+  admin/guest) and confirm the UI reads right — no live-app walkthrough done this
+  pass, `npm run check`/`build` only
+
 ## Backlog
 
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only, unaddressed by F4's real-data wiring).
@@ -259,6 +318,7 @@ where the source file came from.
 
 ## Log
 
+- 2026-08-28: Added and built F6 (group page settings + Responsibilities), at the human's direction to catch the Frontend up on the Backend's B12/B13, which shipped backend-only. Along the way, fixed a real correctness gap B12 introduced that nothing had caught yet: `/groups/[id]` and `/home` both called member-facing routes (`/groups/{id}/homework`, `/groups/{id}/members`) unconditionally, but those now 403 a non-admin member once their group's admin disables that page — previously impossible, since no such per-page disable existed before B12. Both routes now treat a 403 there as "hide this tab"/"no homework from this group" instead of failing the whole load. Two small ad hoc fixes landed alongside from the human's live look at the in-progress group page: Rehearsal Tracks' member view now uses the same circle-play icon button as the personal Library (was a text "Practice" link) and hides version status (admin-only info); the personal Library now hides tracks with no practice file wired up entirely instead of listing them as a dead-end card, matching the group page's own member-view behavior. `npm run check` (0 errors) and `npm run build` both clean. Not verified against a running app this pass (see memory — asked the human to look instead of using Playwright).
 - 2026-08-28: Rewrote F5 after the human questioned its premise directly ("I don't think we need a better renderer do you?"). The original design (B7 server-rendered stems, a new `StemPlayer` audio engine) was built on F1's own assumption that in-browser synthesis wouldn't be "accurate at scale" — an assumption never actually retested, since F1 shipped and was approved specifically because the in-browser synth already sounded good. New scope: teach the existing bundled-demo player to load a real Backend piece's raw MIDI/MusicXML file instead of a static asset, reusing `MidiPlayer`/`ScoreView`/the mixer UI completely unchanged — no stems, no manifest, no new audio engine. Needs one small new Backend endpoint (raw file, not a render) rather than B7's manifest/render-cache machinery. Deleted `src/lib/api/manifest.ts`/`src/lib/server/manifest.ts` (built for the old design in the previous session, never committed, nothing referenced them) rather than leaving dead code for an abandoned approach sitting in the tree. B7 itself isn't touched/removed — still built and harmless, just no longer something the Frontend wires up to.
 - 2026-08-27: Investigated the human's "how do we make the good demo experience a robust build" question and found a real, live production bug: `divisi.maripi.net` (the actual Cloudflare Workers deployment) 500s on `/join/[code]` and, almost certainly, every other Backend-touching route (login, groups, homework) — confirmed live with `curl`. Root cause: the deployed build was produced with whatever was in the deploying machine's local, gitignored `.env` at the time (`PUBLIC_API_BASE_URL=http://localhost:8000`), which is obviously unreachable from Cloudflare's network. The bundled-demo player reads as "working" in production purely because it makes zero Backend calls (bundled MIDI/MusicXML as static assets) — it was never actually exercising the broken path, which is exactly why this went unnoticed. First pass added a `deploy` job (`wrangler deploy` on merge to `main`) alongside CI checks, but the human then said deploys should stay manual — dropped that job entirely rather than leave an auto-deploy path nobody wants sitting in the repo. Landed instead: `.github/workflows/frontend-ci.yml` (repo root, since Backend/Frontend/App share one repo) — one check-only `build` job (`npm run check` + `npm run build`) on every push/PR touching `Frontend/**`, needing zero secrets (falls back to a placeholder `PUBLIC_API_BASE_URL` since this job never deploys anything). The actual production fix is still a pending manual step — build with `PUBLIC_API_BASE_URL=<real-backend-url>` set explicitly before `wrangler deploy`, once `backend/deploy` (a separate, already-in-progress worktree/branch — Render + Neon) produces a real URL; tracked in Backlog. Deliberately did not touch Backend deploy itself.
 - 2026-08-27: UX pass following `UX_WIREFRAME.md`'s "Implementation Direction For Claude" (navigation/brand/naming/redundancy rules), at the human's direction. New `AppHeader.svelte` (Divisi brand top-left + Settings gear top-right, page title below) replaces the ad hoc per-route headers on Home/Library/Groups/Settings and the new merged group page; `BottomNav` dropped "Me" down to Home | Library | Groups, its contents (account, defaults, logout) already lived under `/settings`. Merged `/groups/[id]/admin` into `/groups/[id]` itself as a `Viewing as Member / Switch to Admin` toggle (`mode` state, `?view=admin` deep-linkable) — per the wireframe's "admin mode should be a view of the group, not a separate destination"; one shared load feeds both instead of two near-duplicate `+page.server.ts`s. Default view on open is Member even for an admin (the human's call on the doc's own open question). Admin mode's Members tab gained a real "Invite member" form (Backend's `POST /groups/{id}/members` existed but was never wired to any UI before this). `/groups/[id]/admin` now just redirects to `?view=admin` for old links. Built the previously-missing "create a group" flow (`/groups/new`, name only — Backend's `GroupCreate` has no description/default-sections fields yet, noted in Backlog) with a one-time "created" banner (join code + quick links) on landing back on the group page, closing the backlog item from F4's log. Home's quick actions no longer show "Join group" once the user already belongs to one (redundancy rule). Player's Practice Setup drawer (`/piece/[id]`) relabeled from "Settings" to "Practice Setup" throughout (aria-labels, heading) and its display-mode picker to the wireframe's singer-facing labels (Everyone / My part / My part + others), leaving the underlying `DisplayMode` values and player logic untouched — pure text. `npm run check` (0 errors) and `npm run build` both clean throughout. No Playwright verification this session (see memory — asked the human to look instead); dev server left running.

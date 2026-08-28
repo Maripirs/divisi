@@ -1,4 +1,6 @@
 <script lang="ts">
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import type { PageData } from './$types';
 
@@ -11,8 +13,8 @@
 </script>
 
 <main class="shell">
+	<AppHeader title={data.homework.title} />
 	<p class="crumbs"><a href="/groups/{data.group.id}">{data.group.name}</a> / Homework</p>
-	<h1 class="title">{data.homework.title}</h1>
 	<p class="due">{formatDate(data.homework.due_date)} · {data.homework.range}</p>
 
 	{#if data.homework.instructions}
@@ -34,14 +36,9 @@
 	{/if}
 </main>
 
-<style>
-	.title {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 800;
-		color: var(--text);
-	}
+<BottomNav />
 
+<style>
 	.due {
 		margin: 0;
 		font-size: 0.8125rem;

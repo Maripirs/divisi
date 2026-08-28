@@ -2,6 +2,13 @@
 	import { goto } from '$app/navigation';
 	import Logo from '$lib/components/Logo.svelte';
 	import '$lib/styles/shell.css';
+	import type { PageData } from './$types';
+
+	// No dedicated load here — `data.user` comes straight from the root
+	// layout, just to pick where "back" goes (this screen has two separate
+	// entry points: `/home` for a logged-in member, `/welcome` for a
+	// logged-out visitor).
+	let { data }: { data: PageData } = $props();
 
 	let code = $state('');
 
@@ -39,6 +46,10 @@
 		<button class="btn btn-primary btn-block" type="submit" disabled={!code.trim()}>Continue</button
 		>
 	</form>
+
+	<p class="back-link">
+		<a href={data.user ? '/home' : '/welcome'}>← Back</a>
+	</p>
 </main>
 
 <style>
@@ -79,5 +90,15 @@
 	input[type='text'] {
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
+	}
+
+	.back-link {
+		margin: 0.25rem 0 0;
+		text-align: center;
+		font-size: 0.8125rem;
+	}
+
+	.back-link a {
+		color: var(--accent);
 	}
 </style>

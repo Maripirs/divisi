@@ -1,0 +1,40 @@
+name: Frontend CI
+
+# Scoped to Frontend/ only — Backend has its own deploy path (see
+# backend/deploy branch), unaffected by this workflow.
+#
+# Check-only, deliberately: deploys stay a manual `wrangler deploy` (the
+# human's call) rather than auto-shipping on merge, so this needs no
+# Cloudflare/GitHub secrets at all — it's a pre-merge safety net, not a
+# deploy pipeline.
+on:
+  push:
+    branches: [main]
+    paths: ['Frontend/**']
+  pull_request:
+    paths: ['Frontend/**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    env:
+      # A real value isn't needed here — `npm run build` just needs
+      # *some* string, since this job never deploys the result. Falls back
+      # to a placeholder so this workflow needs zero secrets configured;
+      # set a repo secret of the same name if you ever want this build to
+      # exercise the real Backend URL instead.
+      PUBLIC_API_BASE_URL: ${{ secrets.PUBLIC_API_BASE_URL || 'https://placeholder.invalid' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+

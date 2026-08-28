@@ -84,10 +84,13 @@
 			<div class="list-row"><span>Email</span><span class="dim">{data.user.email}</span></div>
 		{:else}
 			<p class="card-meta">
-				You're browsing as a guest — nothing here leaves this device. Create an account to keep
-				it and your groups everywhere you sign in.
+				You're browsing as a guest — nothing here leaves this device. Create an account (or log
+				in to one) to keep it and your groups everywhere you sign in.
 			</p>
-			<a class="btn btn-primary btn-block" href="/login?mode=register">Create an account</a>
+			<div class="btn-row">
+				<a class="btn btn-primary" href="/login?mode=register">Create an account</a>
+				<a class="btn btn-outline" href="/login">Log in</a>
+			</div>
 		{/if}
 	</section>
 
@@ -116,7 +119,7 @@
 				{/each}
 			</select>
 		</label>
-		<label class="field">
+		<label class="field field--sub">
 			<span>Split part</span>
 			<select
 				value={$playerDefaults.voiceDesk ?? ''}
@@ -131,7 +134,7 @@
 				{/each}
 			</select>
 		</label>
-		<p class="card-note">
+		<p class="card-note field--sub">
 			Only applies to a piece that actually splits your voice (e.g. Soprano 1/2) — everything
 			else looks exactly the same either way.
 		</p>
@@ -217,6 +220,16 @@
 {/if}
 
 <style>
+	/* Reads as a sub-choice of "Voice" right above it, not a peer field —
+	   left border + indent are the same "nested under" language used
+	   elsewhere (e.g. the player's own desk picker hangs off its Display
+	   section the same visual way). */
+	.field--sub {
+		margin-left: 1rem;
+		padding-left: 0.75rem;
+		border-left: 2px solid var(--border);
+	}
+
 	.toggle-row {
 		display: flex;
 		justify-content: space-between;

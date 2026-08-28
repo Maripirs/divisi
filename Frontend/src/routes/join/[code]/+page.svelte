@@ -7,15 +7,25 @@
 
 	let { data }: { data: PageData } = $props();
 
-	type Tab = 'tracks' | 'homework';
+	type Tab = 'tracks' | 'homework' | 'responsibilities';
 	let tab = $state<Tab>('tracks');
 
 	function formatDate(iso: string) {
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 
+	function formatDateTime(iso: string) {
+		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+	}
+
 	function formatDueDate(iso: string | null) {
 		return iso ? formatDate(iso) : 'No due date';
+	}
+
+	function coverageLabel(status: string) {
+		if (status === 'underfilled') return 'Needs volunteers';
+		if (status === 'overfilled') return 'Overfilled';
+		return 'Covered';
 	}
 </script>
 
@@ -54,43 +64,27 @@
 			<a class="btn btn-outline btn-block" href="/join">Back</a>
 		</section>
 	{:else if data.group}
-		<AppHeader
-			title={data.group.groupName}
-			homeHref="/join/{data.code}"
-			settingsHref="/settings?code={data.code}"
-		/>
+		<AppHeader title={data.group.groupName} homeHref="/join/{data.code}" />
 
-		{#if data.homeworkVisible}
+		{#if data.homeworkVisible || data.responsibilitiesVisible}
 			<div class="tabs" role="tablist">
 				<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
 					Rehearsal Tracks
 				</button>
-				<button class="tab" class:active={tab === 'homework'} onclick={() => (tab = 'homework')}>
-					Homework
-				</button>
+				{#if data.homeworkVisible}
+					<button class="tab" class:active={tab === 'homework'} onclick={() => (tab = 'homework')}>
+						Homework
+					</button>
+				{/if}
+				{#if data.responsibilitiesVisible}
+					<button class="tab" class:active={tab === 'responsibilities'} onclick={() => (tab = 'responsibilities')}>
+						Responsibilities
+					</button>
+				{/if}
 			</div>
 		{/if}
 
-		{#if !data.homeworkVisible || tab === 'tracks'}
-			<section class="card">
-				{#if data.group.pieces.length === 0}
-					<p class="empty">No rehearsal tracks shared with this group yet.</p>
-				{:else}
-					{#each data.group.pieces as piece (piece.pieceId)}
-						{@const bundled = getPieceByTitle(piece.title)}
-						<div class="list-row">
-							<span>{piece.title}</span>
-							<span class="dim">Shared {formatDate(piece.distributedAt)}</span>
-						</div>
-						{#if bundled}
-							<div class="btn-row">
-								<a class="btn btn-primary" href="/piece/{bundled.id}?guest=1&code={data.code}">Practice</a>
-							</div>
-						{/if}
-					{/each}
-				{/if}
-			</section>
-		{:else}
+		{#if tab === 'homework' && data.homeworkVisible}
 			{#if data.homework.length === 0}
 				<p class="empty">No homework assigned yet.</p>
 			{:else}
@@ -103,6 +97,61 @@
 							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
 						{/if}
 					</section>
+				{/each}
+			{/if}
+		{:else if tab === 'responsibilities' && data.responsibilitiesVisible}
+			<!-- Guest coverage view only — no signup identities (see the
+			     Backend's `ResponsibilityGuestRoleCoverageOut`), so this is
+			     read-only, no sign-up action like the member group page has. -->
+			{#if data.responsibilities.length === 0}
+				<p class="empty">No responsibilities scheduled yet.</p>
+			{:else}
+				{#each data.responsibilities as d (d.id)}
+					<section class="card">
+						<p class="card-eyebrow">
+							{formatDateTime(d.date)}{#if d.canceled} · Canceled{:else if d.locked} · Locked{/if}
+						</p>
+						<p class="card-title">{d.scheduleName}</p>
+						{#if d.notes}
+							<p class="card-note">{d.notes}</p>
+						{/if}
+						{#each d.roles as role (role.roleId)}
+							<div class="list-row">
+								<span>{role.roleName} · {role.activeCount}/{role.neededCount}</span>
+								<span class="dim">{coverageLabel(role.status)}</span>
+							</div>
+						{/each}
+					</section>
+				{/each}
+			{/if}
+		{:else}
+			<!-- Same as the member group page's Tracks tab: a guest only sees
+			     pieces that actually have a practice file wired up (no dead
+			     "not wired up" entries), each its own card with the same
+			     circle-play icon button as the personal Library. -->
+			{@const visiblePieces = data.group.pieces.filter((piece) => getPieceByTitle(piece.title))}
+			{#if visiblePieces.length === 0}
+				<p class="empty">No rehearsal tracks shared with this group yet.</p>
+			{:else}
+				{#each visiblePieces as piece (piece.pieceId)}
+					{@const bundled = getPieceByTitle(piece.title)}
+					{#if bundled}
+						<section class="card track-card">
+							<div class="track-info">
+								<p class="card-title">{piece.title}</p>
+								<p class="card-meta">Shared {formatDate(piece.distributedAt)}</p>
+							</div>
+							<a
+								class="piece-action piece-action--primary"
+								href="/piece/{bundled.id}?guest=1&code={data.code}"
+								aria-label="Open player"
+							>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M8 5v14l11-7z" />
+								</svg>
+							</a>
+						</section>
+					{/if}
 				{/each}
 			{/if}
 		{/if}
@@ -118,5 +167,53 @@
 		display: flex;
 		justify-content: center;
 		padding: 0.5rem 0 1rem;
+	}
+
+	.track-card {
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.track-info {
+		min-width: 0;
+	}
+
+	.piece-action {
+		flex: 0 0 auto;
+		width: 2.25rem;
+		height: 2.25rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		background: var(--surface);
+		color: var(--text);
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.piece-action:hover {
+		border-color: var(--accent);
+		background: var(--surface-2);
+	}
+
+	.piece-action--primary {
+		border-color: var(--accent);
+		background: var(--accent);
+		color: var(--accent-contrast);
+	}
+
+	.piece-action--primary:hover {
+		background: var(--accent-hover);
+	}
+
+	.piece-action svg {
+		width: 20px;
+		height: 20px;
+		flex: 0 0 auto;
+		margin-left: -0.1rem;
 	}
 </style>

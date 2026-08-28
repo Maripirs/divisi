@@ -3,8 +3,10 @@ import {
 	GuestPasswordRequiredError,
 	JoinCodeNotFoundError,
 	listGuestHomework,
+	listGuestResponsibilityDates,
 	resolveJoinCode,
-	type GuestHomework
+	type GuestHomework,
+	type GuestResponsibilityDate
 } from '$lib/api/guest';
 import type { PageLoad } from './$types';
 
@@ -37,10 +39,31 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 			// is expected here — anything else is a real error.
 			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
 		}
-		return { code, password, group, homework, homeworkVisible, error: null };
+
+		// B13: same optional-page shape as homework above — a 404 here means
+		// this group hasn't opted `responsibilities` into guest visibility.
+		let responsibilities: GuestResponsibilityDate[] = [];
+		let responsibilitiesVisible = false;
+		try {
+			responsibilities = await listGuestResponsibilityDates(code, { password, fetchFn: fetch });
+			responsibilitiesVisible = true;
+		} catch (err) {
+			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
+		}
+
+		return { code, password, group, homework, homeworkVisible, responsibilities, responsibilitiesVisible, error: null };
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) {
-			return { code, password, group: null, homework: [], homeworkVisible: false, error: 'not-found' as const };
+			return {
+				code,
+				password,
+				group: null,
+				homework: [],
+				homeworkVisible: false,
+				responsibilities: [],
+				responsibilitiesVisible: false,
+				error: 'not-found' as const
+			};
 		}
 		if (err instanceof GuestPasswordRequiredError) {
 			return {
@@ -49,11 +72,22 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 				group: null,
 				homework: [],
 				homeworkVisible: false,
+				responsibilities: [],
+				responsibilitiesVisible: false,
 				error: 'password-required' as const
 			};
 		}
 		if (err instanceof GuestApiError) {
-			return { code, password, group: null, homework: [], homeworkVisible: false, error: 'server' as const };
+			return {
+				code,
+				password,
+				group: null,
+				homework: [],
+				homeworkVisible: false,
+				responsibilities: [],
+				responsibilitiesVisible: false,
+				error: 'server' as const
+			};
 		}
 		throw err;
 	}

@@ -1,7 +1,30 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { backendFetch, backendJson, BackendApiError } from '$lib/server/backend';
-import type { GroupMemberOut, GroupOut, HomeworkOut, LibraryEntryOut } from '$lib/server/backendTypes';
+import type {
+	GroupMemberOut,
+	GroupOut,
+	GroupPage,
+	GroupPageSettingOut,
+	HomeworkOut,
+	LibraryEntryOut,
+	PageAudience,
+	ResponsibilityDateOut,
+	ResponsibilityScheduleOut
+} from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
+
+/** B12: a member-facing page route 403s once its admin disables that page
+ * (`require_member_page_access`) — admins always pass regardless, so this
+ * only ever "disables" something for a non-admin caller. Wraps a group-page
+ * fetch so a disabled page hides its tab instead of failing the whole load. */
+async function fetchPageOrDisabled<T>(promise: Promise<T>, fallback: T): Promise<{ data: T; enabled: boolean }> {
+	try {
+		return { data: await promise, enabled: true };
+	} catch (err) {
+		if (err instanceof BackendApiError && err.status === 403) return { data: fallback, enabled: false };
+		throw err;
+	}
+}
 
 // Loads everything both the member view and the admin view need in one
 // pass — the admin view used to be a separate route (`/groups/[id]/admin`)
@@ -19,22 +42,53 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 	const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
 	const group = groups.find((g) => g.id === params.id);
 	if (!group) throw error(404, 'Group not found');
+	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homework, library, members] = await Promise.all([
-			backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch),
+		const [homeworkResult, membersResult, library, responsibilitiesResult] = await Promise.all([
+			fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
+			fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
 			backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch),
-			backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch)
+			fetchPageOrDisabled(
+				backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
+				[]
+			)
 		]);
+
+		// Admin-only management data — these two endpoints 403 for a
+		// non-admin, so only fetched when the caller actually is one.
+		let schedules: ResponsibilityScheduleOut[] = [];
+		let pageSettings: GroupPageSettingOut[] = [];
+		if (isAdmin) {
+			[schedules, pageSettings] = await Promise.all([
+				backendJson<ResponsibilityScheduleOut[]>(
+					locals.token,
+					`/groups/${group.id}/responsibilities/schedules`,
+					undefined,
+					fetch
+				),
+				backendJson<GroupPageSettingOut[]>(locals.token, `/groups/${group.id}/page-settings`, undefined, fetch)
+			]);
+		}
 
 		const tracks = library.filter((entry) => entry.owner_type === 'group' && entry.owner_id === group.id);
 		const trackTitleById = new Map(tracks.map((t) => [t.piece_id, t.title]));
 
 		return {
+			user,
 			group,
-			homework: homework.map((hw) => ({ ...hw, pieceTitle: hw.piece_id ? (trackTitleById.get(hw.piece_id) ?? null) : null })),
+			homework: homeworkResult.data.map((hw) => ({
+				...hw,
+				pieceTitle: hw.piece_id ? (trackTitleById.get(hw.piece_id) ?? null) : null
+			})),
+			homeworkEnabled: homeworkResult.enabled,
 			tracks,
-			members
+			members: membersResult.data,
+			membersEnabled: membersResult.enabled,
+			responsibilities: responsibilitiesResult.data,
+			responsibilitiesEnabled: responsibilitiesResult.enabled,
+			schedules,
+			pageSettings
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) throw error(err.status, err.message);
@@ -42,21 +96,22 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 	}
 };
 
+const RESPONSIBILITY_DATE_ID = (form: FormData) => String(form.get('dateId') ?? '');
+
 export const actions: Actions = {
 	updateGuestSettings: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
 		const newPassword = String(form.get('guestPassword') ?? '').trim();
 		const removePassword = form.get('removePassword') === 'on';
-		const guestHomeworkVisible = form.get('guestHomeworkVisible') === 'on';
 
 		// Partial patch (see Backend's `GroupGuestSettingsUpdate`) — only
 		// include `guest_password` when the admin actually typed a new one
 		// or explicitly asked to remove it. The API never lets them read the
 		// current password back, so a blank field must mean "leave it
-		// alone", not "clear it".
-		const body: { guest_password?: string | null; guest_homework_visible: boolean } = {
-			guest_homework_visible: guestHomeworkVisible
-		};
+		// alone", not "clear it". Per-page visibility (formerly
+		// `guest_homework_visible`) is B12's separate `updatePageSettings`
+		// action below, not this one.
+		const body: { guest_password?: string | null } = {};
 		if (newPassword) body.guest_password = newPassword;
 		else if (removePassword) body.guest_password = null;
 
@@ -72,6 +127,53 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'guestSettings' };
+	},
+
+	// B12: admin-only replace of all 5 pages' enabled/audience in one go —
+	// the form always submits every page's current state (checkboxes for
+	// unchecked/disabled pages just don't appear in the FormData), so this
+	// builds the full set rather than a true partial patch even though the
+	// Backend endpoint itself supports one.
+	updatePageSettings: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const pages: GroupPage[] = ['homework', 'tracks', 'members', 'about', 'responsibilities'];
+		const updates = pages.map((page) => ({
+			page,
+			enabled: form.get(`enabled_${page}`) === 'on',
+			audience: (form.get(`audience_${page}`) === 'everyone' ? 'everyone' : 'members') as PageAudience
+		}));
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/page-settings`,
+				{ method: 'PUT', body: JSON.stringify({ pages: updates }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'pageSettings' });
+			throw err;
+		}
+		return { success: true, form: 'pageSettings' };
+	},
+
+	// Admin-only, full replace — the free-text blurb on the Info/About tab.
+	updateDescription: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const description = String(form.get('description') ?? '').trim();
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/description`,
+				{ method: 'PUT', body: JSON.stringify({ description: description || null }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'description' });
+			throw err;
+		}
+		return { success: true, form: 'description' };
 	},
 
 	addMember: async ({ request, locals, fetch, params }) => {
@@ -91,5 +193,277 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'addMember' };
+	},
+
+	// Admin-only, and only for *other* members — removing yourself is a
+	// separate, deliberate "Leave group" action below (the Members tab's
+	// own Remove button is hidden on the caller's own row, but this checks
+	// again server-side since a form POST doesn't actually enforce that).
+	// `parent()` isn't available in form actions (only `load`), so this
+	// re-resolves the caller via `/auth/me` rather than trusting a
+	// client-supplied id. The Backend itself 409s a removal that would
+	// leave the group with no admins, surfaced here as a normal form error.
+	removeMember: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		if (!userId) return fail(400, { error: 'Missing member', form: 'removeMember' });
+
+		try {
+			const me = await backendJson<{ id: string }>(locals.token, '/auth/me', undefined, fetch);
+			if (userId === me.id) {
+				return fail(400, { error: 'Use "Leave group" to remove yourself', form: 'removeMember' });
+			}
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'removeMember' });
+			throw err;
+		}
+
+		try {
+			await backendFetch(locals.token, `/groups/${params.id}/members/${userId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'removeMember' });
+			throw err;
+		}
+		return { success: true, form: 'removeMember' };
+	},
+
+	// Admin-only; promoting is always allowed, demoting the last admin gets
+	// the same 409 removing them would.
+	updateMemberRole: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		const role = form.get('role') === 'admin' ? 'admin' : 'member';
+		if (!userId) return fail(400, { error: 'Missing member', form: 'updateMemberRole' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/members/${userId}/role`,
+				{ method: 'PUT', body: JSON.stringify({ role }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'updateMemberRole' });
+			throw err;
+		}
+		return { success: true, form: 'updateMemberRole' };
+	},
+
+	// Any member (including an admin, as long as they're not the last one
+	// — the Backend's own 409 covers that) can leave a group they belong
+	// to. Redirects to `/home` on success since staying on this page no
+	// longer makes sense once the caller isn't a member.
+	leaveGroup: async ({ locals, fetch, params }) => {
+		try {
+			const me = await backendJson<{ id: string }>(locals.token, '/auth/me', undefined, fetch);
+			await backendFetch(locals.token, `/groups/${params.id}/members/${me.id}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'leaveGroup' });
+			throw err;
+		}
+		throw redirect(303, '/home');
+	},
+
+	// B13, admin-only: create a schedule with its roles in one call — the
+	// form's role rows arrive as parallel `roleName`/`roleNeeded` arrays
+	// (FormData preserves input order), zipped back together here. Rows
+	// left blank (no name typed) are dropped rather than sent as empty roles.
+	createResponsibilitySchedule: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const name = String(form.get('scheduleName') ?? '').trim();
+		if (!name) return fail(400, { error: 'Enter a schedule name', form: 'createSchedule' });
+
+		const roleNames = form.getAll('roleName').map((v) => String(v).trim());
+		const roleCounts = form.getAll('roleNeeded').map((v) => Number(v) || 1);
+		const roles = roleNames
+			.map((roleName, i) => ({ name: roleName, needed_count: roleCounts[i] ?? 1 }))
+			.filter((r) => r.name);
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/responsibilities/schedules`,
+				{ method: 'POST', body: JSON.stringify({ name, roles }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'createSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'createSchedule' };
+	},
+
+	updateResponsibilitySchedule: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		const name = String(form.get('name') ?? '').trim();
+		if (!scheduleId || !name) return fail(400, { error: 'Enter a name', form: 'editSchedule' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/responsibilities/schedules/${scheduleId}`,
+				{ method: 'PATCH', body: JSON.stringify({ name }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'editSchedule' };
+	},
+
+	// Deletes the whole responsibility — its roles, dates, and signups go
+	// with it (see the Backend route's own note on why there's no undo).
+	// The confirm step lives entirely in the UI (a click-to-reveal button).
+	deleteResponsibilitySchedule: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		if (!scheduleId) return fail(400, { error: 'Missing responsibility', form: 'editSchedule' });
+
+		try {
+			await backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'editSchedule' };
+	},
+
+	addResponsibilityRole: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		const name = String(form.get('name') ?? '').trim();
+		const neededCount = Number(form.get('neededCount')) || 1;
+		if (!scheduleId || !name) return fail(400, { error: 'Enter a role name', form: 'editSchedule' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/responsibilities/schedules/${scheduleId}/roles`,
+				{ method: 'POST', body: JSON.stringify({ name, needed_count: neededCount }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'editSchedule' };
+	},
+
+	updateResponsibilityRole: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const roleId = String(form.get('roleId') ?? '');
+		const name = String(form.get('name') ?? '').trim();
+		const neededCount = Number(form.get('neededCount')) || 1;
+		if (!roleId || !name) return fail(400, { error: 'Enter a role name', form: 'editSchedule' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/responsibilities/roles/${roleId}`,
+				{ method: 'PATCH', body: JSON.stringify({ name, needed_count: neededCount }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'editSchedule' };
+	},
+
+	deleteResponsibilityRole: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const roleId = String(form.get('roleId') ?? '');
+		if (!roleId) return fail(400, { error: 'Missing role', form: 'editSchedule' });
+
+		try {
+			await backendFetch(locals.token, `/responsibilities/roles/${roleId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'editSchedule' };
+	},
+
+	// B13, admin-only: one concrete occurrence of a schedule.
+	addResponsibilityDate: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		const dateInput = String(form.get('date') ?? '');
+		const notes = String(form.get('notes') ?? '').trim();
+		if (!scheduleId || !dateInput) return fail(400, { error: 'Choose a schedule and date', form: 'addDate' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/responsibilities/schedules/${scheduleId}/dates`,
+				{ method: 'POST', body: JSON.stringify({ date: new Date(dateInput).toISOString(), notes }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'addDate' });
+			throw err;
+		}
+		return { success: true, form: 'addDate' };
+	},
+
+	// B13, admin-only: covers lock/unlock and cancel/reinstate — each button
+	// below submits just the one field it's toggling, so this only ever
+	// patches the field that's actually present.
+	updateResponsibilityDate: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const dateId = RESPONSIBILITY_DATE_ID(form);
+		if (!dateId) return fail(400, { error: 'Missing date' });
+
+		const body: { locked?: boolean; canceled?: boolean } = {};
+		if (form.has('locked')) body.locked = form.get('locked') === 'true';
+		if (form.has('canceled')) body.canceled = form.get('canceled') === 'true';
+
+		try {
+			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message });
+			throw err;
+		}
+		return { success: true, form: 'updateDate' };
+	},
+
+	// B13: no `userId` in the form means "sign myself up" (member
+	// self-signup); an explicit `userId` is an admin assigning someone else
+	// (the Backend route enforces the admin check server-side either way).
+	signUpResponsibility: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const dateId = String(form.get('dateId') ?? '');
+		const roleId = String(form.get('roleId') ?? '');
+		const userId = String(form.get('userId') ?? '').trim();
+		if (!dateId || !roleId) return fail(400, { error: 'Missing date or role' });
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/responsibilities/dates/${dateId}/signups`,
+				{ method: 'POST', body: JSON.stringify({ role_id: roleId, user_id: userId || undefined }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'signUp' });
+			throw err;
+		}
+		return { success: true, form: 'signUp' };
+	},
+
+	removeResponsibilitySignup: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const signupId = String(form.get('signupId') ?? '');
+		if (!signupId) return fail(400, { error: 'Missing signup' });
+
+		try {
+			await backendFetch(locals.token, `/responsibilities/signups/${signupId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'signUp' });
+			throw err;
+		}
+		return { success: true, form: 'signUp' };
 	}
 };

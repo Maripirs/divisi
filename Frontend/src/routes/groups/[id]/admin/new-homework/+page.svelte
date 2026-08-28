@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import type { ActionData, PageData } from './$types';
 
@@ -23,8 +25,8 @@
 </script>
 
 <main class="shell">
+	<AppHeader title="New homework" />
 	<p class="crumbs"><a href="/groups/{data.group.id}?view=admin">{data.group.name} / Admin</a></p>
-	<h1 class="title">New homework</h1>
 
 	{#if data.tracks.length === 0}
 		<p class="empty">No rehearsal tracks shared with this group yet — nothing to assign homework against.</p>
@@ -103,14 +105,9 @@
 	{/if}
 </main>
 
-<style>
-	.title {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 800;
-		color: var(--text);
-	}
+<BottomNav />
 
+<style>
 	.range-tabs {
 		border-bottom: none;
 		padding-bottom: 0;
