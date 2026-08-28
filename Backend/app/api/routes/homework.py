@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import HomeworkCreate, HomeworkOut
-from app.db.models import Group, GroupRole, Homework, User
+from app.db.models import Group, GroupPage, GroupRole, Homework, User
 from app.db.session import get_db
+from app.services.pages import require_member_page_access
 from app.services.pieces import group_role
 
 router = APIRouter(tags=["homework"])
@@ -75,6 +76,7 @@ def list_group_homework(
 ) -> list[Homework]:
     _get_group_or_404(group_id, db)
     _require_member(group_id, current_user, db)
+    require_member_page_access(group_id, GroupPage.homework, current_user.id, db)
     return (
         db.query(Homework)
         .filter(Homework.group_id == group_id)
@@ -91,6 +93,7 @@ def get_homework(
 ) -> Homework:
     homework = _get_homework_or_404(homework_id, db)
     _require_member(homework.group_id, current_user, db)
+    require_member_page_access(homework.group_id, GroupPage.homework, current_user.id, db)
     return homework
 
 

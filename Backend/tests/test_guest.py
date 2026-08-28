@@ -121,9 +121,12 @@ def test_guest_cannot_fetch_manifest_for_a_piece_not_distributed_to_this_group(c
 
 def test_guest_can_list_homework_no_auth(client):
     admin_headers = _register_and_login(client, "gh-admin@example.com")
-    group = client.post(
-        "/groups", json={"name": "Choir GH", "guest_homework_visible": True}, headers=admin_headers
-    ).json()
+    group = client.post("/groups", json={"name": "Choir GH"}, headers=admin_headers).json()
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "homework", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
     client.post(
         "/groups/" + group["id"] + "/homework",
         json={"title": "Lacrymosa", "range": "mm. 18-42"},
@@ -178,11 +181,24 @@ def test_guest_password_can_be_set_via_guest_settings(client):
 
     client.put(
         "/groups/" + group["id"] + "/guest-settings",
-        json={"guest_password": "newpass", "guest_homework_visible": False},
+        json={"guest_password": "newpass"},
         headers=admin_headers,
     )
     assert client.get(f"/guest/{group['join_code']}").status_code == 401
     assert client.get(f"/guest/{group['join_code']}", params={"password": "newpass"}).status_code == 200
+
+
+def test_guest_join_code_404s_when_tracks_page_disabled(client):
+    admin_headers = _register_and_login(client, "pg-guest1@example.com")
+    group, piece_id, version_id = _create_group_with_distributed_midi_piece(client, admin_headers, title="Foo")
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": False, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+
+    assert client.get(f"/guest/{group['join_code']}").status_code == 404
+    assert client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/manifest").status_code == 404
 
 
 def test_guest_endpoints_are_rate_limited(client):

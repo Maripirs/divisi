@@ -15,12 +15,31 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.schemas import GuestGroupOut, GuestPieceOut, HomeworkOut, RenderManifestOut
+from app.api.schemas import (
+    GuestGroupOut,
+    GuestPieceOut,
+    HomeworkOut,
+    RenderManifestOut,
+    ResponsibilityGuestDateOut,
+    ResponsibilityGuestRoleCoverageOut,
+)
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import verify_password
-from app.db.models import Distribution, Group, Homework, Piece, PieceVersion
+from app.db.models import (
+    Distribution,
+    Group,
+    GroupPage,
+    Homework,
+    Piece,
+    PieceVersion,
+    ResponsibilityDate,
+    ResponsibilityRole,
+    ResponsibilitySchedule,
+)
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.services.pages import require_guest_page_access
+from app.services.responsibilities import role_coverage
 from app.storage.files import resolve_source_path
 
 router = APIRouter(prefix="/guest", tags=["guest"], dependencies=[Depends(rate_limit_guest)])
@@ -63,6 +82,10 @@ def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> Pi
 def resolve_join_code(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> GuestGroupOut:
     group = _get_group_by_join_code_or_404(join_code, db)
     _check_guest_password(group, password)
+    # B12: this route *is* the guest-facing "tracks" page (a group's
+    # distributed pieces) — gated the same way homework is below, replacing
+    # the old unconditional-for-guests behavior.
+    require_guest_page_access(group.id, GroupPage.tracks, db)
 
     distributed_rows = (
         db.query(Distribution, PieceVersion, Piece)
@@ -96,19 +119,72 @@ def list_guest_homework(join_code: str, password: str | None = None, db: Session
     homework assignment (title/range/instructions/due date) carries no more
     sensitivity than the piece titles already exposed above, so it's
     scoped by join code the same way, no membership required. Also gated
-    by B10's `guest_homework_visible` flag (default off) — unlike pieces,
-    an admin may not want assignments visible to non-members at all, even
-    ones who have the join code/password."""
+    by B12's `homework` page settings (default: enabled, members-only
+    audience) — unlike tracks, homework isn't guest-visible by default
+    even with the right join code/password."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _check_guest_password(group, password)
-    if not group.guest_homework_visible:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Homework not available for this group")
+    require_guest_page_access(group.id, GroupPage.homework, db)
     return (
         db.query(Homework)
         .filter(Homework.group_id == group.id)
         .order_by(Homework.due_date.asc().nulls_last(), Homework.created_at.asc())
         .all()
     )
+
+
+@router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])
+def list_guest_responsibility_dates(
+    join_code: str, password: str | None = None, db: Session = Depends(get_db)
+) -> list[ResponsibilityGuestDateOut]:
+    """Read-only, same no-auth stance as the rest of this router. Unlike the
+    member-facing `GET /groups/{id}/responsibilities/dates`, this never
+    returns *who* signed up (see `ResponsibilityGuestRoleCoverageOut`) —
+    member names/emails aren't something a join-code link should hand out,
+    only whether a role still needs people. Gated by B12's `responsibilities`
+    page settings, same mechanism as homework."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.responsibilities, db)
+    rows = (
+        db.query(ResponsibilityDate, ResponsibilitySchedule)
+        .join(ResponsibilitySchedule, ResponsibilityDate.schedule_id == ResponsibilitySchedule.id)
+        .filter(ResponsibilitySchedule.group_id == group.id)
+        .order_by(ResponsibilityDate.date.asc())
+        .all()
+    )
+    out: list[ResponsibilityGuestDateOut] = []
+    for date, schedule in rows:
+        roles = (
+            db.query(ResponsibilityRole)
+            .filter(ResponsibilityRole.schedule_id == schedule.id)
+            .order_by(ResponsibilityRole.created_at.asc())
+            .all()
+        )
+        role_outs = []
+        for role in roles:
+            active_count, coverage_status, _signups = role_coverage(date.id, role, db)
+            role_outs.append(
+                ResponsibilityGuestRoleCoverageOut(
+                    role_id=role.id,
+                    role_name=role.name,
+                    needed_count=role.needed_count,
+                    active_count=active_count,
+                    status=coverage_status,
+                )
+            )
+        out.append(
+            ResponsibilityGuestDateOut(
+                id=date.id,
+                schedule_name=schedule.name,
+                date=date.date,
+                notes=date.notes,
+                locked=date.locked,
+                canceled=date.canceled,
+                roles=role_outs,
+            )
+        )
+    return out
 
 
 @router.get("/{join_code}/pieces/{piece_id}/manifest", response_model=RenderManifestOut)
@@ -121,6 +197,7 @@ def get_guest_piece_manifest(
     than trusting a client-supplied version id."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
@@ -153,6 +230,7 @@ def get_guest_render_file(
 ) -> FileResponse:
     group = _get_group_by_join_code_or_404(join_code, db)
     _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")

@@ -54,11 +54,10 @@ class Group(Base):
     # set", the group behaves exactly as it did before this existed. Stored
     # hashed via the same bcrypt helper `User.hashed_password` uses.
     guest_password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Whether the guest (no-login) view exposes this group's homework, not
-    # just its distributed pieces. Defaults to hidden — an admin opts in
-    # per group rather than every group's assignments being guest-visible
-    # by default.
-    guest_homework_visible: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # Free-text blurb shown on the group's Info/About page — admin-editable,
+    # `None` means nothing's been written yet (not the same as an empty
+    # string, though the Frontend treats both as "nothing to show").
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -71,6 +70,42 @@ class GroupMembership(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     role: Mapped[GroupRole] = mapped_column(
         SAEnum(GroupRole, native_enum=False), nullable=False, default=GroupRole.member
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class GroupPage(str, enum.Enum):
+    homework = "homework"
+    tracks = "tracks"
+    members = "members"
+    about = "about"
+    responsibilities = "responsibilities"
+
+
+class PageAudience(str, enum.Enum):
+    members = "members"
+    everyone = "everyone"
+
+
+class GroupPageSettings(Base):
+    """B12: generalizes the old `Group.guest_homework_visible` boolean into
+    a per-(group, page) row across all 5 pages. `enabled=False` makes a page
+    unreachable via its routes for everyone but the group's admins;
+    `audience` only matters while `enabled` is true, and controls whether
+    the unauthenticated guest routes can reach it too (`everyone`) or it's
+    members-only (`members`). Every group gets one row per page, seeded at
+    creation (see `app/api/routes/groups.py`) and backfilled for pre-B12
+    groups by this migration."""
+
+    __tablename__ = "group_page_settings"
+    __table_args__ = (UniqueConstraint("group_id", "page", name="uq_group_page_settings"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    page: Mapped[GroupPage] = mapped_column(SAEnum(GroupPage, native_enum=False), nullable=False)
+    enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+    audience: Mapped[PageAudience] = mapped_column(
+        SAEnum(PageAudience, native_enum=False), nullable=False, default=PageAudience.members
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -173,6 +208,76 @@ class Homework(Base):
     instructions: Mapped[str] = mapped_column(String, nullable=False, default="")
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ResponsibilitySchedule(Base):
+    """B13: a named, reusable set of roles (e.g. "Sunday cantors") that
+    individual one-off dates get added to. Scoped down hard from
+    `../../BACKEND_PROPOSALS.md`: no `recurrence_rule`/lazy generation (no
+    scheduled-job runner exists in this backend yet), so every date is
+    created explicitly by an admin."""
+
+    __tablename__ = "responsibility_schedules"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ResponsibilityRole(Base):
+    """A role definition within a schedule (e.g. "Cantor", `needed_count`=1).
+    Kept as its own entity rather than inlined on `ResponsibilityDate` so the
+    same role list is reused across every date added to the schedule instead
+    of being redefined per date."""
+
+    __tablename__ = "responsibility_roles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    schedule_id: Mapped[str] = mapped_column(
+        String, ForeignKey("responsibility_schedules.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    needed_count: Mapped[int] = mapped_column(default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ResponsibilityDate(Base):
+    """One occurrence under a schedule. `locked` blocks member self-signup/
+    self-removal (admins bypass it either way); `canceled` marks a date
+    inactive without deleting its signup history."""
+
+    __tablename__ = "responsibility_dates"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    schedule_id: Mapped[str] = mapped_column(
+        String, ForeignKey("responsibility_schedules.id"), nullable=False
+    )
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    notes: Mapped[str] = mapped_column(String, nullable=False, default="")
+    locked: Mapped[bool] = mapped_column(default=False, server_default="false")
+    canceled: Mapped[bool] = mapped_column(default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ResponsibilitySignup(Base):
+    """One member covering one role on one date. Unique per (date, role,
+    user) so re-signing up is a no-op collision rather than a duplicate row;
+    nothing stops the same user covering *different* roles on the same date,
+    or a role having more signups than `needed_count` (that's exactly what
+    "overfilled" coverage means)."""
+
+    __tablename__ = "responsibility_signups"
+    __table_args__ = (
+        UniqueConstraint("date_id", "role_id", "user_id", name="uq_responsibility_signup"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    date_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_dates.id"), nullable=False)
+    role_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_roles.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

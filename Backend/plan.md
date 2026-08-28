@@ -2,16 +2,18 @@
 
 Separate from the root `plan.md` (owned by another session, tracking the iOS app's M-milestones). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Current milestone:** B11 (deploy to hosting) — all acceptance criteria + tasks
-done and verified against the real live instance, pending the human's review/
-sign-off. B6 done (approved via the human's join-code-format call, see log); B7's
-and B8's Claude tasks are also done, still pending the human's listening /
-engine-install sign-offs; B9 (Homework/assignments) and B10 (guest privacy
-controls) both pending review, added to unblock `Frontend/plan.md`'s expanded F4.
-B11 started 2026-08-27 in a dedicated worktree, per the human's request to get a
-real reachable backend for `Frontend/plan.md`'s F2 — **renumbered from B9** on
-merge, since that number was independently claimed by the Homework milestone in
-a parallel session; no task content changed, just the label.
+**Current milestone:** none started yet. B12 (group page configuration)
+approved 2026-08-28. B11 (deploy to hosting) still separately pending review
+from the prior session. B6 done (approved via the human's join-code-format
+call, see log); B7's and B8's Claude tasks are also done, still pending the
+human's listening / engine-install sign-offs; B9 (Homework/assignments) and B10
+(guest privacy controls) both pending review, added to unblock
+`Frontend/plan.md`'s expanded F4.
+
+**Current milestone:** none started yet — B13 (Responsibilities) approved
+2026-08-28. No further B-milestones are scoped; see Backlog below for
+candidates (B7/B8's human-only follow-through, Object Storage wiring, real
+job queue, Responsibilities' deferred recurrence/notifications/swap/approval).
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -37,6 +39,25 @@ AnnotationShare annotation_id, shared_with_user_id          — explicit peer-to
 Homework        id, group_id, piece_id (nullable), title, range, instructions, due_date,
                  created_by, created_at  — a group admin's assignment to their members;
                  unrelated to Piece review/distribution status (B4)
+
+GroupPageSettings group_id, page (homework|tracks|members|about|responsibilities),
+                 enabled (bool), audience (members|everyone)  — per-group, per-page
+                 visibility; replaces Group.guest_homework_visible (B10). `audience`
+                 only matters while `enabled` is true; admins always see every page
+                 regardless of either setting.
+
+ResponsibilitySchedule id, group_id, title, description, created_by, status
+                 (active|paused|archived), created_at  — a named volunteer program
+                 inside a group (e.g. "Snack and rehearsal support"). One-off for
+                 now: no recurrence_rule.
+ResponsibilityRole     id, schedule_id, name, needed_count, sort_order
+ResponsibilityDate     id, schedule_id, date, status (open|locked|cancelled|complete),
+                 notes  — one concrete occurrence, admin-created directly (no lazy
+                 generation, no signup_deadline)
+ResponsibilitySignup   id, responsibility_date_id, responsibility_role_id, user_id,
+                 assigned_by_user_id, source (self_signup|admin_assignment),
+                 status (active|removed), created_at, removed_at  — soft-removed for
+                 admin audit; coverage = needed_count - active signups, per role
 ```
 
 Stack: Python/FastAPI, Postgres (SQLAlchemy + Alembic migrations), local-disk file storage
@@ -228,16 +249,72 @@ Gets a real, reachable URL for the Frontend to talk to (F2 needs this to move pa
 - [x] Confirm the deployed `/health` URL
 - [x] Redeploy on Render once this merge (CORS + B9/B10) reaches `backend/deploy`, so the live instance actually has it — done via `render services update`/`render deploys list` (CLI); also fixed a `rootDir`/`dockerContext` misconfiguration surfaced along the way (see Log)
 
+### B12 — Group page configuration [x]
+
+Generalizes B10's ad-hoc `Group.guest_homework_visible` boolean into a per-page
+enabled/audience setting, ahead of adding Responsibilities (B13) as a 5th page.
+Backend only this pass — no Frontend wiring (the Frontend already references
+the old `guest_homework_visible` field in a few places — `src/lib/server/backendTypes.ts`,
+`src/lib/api/guest.ts`, `src/routes/groups/[id]/+page.*` — left untouched on
+purpose, matching this milestone's explicit backend-only scope; a Frontend pass
+will need to pick up the new `page-settings` endpoint instead).
+
+**Acceptance criteria:**
+- [x] Every group has a settings row for each of the 5 pages (homework, tracks, members, about, responsibilities), defaulting to match today's behavior so existing groups don't silently change
+- [x] An admin can enable/disable a page and set its audience (members-only vs. everyone) independently, per page
+- [x] A disabled page is unreachable via its member/guest endpoints (403/404, not just hidden by convention), regardless of audience
+- [x] An enabled page with audience=members is reachable by authenticated members but not by the unauthenticated guest routes
+- [x] Admins can always read every page's data regardless of its enabled/audience settings
+- [x] `Group.guest_homework_visible` is removed; existing groups are backfilled to the equivalent `group_page_settings` row, no manual re-setup needed
+
+**Tasks — Claude:**
+- [x] `GroupPageSettings` model + migration, seeded per-group at group creation and backfilled for existing groups from `guest_homework_visible`
+- [x] `GET/PUT /groups/{id}/page-settings` (admin-only read/write)
+- [x] Wire the existing homework + guest routes to check `group_page_settings` instead of `guest_homework_visible`; add the same check anywhere tracks/members/about have a route
+- [x] Drop `Group.guest_homework_visible` (migration)
+- [x] Tests: default seeding, per-page enable/audience toggling (admin-only, member/guest 403), disabled page blocked for members and guests, members-only page blocked for guests but not members, admin always has access, backfill migration correctness
+
+### B13 — Responsibilities [x]
+
+Depends on B12 (registers as the `responsibilities` page). Scoped down from
+`../BACKEND_PROPOSALS.md`'s full proposal: one-off dates only (no recurrence rule,
+no lazy generation, no `signup_deadline`), no swapping, no signup-approval step, no
+notifications/reminders — all deferred to Backlog below if actually needed later.
+
+**Acceptance criteria:**
+- [x] A group admin can create a `ResponsibilitySchedule` with named roles + headcounts, and add individual dates to it
+- [x] Any member can list a group's responsibility dates and see per-role coverage (covered/underfilled/overfilled)
+- [x] A member can sign up for an open slot and remove their own signup; both are blocked once the date is admin-locked
+- [x] An admin can assign/remove any member's signup regardless of lock state, and can lock or cancel a date
+- [x] A non-member cannot see or act on another group's responsibilities (403, no data leak)
+- [x] Visibility (members-only vs. everyone) follows B12's page settings, same mechanism as homework/tracks
+
+**Tasks — Claude:**
+- [x] `ResponsibilitySchedule`, `ResponsibilityRole`, `ResponsibilityDate`, `ResponsibilitySignup` models + migration
+- [x] Admin endpoints: create/edit schedule + roles, create/edit/lock/cancel dates, assign/remove any signup
+- [x] Member endpoints: list a group's dates + coverage, self-signup, self-remove (blocked when locked)
+- [x] Guest endpoint, gated by B12's `responsibilities` page audience=everyone, mirroring the homework guest route's shape
+- [x] Coverage computed server-side (`needed_count - active_signup_count` per role), returned on the list endpoint
+- [x] Tests: admin CRUD, member self-signup/remove + 403 for non-members, locked date blocks member writes but not admin, coverage math, guest route respects page settings
+
 ## Backlog
 
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
 - Wire `app/storage/files.py` to Neon's Object Storage (S3-compatible, already provisioned on the project — see B9's log) instead of local disk, to fix the free-tier ephemeral-disk gap. Credentials already sit in `Backend/.env` (`AWS_*`); this item is the actual code + `boto3` dependency work, not yet started.
 - Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
+- Responsibilities: recurrence rules + lazy date generation (needs a real scheduled-job runner, which doesn't exist yet — deferred out of B13, see `../BACKEND_PROPOSALS.md`)
+- Responsibilities: notifications/reminders (no notification infra of any kind exists yet — in-app, email, and push are all unbuilt)
+- Responsibilities: swap requests between members, and an admin-required-approval step for signups — both explicitly deferred out of B13 per the human's call
 
 ## Log
 
+- 2026-08-28: B13 (Responsibilities) approved. No next B-milestone scoped yet — see Backlog for candidates.
+- 2026-08-28: B13 built (Responsibilities) — `ResponsibilitySchedule`/`ResponsibilityRole`/`ResponsibilityDate`/`ResponsibilitySignup` models + migration (`a1c4e8f2b6d9`, chains off B12's `3d1749b04685`). New `app/services/responsibilities.py` (mirrors `services/pages.py`'s shape): `role_coverage`/`role_signups`, the one place coverage status (`underfilled`/`covered`/`overfilled`) is computed, shared between the member and guest routes so they can't drift. New `app/api/routes/responsibilities.py`: admin create/edit schedule+roles, create/edit/lock/cancel a date (one partial-patch `PATCH .../dates/{id}` covers edit+lock+cancel, same convention as B12's page-settings patch), member list-with-coverage, self-signup/self-remove; `POST .../signups` doubles as the admin-assign route — an explicit `user_id` in the body targets someone else and requires admin, which also bypasses the lock check (member self-signup/self-remove is blocked once `locked=True`, admin never is). Capacity is deliberately never enforced — "overfilled" is a real, reachable status, not just a hypothetical. New `GET /guest/{code}/responsibilities/dates` in `guest.py`, same no-auth/join-code/page-settings-gated shape as the homework guest route, but returns a distinct `ResponsibilityGuestRoleCoverageOut` (coverage numbers only, no `signups` list) — a guest link shouldn't hand out member names/emails the way the member view does. Verified for real, not just `pytest`: `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against a real Postgres container; ran the live app against that Postgres end-to-end (register two users → create group → enable `responsibilities` for guests → create schedule+role → create date → member self-signup → member listing shows the signup → guest listing shows coverage with no name/email → admin locks the date → member's own removal now 409s → admin's removal of the same signup still succeeds); test data deleted from Postgres after, container torn down. `pytest` — 92 passed (12 new: admin schedule/role CRUD, member-vs-admin 403s, non-member 403 on both list routes, self-signup/self-remove round trip, cross-member removal blocked, lock blocks member signup+removal but not admin, admin assign-to-another-member + non-admin blocked from doing the same, underfilled/covered/overfilled coverage math, guest sees coverage without signup identities, guest hidden by default and on an unknown join code).
+- 2026-08-28: B12 approved. Moving to B13 (Responsibilities).
+- 2026-08-28: B12 built (group page configuration) — new `GroupPage`/`PageAudience` enums + `GroupPageSettings` model (`id, group_id, page, enabled, audience, created_at`, unique on `(group_id, page)`) and migration: creates the table, backfills one row per page for every existing group (homework's `audience` carries forward its old `guest_homework_visible` value — `everyone` if it was `True`, else `members`; every other page defaults to whatever was already true unconditionally: `tracks` always `enabled=True`/`audience=everyone` since guests could see distributed pieces with no gate at all before this, `members`/`about`/`responsibilities` default `members`-audience since no guest route touches them), then drops `groups.guest_homework_visible`. `app/services/pages.py` (new, mirrors `services/pieces.py`'s shape): `seed_default_page_settings` (called once at group creation), `require_guest_page_access`/`require_member_page_access` (the actual gates — admin always passes on the member path, matching the acceptance criterion). New `GET/PUT /groups/{id}/page-settings` (admin-only; `PUT` is a partial per-page update, not full-replace, since every group already has all 5 rows). Rewired: `guest.py`'s `resolve_join_code` (this route *is* the guest-facing tracks page — a group's distributed pieces list, previously ungated entirely) plus its manifest/render-file routes all now gate on the `tracks` page; `list_guest_homework` swapped its `guest_homework_visible` check for the `homework` page gate; `homework.py`'s member list/get routes gate on the `homework` page (admin bypass via the same helper); `groups.py`'s `list_members` gates on the new `members` page. `about` and `responsibilities` have no live routes yet (the latter is B13's whole job) so nothing to wire there this pass — their settings rows exist and are inert until routes show up. `GroupCreate`/`GroupOut`/`GroupGuestSettingsUpdate` all dropped `guest_homework_visible` (superseded by the page-settings endpoint). Verified for real, not just `pytest`: `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against a real Postgres container; separately downgraded to pre-B12, hand-inserted two groups with `guest_homework_visible=true`/`false` directly via `psql`, re-ran `upgrade head`, and confirmed their backfilled `homework` rows came out `everyone`/`members` respectively — the actual backfill-correctness criterion, not just "the migration runs." Also ran the real app against that Postgres instance end-to-end (register → login → create group → confirm default page-settings → disable `tracks` via the new `PUT` → guest `/guest/{code}` now 404s). `pytest` — 80 passed (5 new: default seeding, admin-only read/write 403 for non-admins, per-page toggling round-trip including that untouched pages keep their prior settings, disabled `members` page blocks members but not admins, and guest 404 on both the join-code resolve and the piece manifest once `tracks` is disabled). Frontend still reads the old `guest_homework_visible` field in a few places (`backendTypes.ts`, `api/guest.ts`, the group detail page) — deliberately left alone, matching this milestone's explicit "backend only, no Frontend wiring" scope; noted here so it's not mistaken for an oversight when Frontend work picks this up.
 - 2026-08-28: Seeded the human's real live group ("San Francisco City Chorus", created by them via the real `/login` → `/groups/new` flow — the app's first genuine end user) with all 7 pieces from `Frontend/static/fixtures/SFCC/`, at their request. Committed a copy under `Backend/fixtures/SFCC/` first (same `fixtures/` convention as B11), redeployed, then created the `Piece`/`PieceVersion`/`Distribution` rows directly (still no upload UI — same direct-model-insert approach as the original ad-hoc SFCC seeding and this session's smoke tests). These are MusicXML source files, not MIDI, so B7's render pipeline can't play them — 6 of the 7 titles exactly match a bundled Frontend registry entry, though, so those get a real working Practice button via the pre-existing `getPieceByTitle()` title-match path (client-side player, unrelated to this file's Backend location); "The Frost Myth" has no registry match and lists without a Practice button, a pre-existing gap. Verified live: `GET /guest/9CJM7VRU` returns all 7.
+- 2026-08-28: Grilled the human on `../BACKEND_PROPOSALS.md` ("Group Responsibilities") before touching code. Landed on two new milestones, both backend-only for now (no Frontend wiring this session): **B12 (group page configuration)** — generalizes B10's single `guest_homework_visible` boolean into a `GroupPageSettings` row per (group, page) across all 5 pages (homework, tracks, members, about, responsibilities), each independently `enabled` + `audience` (members|everyone), admins always see everything regardless. **B13 (Responsibilities)** — scoped down hard from the original proposal: one-off dates only (no `recurrence_rule`, no lazy generation, since there's no scheduled-job runner in this backend yet), `Schedule`/`Role`/`Date`/`Signup` kept as separate entities so role definitions are still reusable across a schedule's dates, no swapping, no signup-approval step, no notifications (no notification infra exists at all yet). Explicitly sequenced ahead of resuming B7/B8's remaining items, per the human's direction — those are human-only follow-through at this point (listen to a stem, install Audiveris, test a real PDF), not blocking further Claude work, so this isn't actually a reprioritization away from in-progress Claude work. Deferred items (recurrence, notifications, swap, approval) logged to Backlog rather than dropped.
 - 2026-08-27: Closed out B11, working autonomously while the human was away ("fix the backend, I'm afk"). Found and fixed a chain of real production issues, not just merged code: (1) the deployed instance predated the CORS/Homework/B10 work entirely — a leftover from the `backend/deploy` branch having only 2 commits past its fork point, while all of that work sat uncommitted in the working tree. Merged `backend/deploy` into `main` (one real conflict: `B9` had been independently claimed by both the Homework milestone here and this branch's "deploy to hosting" milestone — renumbered the latter to B11, no content lost), committed the uncommitted Backend work, pushed both `main` and `backend/deploy`. (2) First redeploy attempt (moving the Docker build context to the repo root so the Dockerfile could reach a sibling `Fixtures/` directory, per the human's separate "put the music files in the repo" request) broke the live build — `render deploys list` showed `build_failed`. Root cause, found via `render services -o json`: the live service has its own dashboard-set `rootDir: Backend`, which prefixes onto render.yaml's `dockerContext` — so "repo root" there actually meant "Backend/Backend/". Fixed by keeping the build context at `./Backend` and committing a copy of the fixtures under `Backend/fixtures/` instead of reaching across to the sibling directory — no Render config change needed at all. (3) Verified for real both locally (`docker compose up` against a real Postgres) and against the actual live `https://divisi.onrender.com`: registered a user, created a group, seeded a `fixtures/`-pointed `PieceVersion` (direct model insert — no API surface for this yet), distributed it, then called the real guest manifest endpoint and fetched a rendered stem back (32MB valid RIFF/WAVE, not an error page). Confirmed CORS works from the real Frontend origin and that `/join/[code]` on `divisi.maripi.net` now returns a clean response instead of the earlier 500. Test data deleted from the live Neon DB after each pass. `pytest` 75/75 throughout. Used the `render` CLI (`services`, `deploys list`, `services update`) for all of this — no dashboard access needed. B11 marked `[?]` pending the human's review.
 - 2026-08-27: B10 built (guest privacy controls) — `Group.guest_password_hash` (nullable) + `guest_homework_visible` (bool, default false) + migration, verified `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against the real running Postgres container. `GroupCreate` takes an optional `guest_password` (hashed via the existing bcrypt `hash_password` helper, same as user passwords) and `guest_homework_visible`; `GroupOut` exposes only `has_guest_password`/`guest_homework_visible`, never the hash. New `PUT /groups/{id}/guest-settings` (admin-only, full replace — `guest_password: None` clears it) so these aren't creation-only. All four `/guest/*` routes now take an optional `password` query param and 401 (one generic message, missing or wrong) whenever the group has one set; the homework route additionally 404s when `guest_homework_visible` is false, independent of the password. Verified: `pytest` — 75 passed (9 new). Restarted the local dev `uvicorn` to pick up the new routes.
 - 2026-08-27: B9 built (Homework/assignments) — new `Homework` model + migration (verified `alembic upgrade head`/`downgrade -1`/`upgrade head` clean against the real running Postgres container), new `app/api/routes/homework.py`: `POST /groups/{group_id}/homework` (admin-only), `GET /groups/{group_id}/homework` (member list, ordered by `due_date` ascending with nulls last, then `created_at`), `GET /homework/{id}` and `DELETE /homework/{id}` (member/admin respectively, scoped via the homework row's own `group_id` so the URL doesn't need to repeat it). Reused `app/services/pieces.py`'s `group_role` helper for membership/admin checks rather than reimplementing `groups.py`'s local versions. `piece_id` is nullable — an assignment can exist before a piece is picked, matching the Frontend's own admin-form UX (piece is chosen from a dropdown, not required up front). Verified: `pytest` — 66 passed (7 new: admin create, member-cannot-create 403, member list+get, non-member 403 on both, unknown-id 404, admin delete + member-cannot-delete 403, due-date ordering with a null-due-date entry sorting last). Restarted the local dev `uvicorn` (no `--reload`) to pick up the new router; confirmed live via `/openapi.json`. Done to unblock `Frontend/plan.md`'s F4, which is being built in the same session right after this.

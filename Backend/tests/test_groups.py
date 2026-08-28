@@ -110,7 +110,6 @@ def test_group_created_with_no_guest_password_by_default(client):
     admin_headers = _register_and_login(client, "admin8@example.com")
     group = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()
     assert group["has_guest_password"] is False
-    assert group["guest_homework_visible"] is False
 
 
 def test_group_can_be_created_with_a_guest_password(client):
@@ -127,17 +126,15 @@ def test_admin_can_update_guest_settings(client):
 
     updated = client.put(
         "/groups/" + group_id + "/guest-settings",
-        json={"guest_password": "s3cret", "guest_homework_visible": True},
+        json={"guest_password": "s3cret"},
         headers=admin_headers,
     )
     assert updated.status_code == 200
-    body = updated.json()
-    assert body["has_guest_password"] is True
-    assert body["guest_homework_visible"] is True
+    assert updated.json()["has_guest_password"] is True
 
     cleared = client.put(
         "/groups/" + group_id + "/guest-settings",
-        json={"guest_password": None, "guest_homework_visible": False},
+        json={"guest_password": None},
         headers=admin_headers,
     )
     assert cleared.json()["has_guest_password"] is False
@@ -151,7 +148,77 @@ def test_non_admin_cannot_update_guest_settings(client):
 
     forbidden = client.put(
         "/groups/" + group_id + "/guest-settings",
-        json={"guest_password": "hack", "guest_homework_visible": True},
+        json={"guest_password": "hack"},
         headers=member_headers,
     )
     assert forbidden.status_code == 403
+
+
+def test_group_created_with_default_page_settings(client):
+    admin_headers = _register_and_login(client, "pg-admin1@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    settings = client.get("/groups/" + group_id + "/page-settings", headers=admin_headers)
+    assert settings.status_code == 200
+    by_page = {row["page"]: row for row in settings.json()}
+    assert set(by_page) == {"homework", "tracks", "members", "about", "responsibilities"}
+    for page, row in by_page.items():
+        assert row["enabled"] is True
+        expected_audience = "everyone" if page == "tracks" else "members"
+        assert row["audience"] == expected_audience
+
+
+def test_non_admin_cannot_read_or_write_page_settings(client):
+    admin_headers = _register_and_login(client, "pg-admin2@example.com")
+    member_headers = _register_and_login(client, "pg-member2@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "pg-member2@example.com"}, headers=admin_headers)
+
+    assert client.get("/groups/" + group_id + "/page-settings", headers=member_headers).status_code == 403
+    forbidden = client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "homework", "enabled": False, "audience": "members"}]},
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_admin_can_toggle_page_settings(client):
+    admin_headers = _register_and_login(client, "pg-admin3@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    updated = client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "homework", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    by_page = {row["page"]: row for row in updated.json()}
+    assert by_page["homework"]["audience"] == "everyone"
+    # Untouched pages keep their prior settings.
+    assert by_page["tracks"]["audience"] == "everyone"
+    assert by_page["members"]["enabled"] is True
+
+    disabled = client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": False, "audience": "everyone"}]},
+        headers=admin_headers,
+    ).json()
+    assert {row["page"]: row["enabled"] for row in disabled}["tracks"] is False
+
+
+def test_disabled_members_page_blocks_members_but_not_admin(client):
+    admin_headers = _register_and_login(client, "pg-admin4@example.com")
+    member_headers = _register_and_login(client, "pg-member4@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "pg-member4@example.com"}, headers=admin_headers)
+
+    client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "members", "enabled": False, "audience": "members"}]},
+        headers=admin_headers,
+    )
+
+    assert client.get("/groups/" + group_id + "/members", headers=member_headers).status_code == 403
+    # Admins always see it regardless of the page's own settings.
+    assert client.get("/groups/" + group_id + "/members", headers=admin_headers).status_code == 200

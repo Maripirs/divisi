@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr
 
-from app.db.models import GroupRole, OmrJobStatus, OwnerType, VersionSource, VersionStatus
+from app.db.models import GroupPage, GroupRole, OmrJobStatus, OwnerType, PageAudience, VersionSource, VersionStatus
 
 
 class UserCreate(BaseModel):
@@ -36,7 +36,6 @@ class GroupCreate(BaseModel):
     # Optional second factor on the guest (no-login) join-code view — see
     # `Group.guest_password_hash`. `None`/omitted means no password.
     guest_password: str | None = None
-    guest_homework_visible: bool = False
 
 
 class GroupOut(BaseModel):
@@ -45,26 +44,59 @@ class GroupOut(BaseModel):
     join_code: str  # B6: share this (or a link embedding it) to let guests in
     role: GroupRole  # the requesting user's role in this group
     has_guest_password: bool  # never the password/hash itself, just whether one is set
-    guest_homework_visible: bool
+    description: str | None = None  # free-text blurb on the group's Info/About page
 
     model_config = {"from_attributes": True}
+
+
+class GroupDescriptionUpdate(BaseModel):
+    """Admin-only, full replace — `None`/omitted clears it back to nothing
+    written yet."""
+
+    description: str | None = None
 
 
 class GroupGuestSettingsUpdate(BaseModel):
     """Partial patch: a field left out of the request body is left
     untouched (checked via Pydantic's `model_fields_set`, not just "was it
-    `None`") — so an admin can toggle `guest_homework_visible` without
-    having to resend a password, which the API never lets them read back
-    to resend in the first place. Explicitly sending `guest_password: null`
-    does clear it — that's a provided value, just an empty one."""
+    `None`") — currently just the password, since B12 moved per-page guest
+    visibility (formerly `guest_homework_visible`) to
+    `GET/PUT /groups/{id}/page-settings` below. Explicitly sending
+    `guest_password: null` does clear it — that's a provided value, just an
+    empty one."""
 
     guest_password: str | None = None
-    guest_homework_visible: bool | None = None
+
+
+class GroupPageSettingOut(BaseModel):
+    page: GroupPage
+    enabled: bool
+    audience: PageAudience
+
+    model_config = {"from_attributes": True}
+
+
+class GroupPageSettingUpdate(BaseModel):
+    page: GroupPage
+    enabled: bool
+    audience: PageAudience
+
+
+class GroupPageSettingsUpdate(BaseModel):
+    """Partial: only the pages included get changed — a group always has
+    all 5 rows already (seeded/backfilled), so this is an update, not a
+    replace-everything-or-nothing operation."""
+
+    pages: list[GroupPageSettingUpdate]
 
 
 class GroupMemberAdd(BaseModel):
     email: EmailStr
     role: GroupRole = GroupRole.member
+
+
+class GroupMemberRoleUpdate(BaseModel):
+    role: GroupRole
 
 
 class GroupMemberOut(BaseModel):
@@ -229,6 +261,121 @@ class OmrImportOut(BaseModel):
     piece: PieceOut
     version: PieceVersionOut
     created_new_piece: bool
+
+
+class ResponsibilityRoleCreate(BaseModel):
+    name: str
+    needed_count: int = 1
+
+
+class ResponsibilityRoleUpdate(BaseModel):
+    """Partial patch (checked via `model_fields_set`, same convention as
+    `GroupGuestSettingsUpdate`) — a field left out is left untouched."""
+
+    name: str | None = None
+    needed_count: int | None = None
+
+
+class ResponsibilityRoleOut(BaseModel):
+    id: str
+    schedule_id: str
+    name: str
+    needed_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class ResponsibilityScheduleCreate(BaseModel):
+    name: str
+    roles: list[ResponsibilityRoleCreate] = []
+
+
+class ResponsibilityScheduleUpdate(BaseModel):
+    name: str | None = None
+
+
+class ResponsibilityScheduleOut(BaseModel):
+    id: str
+    group_id: str
+    name: str
+    created_by: str
+    created_at: datetime
+    roles: list[ResponsibilityRoleOut]
+
+
+class ResponsibilityDateCreate(BaseModel):
+    date: datetime
+    notes: str = ""
+
+
+class ResponsibilityDateUpdate(BaseModel):
+    """Partial patch, same `model_fields_set` convention — lets an admin
+    lock/cancel a date (or edit its date/notes) independently."""
+
+    date: datetime | None = None
+    notes: str | None = None
+    locked: bool | None = None
+    canceled: bool | None = None
+
+
+class ResponsibilitySignupCreate(BaseModel):
+    """`user_id` omitted means "sign myself up"; an explicit `user_id` for
+    someone else requires the admin role (see the route)."""
+
+    role_id: str
+    user_id: str | None = None
+
+
+class ResponsibilitySignupOut(BaseModel):
+    id: str
+    user_id: str
+    name: str
+    email: str
+    created_at: datetime
+
+
+class ResponsibilityRoleCoverageOut(BaseModel):
+    """Per-role coverage on one date, as seen by a member/admin — includes
+    who's actually signed up."""
+
+    role_id: str
+    role_name: str
+    needed_count: int
+    active_count: int
+    status: str  # "underfilled" | "covered" | "overfilled"
+    signups: list[ResponsibilitySignupOut]
+
+
+class ResponsibilityDateOut(BaseModel):
+    id: str
+    schedule_id: str
+    schedule_name: str
+    date: datetime
+    notes: str
+    locked: bool
+    canceled: bool
+    roles: list[ResponsibilityRoleCoverageOut]
+
+
+class ResponsibilityGuestRoleCoverageOut(BaseModel):
+    """Same coverage numbers as the member view, minus `signups` — a guest
+    gets no member names/emails, just whether a role still needs people."""
+
+    role_id: str
+    role_name: str
+    needed_count: int
+    active_count: int
+    status: str
+
+
+class ResponsibilityGuestDateOut(BaseModel):
+    id: str
+    schedule_name: str
+    date: datetime
+    notes: str
+    locked: bool
+    canceled: bool
+    roles: list[ResponsibilityGuestRoleCoverageOut]
 
 
 class RenderManifestOut(BaseModel):

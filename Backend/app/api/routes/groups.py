@@ -9,11 +9,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import GroupCreate, GroupGuestSettingsUpdate, GroupMemberAdd, GroupMemberOut, GroupOut
+from app.api.schemas import (
+    GroupCreate,
+    GroupDescriptionUpdate,
+    GroupGuestSettingsUpdate,
+    GroupMemberAdd,
+    GroupMemberOut,
+    GroupMemberRoleUpdate,
+    GroupOut,
+    GroupPageSettingOut,
+    GroupPageSettingsUpdate,
+)
 from app.core.join_codes import generate_join_code
 from app.core.security import hash_password
-from app.db.models import Group, GroupMembership, GroupRole, User
+from app.db.models import Group, GroupMembership, GroupPage, GroupPageSettings, GroupRole, User
 from app.db.session import get_db
+from app.services.pages import require_member_page_access, seed_default_page_settings
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -42,6 +53,22 @@ def _require_admin(group_id: str, current_user: User, db: Session) -> GroupMembe
     return membership
 
 
+def _remaining_admins_excluding(group_id: str, user_id: str, db: Session) -> int:
+    """How many admins this group would have left if `user_id` stopped
+    being one — shared by `remove_member` (leaving/being removed) and
+    `update_member_role` (being demoted), so a group can never end up with
+    zero admins either way."""
+    return (
+        db.query(GroupMembership)
+        .filter(
+            GroupMembership.group_id == group_id,
+            GroupMembership.role == GroupRole.admin,
+            GroupMembership.user_id != user_id,
+        )
+        .count()
+    )
+
+
 @router.post("", response_model=GroupOut, status_code=status.HTTP_201_CREATED)
 def create_group(
     payload: GroupCreate,
@@ -58,7 +85,6 @@ def create_group(
             name=payload.name,
             join_code=generate_join_code(),
             guest_password_hash=guest_password_hash,
-            guest_homework_visible=payload.guest_homework_visible,
         )
         db.add(group)
         try:
@@ -69,6 +95,10 @@ def create_group(
             if attempt == _JOIN_CODE_CREATE_ATTEMPTS - 1:
                 raise
     db.add(GroupMembership(group_id=group.id, user_id=current_user.id, role=GroupRole.admin))
+    # B12: seed all 5 pages' settings up front so every group has a full
+    # set of rows from creation, matching today's pre-B12 behavior — no
+    # separate "does this group have settings yet" branch anywhere else.
+    seed_default_page_settings(group.id, db)
     db.commit()
     db.refresh(group)
     return _group_out(group, GroupRole.admin)
@@ -81,7 +111,7 @@ def _group_out(group: Group, role: GroupRole) -> GroupOut:
         join_code=group.join_code,
         role=role,
         has_guest_password=group.guest_password_hash is not None,
-        guest_homework_visible=group.guest_homework_visible,
+        description=group.description,
     )
 
 
@@ -113,11 +143,79 @@ def update_guest_settings(
     fields_sent = payload.model_fields_set
     if "guest_password" in fields_sent:
         group.guest_password_hash = hash_password(payload.guest_password) if payload.guest_password else None
-    if "guest_homework_visible" in fields_sent and payload.guest_homework_visible is not None:
-        group.guest_homework_visible = payload.guest_homework_visible
     db.commit()
     db.refresh(group)
     return _group_out(group, membership.role)
+
+
+@router.put("/{group_id}/description", response_model=GroupOut)
+def update_description(
+    group_id: str,
+    payload: GroupDescriptionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupOut:
+    """Admin-only, full replace — the free-text blurb shown on the group's
+    Info/About page to every member (and to guests, since it carries no
+    more sensitivity than the group name itself)."""
+    group = _get_group_or_404(group_id, db)
+    membership = _require_admin(group_id, current_user, db)
+    group.description = payload.description
+    db.commit()
+    db.refresh(group)
+    return _group_out(group, membership.role)
+
+
+@router.get("/{group_id}/page-settings", response_model=list[GroupPageSettingOut])
+def get_page_settings(
+    group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[GroupPageSettings]:
+    """B12: admin-only view of all 5 pages' `enabled`/`audience` settings."""
+    _get_group_or_404(group_id, db)
+    _require_admin(group_id, current_user, db)
+    return (
+        db.query(GroupPageSettings)
+        .filter(GroupPageSettings.group_id == group_id)
+        .order_by(GroupPageSettings.page)
+        .all()
+    )
+
+
+@router.put("/{group_id}/page-settings", response_model=list[GroupPageSettingOut])
+def update_page_settings(
+    group_id: str,
+    payload: GroupPageSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[GroupPageSettings]:
+    """B12: admin-only update of one or more pages' `enabled`/`audience` —
+    every group already has all 5 rows (seeded at creation / backfilled),
+    so this always updates existing rows rather than creating them."""
+    _get_group_or_404(group_id, db)
+    _require_admin(group_id, current_user, db)
+    rows_by_page = {
+        row.page: row
+        for row in db.query(GroupPageSettings).filter(GroupPageSettings.group_id == group_id).all()
+    }
+    for update in payload.pages:
+        row = rows_by_page.get(update.page)
+        if row is None:
+            # Defensive only — every group should already have this row;
+            # create it rather than silently dropping the admin's change.
+            row = GroupPageSettings(group_id=group_id, page=update.page)
+            db.add(row)
+            rows_by_page[update.page] = row
+        row.enabled = update.enabled
+        row.audience = update.audience
+    db.commit()
+    return (
+        db.query(GroupPageSettings)
+        .filter(GroupPageSettings.group_id == group_id)
+        .order_by(GroupPageSettings.page)
+        .all()
+    )
 
 
 @router.get("/{group_id}/members", response_model=list[GroupMemberOut])
@@ -129,6 +227,7 @@ def list_members(
     _get_group_or_404(group_id, db)
     if _get_membership(group_id, current_user.id, db) is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
+    require_member_page_access(group_id, GroupPage.members, current_user.id, db)
     rows = (
         db.query(User, GroupMembership.role)
         .join(GroupMembership, GroupMembership.user_id == User.id)
@@ -169,17 +268,36 @@ def remove_member(
     membership = _get_membership(group_id, user_id, db)
     if membership is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a member")
-    if membership.role == GroupRole.admin:
-        remaining_admins = (
-            db.query(GroupMembership)
-            .filter(
-                GroupMembership.group_id == group_id,
-                GroupMembership.role == GroupRole.admin,
-                GroupMembership.user_id != user_id,
-            )
-            .count()
-        )
-        if remaining_admins == 0:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot remove the last admin")
+    if membership.role == GroupRole.admin and _remaining_admins_excluding(group_id, user_id, db) == 0:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot remove the last admin")
     db.delete(membership)
     db.commit()
+
+
+@router.put("/{group_id}/members/{user_id}/role", response_model=GroupMemberOut)
+def update_member_role(
+    group_id: str,
+    user_id: str,
+    payload: GroupMemberRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupMemberOut:
+    """Admin-only. Demoting the last admin is blocked the same way removing
+    them is (`_remaining_admins_excluding`) — promoting has no such risk,
+    so that direction is always allowed."""
+    _get_group_or_404(group_id, db)
+    _require_admin(group_id, current_user, db)
+    membership = _get_membership(group_id, user_id, db)
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a member")
+    if (
+        membership.role == GroupRole.admin
+        and payload.role == GroupRole.member
+        and _remaining_admins_excluding(group_id, user_id, db) == 0
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot demote the last admin")
+    membership.role = payload.role
+    db.commit()
+    user = db.get(User, user_id)
+    assert user is not None
+    return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role)
