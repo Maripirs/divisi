@@ -130,6 +130,7 @@ class GroupPage(str, enum.Enum):
     members = "members"
     about = "about"
     responsibilities = "responsibilities"
+    weekly_notes = "weekly_notes"
 
 
 class PageAudience(str, enum.Enum):
@@ -267,6 +268,26 @@ class Homework(Base):
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the assignment out from under the rest of the group.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class WeeklyNote(Base):
+    """A group admin's dated bulletin entry (e.g. "week of Sept 1: no
+    rehearsal, retreat instead") — a history feed, not a single running
+    note, so members can scroll back through past weeks' entries.
+    `note_date` is the admin-set "week of" date this entry is about,
+    distinct from `created_at` (when it was actually posted)."""
+
+    __tablename__ = "weekly_notes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str] = mapped_column(String, nullable=False, default="")
+    note_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the note out from under the rest of the group.
     created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

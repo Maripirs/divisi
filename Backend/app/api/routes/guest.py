@@ -22,6 +22,7 @@ from app.api.schemas import (
     RenderManifestOut,
     ResponsibilityGuestDateOut,
     ResponsibilityGuestRoleCoverageOut,
+    WeeklyNoteOut,
 )
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import verify_password
@@ -35,6 +36,7 @@ from app.db.models import (
     ResponsibilityDate,
     ResponsibilityRole,
     ResponsibilitySchedule,
+    WeeklyNote,
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
@@ -129,6 +131,24 @@ def list_guest_homework(join_code: str, password: str | None = None, db: Session
         db.query(Homework)
         .filter(Homework.group_id == group.id)
         .order_by(Homework.due_date.asc().nulls_last(), Homework.created_at.asc())
+        .all()
+    )
+
+
+@router.get("/{join_code}/weekly-notes", response_model=list[WeeklyNoteOut])
+def list_guest_weekly_notes(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> list[WeeklyNote]:
+    """Read-only, same no-auth stance as `list_guest_homework` above — a
+    weekly note carries no more sensitivity than homework does (`created_by`
+    is a bare id, never surfaced as a name), so it reuses `WeeklyNoteOut`
+    as-is rather than a hidden-identity variant. Gated by the `weekly_notes`
+    page settings, members-only audience by default."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.weekly_notes, db)
+    return (
+        db.query(WeeklyNote)
+        .filter(WeeklyNote.group_id == group.id)
+        .order_by(WeeklyNote.note_date.desc(), WeeklyNote.created_at.desc())
         .all()
     )
 

@@ -65,6 +65,7 @@ from app.api.schemas.responsibilities import (
     ResponsibilitySignupCreate,
     ResponsibilitySignupOut,
 )
+from app.api.schemas.weekly_notes import WeeklyNoteCreate, WeeklyNoteOut, WeeklyNoteUpdate
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
@@ -121,4 +122,7 @@ __all__ = [
     "UserLogin",
     "UserOut",
     "UserUpdate",
+    "WeeklyNoteCreate",
+    "WeeklyNoteOut",
+    "WeeklyNoteUpdate",
 ]

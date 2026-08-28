@@ -1,7 +1,17 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import annotations, auth, groups, guest, homework, library, omr, responsibilities
+from app.api.routes import (
+    annotations,
+    auth,
+    groups,
+    guest,
+    homework,
+    library,
+    omr,
+    responsibilities,
+    weekly_notes,
+)
 from app.core.config import get_settings
 
 app = FastAPI(title="Divisi Backend")
@@ -22,6 +32,7 @@ app.include_router(annotations.router)
 app.include_router(guest.router)
 app.include_router(homework.router)
 app.include_router(responsibilities.router)
+app.include_router(weekly_notes.router)
 
 
 @app.get("/health")

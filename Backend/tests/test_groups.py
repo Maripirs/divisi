@@ -161,7 +161,7 @@ def test_group_created_with_default_page_settings(client):
     settings = client.get("/groups/" + group_id + "/page-settings", headers=admin_headers)
     assert settings.status_code == 200
     by_page = {row["page"]: row for row in settings.json()}
-    assert set(by_page) == {"homework", "tracks", "members", "about", "responsibilities"}
+    assert set(by_page) == {"homework", "tracks", "members", "about", "responsibilities", "weekly_notes"}
     for page, row in by_page.items():
         assert row["enabled"] is True
         expected_audience = "everyone" if page == "tracks" else "members"

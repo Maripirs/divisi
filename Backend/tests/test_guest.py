@@ -158,6 +158,45 @@ def test_guest_homework_hidden_by_default(client):
     assert response.status_code == 404
 
 
+def test_guest_can_list_weekly_notes_no_auth(client):
+    admin_headers = _register_and_login(client, "gwn-admin@example.com")
+    group = client.post("/groups", json={"name": "Choir GWN"}, headers=admin_headers).json()
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "weekly_notes", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+    client.post(
+        "/groups/" + group["id"] + "/weekly-notes",
+        json={"title": "Week of Sept 1", "note_date": "2026-09-01T00:00:00Z"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/weekly-notes")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["title"] == "Week of Sept 1"
+
+
+def test_guest_weekly_notes_unknown_join_code_404s(client):
+    response = client.get("/guest/NOTAREAL/weekly-notes")
+    assert response.status_code == 404
+
+
+def test_guest_weekly_notes_hidden_by_default(client):
+    admin_headers = _register_and_login(client, "gwn-admin2@example.com")
+    group = client.post("/groups", json={"name": "Choir GWN2"}, headers=admin_headers).json()
+    client.post(
+        "/groups/" + group["id"] + "/weekly-notes",
+        json={"title": "Week of Sept 1", "note_date": "2026-09-01T00:00:00Z"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/weekly-notes")
+    assert response.status_code == 404
+
+
 def test_guest_password_protects_all_routes(client):
     admin_headers = _register_and_login(client, "gp-admin@example.com")
     group = client.post(

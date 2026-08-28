@@ -27,6 +27,7 @@ DEFAULT_AUDIENCE: dict[GroupPage, PageAudience] = {
     GroupPage.members: PageAudience.members,
     GroupPage.about: PageAudience.members,
     GroupPage.responsibilities: PageAudience.members,
+    GroupPage.weekly_notes: PageAudience.members,
 }
 
 
@@ -63,8 +64,9 @@ def require_guest_page_access(group_id: str, page: GroupPage, db: Session) -> No
     unauthorized caller which of "disabled" vs. "members-only" applies."""
     enabled, audience = _effective_settings(group_id, page, db)
     if not enabled or audience != PageAudience.everyone:
+        page_label = page.value.replace("_", " ").capitalize()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"{page.value.capitalize()} not available for this group"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"{page_label} not available for this group"
         )
 
 
@@ -77,6 +79,7 @@ def require_member_page_access(group_id: str, page: GroupPage, user_id: str, db:
         return
     enabled, _audience = _effective_settings(group_id, page, db)
     if not enabled:
+        page_label = page.value.replace("_", " ").capitalize()
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=f"{page.value.capitalize()} is disabled for this group"
+            status_code=status.HTTP_403_FORBIDDEN, detail=f"{page_label} is disabled for this group"
         )

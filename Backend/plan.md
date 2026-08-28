@@ -292,7 +292,7 @@ notifications/reminders — all deferred to Backlog below if actually needed lat
 - [x] Coverage computed server-side (`needed_count - active_signup_count` per role), returned on the list endpoint
 - [x] Tests: admin CRUD, member self-signup/remove + 403 for non-members, locked date blocks member writes but not admin, coverage math, guest route respects page settings
 
-### B14 — Account security (password strength/reset, OAuth scaffold) [?]
+### B14 — Account security (password strength/reset, OAuth scaffold) [x]
 
 Built autonomously overnight, per the human's direction before going to bed:
 "make account setup more robust/secure, consider incorporating google/apple
@@ -389,12 +389,41 @@ recorded here rather than just done silently:
   email" step, still entirely unbuilt
 - [x] Google Sign-In: created the OAuth app in Google Cloud Console
   (project `divisi-506916`), set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
-  locally (`Backend/.env`) and on Render — verified 2026-08-28 via
-  `GET /auth/oauth/providers` (`google: true` in prod) and a real
-  "Continue with Google" round trip against `divisi.maripi.net`. Consent
-  screen is still in Testing status (only listed test users can sign in);
-  Apple Sign-In still needs its own credentials once its real flow is
-  built (see B14's Apple note above).
+  locally (`Backend/.env`) and on Render. **Actually verified
+  end-to-end 2026-08-28** — a prior session's "verified" note here had
+  only ever curled `/auth/oauth/providers`/`.../start`, never a real
+  browser round trip; `HANDOFF.md` was written to close that gap. This
+  session confirmed the redirect URI was registered in Cloud Console
+  (both `https://divisi.onrender.com/auth/oauth/google/callback` and the
+  localhost dev one), confirmed `FRONTEND_BASE_URL` was correctly
+  `https://divisi.maripi.net` on Render (not the localhost default), and
+  the human then clicked "Continue with Google" on the real
+  `divisi.maripi.net/login` with a real account — landed logged in. Also
+  tested the password-account + Google linking path (register with a
+  password, then Google sign-in on the same email) — works as intended.
+  Consent screen is still in Testing status (only listed test users can
+  sign in), which is why it's hidden again right after verifying (see
+  below) rather than left live for arbitrary users. Apple Sign-In still
+  needs its own credentials once its real flow is built (see B14's Apple
+  note above).
+- [x] **Hidden again, deliberately, 2026-08-28, right after the above
+  verification** — the consent screen's Testing-status cap (only listed
+  test users can sign in) means it's not ready for arbitrary real users
+  yet, so rather than leave it live in its current half-working-for-most-
+  people state, pulled `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` from
+  Render directly this time (previous attempt, 2026-08-27 entry below,
+  only commented them out of local `.env`, which doesn't touch
+  Render's own dashboard-set copies — the exact half-state `HANDOFF.md`
+  called out). Deleted both keys via Render's REST API (`DELETE
+  /v1/services/{id}/env-vars/{key}`, no CLI command exists for this) and
+  `render restart`ed the service, since deleting an env var via the API
+  does *not* auto-trigger a redeploy the way the dashboard UI does — the
+  running container keeps its old env until manually restarted.
+  Confirmed via the API that both keys were actually gone, then polled
+  `/auth/oauth/providers` until it reported `google: false` again. To
+  re-enable: either publish the OAuth consent screen out of Testing (see
+  Backlog) and re-add the two keys on Render, or add specific test users
+  in Cloud Console for now.
 
 ## Backlog
 
@@ -408,9 +437,11 @@ recorded here rather than just done silently:
 - Responsibilities: whether roles/schedules should be reusable *templates* shared across groups, rather than each group defining its own from scratch — an open question from the original proposal doc (deleted 2026-08-28, repo cleanup), never decided either way
 - No `pytest` coverage yet for `PUT /groups/{id}/description`, `PUT /groups/{id}/members/{user_id}/role`, or `DELETE /responsibilities/schedules/{id}`/`.../roles/{id}` (added post-B13, live in production — see 2026-08-28's deploy log entry)
 - Set `FRONTEND_BASE_URL` on Render (see B14) and pick a transactional email provider so password-reset links actually work for someone who isn't reading server logs
+- Re-enable Google Sign-In for real users: publish the OAuth consent screen out of Testing status in Cloud Console (project `divisi-506916` — `Publish App` under OAuth consent screen; scopes are non-sensitive `openid email profile` so this shouldn't require Google's full verification review, just a confirm click), then re-add `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` on Render and `restart` the service — see B14's log entry above for why a restart is required after an env var change via the API
 
 ## Log
 
+- 2026-08-28: Google Sign-In verified for real, closing out B14. A prior session's log entry (below) had claimed this was "verified" when it had only ever curled `/auth/oauth/providers`/`.../start` — never an actual browser round trip with a real Google account; `HANDOFF.md` (deleted now, its job done) was written specifically to catch and close that gap rather than leave the feature live in production on a false "verified" claim. This session confirmed both known failure modes were already clear — `FRONTEND_BASE_URL` correctly `https://divisi.maripi.net` on Render (checked read-only via the Render REST API using the CLI's cached token, since `render` has no `env-vars` command) and both redirect URIs registered in Google Cloud Console (project `divisi-506916`) — then the human clicked "Continue with Google" on the real `divisi.maripi.net/login` and confirmed landing logged in, plus separately tested the password-account + Google linking path (register with a password, then Google sign-in on the same email) and confirmed it links as intended. B14 marked `[x]`.
 - 2026-08-28: Deploying tonight's batch (this entry plus the one below) to production. `PUT`/`DELETE /auth/me` (edit display name; delete account with full cascade — nulls `created_by` on group-owned content the account created rather than deleting it out from under the group, hard-deletes genuinely personal data, blocked if the account is a group's sole admin) and admin per-piece default tempo (`PUT /library/pieces/{id}/default-tempo`, read back on guest/member piece responses so the practice player can seed its starting tempo). Two new migrations: `a7e2c9f4b3d8` (nullable `created_by` on `piece_versions`/`homework`/`responsibility_schedules`, needed for account deletion's cascade) and `f1a9d3c7b2e6` (`pieces.default_tempo_bpm`). Separately, hid the Google OAuth path per the human's call — real credentials exist now (a real Google Cloud OAuth app), but rather than ship real sign-in untested, commented them out of `.env` so `/auth/oauth/providers` reports `google: false` again and the Frontend's conditional button stays hidden; the 3 tests asserting "unconfigured by default" (which the real credentials had started failing) pass again as a result. `pytest` 109/109. `alembic heads` confirms a single linear head (`a7e2c9f4b3d8`), local DB already upgraded to it.
 - **2026-08-28, morning summary (read this first):** overnight, unsupervised, per explicit direction before bed ("make account setup more robust/secure... consider google/apple log in" + "do an overall repo cleaning"). Two things landed and are **live in production** right now: B14 (account security — password strength/reset/confirm, Google OAuth for real but gated off, Apple honestly not implemented) and a repo cleanup (three superseded .md files removed after folding their still-useful content into the two active plan.md files, `schemas.py` split by domain). Both fully verified — `pytest` 103/103, real end-to-end round trips against the actually-running local and production servers, not just unit tests — and both deployed with the same commit→push→Render/Cloudflare→live-curl-check discipline as every other deploy tonight. **Two judgment calls made without you there to ask** (full reasoning in B14's section below): no email provider exists, so password-reset links are logged server-side rather than emailed; Apple Sign-In got an honest "not implemented" instead of a shortcut that would've been wrong, not just untested. **Three concrete things need you specifically:** set `FRONTEND_BASE_URL` on Render (see B14's Human tasks) so reset links point at the real site, not localhost; pick an email provider when you want reset links to actually reach someone besides you; and if real Google/Apple sign-in matters, create those OAuth apps and hand over the credentials. Also: this session flagged (but deliberately didn't touch) an unrelated player bug and a Frontend component that's grown too large — see `Frontend/plan.md`'s own log/Backlog.
 - 2026-08-28: Deployed the repo-cleanup commit (schemas.py split + doc removal, previous Log entry below) to production — confirmed live via `/health` and `/openapi.json` (51 routes, unchanged count, as expected for a pure refactor) plus one real request (`/auth/login` with a bogus account correctly 401s). No Frontend changes in this commit, so no redeploy needed there.
