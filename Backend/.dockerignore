@@ -1,0 +1,9 @@
+# Keeps local `docker build` sane (Render builds from a git clone, so this
+# mostly matters for testing locally, where these gitignored directories
+# actually exist on disk).
+.venv
+__pycache__
+**/__pycache__
+data
+.env
+.neon

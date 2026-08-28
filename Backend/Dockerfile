@@ -7,17 +7,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends fluidsynth \
 
 WORKDIR /srv
 
-COPY Backend/pyproject.toml ./
-COPY Backend/app ./app
-COPY Backend/alembic.ini ./
+COPY pyproject.toml ./
+COPY app ./app
+COPY alembic.ini ./
 
 RUN pip install --no-cache-dir .
 
 # Read-only, version-controlled piece source files (see B11's plan.md log
-# and app/core/config.py's `fixtures_dir` doc comment) — copied from the
-# repo root, one level up from Backend/, which is why the build context
-# had to move to the repo root (render.yaml's `dockerContext`).
-COPY Fixtures ./fixtures
+# and app/core/config.py's `fixtures_dir` doc comment) — a copy of the
+# repo-root Fixtures/ committed under Backend/fixtures/ specifically so
+# this stays reachable from the build context as actually configured on
+# Render (rootDir=Backend — moving the context to the repo root turned
+# out to need a dashboard change the render.yaml Blueprint doesn't
+# control here, so this avoids that entirely).
+COPY fixtures ./fixtures
 
 EXPOSE 8000
 
