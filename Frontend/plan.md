@@ -1,9 +1,9 @@
 # Project Plan: Divisi Frontend (web player)
 
-Separate from `Backend/plan.md` (the API/data model this talks to) and the root
-`plan.md` (the native iOS app — **paused/backlogged** as of 2026-08-27 in favor of
-this web player; see its Log). Milestones prefixed `F` to avoid clashing with the
-Backend's `B`-prefixed and the iOS app's `M`-prefixed milestones.
+Separate from `Backend/plan.md` (the API/data model this talks to) and the native
+iOS app — **paused/backlogged** as of 2026-08-27 in favor of this web player; see
+the condensed "iOS app" section below. Milestones prefixed `F` to avoid clashing
+with the Backend's `B`-prefixed and the iOS app's `M`-prefixed milestones.
 
 **Why a website first:** the earliest useful version of Divisi is choir members
 listening to customizable practice tracks in the background, joining a group's
@@ -26,6 +26,48 @@ live audio/animation state (sliders, moving cursor) rather than a big component
 tree; small bundle matters for a page choir members open on their phones.
 
 **Current milestone:** F5 (wire the player to real Backend-rendered pieces), inserted ahead of F4's remaining annotation work at the human's direction, started 2026-08-27. F2, F3, and F4 all still pending human review.
+
+## UI/UX conventions
+
+Condensed 2026-08-28 from the now-deleted `UX_WIREFRAME.md` (repo cleanup —
+its screen mockups were one-time input already built and covered by the Log
+below; these are the *standing rules* worth keeping as a reference for
+future UI work, since several log entries above and below still cite them
+by name).
+
+**Navigation and brand:**
+- Divisi is persistent app chrome (top-left `AppHeader` brand), never a
+  repeated centered page title
+- Global account/settings access lives top-right as the gear button
+  (`Settings`) — currently a drawer, see F6's Settings-drawer work below
+- Page titles name the current place: Home, Library, a specific group's
+  name, Settings — not the app name again
+- Bottom nav: Home | Library only (no "Me" — its contents live under
+  Settings; no standalone Groups tab — "My groups" lives on Home)
+- The practice player uses its own focused chrome (back button, piece
+  title, Practice Setup button) — no `AppHeader`/`BottomNav`
+
+**Naming:**
+- "Settings" = global account/app defaults. "Practice Setup" = choices
+  scoped to the current piece/track/assignment — never call the player's
+  drawer "Settings"
+- "Group Settings" = admin-only group configuration
+- "Viewing as Member"/"Viewing as Admin" for the role switcher
+- Singer-facing practice labels: Everyone / My part / My part + others /
+  My part + accomp / Custom (not the underlying `DisplayMode`/`MixMode`
+  values)
+
+**Redundancy:** don't repeat "Divisi" as a page title; don't duplicate a
+control in two places (e.g. theme picker only in Settings, not also in
+Practice Setup); don't show "Join a group" once the user already belongs
+to one; don't show a sparse empty section with no explanation of the next
+action; Library (finding practice material) and Groups (membership/admin/
+context) stay conceptually distinct even though they share underlying data.
+
+**Still-open questions** (never decided, carried over in case they matter
+later): should annotations default to shared-with-director rather than
+fully private? Should personal calendar export of responsibility dates be
+supported? Should roles/responsibility templates be reusable across groups?
 
 ## Milestones
 
@@ -309,12 +351,53 @@ both over.
 
 ## Backlog
 
+- **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only, unaddressed by F4's real-data wiring).
-- Admin's Assignments/Tracks tabs have no edit/delete UI yet (Backend supports `DELETE /homework/{id}`; there's no equivalent for tracks). Not attempted this session — stayed scoped to navigation/structure per UX_WIREFRAME.md, not new CRUD surface.
-- `/groups/new`'s form only asks for a name — UX_WIREFRAME.md's Create Group Flow also mockups a description and a default-sections checklist, but the Backend's `GroupCreate` schema has no fields for either yet.
+- Admin's Assignments/Tracks tabs have no edit/delete UI yet (Backend supports `DELETE /homework/{id}`; there's no equivalent for tracks). Not attempted this session — stayed scoped to navigation/structure, not new CRUD surface.
+- `/groups/new`'s form only asks for a name — the original wireframe's Create Group Flow also mocked up a description and a default-sections checklist, but the Backend's `GroupCreate` schema has no fields for either yet.
 - Preserve fully independent polyphonic notation in the player-generated MusicXML. Same-onset notes now render as MusicXML chords, including the collapsed accompaniment staff, but truly independent overlapping rhythms on one staff still need a multi-voice representation rather than the current single-timeline simplification.
 - Live tempo control for F5's stem-backed pieces (F5 leaves it out — see that milestone's note on why it's a real time-stretching problem, not a rate multiplier like the MIDI-synth player has).
 - **Fix the live production Backend URL** (see 2026-08-27 Log entry below): the deployed `divisi-frontend` Worker was built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in (confirmed via a live 500 on `/join/[code]`) — a human step, deploying is staying manual at the human's direction (2026-08-27). Once the real Backend URL exists (`backend/deploy` branch/worktree, still in progress), redeploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy` instead of a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold.
+
+## iOS app (paused 2026-08-27, moved here from root `plan.md`)
+
+Condensed 2026-08-28 during repo cleanup — the root-level `plan.md` (the
+native Swift/SwiftUI app this project pivoted away from, see the "Why a
+website first" note above) was deleted since it's a fully separate,
+already-frozen sub-project whose only forward-looking content was the
+portability constraint below; the day-by-day build log stays in git
+history if anyone ever needs it.
+
+**What existed:** M1 (Xcode/xcodegen scaffold) → M2 (MIDI parsing via
+AudioToolbox's `MusicSequence`/`MusicEventIterator`, not
+`AVAudioSequencer` — `AVMIDIMetaEvent` couldn't expose lyric/track-name
+payload bytes) → M3 (playback via `AVAudioSequencer`/`AVAudioEngine`,
+verified surviving backgrounding on a real device) → M4 (in-app
+follow-along: OpenSheetMusicDisplay in a `WKWebView`, flat/highlighted/
+solo display modes, per-part balance mixing — frozen mid-milestone with
+zoom controls and seek/scrub both confirmed broken, never fixed) — M5
+through M7 (SwiftUI shell, PiP piano-roll renderer, PiP controller) were
+never started. The MIDI-parsing heuristics and `MusicXMLConverter`
+quantization math carried over conceptually into this Frontend's own
+`$lib/midi`/`$lib/musicxml` — same problem, rewritten in TypeScript.
+
+**Standing constraint, if iOS work ever resumes:** keep pure-algorithm
+Swift (MIDI-parsing rules, `MusicXMLConverter`'s quantization math,
+`DivisiSyncEngine`'s poll→cursor-index math) free of Foundation/UIKit
+types where the logic itself doesn't need them — plain data in, plain
+data/strings out. Costs nothing now; turns a future Android port into
+translation rather than redesign. No Kotlin Multiplatform or cross-platform
+framework (React Native/Flutter) until Android work actually starts —
+speculative infra otherwise, and would fight native audio-timing/PiP work
+already invested. (Also recorded in this session's own persistent memory,
+`divisi-android-portability.md`.)
+
+**Fixture provenance:** the `Fixtures/*.mid` files (still used by this
+Frontend and the Backend) are synthetic, generated via `Fixtures/generate.py`
+(mido) approximating the opening of Mozart's Requiem's "Requiem aeternam"
+— not a verified transcription, sourced this way because CPDL/8notes/
+MuseScore/smallchurchmusic all blocked automated fetching or required
+accounts.
 
 ## Log
 
