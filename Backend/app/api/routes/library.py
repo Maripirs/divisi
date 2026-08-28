@@ -18,6 +18,8 @@ from app.api.deps import get_current_user
 from app.api.schemas import (
     DistributionOut,
     LibraryEntryOut,
+    PieceDefaultTempoUpdate,
+    PieceOut,
     PieceUploadOut,
     PieceVersionOut,
     RenderManifestOut,
@@ -80,6 +82,25 @@ def _require_review_authority(piece: Piece, user: User, db: Session) -> None:
     else:
         if _group_role(piece.owner_id, user.id, db) != GroupRole.admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+
+
+@router.put("/pieces/{piece_id}/default-tempo", response_model=PieceOut)
+def update_default_tempo(
+    piece_id: str,
+    payload: PieceDefaultTempoUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Piece:
+    """Same review authority as approve/reject (group admin, or the owner
+    for a personal piece) — the starting tempo the player resets to isn't
+    a review decision, but it's the same "who's allowed to make calls
+    about this piece" boundary."""
+    piece = _get_piece_or_404(piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    piece.default_tempo_bpm = payload.default_tempo_bpm
+    db.commit()
+    db.refresh(piece)
+    return piece
 
 
 @router.post("/pieces", response_model=PieceUploadOut, status_code=status.HTTP_201_CREATED)
@@ -253,6 +274,7 @@ def list_my_library(
                 version_status=latest.status,
                 version_source=latest.source,
                 version_created_at=latest.created_at,
+                default_tempo_bpm=piece.default_tempo_bpm,
             )
         )
 
@@ -284,6 +306,7 @@ def list_my_library(
                     version_status=version.status,
                     version_source=version.source,
                     version_created_at=version.created_at,
+                    default_tempo_bpm=piece.default_tempo_bpm,
                 )
             )
 

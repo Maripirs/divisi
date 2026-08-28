@@ -21,7 +21,7 @@ class HomeworkOut(BaseModel):
     range: str
     instructions: str
     due_date: datetime | None
-    created_by: str
+    created_by: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

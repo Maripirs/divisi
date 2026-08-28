@@ -186,6 +186,12 @@ class Piece(Base):
     # Polymorphic: a user id when owner_type == user, a group id when owner_type == group.
     # No FK constraint since it points at either table depending on owner_type.
     owner_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Admin-set (group admin, or the owner for a personal piece) starting
+    # tempo the player resets to — `None` means "use the MIDI file's own
+    # tempo", today's behavior unchanged. Distinct from a singer's own
+    # practice-tempo preference, which stays a per-piece, per-browser
+    # `localStorage` value on the Frontend, never written here.
+    default_tempo_bpm: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -194,7 +200,9 @@ class PieceVersion(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
-    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting a version the rest of the group still relies on.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     source: Mapped[VersionSource] = mapped_column(SAEnum(VersionSource, native_enum=False), nullable=False)
     status: Mapped[VersionStatus] = mapped_column(
@@ -257,23 +265,28 @@ class Homework(Base):
     range: Mapped[str] = mapped_column(String, nullable=False)
     instructions: Mapped[str] = mapped_column(String, nullable=False, default="")
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the assignment out from under the rest of the group.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class ResponsibilitySchedule(Base):
     """B13: a named, reusable set of roles (e.g. "Sunday cantors") that
-    individual one-off dates get added to. Scoped down hard from
-    `../../BACKEND_PROPOSALS.md`: no `recurrence_rule`/lazy generation (no
-    scheduled-job runner exists in this backend yet), so every date is
-    created explicitly by an admin."""
+    individual one-off dates get added to. Scoped down hard from the
+    original proposal doc (no longer in the repo, see plan.md's own
+    history): no `recurrence_rule`/lazy generation (no scheduled-job
+    runner exists in this backend yet), so every date is created
+    explicitly by an admin."""
 
     __tablename__ = "responsibility_schedules"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    created_by: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the schedule out from under the rest of the group.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

@@ -381,20 +381,20 @@ recorded here rather than just done silently:
   fix (`_as_utc()`, normalizes before comparing) is correct either way
 
 **Tasks — Human:**
-- [ ] Set `FRONTEND_BASE_URL=https://divisi.maripi.net` in Render's
-  dashboard (divisi service → Environment) — defaults to
-  `http://localhost:5173` otherwise, which would make a *production*
-  password-reset link point at your laptop. Nothing breaks without this
-  (the link is only ever logged, never emailed, so only an admin reading
-  Render's logs could use it right now anyway) but it should still get
-  fixed before this is genuinely usable by anyone else.
+- [x] Set `FRONTEND_BASE_URL=https://divisi.maripi.net` in Render's
+  dashboard (divisi service → Environment) — verified 2026-08-28: OAuth
+  callback now redirects to the real site instead of localhost
 - [ ] Pick a transactional email provider and wire it in place of
   `forgot_password`'s `logger.warning(...)` — the actual "send a real
   email" step, still entirely unbuilt
-- [ ] If real Google/Apple sign-in is wanted: create the OAuth app(s) in
-  Google Cloud Console / Apple Developer, set
-  `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (and, once Apple's real flow
-  gets built, its own credentials) as Render env vars
+- [x] Google Sign-In: created the OAuth app in Google Cloud Console
+  (project `divisi-506916`), set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
+  locally (`Backend/.env`) and on Render — verified 2026-08-28 via
+  `GET /auth/oauth/providers` (`google: true` in prod) and a real
+  "Continue with Google" round trip against `divisi.maripi.net`. Consent
+  screen is still in Testing status (only listed test users can sign in);
+  Apple Sign-In still needs its own credentials once its real flow is
+  built (see B14's Apple note above).
 
 ## Backlog
 
@@ -411,6 +411,7 @@ recorded here rather than just done silently:
 
 ## Log
 
+- 2026-08-28: Deploying tonight's batch (this entry plus the one below) to production. `PUT`/`DELETE /auth/me` (edit display name; delete account with full cascade — nulls `created_by` on group-owned content the account created rather than deleting it out from under the group, hard-deletes genuinely personal data, blocked if the account is a group's sole admin) and admin per-piece default tempo (`PUT /library/pieces/{id}/default-tempo`, read back on guest/member piece responses so the practice player can seed its starting tempo). Two new migrations: `a7e2c9f4b3d8` (nullable `created_by` on `piece_versions`/`homework`/`responsibility_schedules`, needed for account deletion's cascade) and `f1a9d3c7b2e6` (`pieces.default_tempo_bpm`). Separately, hid the Google OAuth path per the human's call — real credentials exist now (a real Google Cloud OAuth app), but rather than ship real sign-in untested, commented them out of `.env` so `/auth/oauth/providers` reports `google: false` again and the Frontend's conditional button stays hidden; the 3 tests asserting "unconfigured by default" (which the real credentials had started failing) pass again as a result. `pytest` 109/109. `alembic heads` confirms a single linear head (`a7e2c9f4b3d8`), local DB already upgraded to it.
 - **2026-08-28, morning summary (read this first):** overnight, unsupervised, per explicit direction before bed ("make account setup more robust/secure... consider google/apple log in" + "do an overall repo cleaning"). Two things landed and are **live in production** right now: B14 (account security — password strength/reset/confirm, Google OAuth for real but gated off, Apple honestly not implemented) and a repo cleanup (three superseded .md files removed after folding their still-useful content into the two active plan.md files, `schemas.py` split by domain). Both fully verified — `pytest` 103/103, real end-to-end round trips against the actually-running local and production servers, not just unit tests — and both deployed with the same commit→push→Render/Cloudflare→live-curl-check discipline as every other deploy tonight. **Two judgment calls made without you there to ask** (full reasoning in B14's section below): no email provider exists, so password-reset links are logged server-side rather than emailed; Apple Sign-In got an honest "not implemented" instead of a shortcut that would've been wrong, not just untested. **Three concrete things need you specifically:** set `FRONTEND_BASE_URL` on Render (see B14's Human tasks) so reset links point at the real site, not localhost; pick an email provider when you want reset links to actually reach someone besides you; and if real Google/Apple sign-in matters, create those OAuth apps and hand over the credentials. Also: this session flagged (but deliberately didn't touch) an unrelated player bug and a Frontend component that's grown too large — see `Frontend/plan.md`'s own log/Backlog.
 - 2026-08-28: Deployed the repo-cleanup commit (schemas.py split + doc removal, previous Log entry below) to production — confirmed live via `/health` and `/openapi.json` (51 routes, unchanged count, as expected for a pure refactor) plus one real request (`/auth/login` with a bogus account correctly 401s). No Frontend changes in this commit, so no redeploy needed there.
 - 2026-08-28: Repo cleanup (part of the human's second overnight task, alongside B14): split `app/api/schemas.py` (445 lines, 47 unrelated Pydantic models) into `app/api/schemas/` — one file per domain (`auth`, `groups`, `library`, `annotations`, `homework`, `omr`, `responsibilities`), `__init__.py` re-exporting every name so all 8 route files' existing `from app.api.schemas import X` calls needed zero edits. Purely structural, mechanical, low-risk by construction — verified every route module still imports clean, `pytest` still 103/103, and the real local `uvicorn --reload` picked up the change and kept serving all 51 routes with no restart issues. Also deleted the root `plan.md` (paused iOS app) and `BACKEND_PROPOSALS.md` (B13's now-built source proposal) — see `Frontend/plan.md`'s log for what got folded where before deleting, and this file's own Backlog for the one open question pulled out of the proposal doc. Deliberately did *not* attempt the Frontend's obvious equivalent candidate (`groups/[id]/+page.svelte`, well over 1,000 lines across 6 tabs) — a Svelte component split touches live `$state`/reactive bindings in a file the human's been actively live-testing all night, and this session has no way to visually verify a UI refactor (no Playwright, no one awake to look) — flagged in `Frontend/plan.md`'s Backlog instead of risked blind.

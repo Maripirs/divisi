@@ -41,7 +41,7 @@ class ResponsibilityScheduleOut(BaseModel):
     id: str
     group_id: str
     name: str
-    created_by: str
+    created_by: str | None
     created_at: datetime
     roles: list[ResponsibilityRoleOut]
 

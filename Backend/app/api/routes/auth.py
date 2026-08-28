@@ -20,6 +20,7 @@ from app.api.schemas import (
     UserCreate,
     UserLogin,
     UserOut,
+    UserUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import (
@@ -29,7 +30,25 @@ from app.core.security import (
     hash_reset_token,
     verify_password,
 )
-from app.db.models import OAuthAccount, OAuthProvider, PasswordResetToken, User
+from app.db.models import (
+    Annotation,
+    AnnotationShare,
+    Distribution,
+    Group,
+    GroupMembership,
+    GroupRole,
+    Homework,
+    OAuthAccount,
+    OAuthProvider,
+    OmrJob,
+    OwnerType,
+    PasswordResetToken,
+    Piece,
+    PieceVersion,
+    ResponsibilitySchedule,
+    ResponsibilitySignup,
+    User,
+)
 from app.db.session import get_db
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
 
@@ -63,6 +82,117 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
+
+
+@router.put("/me", response_model=UserOut)
+def update_me(
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> User:
+    current_user.name = payload.name
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Deletes the account and everything that's genuinely the user's own
+    (annotations, their group memberships, their own responsibility
+    signups, personally-owned pieces, password-reset tokens, OAuth
+    links). Content shared with a group survives — a piece version,
+    homework assignment, or responsibility schedule they created just
+    loses its `created_by` attribution (now nullable specifically for
+    this) rather than vanishing out from under everyone else. Blocked
+    entirely if deleting them would leave any group with zero admins,
+    same protection `remove_member`/`update_member_role` already give a
+    group that isn't being dissolved."""
+    user_id = current_user.id
+
+    admin_memberships = (
+        db.query(GroupMembership)
+        .filter(GroupMembership.user_id == user_id, GroupMembership.role == GroupRole.admin)
+        .all()
+    )
+    blocking_group_names: list[str] = []
+    for membership in admin_memberships:
+        remaining_admins = (
+            db.query(GroupMembership)
+            .filter(
+                GroupMembership.group_id == membership.group_id,
+                GroupMembership.role == GroupRole.admin,
+                GroupMembership.user_id != user_id,
+            )
+            .count()
+        )
+        if remaining_admins == 0:
+            group = db.get(Group, membership.group_id)
+            blocking_group_names.append(group.name if group else membership.group_id)
+    if blocking_group_names:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "You're the only admin of: "
+                + ", ".join(blocking_group_names)
+                + ". Promote another member to admin (or delete the group) before deleting your account."
+            ),
+        )
+
+    # Personally-owned pieces (not group-owned) are deleted outright:
+    # their versions, those versions' distributions, then the piece.
+    personal_pieces = (
+        db.query(Piece).filter(Piece.owner_type == OwnerType.user, Piece.owner_id == user_id).all()
+    )
+    for piece in personal_pieces:
+        version_ids = [v.id for v in db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).all()]
+        if version_ids:
+            db.query(Distribution).filter(Distribution.piece_version_id.in_(version_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(PieceVersion).filter(PieceVersion.id.in_(version_ids)).delete(synchronize_session=False)
+        db.delete(piece)
+
+    # Null out attribution on content that belongs to a group, not to them.
+    db.query(PieceVersion).filter(PieceVersion.created_by == user_id).update(
+        {"created_by": None}, synchronize_session=False
+    )
+    db.query(PieceVersion).filter(PieceVersion.reviewed_by == user_id).update(
+        {"reviewed_by": None}, synchronize_session=False
+    )
+    db.query(Homework).filter(Homework.created_by == user_id).update(
+        {"created_by": None}, synchronize_session=False
+    )
+    db.query(ResponsibilitySchedule).filter(ResponsibilitySchedule.created_by == user_id).update(
+        {"created_by": None}, synchronize_session=False
+    )
+
+    # Delete what's genuinely theirs: private notes (and any shares of
+    # them), shares granted *to* them, their own group memberships, their
+    # own responsibility signups, their own OMR jobs, and any outstanding
+    # reset tokens / OAuth links.
+    own_annotation_ids = [a.id for a in db.query(Annotation).filter(Annotation.user_id == user_id).all()]
+    if own_annotation_ids:
+        db.query(AnnotationShare).filter(AnnotationShare.annotation_id.in_(own_annotation_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(Annotation).filter(Annotation.id.in_(own_annotation_ids)).delete(synchronize_session=False)
+    db.query(AnnotationShare).filter(AnnotationShare.shared_with_user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(ResponsibilitySignup).filter(ResponsibilitySignup.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(OmrJob).filter(OmrJob.user_id == user_id).delete(synchronize_session=False)
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
+    db.query(OAuthAccount).filter(OAuthAccount.user_id == user_id).delete(synchronize_session=False)
+    db.query(GroupMembership).filter(GroupMembership.user_id == user_id).delete(synchronize_session=False)
+
+    db.delete(current_user)
+    db.commit()
 
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)

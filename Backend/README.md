@@ -37,3 +37,17 @@ uvicorn app.main:app --reload
 alembic revision --autogenerate -m "message"
 alembic upgrade head
 ```
+
+## Local test accounts
+
+Against the local dev Postgres (not production — see `mariapazmaluenda@gmail.com`'s
+real account and its live San Francisco City Chorus group for that):
+
+| Email | Password | Role | Group |
+| --- | --- | --- | --- |
+| `test@example.com` | `testpass123` | admin | Test Choir |
+| `alex@example.com` | *(unset — reset via `/auth/forgot-password` if needed)* | member | Test Choir |
+
+`test@example.com`'s password was reset 2026-08-28 via the real forgot-password flow
+(the dev server logs the reset link instead of emailing it — see `auth.py`'s
+`forgot_password`), since the original wasn't recoverable from its bcrypt hash.

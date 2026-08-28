@@ -61,6 +61,14 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class UserUpdate(BaseModel):
+    """Full replace of the editable profile fields — just `name` for now
+    (email changes aren't supported yet: they'd need their own re-
+    verification story, out of scope here)."""
+
+    name: str
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

@@ -20,6 +20,7 @@ from app.api.schemas.auth import (
     UserCreate,
     UserLogin,
     UserOut,
+    UserUpdate,
 )
 from app.api.schemas.groups import (
     GroupCreate,
@@ -40,6 +41,7 @@ from app.api.schemas.library import (
     GuestGroupOut,
     GuestPieceOut,
     LibraryEntryOut,
+    PieceDefaultTempoUpdate,
     PieceOut,
     PieceUploadOut,
     PieceVersionOut,
@@ -93,6 +95,7 @@ __all__ = [
     "OmrImportOut",
     "OmrImportRequest",
     "OmrJobOut",
+    "PieceDefaultTempoUpdate",
     "PieceOut",
     "PieceUploadOut",
     "PieceVersionOut",
@@ -117,4 +120,5 @@ __all__ = [
     "UserCreate",
     "UserLogin",
     "UserOut",
+    "UserUpdate",
 ]

@@ -13,14 +13,23 @@ class PieceOut(BaseModel):
     title: str
     owner_type: OwnerType
     owner_id: str
+    default_tempo_bpm: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class PieceDefaultTempoUpdate(BaseModel):
+    """Admin (group-owned piece) or owner (personal piece) only, full
+    replace — `None`/omitted clears it back to "use the MIDI file's own
+    tempo"."""
+
+    default_tempo_bpm: int | None = None
 
 
 class PieceVersionOut(BaseModel):
     id: str
     piece_id: str
-    created_by: str
+    created_by: str | None
     created_at: datetime
     source: VersionSource
     status: VersionStatus
@@ -53,6 +62,7 @@ class LibraryEntryOut(BaseModel):
     version_status: VersionStatus
     version_source: VersionSource
     version_created_at: datetime
+    default_tempo_bpm: int | None = None
 
 
 class GuestPieceOut(BaseModel):

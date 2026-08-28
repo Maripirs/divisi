@@ -114,3 +114,57 @@ def test_member_can_submit_but_not_approve_own_version(client):
     # Rejected version never appears in the member's own group library (nothing was ever distributed).
     member_library = client.get("/library/pieces", headers=member_headers)
     assert member_library.json() == []
+
+
+def test_default_tempo_owner_can_set_and_clear(client):
+    headers = _register_and_login(client, "tempoowner@example.com")
+    upload = _upload_file(client, headers)
+    piece_id = upload.json()["piece"]["id"]
+    assert upload.json()["piece"]["default_tempo_bpm"] is None
+
+    set_res = client.put(
+        f"/library/pieces/{piece_id}/default-tempo", json={"default_tempo_bpm": 76}, headers=headers
+    )
+    assert set_res.status_code == 200
+    assert set_res.json()["default_tempo_bpm"] == 76
+
+    library = client.get("/library/pieces", headers=headers)
+    assert library.json()[0]["default_tempo_bpm"] == 76
+
+    clear_res = client.put(
+        f"/library/pieces/{piece_id}/default-tempo", json={"default_tempo_bpm": None}, headers=headers
+    )
+    assert clear_res.status_code == 200
+    assert clear_res.json()["default_tempo_bpm"] is None
+
+
+def test_default_tempo_non_owner_and_non_admin_forbidden(client):
+    owner_headers = _register_and_login(client, "tempoowner2@example.com")
+    other_headers = _register_and_login(client, "tempostranger@example.com")
+    piece_id = _upload_file(client, owner_headers).json()["piece"]["id"]
+
+    res = client.put(
+        f"/library/pieces/{piece_id}/default-tempo", json={"default_tempo_bpm": 90}, headers=other_headers
+    )
+    assert res.status_code == 403
+
+    admin_headers = _register_and_login(client, "tempogadmin@example.com")
+    member_headers = _register_and_login(client, "tempogmember@example.com")
+    group_id = client.post("/groups", json={"name": "Tempo Choir"}, headers=admin_headers).json()["id"]
+    client.post(
+        f"/groups/{group_id}/members", json={"email": "tempogmember@example.com"}, headers=admin_headers
+    )
+    group_piece_id = _upload_file(
+        client, admin_headers, title="Group Piece", owner_type="group", group_id=group_id
+    ).json()["piece"]["id"]
+
+    member_res = client.put(
+        f"/library/pieces/{group_piece_id}/default-tempo", json={"default_tempo_bpm": 90}, headers=member_headers
+    )
+    assert member_res.status_code == 403
+
+    admin_res = client.put(
+        f"/library/pieces/{group_piece_id}/default-tempo", json={"default_tempo_bpm": 90}, headers=admin_headers
+    )
+    assert admin_res.status_code == 200
+    assert admin_res.json()["default_tempo_bpm"] == 90
