@@ -69,6 +69,21 @@
 	let savingName = $state(false);
 	let nameError = $state<string | null>(null);
 
+	// Account section: "Change password" click-to-edit, same pattern as
+	// "Edit name" above — requires the current password (see the Backend's
+	// `change_password` route), distinct from `/forgot-password`'s
+	// token-based flow for someone who's locked out entirely.
+	let changingPassword = $state(false);
+	let currentPasswordDraft = $state('');
+	let newPasswordDraft = $state('');
+	let confirmNewPasswordDraft = $state('');
+	let savingPassword = $state(false);
+	let passwordError = $state<string | null>(null);
+	let passwordChanged = $state(false);
+	const passwordMismatch = $derived(
+		newPasswordDraft.length > 0 && confirmNewPasswordDraft.length > 0 && newPasswordDraft !== confirmNewPasswordDraft
+	);
+
 	// Account section: "Delete account" click-to-confirm, same pattern as a
 	// group's "Leave group".
 	let confirmingDelete = $state(false);
@@ -140,6 +155,95 @@
 					</div>
 				{/if}
 				<div class="list-row"><span>Email</span><span class="dim">{user.email}</span></div>
+
+				{#if changingPassword}
+					<form
+						method="POST"
+						action="/settings?/changePassword"
+						class="inline-edit-row"
+						use:enhance={() => {
+							savingPassword = true;
+							passwordError = null;
+							return async ({ result, update }) => {
+								savingPassword = false;
+								if (result.type === 'failure') {
+									passwordError =
+										(result.data as { error?: string } | undefined)?.error ?? 'Could not change password';
+									return;
+								}
+								if (result.type === 'success') {
+									changingPassword = false;
+									currentPasswordDraft = '';
+									newPasswordDraft = '';
+									confirmNewPasswordDraft = '';
+									passwordChanged = true;
+									// This form doesn't stay visible after success (it
+									// collapses back to the summary row above), so the
+									// native `form.reset()` SvelteKit's default `update()`
+									// runs here is harmless — unlike the group page's
+									// page-visibility toggles, nothing here needs to
+									// survive it.
+									await update();
+								}
+							};
+						}}
+					>
+						<label class="field">
+							<span>Current password</span>
+							<input type="password" name="currentPassword" bind:value={currentPasswordDraft} required autocomplete="current-password" />
+						</label>
+						<label class="field">
+							<span>New password</span>
+							<input type="password" name="newPassword" bind:value={newPasswordDraft} required minlength="8" autocomplete="new-password" />
+						</label>
+						<label class="field">
+							<span>Confirm new password</span>
+							<input type="password" bind:value={confirmNewPasswordDraft} required minlength="8" autocomplete="new-password" />
+						</label>
+						{#if passwordMismatch}<p class="error">Passwords don't match</p>{/if}
+						{#if passwordError}<p class="error">{passwordError}</p>{/if}
+						<div class="btn-row">
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									changingPassword = false;
+									currentPasswordDraft = '';
+									newPasswordDraft = '';
+									confirmNewPasswordDraft = '';
+									passwordError = null;
+								}}
+								disabled={savingPassword}
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								class="btn btn-outline"
+								disabled={savingPassword || passwordMismatch || newPasswordDraft.length < 8}
+							>
+								{savingPassword ? 'Saving…' : 'Save'}
+							</button>
+						</div>
+					</form>
+				{:else}
+					<div class="list-row">
+						<span>Password</span>
+						<span class="value-with-action">
+							{#if passwordChanged}<span class="dim">Changed</span>{/if}
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									passwordChanged = false;
+									changingPassword = true;
+								}}
+							>
+								Change
+							</button>
+						</span>
+					</div>
+				{/if}
 			{:else}
 				<p class="card-meta">
 					You're browsing as a guest — nothing here leaves this device. Create an account (or

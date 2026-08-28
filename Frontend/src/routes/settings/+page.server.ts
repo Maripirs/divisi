@@ -25,6 +25,29 @@ export const actions: Actions = {
 		return { success: true, form: 'updateName' as const };
 	},
 
+	changePassword: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const currentPassword = String(form.get('currentPassword') ?? '');
+		const newPassword = String(form.get('newPassword') ?? '');
+		if (!currentPassword || !newPassword) {
+			return fail(400, { error: 'Enter your current and new password', form: 'changePassword' });
+		}
+		if (newPassword.length < 8) {
+			return fail(400, { error: 'New password must be at least 8 characters', form: 'changePassword' });
+		}
+
+		try {
+			await backendFetch(locals.token, '/auth/me/password', {
+				method: 'PUT',
+				body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+			}, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'changePassword' });
+			throw err;
+		}
+		return { success: true, form: 'changePassword' as const };
+	},
+
 	// Destructive and irreversible — the Backend itself is the source of
 	// truth on whether it's actually safe (e.g. 409s if this account is the
 	// sole admin of a group), this action just forwards that.
