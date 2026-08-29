@@ -18,9 +18,18 @@ async function loadMusicXml(url: string, tempoOverrideBPM?: number) {
 	return tempoOverrideBPM === undefined ? parsed : { ...parsed, tempoBPM: tempoOverrideBPM };
 }
 
-/** Static, frontend-only piece list — same "no backend" philosophy as F1's
- * single bundled fixture, just more than one entry now. Swap for a Backend
- * fetch in F2 without changing anything that consumes `Piece`. */
+/** Static, frontend-only piece list — publicly served with no auth at all
+ * (these files sit under `static/`, so anyone can fetch them directly by
+ * URL regardless of what routing does). Deliberately kept to just two
+ * examples for that reason: Lacrymosa (public-domain demo content) and
+ * Challenge of Thor (kept as a working example of this direct-URL path,
+ * at the human's request). Every other piece a group actually rehearses
+ * — including the rest of what used to live here (Der Abend, Proserpine,
+ * Les djinns, Eglamore, The Fay's Song) — is a real Backend `Piece`
+ * instead, gated by group membership or a join code the same way user
+ * uploads are (see `$lib/pieces/remotePiece.ts`); adding a piece here is
+ * exactly the "not safe nor scalable" pattern this list should stay
+ * small enough to avoid repeating. */
 export const PIECES: Piece[] = [
 	{
 		id: 'lacrymosa',
@@ -45,60 +54,6 @@ export const PIECES: Piece[] = [
 		// so it's sourced from its MusicXML export instead, which has one
 		// `<part>` per staff.
 		load: () => loadMusicXml('/fixtures/SFCC/The_Challenge_of_Thor_Elgar.musicxml', 104)
-	},
-	{
-		id: 'der-abend',
-		title: 'Der Abend',
-		composer: 'Brahms',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/Brahms_Der_Abend.pdf',
-		// No <sound tempo> in this export. Printed marking "Ruhig", ♩ = 56-62;
-		// concert timings run 4:30-5:00 and spacious/soloistic — using the
-		// low end.
-		load: () => loadMusicXml('/fixtures/SFCC/Brahms_Der_Abend.musicxml', 58)
-	},
-	{
-		id: 'proserpine',
-		title: 'Proserpine',
-		composer: 'Coleridge-Taylor',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf',
-		// No <sound tempo> in this export and no printed number found. ♩ =
-		// 76-84 estimated from recordings (2:29-4:00 range); midpoint lines
-		// up with a ~2:45 concert target.
-		load: () => loadMusicXml('/fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.musicxml', 80)
-	},
-	{
-		id: 'les-djinns',
-		title: 'Les djinns, Op. 12',
-		composer: 'Fauré',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/Faure__-_Les_djinns__Op._12.pdf',
-		// No <sound tempo> in this export. ♩ = 138 per the Mutopia MIDI
-		// source, consistent with the ~4:05 Plasson recording.
-		load: () => loadMusicXml('/fixtures/SFCC/Faure__-_Les_djinns__Op._12.musicxml', 138)
-	},
-	{
-		id: 'eglamore',
-		title: 'Eglamore',
-		composer: 'Gardiner',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/GARDINER_Eglamore.pdf',
-		// No <sound tempo> in this export. Printed marking is dotted-quarter
-		// = 88-96 (6/8); MusicXML tempo is always quarter-notes/min, so
-		// ×1.5 → 132-144. Leaned toward the faster/jaunty end per the
-		// source ballad's character.
-		load: () => loadMusicXml('/fixtures/SFCC/GARDINER_Eglamore.musicxml', 141)
-	},
-	{
-		id: 'the-fays-song',
-		title: "The Fay's Song",
-		composer: 'Massi',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/The_Fay_s_Song_Massi.pdf',
-		// No <sound tempo> in this export and no printed number/recording
-		// found. ♩ = 92-104 estimated; leaned forward, light character.
-		load: () => loadMusicXml('/fixtures/SFCC/The_Fay_s_Song_Massi.musicxml', 100)
 	}
 ];
 

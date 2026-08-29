@@ -3,6 +3,7 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { buildRemotePiece } from '$lib/pieces/remotePiece';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -29,8 +30,29 @@
 			     distributed track with nothing wired up yet has nothing this
 			     view could do with it, same call the group page's own Tracks
 			     tab makes for a member (as opposed to its admin view, which
-			     does list them so an admin knows what still needs fixing). -->
-			{@const playable = pieces.map((p) => getPieceByTitle(p.title)).filter((p) => p !== undefined)}
+			     does list them so an admin knows what still needs fixing).
+			     A bundled registry match (now just Lacrymosa/Thor, see
+			     registry.ts) still gets that fixture's `Piece`; every other
+			     real Backend piece builds one from its own library entry
+			     instead — same has_music/has_pdf gate the group Tracks tab
+			     and guest join page already use, so a group's own uploaded
+			     repertoire shows up here too, not just the two public demos. -->
+			{@const playable = pieces
+				.map((p) =>
+					getPieceByTitle(p.title) ??
+					(p.has_music || p.has_pdf
+						? buildRemotePiece({
+								pieceId: p.piece_id,
+								title: p.title,
+								composer: p.composer,
+								hasMusic: p.has_music,
+								hasPdf: p.has_pdf,
+								youtubeUrl: p.youtube_url,
+								defaultTempoBpm: p.default_tempo_bpm
+							})
+						: undefined)
+				)
+				.filter((p) => p !== undefined)}
 			<section class="library-section">
 				<div class="library-section-head">
 					<h2>{group.name}</h2>

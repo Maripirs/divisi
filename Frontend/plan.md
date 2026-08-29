@@ -603,6 +603,88 @@ sites, so it surfaced as an unhandled exception instead of a message.
   including a real Backend-down/Backend-recovered cycle — not just
   `check`/`build`
 
+### F10 — Lock down `$lib/pieces/registry.ts`'s bundled pieces [x]
+
+At the human's direct request ("some of them might have restricted privileges
+and we might not want them publicly available... let's keep challenge of thor
+the way it's routed as an example, but let's protect the rest under their
+owners and invite links"). The real hole: `registry.ts`'s bundled `PIECES`
+array held every SFCC piece (Der Abend, Proserpine, Les djinns, Eglamore, The
+Fay's Song — real choir repertoire, not public-domain demo content) as static
+files under `static/fixtures/SFCC/`, fetchable by anyone with zero auth by
+direct URL, and `getPiece(data.id)` in `piece/[id]/+page.svelte` checked this
+bundled registry *before* the already-correctly-gated Backend `remote` piece
+(member session or guest join code — built in F5/B10-B12, confirmed still
+correct: `/library/pieces` scopes to the caller's own groups,
+`/guest/{code}/pieces/{id}/*` re-checks the piece is actually distributed to
+*that* group, both check a group guest password when set). So `/piece/
+der-abend` (or any of the other four, or `/fixtures/SFCC/....pdf` directly)
+worked for a fully anonymous visitor — the Backend-side gating was never even
+reached. Confirmed via `Backend/plan.md`'s own log that all 7 SFCC pieces
+already have real `Piece`/`PieceVersion`/`Distribution` rows owned by the
+human's real group ("San Francisco City Chorus") — the fix didn't need any
+new Backend modeling, just removing the public bypass on the Frontend.
+
+**Mechanism:**
+- `registry.ts`'s `PIECES` pruned from 7 entries to 2: Lacrymosa (public
+  demo, per the human's choice to keep it alongside Thor rather than migrate
+  it — it isn't owned by any real group today) and Challenge of Thor (kept
+  exactly as before, at the human's explicit request, as a worked example of
+  this direct-URL/no-auth path).
+- Deleted the other 5 pieces' PDF/MusicXML files from `static/fixtures/SFCC/`
+  outright — pruning the registry alone wasn't enough, since Cloudflare's
+  asset binding serves anything under `static/` regardless of whether any
+  route references it. Also deleted `The-Frost-Myth_SATB-Score.*`, which had
+  no registry entry at all but was sitting in the same public directory
+  (an 8th real SFCC piece, already only reachable through the real Backend
+  path per a pre-existing gap noted in `Backend/plan.md`'s log — this closes
+  that leak too, not just the registry-matched ones).
+- No routing/gating logic changed anywhere — `getPiece(id) ?? (remote ? ...
+  : undefined)` in `piece/[id]/+page.server.ts`/`+page.svelte` was already
+  correct; once the registry only has 2 entries, everything else falls
+  through to the real gated path automatically.
+- Found and fixed a real regression this would otherwise have caused: `/`'s
+  personal-library group sections only ever rendered a piece if
+  `getPieceByTitle` matched the bundled registry, with no `has_music`/
+  `has_pdf` fallback (unlike the group Tracks tab and guest join page, which
+  both already had one from F5). Once the 5 pieces left the registry, a
+  logged-in member's own distributed repertoire would've silently vanished
+  from `/` even though they still had full legitimate access via
+  `/groups/[id]`. Fixed by building a `Piece` via `remotePiece.ts`'s
+  `buildRemotePiece()` for any library entry with no bundled match, same
+  `has_music || has_pdf` gate the other two consumers use.
+- Tempo: the 5 migrated pieces lost their registry `tempoOverrideBPM` (their
+  MusicXML exports carry no `<sound tempo>` at all — see F1's log). The
+  Backend's `Piece.default_tempo_bpm` is the real replacement and the group
+  Tracks tab already has a "Set default tempo" admin control wired to it —
+  left for the human to fill in themselves rather than me reaching into
+  production data: Der Abend 58, Proserpine 80, Les djinns 138, Eglamore
+  141, The Fay's Song 100 (same values as the removed overrides).
+
+**Acceptance criteria:**
+- [x] Only Lacrymosa and Challenge of Thor remain reachable with no login and
+  no invite code, by direct URL or otherwise
+- [x] The other 5 registry pieces + The Frost Myth have no public static file
+  left to fetch directly
+- [x] A group member still sees their group's full distributed repertoire on
+  `/`, `/groups/[id]`, and the player — via the real Backend piece now, not
+  the bundled fixture
+- [x] A guest with a valid join code (and group password, if set) still gets
+  the same access as before; an invalid/missing code does not
+- [x] `npm run check`/`build` both clean
+
+**Tasks — Claude:**
+- [x] Pruned `registry.ts`'s `PIECES` to Lacrymosa + Challenge of Thor
+- [x] Deleted the other 5 pieces' + The Frost Myth's public static files
+- [x] Fixed `/`'s personal-library section to fall back to a real Backend
+  piece via `buildRemotePiece()`, matching the Tracks tab/join page pattern
+- [x] `check`/`build` clean
+
+**Tasks — Human:**
+- [ ] Set the 5 migrated pieces' default tempo via the group's Tracks tab
+  (values above) — nothing plays at the wrong tempo until this is done, it
+  just falls back to whatever the player's own default is
+
 ## Backlog
 
 - **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
@@ -656,6 +738,7 @@ accounts.
 
 ## Log
 
+- 2026-08-29: Built F10 (locked down `$lib/pieces/registry.ts`'s bundled pieces), the human's direct follow-up request right after F9, flagging that `piece/<name>` routing "is not safe nor scalable" and asking to keep Challenge of Thor public as an example while protecting the rest "under their owners and invite links". Traced the actual hole: `registry.ts`'s bundled `PIECES` array held all 7 SFCC choir pieces as static files under `static/fixtures/SFCC/`, served with zero auth by Cloudflare's asset binding regardless of app routing, and `piece/[id]/+page.svelte` checked this bundled registry by id *before* the already-correct Backend-gated `remote` piece — so any anonymous visitor could open `/piece/der-abend` (or fetch the PDF directly) and get full access, completely bypassing the member/guest-code gating F5/B10-B12 already built and that I confirmed is still correct (group-scoped `/library/pieces`, `/guest/{code}/pieces/{id}/*` re-checking the piece is actually distributed to that specific group, guest password enforced when set). Also confirmed via `Backend/plan.md`'s own log that all 7 SFCC pieces already have real `Piece`/`PieceVersion`/`Distribution` rows owned by the human's actual group ("San Francisco City Chorus") — so this needed zero Backend changes, only removing the Frontend's public bypass. Per the human's answers to two scoping questions: Lacrymosa (not owned by any real group, unlike the SFCC 7) stays public alongside Thor rather than being migrated or removed; the 5 migrated pieces' tempo (lost along with their registry `tempoOverrideBPM` overrides) gets set by the human themselves afterward via the group Tracks tab's existing "Set default tempo" control, not by me reaching into production data — logged the 5 target BPM values for them to enter. Pruned `PIECES` to just Lacrymosa + Thor, deleted the other 5 pieces' PDF/MusicXML from `static/fixtures/SFCC/` (registry pruning alone doesn't stop direct-URL fetches — the files themselves had to go), and also deleted `The-Frost-Myth_SATB-Score.*`, an 8th real SFCC piece that had no registry entry at all but was sitting in the same public directory unreferenced. Along the way, caught and fixed a real regression this change would otherwise have introduced: `/`'s personal-library section only rendered a piece via `getPieceByTitle`'s bundled-registry match, with no `has_music`/`has_pdf` fallback to a real Backend piece (unlike the group Tracks tab and guest join page, which both already had one) — once the 5 pieces left the registry, a member's own legitimately-owned repertoire would've silently vanished from `/` even with full access still intact via `/groups/[id]`. Fixed by building a `Piece` through `remotePiece.ts`'s `buildRemotePiece()` for any library entry with no bundled match, matching the same gate the other two consumers already use. No routing/gating logic needed to change anywhere else — `getPiece(id) ?? (remote ? ... : undefined)` was already correct; shrinking the registry to 2 entries was enough for everything else to fall through to the real gated path on its own. `npm run check` (0 errors)/`build` both clean.
 - 2026-08-29: Built F9 (graceful error handling app-wide), the human's direct follow-up request this session right after F8, again on a Windows machine with no browser available. Two parts, matching how the human scoped it: (1) a branded `+error.svelte` at the routes root — replaces SvelteKit's default unstyled crash/404 page with the app's own shell/logo, a status-appropriate title (`error_404_title`/`error_403_title`/`error_503_title`/generic fallback) and a "back to home" link built through `lh()` so it stays locale-correct even on a hard crash; (2) normalized handling of genuine network failures (Backend unreachable) versus resolved-but-non-2xx responses, which were already handled. `backendFetch` (`$lib/server/backend.ts`) and a new `guestFetch` helper (`$lib/api/guest.ts`) now catch the raw `fetch()` throw and re-raise it as a synthetic 503 `BackendApiError`/`GuestApiError` with a translated `errors_could_not_reach_server` message, so every call site that already does `catch (err) { if (err instanceof XApiError) }` got the fix for free. Swept the rest of the repo by hand for raw unguarded `fetch()` calls that don't go through either wrapper and fixed each: `login/+page.server.ts` (both the login helper and the register action), `reset-password/+page.server.ts`, `piece/[id]/+page.server.ts`'s guest resolver (falls back to `remote: null`, same as a bad code), both `piece/[id]/file` and `.../pdf` proxy routes (return a clean 503 instead of an unhandled exception), and `groups/[id]/+page.server.ts`'s track-upload action. Considered and explicitly reverted a more aggressive change to the root `+layout.server.ts` — throwing on any non-401 `BackendApiError` there (to show the new error page instead of quietly treating an outage as logged-out) sounded right until I noticed that load runs for every route including fully public ones (`/welcome`, `/join`), so it would've blocked pages needing no user at all over a transient blip; kept the original fail-open `return { user: null }` for non-401 cases and only improved the doc comment explaining why. Verified live: `npm run check` (0 errors) and `build` both clean; a real kill-Backend/restart-Backend cycle against local dev confirmed a 404 renders the branded page in both `en` and `es`, register/login fail with the translated "can't reach the server" message instead of a raw exception while the Backend is down, and once it's back the same session cookie resolves normally again with no forced re-login — self-healing as designed. Not clicked through in a real browser (none available here), same caveat as F8.
 - 2026-08-29: Built F8 (Spanish localization, full app under `/es`), the human's direct request this session, on a Windows machine with no browser/Playwright available. Full detail in F8's own section above. Installed Paraglide JS (inlang) — `project.inlang/` + `messages/en.json`/`es.json` (~350 keys), `vite.config.ts`'s plugin with `urlPatterns` (base locale `en` unprefixed, `es` prefixed), `src/hooks.ts`'s `reroute` + `src/hooks.server.ts`'s `paraglideMiddleware` (composed with the existing session-cookie handle via `sequence()`), `%lang%`/`%dir%` in `app.html`, and a new `<LanguageSwitcher>`. The real work was converting every route (~30 files) and every shared component to `m.*()` calls instead of hardcoded strings, plus — the actual gotcha — wrapping every internal `href`/`goto`/`redirect` in a new `$lib/i18n.ts` `lh()` helper, since Paraglide only auto-localizes *inbound* URLs, not outbound links; without it, a plain link would've silently dropped the `/es` prefix on the very next click. Verified live via curl against both `npm run build`'s output and `npm run dev`: `<html lang>` flips correctly per prefix, real Spanish renders, the language switcher's hrefs are right, and internal navigation (including the root page's own auth redirect) stays locale-prefixed end to end. `npm run check` (0 errors, same pre-existing warning pattern)/`build` both clean. Not deployed to production; local-only, and not clicked through in a real browser — flagged as F8's own open Human task. Merged on top of the Mac session's guest-piece-upload fix below (same day) — its `join/[code]/+page.svelte` fix (dropping the dead `{#if bundled}` gate, a real `practiceId` fallback for non-bundled pieces) is preserved as-is, with F8's translations layered onto it.
 - 2026-08-29: Fixed a real gap in the Windows session's F5/piece-uploads work (see the merged-in Log entry below and `Backend/plan.md`'s matching one) — asked to deploy the Frontend and click through it for real via Playwright, since the Windows session had no browser available on their end. Real Backend pieces (uploaded via the new group Tracks-tab form) worked cleanly for a logged-in member but were **completely unreachable as a guest**, a real regression against F5's own acceptance criteria ("a guest... can open and fully practice any of that group's distributed pieces the same way, with no login"): `join/[code]/+page.svelte`'s `visiblePieces` filter only ever matched bundled fixture titles (never `has_music`/`has_pdf`, which didn't exist on `GuestPiece` at all yet); `piece/[id]/+page.server.ts`'s own comment said a guest explicitly falls back to `remote: null`; both `file`/`pdf` proxy routes unconditionally attached `locals.token` (`undefined` for a guest → guaranteed 401 against the Backend even if the listing/routing gaps above were fixed). Backend's guest file/pdf routes themselves were already built and correct — just nothing on the Frontend ever reached them. Fixed all four: widened the guest listing filter (same `has_music||has_pdf` pattern already used on the member Tracks tab), gave `piece/[id]/+page.server.ts` a real guest branch (resolves through the guest group listing via `?code=` instead of the authenticated `/library/pieces` lookup), branched both proxy routes on `locals.token` presence (proxying to the Backend's guest routes when absent), and threaded the join code through `remotePiece.ts`'s proxy URLs so a guest's file/pdf requests carry it. `npm run check`/`build` clean. Verified live via Playwright against the real local dev server + Postgres: full upload flow (music+PDF+YouTube link, music-only, PDF-only) as admin, then the same three pieces opened by a completely anonymous guest via join code — real MIDI parses and plays, real PDF renders, matching the member experience exactly, zero JS errors throughout. Also confirmed live on production (`divisi.maripi.net`) with a real curl round trip through the actual proxy routes. Test data cleaned up from both local and production Postgres after. Deployed straight to production myself rather than waiting on the human's own planned Backend push — see `Backend/plan.md`'s matching entry for why.
