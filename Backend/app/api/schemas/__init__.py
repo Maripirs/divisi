@@ -35,6 +35,7 @@ from app.api.schemas.groups import (
     GroupPageSettingOut,
     GroupPageSettingsUpdate,
     GroupPageSettingUpdate,
+    GroupRehearsalScheduleUpdate,
 )
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut
 from app.api.schemas.library import (
@@ -89,6 +90,7 @@ __all__ = [
     "GroupPageSettingOut",
     "GroupPageSettingUpdate",
     "GroupPageSettingsUpdate",
+    "GroupRehearsalScheduleUpdate",
     "GuestGroupOut",
     "GuestPieceOut",
     "HomeworkCreate",

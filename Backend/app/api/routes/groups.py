@@ -4,6 +4,8 @@ A group's creator becomes its first admin. Only admins can add/remove
 members; a group is never left without at least one admin.
 """
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +22,7 @@ from app.api.schemas import (
     GroupOut,
     GroupPageSettingOut,
     GroupPageSettingsUpdate,
+    GroupRehearsalScheduleUpdate,
 )
 from app.core.join_codes import generate_join_code
 from app.core.security import hash_password
@@ -113,6 +116,8 @@ def _group_out(group: Group, role: GroupRole) -> GroupOut:
         role=role,
         has_guest_password=group.guest_password_hash is not None,
         description=group.description,
+        rehearsal_weekday=group.rehearsal_weekday,
+        rehearsal_time=group.rehearsal_time,
     )
 
 
@@ -162,6 +167,42 @@ def update_description(
     group = _get_group_or_404(group_id, db)
     membership = _require_admin(group_id, current_user, db)
     group.description = payload.description
+    db.commit()
+    db.refresh(group)
+    return _group_out(group, membership.role)
+
+
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@router.put("/{group_id}/rehearsal-schedule", response_model=GroupOut)
+def update_rehearsal_schedule(
+    group_id: str,
+    payload: GroupRehearsalScheduleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupOut:
+    """Admin-only, full replace — a regular weekly rehearsal slot (e.g.
+    "Wednesdays at 7pm") the Responsibilities "Add a date" form can offer
+    as a one-click "Next rehearsal" fill. Both fields are set or cleared
+    together: `weekday`+`time` both present sets it, both `None` clears
+    it, anything else (one set, one not) is a 400 — a weekday with no time
+    (or vice versa) isn't a schedule anyone could compute "next" from."""
+    group = _get_group_or_404(group_id, db)
+    membership = _require_admin(group_id, current_user, db)
+
+    if (payload.rehearsal_weekday is None) != (payload.rehearsal_time is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="rehearsal_weekday and rehearsal_time must be set or cleared together",
+        )
+    if payload.rehearsal_weekday is not None and not (0 <= payload.rehearsal_weekday <= 6):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="rehearsal_weekday must be 0-6 (Monday-Sunday)")
+    if payload.rehearsal_time is not None and not _TIME_RE.match(payload.rehearsal_time):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="rehearsal_time must be \"HH:MM\" (24h)")
+
+    group.rehearsal_weekday = payload.rehearsal_weekday
+    group.rehearsal_time = payload.rehearsal_time
     db.commit()
     db.refresh(group)
     return _group_out(group, membership.role)

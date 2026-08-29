@@ -222,3 +222,86 @@ def test_disabled_members_page_blocks_members_but_not_admin(client):
     assert client.get("/groups/" + group_id + "/members", headers=member_headers).status_code == 403
     # Admins always see it regardless of the page's own settings.
     assert client.get("/groups/" + group_id + "/members", headers=admin_headers).status_code == 200
+
+
+def test_rehearsal_schedule_set_read_and_clear(client):
+    admin_headers = _register_and_login(client, "rehearsal-admin@example.com")
+    created = client.post("/groups", json={"name": "Rehearsal Choir"}, headers=admin_headers).json()
+    group_id = created["id"]
+    assert created["rehearsal_weekday"] is None
+    assert created["rehearsal_time"] is None
+
+    set_res = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": 2, "rehearsal_time": "19:00"},
+        headers=admin_headers,
+    )
+    assert set_res.status_code == 200
+    assert set_res.json()["rehearsal_weekday"] == 2
+    assert set_res.json()["rehearsal_time"] == "19:00"
+
+    listed = client.get("/groups", headers=admin_headers).json()
+    entry = next(g for g in listed if g["id"] == group_id)
+    assert entry["rehearsal_weekday"] == 2
+    assert entry["rehearsal_time"] == "19:00"
+
+    clear_res = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": None, "rehearsal_time": None},
+        headers=admin_headers,
+    )
+    assert clear_res.status_code == 200
+    assert clear_res.json()["rehearsal_weekday"] is None
+    assert clear_res.json()["rehearsal_time"] is None
+
+
+def test_rehearsal_schedule_requires_both_fields_together(client):
+    admin_headers = _register_and_login(client, "rehearsal-admin2@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    only_weekday = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": 2, "rehearsal_time": None},
+        headers=admin_headers,
+    )
+    assert only_weekday.status_code == 400
+
+    only_time = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": None, "rehearsal_time": "19:00"},
+        headers=admin_headers,
+    )
+    assert only_time.status_code == 400
+
+
+def test_rehearsal_schedule_validates_ranges(client):
+    admin_headers = _register_and_login(client, "rehearsal-admin3@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    bad_weekday = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": 7, "rehearsal_time": "19:00"},
+        headers=admin_headers,
+    )
+    assert bad_weekday.status_code == 400
+
+    bad_time = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": 2, "rehearsal_time": "7pm"},
+        headers=admin_headers,
+    )
+    assert bad_time.status_code == 400
+
+
+def test_rehearsal_schedule_non_admin_forbidden(client):
+    admin_headers = _register_and_login(client, "rehearsal-admin4@example.com")
+    member_headers = _register_and_login(client, "rehearsal-member4@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "rehearsal-member4@example.com"}, headers=admin_headers)
+
+    res = client.put(
+        f"/groups/{group_id}/rehearsal-schedule",
+        json={"rehearsal_weekday": 2, "rehearsal_time": "19:00"},
+        headers=member_headers,
+    )
+    assert res.status_code == 403

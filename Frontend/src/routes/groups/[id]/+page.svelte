@@ -72,6 +72,8 @@
 	let memberEmail = $state('');
 	let creatingSchedule = $state(false);
 	let addingDate = $state(false);
+	// "Use next rehearsal" quick-fill target for the "Add a date" form above.
+	let addDateDraft = $state('');
 	// Create-schedule form's dynamic role rows — starts with one blank row.
 	let roleRowCount = $state(1);
 	// Members tab: which member's row (by id) has its "Remove" button
@@ -123,6 +125,15 @@
 	let editingDescription = $state(false);
 	let descriptionDraft = $state(data.group.description ?? '');
 	let savingDescription = $state(false);
+	// Info/About tab: the admin's "Regular rehearsals" editor — a weekly
+	// day+time (e.g. "Wednesdays at 7:00 PM") the Responsibilities tab's
+	// "Next rehearsal" button (below) anchors new dates to.
+	let editingRehearsal = $state(false);
+	let rehearsalWeekdayDraft = $state(
+		data.group.rehearsal_weekday !== null ? String(data.group.rehearsal_weekday) : ''
+	);
+	let rehearsalTimeDraft = $state(data.group.rehearsal_time ?? '');
+	let savingRehearsal = $state(false);
 	// Info/About tab: "Leave group" click-to-confirm.
 	let confirmingLeave = $state(false);
 	let leavingGroup = $state(false);
@@ -187,6 +198,37 @@
 
 	function formatDateTime(iso: string) {
 		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+	}
+
+	// `Group.rehearsal_weekday` is 0=Monday..6=Sunday (matches Python's
+	// `date.weekday()`, what the Backend stores) — distinct from JS's own
+	// `Date.getDay()`, which is 0=Sunday..6=Saturday. Every place below that
+	// converts between the two says so explicitly.
+	const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+	function formatRehearsalSchedule(weekday: number, time: string): string {
+		const [hours, minutes] = time.split(':').map(Number);
+		const sample = new Date(2026, 0, 1, hours, minutes); // any date — only the time-of-day is used
+		const timeLabel = sample.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+		return `${WEEKDAY_LABELS[weekday]}s at ${timeLabel}`;
+	}
+
+	// The Responsibilities tab's "Next rehearsal" quick-fill: the next
+	// upcoming occurrence of `weekday`/`time` (both wall-clock, no timezone
+	// stored — see `Group.rehearsal_weekday`'s doc comment), computed
+	// entirely against the browser's own local clock, formatted for direct
+	// use as a `datetime-local` input value. "Today, but the time already
+	// passed" rolls to next week rather than showing a moment in the past.
+	function nextRehearsalDatetimeLocal(weekday: number, time: string): string {
+		const [hours, minutes] = time.split(':').map(Number);
+		const now = new Date();
+		const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+		const jsTargetDay = (weekday + 1) % 7; // Mon=0..Sun=6 -> Sun=0..Sat=6
+		let daysUntil = (jsTargetDay - next.getDay() + 7) % 7;
+		if (daysUntil === 0 && next.getTime() <= now.getTime()) daysUntil = 7;
+		next.setDate(next.getDate() + daysUntil);
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}T${pad(next.getHours())}:${pad(next.getMinutes())}`;
 	}
 
 	// `<input type="datetime-local">` wants "YYYY-MM-DDTHH:mm" in the
@@ -836,8 +878,21 @@
 						</label>
 						<label class="field">
 							<span>Date &amp; time</span>
-							<input type="datetime-local" name="date" required />
+							<input type="datetime-local" name="date" bind:value={addDateDraft} required />
 						</label>
+						{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
+							{@const weekday = data.group.rehearsal_weekday}
+							{@const time = data.group.rehearsal_time}
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									addDateDraft = nextRehearsalDatetimeLocal(weekday, time);
+								}}
+							>
+								Use next rehearsal ({formatRehearsalSchedule(weekday, time)})
+							</button>
+						{/if}
 						<label class="field">
 							<span>Notes</span>
 							<input name="notes" placeholder="Optional" />
@@ -1078,6 +1133,72 @@
 		</section>
 
 		<section class="card">
+			<p class="card-eyebrow">Regular rehearsals</p>
+			<p class="card-note">
+				Shown on the Info tab; the Responsibilities tab's "Next rehearsal" button anchors new
+				dates to this instead of typing one in by hand each time.
+			</p>
+			{#if editingRehearsal}
+				<form
+					method="POST"
+					action="?/updateRehearsalSchedule"
+					use:enhance={() => {
+						savingRehearsal = true;
+						return async ({ update }) => {
+							savingRehearsal = false;
+							editingRehearsal = false;
+							await update();
+						};
+					}}
+				>
+					<label class="field">
+						<span>Day</span>
+						<select name="weekday" bind:value={rehearsalWeekdayDraft}>
+							<option value="">No regular rehearsal</option>
+							{#each WEEKDAY_LABELS as label, i (label)}
+								<option value={String(i)}>{label}</option>
+							{/each}
+						</select>
+					</label>
+					{#if rehearsalWeekdayDraft !== ''}
+						<label class="field">
+							<span>Time</span>
+							<input type="time" name="time" bind:value={rehearsalTimeDraft} required />
+						</label>
+					{/if}
+					{#if form?.form === 'rehearsalSchedule' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
+					<div class="btn-row">
+						<button type="button" class="btn btn-outline" onclick={() => (editingRehearsal = false)}>
+							Cancel
+						</button>
+						<button class="btn btn-primary" type="submit" disabled={savingRehearsal}>
+							{savingRehearsal ? 'Saving…' : 'Save'}
+						</button>
+					</div>
+				</form>
+			{:else}
+				{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
+					<p class="card-meta">{formatRehearsalSchedule(data.group.rehearsal_weekday, data.group.rehearsal_time)}</p>
+				{:else}
+					<p class="card-note">No regular rehearsal set yet.</p>
+				{/if}
+				<button
+					type="button"
+					class="text-link"
+					onclick={() => {
+						rehearsalWeekdayDraft = data.group.rehearsal_weekday !== null ? String(data.group.rehearsal_weekday) : '';
+						rehearsalTimeDraft = data.group.rehearsal_time ?? '';
+						editingRehearsal = true;
+					}}
+				>
+					{data.group.rehearsal_weekday !== null ? 'Edit' : '+ Set regular rehearsal'}
+				</button>
+			{/if}
+		</section>
+
+		<section class="card">
 			<p class="card-eyebrow">Guest access</p>
 			<p class="card-note">
 				Anyone with the join code (and password, if set) can view whatever pages below are set to
@@ -1183,6 +1304,13 @@
 
 			{#if data.group.description}
 				<p class="card-meta body">{data.group.description}</p>
+			{/if}
+
+			{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
+				<div class="list-row">
+					<span>Regular rehearsals</span>
+					<span class="dim">{formatRehearsalSchedule(data.group.rehearsal_weekday, data.group.rehearsal_time)}</span>
+				</div>
 			{/if}
 
 			<p class="card-meta">

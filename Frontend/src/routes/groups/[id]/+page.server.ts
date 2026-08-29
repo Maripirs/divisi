@@ -162,6 +162,35 @@ export const actions: Actions = {
 		return { success: true, form: 'pageSettings' };
 	},
 
+	// Admin-only, full replace — a regular weekly rehearsal slot (e.g.
+	// "Wednesdays at 7pm") the Responsibilities tab's "Next rehearsal"
+	// button anchors new dates to. `weekday` empty means "clear it"; the
+	// select's own options are '0'-'6' strings (Monday-Sunday, matching the
+	// Backend's `date.weekday()` convention) so this just needs `Number(...)`.
+	updateRehearsalSchedule: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const weekdayRaw = String(form.get('weekday') ?? '').trim();
+		const time = String(form.get('time') ?? '').trim();
+		const rehearsalWeekday = weekdayRaw === '' ? null : Number(weekdayRaw);
+		const rehearsalTime = weekdayRaw === '' ? null : time;
+		if (rehearsalWeekday !== null && (!Number.isInteger(rehearsalWeekday) || !rehearsalTime)) {
+			return fail(400, { error: 'Choose a day and time', form: 'rehearsalSchedule' });
+		}
+
+		try {
+			await backendFetch(
+				locals.token,
+				`/groups/${params.id}/rehearsal-schedule`,
+				{ method: 'PUT', body: JSON.stringify({ rehearsal_weekday: rehearsalWeekday, rehearsal_time: rehearsalTime }) },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'rehearsalSchedule' });
+			throw err;
+		}
+		return { success: true, form: 'rehearsalSchedule' };
+	},
+
 	// Admin-only, full replace — the free-text blurb on the Info/About tab.
 	updateDescription: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();

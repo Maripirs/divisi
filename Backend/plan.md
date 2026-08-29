@@ -301,6 +301,26 @@ notifications/reminders — all deferred to Backlog below if actually needed lat
 - [x] Coverage computed server-side (`needed_count - active_signup_count` per role), returned on the list endpoint
 - [x] Tests: admin CRUD, member self-signup/remove + 403 for non-members, locked date blocks member writes but not admin, coverage math, guest route respects page settings
 
+**Expanded 2026-08-29 (regular rehearsal schedule):** `Group.rehearsal_weekday`
+(0=Monday..6=Sunday)/`rehearsal_time` ("HH:MM", 24h, no timezone stored — see
+the model's own doc comment on why: "next occurrence" is computed
+client-side against the browser's local clock, same implicit-local-time
+convention the existing `datetime-local` responsibility-date inputs already
+use) + migration `d8b3f5a1c7e4`. `PUT /groups/{id}/rehearsal-schedule`
+(admin-only, full replace, both fields set/cleared together — a weekday
+with no time is rejected 400) lets an admin set e.g. "Wednesdays at 7pm";
+`GroupOut` exposes both fields so the Frontend's "Next rehearsal"
+quick-fill (see `Frontend/plan.md`'s F6 note) can read them. Investigated
+the human's separate report of responsibility-date times "not getting
+stored or reflecting properly" first — the actual create/read round trip
+verified correct via a live curl round trip (sent 19:00 UTC, read back as
+12:00-07:00 Pacific, the same instant); no bug found in the stored
+value itself. Most likely explanation is friction from hand-typing a
+`datetime-local` value each time rather than a real storage bug — this
+regular-rehearsal-anchor feature is the human's own requested fix for
+exactly that. `pytest` 137/139 (same 2 pre-existing, unrelated local
+FluidSynth-not-installed failures).
+
 ### B14 — Account security (password strength/reset, OAuth scaffold) [x]
 
 Built autonomously overnight, per the human's direction before going to bed:
@@ -459,6 +479,7 @@ recorded here rather than just done silently:
 
 ## Log
 
+- 2026-08-29: Added a regular weekly rehearsal schedule to `Group` (see B13's "Expanded 2026-08-29" note above) at the human's request, after investigating their report of responsibility-date times not storing/reflecting properly — found no actual bug in the stored value (live-curl-verified round trip is exact), so built the requested "Next rehearsal" anchor instead of a fix for a bug that didn't reproduce. `pytest` 137/139 (same 2 pre-existing FluidSynth failures). Same session as, and pushed together with, the piece-uploads work below.
 - 2026-08-29: Built real piece uploads (MIDI/MusicXML + PDF + reference audio), per the plan a prior session (this repo's Mac machine) scoped and handed off in `HANDOFF.md` (deleted now, its job done) — see B4's "Expanded 2026-08-29" note above for the actual change list. Done from a fresh Windows worktree (`git clone` of this repo — two fixture PDFs with `"` in their filenames couldn't check out there, an OS filename restriction, not a repo problem), with a portable (no-admin-install) Postgres 17 + Python venv set up locally first. Also re-provisioned this session: the Neon Object Storage `AWS_*` credentials HANDOFF.md flagged as missing from `Backend/.env` — re-pulled via `neon env pull -s object-storage` after the human generated a fresh personal API key (device browser OAuth couldn't complete on a headless machine, so API-key auth instead) — storage swap itself still not implemented, just unblocked. Migration `a3f7c1e9b5d2` verified upgrade/downgrade/upgrade clean against the local Postgres; `pytest` 133/135 (2 failures are the pre-existing, unrelated local FluidSynth-not-installed gap, not a regression); a live curl round trip covered all four upload combinations plus the full group upload→submit→approve→distribute→file/pdf-route chain, both authenticated and guest. Not deployed to production and not pushed — local-only, verify+push left for the human/next session.
 - 2026-08-28: Added `PUT /auth/me/password` (change password while logged in — current + new password), the human's live follow-up ask on top of B14's existing forgot/reset flow. See B14's section above for detail. `pytest` 124/124. Deployed to production alongside the Frontend's matching Settings-drawer UI (see `Frontend/plan.md`'s log) — commit→push→Render live, verified via a real Playwright round trip against the local dev server (old password rejected after change, new one logs in) since production itself wasn't separately re-verified for this one (low-risk, same pattern as every other auth route, real local E2E was enough).
 - 2026-08-28: Google Sign-In verified for real, closing out B14. A prior session's log entry (below) had claimed this was "verified" when it had only ever curled `/auth/oauth/providers`/`.../start` — never an actual browser round trip with a real Google account; `HANDOFF.md` (deleted now, its job done) was written specifically to catch and close that gap rather than leave the feature live in production on a false "verified" claim. This session confirmed both known failure modes were already clear — `FRONTEND_BASE_URL` correctly `https://divisi.maripi.net` on Render (checked read-only via the Render REST API using the CLI's cached token, since `render` has no `env-vars` command) and both redirect URIs registered in Google Cloud Console (project `divisi-506916`) — then the human clicked "Continue with Google" on the real `divisi.maripi.net/login` and confirmed landing logged in, plus separately tested the password-account + Google linking path (register with a password, then Google sign-in on the same email) and confirmed it links as intended. B14 marked `[x]`.

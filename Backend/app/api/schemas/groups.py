@@ -19,6 +19,11 @@ class GroupOut(BaseModel):
     role: GroupRole  # the requesting user's role in this group
     has_guest_password: bool  # never the password/hash itself, just whether one is set
     description: str | None = None  # free-text blurb on the group's Info/About page
+    # A regular weekly rehearsal slot, e.g. weekday=2 ("Wednesday"),
+    # time="19:00" — see `Group.rehearsal_weekday`'s doc comment for why no
+    # timezone is stored. Both `None` means unset.
+    rehearsal_weekday: int | None = None
+    rehearsal_time: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -28,6 +33,16 @@ class GroupDescriptionUpdate(BaseModel):
     written yet."""
 
     description: str | None = None
+
+
+class GroupRehearsalScheduleUpdate(BaseModel):
+    """Admin-only, full replace — both fields always set or cleared
+    together (a weekday with no time, or vice versa, isn't a valid
+    schedule), enforced in the route rather than here to keep this a plain
+    passthrough shape like the sibling `*Update` models."""
+
+    rehearsal_weekday: int | None = None
+    rehearsal_time: str | None = None
 
 
 class GroupGuestSettingsUpdate(BaseModel):

@@ -103,6 +103,18 @@ class Group(Base):
     # `None` means nothing's been written yet (not the same as an empty
     # string, though the Frontend treats both as "nothing to show").
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    # A regular weekly rehearsal slot (e.g. "Wednesdays at 7pm"), so the
+    # Responsibilities "Add a date" form can offer a one-click "Next
+    # rehearsal" fill instead of the admin hand-computing/typing it every
+    # time. Deliberately no timezone stored here — `rehearsal_time` is a
+    # plain "HH:MM" wall-clock value, and "next occurrence" is always
+    # computed client-side against the browser's own local clock (same
+    # implicit-local-time convention the existing `datetime-local` date
+    # inputs already use elsewhere on this page). `None`/`None` means no
+    # regular rehearsal is set — both fields are set or cleared together,
+    # never independently (see `GroupRehearsalScheduleUpdate`).
+    rehearsal_weekday: Mapped[int | None] = mapped_column(nullable=True)  # 0=Monday .. 6=Sunday
+    rehearsal_time: Mapped[str | None] = mapped_column(String, nullable=True)  # "HH:MM", 24h
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

@@ -15,6 +15,11 @@ export interface GroupOut {
 	role: GroupRole;
 	has_guest_password: boolean;
 	description: string | null;
+	/** A regular weekly rehearsal slot (e.g. weekday=2/"19:00" ->
+	 * "Wednesdays at 7:00 PM") — no timezone stored, see the Backend
+	 * `Group.rehearsal_weekday` doc comment for why. Both null means unset. */
+	rehearsal_weekday: number | null;
+	rehearsal_time: string | null;
 }
 
 /** B12: per-(group, page) visibility, replacing the old single
