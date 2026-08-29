@@ -33,7 +33,9 @@
 	// ids are short slugs, real Backend piece ids are UUIDs — but bundled
 	// first matches this file's existing behavior before F5).
 	// svelte-ignore state_referenced_locally
-	const piece = getPiece(data.id) ?? (data.remote ? buildRemotePiece(data.remote) : undefined);
+	const piece =
+		getPiece(data.id) ??
+		(data.remote ? buildRemotePiece(data.remote, page.url.searchParams.get('code')) : undefined);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like

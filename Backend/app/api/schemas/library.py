@@ -82,6 +82,10 @@ class GuestPieceOut(BaseModel):
     title: str
     version_id: str
     distributed_at: datetime
+    composer: str | None = None
+    youtube_url: str | None = None
+    has_music: bool = False
+    has_pdf: bool = False
 
 
 class GuestGroupOut(BaseModel):

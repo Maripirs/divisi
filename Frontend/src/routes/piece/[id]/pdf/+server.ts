@@ -3,8 +3,18 @@ import type { RequestHandler } from './$types';
 
 /** F5: proxies the Backend's `GET /library/versions/{id}/pdf` — see
  * `../file/+server.ts` for why this resolves `id` (a `Piece` id) to its
- * current version first. */
-export const GET: RequestHandler = async ({ params, locals, fetch }) => {
+ * current version first. A guest (no `locals.token`, `?code=` present
+ * instead — see `remotePiece.ts`'s `buildRemotePiece`) proxies straight to
+ * the Backend's unauthenticated `GET /guest/{code}/pieces/{id}/pdf`
+ * instead, which is already keyed by piece id, no version lookup needed. */
+export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
+	if (!locals.token) {
+		const code = url.searchParams.get('code');
+		if (!code) return new Response(null, { status: 401 });
+		const res = await fetch(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${params.id}/pdf`);
+		return new Response(res.body, { status: res.status, headers: res.headers });
+	}
+
 	const library = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
 		headers: { Authorization: `Bearer ${locals.token}` }
 	});

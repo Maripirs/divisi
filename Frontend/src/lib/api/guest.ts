@@ -10,6 +10,10 @@ export interface GuestPiece {
 	title: string;
 	versionId: string;
 	distributedAt: string;
+	composer: string | null;
+	youtubeUrl: string | null;
+	hasMusic: boolean;
+	hasPdf: boolean;
 }
 
 export interface GuestGroup {
@@ -101,6 +105,10 @@ interface GuestPieceResponse {
 	title: string;
 	version_id: string;
 	distributed_at: string;
+	composer: string | null;
+	youtube_url: string | null;
+	has_music: boolean;
+	has_pdf: boolean;
 }
 
 interface GuestGroupResponse {
@@ -174,7 +182,11 @@ export async function resolveJoinCode(code: string, { password, fetchFn = fetch 
 			pieceId: p.piece_id,
 			title: p.title,
 			versionId: p.version_id,
-			distributedAt: p.distributed_at
+			distributedAt: p.distributed_at,
+			composer: p.composer,
+			youtubeUrl: p.youtube_url,
+			hasMusic: p.has_music,
+			hasPdf: p.has_pdf
 		}))
 	};
 }
