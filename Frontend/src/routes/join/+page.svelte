@@ -2,6 +2,8 @@
 	import { goto } from '$app/navigation';
 	import Logo from '$lib/components/Logo.svelte';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { PageData } from './$types';
 
 	// No dedicated load here — `data.user` comes straight from the root
@@ -16,23 +18,22 @@
 		e.preventDefault();
 		const trimmed = code.trim();
 		if (!trimmed) return;
-		goto(`/join/${encodeURIComponent(trimmed)}`);
+		goto(lh(`/join/${encodeURIComponent(trimmed)}`));
 	}
 </script>
 
 <main class="shell join">
 	<div class="hero">
 		<Logo size={48} />
-		<h1>Join a group</h1>
+		<h1>{m.join_title()}</h1>
 		<p class="pitch">
-			Enter the join code your choir admin shared with you. No account needed to view and
-			practice a group's rehearsal tracks.
+			{m.join_pitch()}
 		</p>
 	</div>
 
 	<form class="card" onsubmit={submit}>
 		<div class="field">
-			<label for="join-code">Join code</label>
+			<label for="join-code">{m.join_code_label()}</label>
 			<input
 				id="join-code"
 				type="text"
@@ -43,12 +44,12 @@
 				bind:value={code}
 			/>
 		</div>
-		<button class="btn btn-primary btn-block" type="submit" disabled={!code.trim()}>Continue</button
+		<button class="btn btn-primary btn-block" type="submit" disabled={!code.trim()}>{m.join_continue()}</button
 		>
 	</form>
 
 	<p class="back-link">
-		<a href={data.user ? '/home' : '/welcome'}>← Back</a>
+		<a href={lh(data.user ? '/home' : '/welcome')}>← {m.join_back()}</a>
 	</p>
 </main>
 

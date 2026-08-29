@@ -7,6 +7,8 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -27,31 +29,31 @@
 	// promotable the same way from the player, but isn't a dropdown-shaped
 	// value, so it isn't exposed here. The toggles below it are still
 	// fixture-only UI, not backed by an implemented feature yet.
-	const VOICE_PART_LABELS: Record<VoicePart, string> = {
-		soprano: 'Soprano',
-		alto: 'Alto',
-		tenor: 'Tenor',
-		bass: 'Bass'
+	const VOICE_PART_LABELS: Record<VoicePart, () => string> = {
+		soprano: m.voice_soprano,
+		alto: m.voice_alto,
+		tenor: m.voice_tenor,
+		bass: m.voice_bass
 	};
-	const DISPLAY_MODE_LABELS: Record<Exclude<DisplayMode, 'custom'>, string> = {
-		flat: 'Everyone',
-		highlighted: 'My part + others',
-		solo: 'My part'
+	const DISPLAY_MODE_LABELS: Record<Exclude<DisplayMode, 'custom'>, () => string> = {
+		flat: m.display_mode_everyone,
+		highlighted: m.display_mode_highlighted,
+		solo: m.display_mode_solo
 	};
 	const DEFAULT_DISPLAY_MODES = Object.keys(DISPLAY_MODE_LABELS) as Array<keyof typeof DISPLAY_MODE_LABELS>;
-	const VIEW_MODE_LABELS: Record<ViewMode, string> = {
-		player: 'Score',
-		pdf: 'PDF'
+	const VIEW_MODE_LABELS: Record<ViewMode, () => string> = {
+		player: m.settings_view_score,
+		pdf: m.settings_view_pdf
 	};
 	// Same labels/pattern as the player's own Mix segmented control
 	// (`routes/piece/[id]`'s `MIX_MODE_LABELS`) — "Custom" isn't offered here
 	// for the same reason "Custom" display isn't: a raw slider mix isn't
 	// representable by a dropdown option, only promotable from the player
 	// itself via "Make this my default".
-	const MIX_MODE_LABELS: Record<Exclude<MixMode, 'custom'>, string> = {
-		everyone: 'Everyone',
-		minusMe: 'Minus Me',
-		mostlyMe: 'Mostly Me'
+	const MIX_MODE_LABELS: Record<Exclude<MixMode, 'custom'>, () => string> = {
+		everyone: m.mix_mode_everyone,
+		minusMe: m.mix_mode_minus_me,
+		mostlyMe: m.mix_mode_mostly_me
 	};
 	const DEFAULT_MIX_MODES = Object.keys(MIX_MODE_LABELS) as Array<keyof typeof MIX_MODE_LABELS>;
 
@@ -60,7 +62,12 @@
 	// picking a number here that a given piece doesn't happen to use (it's
 	// just ignored then, same as any other default a piece doesn't match).
 	const DESK_OPTIONS = [1, 2, 3, 4];
-	const DESK_LABELS: Record<number, string> = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+	const DESK_LABELS: Record<number, () => string> = {
+		1: m.desk_1st,
+		2: m.desk_2nd,
+		3: m.desk_3rd,
+		4: m.desk_4th
+	};
 
 	function updatePlayerDefaults(next: Partial<PlayerDefaults>) {
 		setPlayerDefaults({ ...$playerDefaults, ...next });
@@ -73,54 +80,53 @@
 
 <main class="shell">
 	<AppHeader
-		title="Settings"
-		homeHref={guestJoinCode ? `/join/${guestJoinCode}` : '/home'}
+		title={m.settings_title()}
+		homeHref={guestJoinCode ? lh(`/join/${guestJoinCode}`) : lh('/home')}
 	/>
 
 	<section class="card">
-		<p class="card-eyebrow">Account</p>
+		<p class="card-eyebrow">{m.settings_account()}</p>
 		{#if data.user}
-			<div class="list-row"><span>Name</span><span class="dim">{data.user.name}</span></div>
-			<div class="list-row"><span>Email</span><span class="dim">{data.user.email}</span></div>
+			<div class="list-row"><span>{m.login_name()}</span><span class="dim">{data.user.name}</span></div>
+			<div class="list-row"><span>{m.login_email()}</span><span class="dim">{data.user.email}</span></div>
 		{:else}
 			<p class="card-meta">
-				You're browsing as a guest — nothing here leaves this device. Create an account (or log
-				in to one) to keep it and your groups everywhere you sign in.
+				{m.settings_guest_note()}
 			</p>
 			<div class="btn-row">
-				<a class="btn btn-primary" href="/login?mode=register">Create an account</a>
-				<a class="btn btn-outline" href="/login">Log in</a>
+				<a class="btn btn-primary" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
+				<a class="btn btn-outline" href={lh('/login')}>{m.login_title()}</a>
 			</div>
 		{/if}
 	</section>
 
 	<section class="card">
-		<p class="card-eyebrow">Theme</p>
+		<p class="card-eyebrow">{m.settings_theme()}</p>
 		<label class="field">
-			<span>Appearance</span>
+			<span>{m.settings_appearance()}</span>
 			<select value={$themeMode} onchange={(e) => setThemeMode((e.currentTarget as HTMLSelectElement).value as ThemeMode)}>
-				<option value="system">System</option>
-				<option value="light">Light</option>
-				<option value="dark">Dark</option>
+				<option value="system">{m.settings_theme_system()}</option>
+				<option value="light">{m.settings_theme_light()}</option>
+				<option value="dark">{m.settings_theme_dark()}</option>
 			</select>
 		</label>
 	</section>
 
 	<section class="card">
-		<p class="card-eyebrow">Practice defaults</p>
+		<p class="card-eyebrow">{m.settings_practice_defaults()}</p>
 		<label class="field">
-			<span>Voice</span>
+			<span>{m.settings_voice()}</span>
 			<select
 				value={$playerDefaults.voicePart}
 				onchange={(e) => updatePlayerDefaults({ voicePart: (e.currentTarget as HTMLSelectElement).value as VoicePart })}
 			>
 				{#each PLAYER_VOICE_PARTS as part (part)}
-					<option value={part}>{VOICE_PART_LABELS[part]}</option>
+					<option value={part}>{VOICE_PART_LABELS[part]()}</option>
 				{/each}
 			</select>
 		</label>
 		<label class="field field--sub">
-			<span>Split part</span>
+			<span>{m.settings_split_part()}</span>
 			<select
 				value={$playerDefaults.voiceDesk ?? ''}
 				onchange={(e) => {
@@ -128,18 +134,17 @@
 					updatePlayerDefaults({ voiceDesk: raw === '' ? null : Number(raw) });
 				}}
 			>
-				<option value="">Whole section</option>
+				<option value="">{m.settings_whole_section()}</option>
 				{#each DESK_OPTIONS as desk (desk)}
-					<option value={desk}>{DESK_LABELS[desk]}</option>
+					<option value={desk}>{DESK_LABELS[desk]()}</option>
 				{/each}
 			</select>
 		</label>
 		<p class="card-note field--sub">
-			Only applies to a piece that actually splits your voice (e.g. Soprano 1/2) — everything
-			else looks exactly the same either way.
+			{m.settings_split_part_note()}
 		</p>
 		<label class="field">
-			<span>Display</span>
+			<span>{m.settings_display()}</span>
 			<select
 				value={$playerDefaults.displayMode}
 				onchange={(e) =>
@@ -148,12 +153,12 @@
 					})}
 			>
 				{#each DEFAULT_DISPLAY_MODES as mode (mode)}
-					<option value={mode}>{DISPLAY_MODE_LABELS[mode]}</option>
+					<option value={mode}>{DISPLAY_MODE_LABELS[mode]()}</option>
 				{/each}
 			</select>
 		</label>
 		<label class="field">
-			<span>Sound mixing</span>
+			<span>{m.settings_sound_mixing()}</span>
 			<select
 				value={$playerDefaults.mixMode}
 				onchange={(e) =>
@@ -162,49 +167,49 @@
 					})}
 			>
 				{#each DEFAULT_MIX_MODES as mode (mode)}
-					<option value={mode}>{MIX_MODE_LABELS[mode]}</option>
+					<option value={mode}>{MIX_MODE_LABELS[mode]()}</option>
 				{/each}
 			</select>
 		</label>
 		<label class="field">
-			<span>View</span>
+			<span>{m.settings_view()}</span>
 			<select
 				value={$playerDefaults.viewMode}
 				onchange={(e) => updatePlayerDefaults({ viewMode: (e.currentTarget as HTMLSelectElement).value as ViewMode })}
 			>
 				{#each VIEW_MODES as mode (mode)}
-					<option value={mode}>{VIEW_MODE_LABELS[mode]}</option>
+					<option value={mode}>{VIEW_MODE_LABELS[mode]()}</option>
 				{/each}
 			</select>
 		</label>
 	</section>
 
 	<section class="card">
-		<p class="card-eyebrow">Playback</p>
+		<p class="card-eyebrow">{m.settings_playback()}</p>
 		<label class="toggle-row">
-			<span>Keep screen awake while practicing</span>
+			<span>{m.settings_keep_screen_awake()}</span>
 			<input type="checkbox" bind:checked={keepScreenAwake} />
 		</label>
 		<label class="toggle-row">
-			<span>Count-in before playback</span>
+			<span>{m.settings_count_in()}</span>
 			<input type="checkbox" bind:checked={countIn} />
 		</label>
 		<label class="toggle-row">
-			<span>Background audio</span>
+			<span>{m.settings_background_audio()}</span>
 			<input type="checkbox" bind:checked={backgroundAudio} />
 		</label>
 	</section>
 
 	<section class="card">
-		<a class="list-row-link" href="/settings/more">
-			<span>More</span>
-			<span class="dim">About Divisi, portfolio</span>
+		<a class="list-row-link" href={lh('/settings/more')}>
+			<span>{m.settings_more()}</span>
+			<span class="dim">{m.settings_more_note()}</span>
 		</a>
 	</section>
 
 	{#if data.user}
 		<form method="POST" action="/logout">
-			<button class="btn btn-danger btn-block" type="submit">Log out</button>
+			<button class="btn btn-danger btn-block" type="submit">{m.settings_log_out()}</button>
 		</form>
 	{/if}
 </main>
@@ -213,7 +218,7 @@
 	<!-- A code-guest has no dashboard `BottomNav`'s Home tab would resolve
 	     to (it's login-gated) — send them back where they came from instead. -->
 	<nav class="bottom-nav">
-		<a href="/join/{guestJoinCode}">Back to your choir</a>
+		<a href={lh(`/join/${guestJoinCode}`)}>{m.settings_back_to_choir()}</a>
 	</nav>
 {:else}
 	<BottomNav />

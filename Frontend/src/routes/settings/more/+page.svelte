@@ -1,42 +1,39 @@
 <script lang="ts">
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	const portfolioUrl = 'https://your-portfolio-url.example';
 </script>
 
 <main class="shell">
-	<p class="crumbs"><a href="/settings">Settings</a> / More</p>
-	<h1 class="title">More</h1>
+	<p class="crumbs"><a href={lh('/settings')}>{m.settings_title()}</a> / {m.settings_more()}</p>
+	<h1 class="title">{m.settings_more()}</h1>
 
 	<section class="card">
-		<p class="card-eyebrow">About Divisi</p>
+		<p class="card-eyebrow">{m.more_about_title()}</p>
 		<p class="card-meta body">
-			Divisi is a choir companion app for singers, section leaders, and directors.
+			{m.more_about_body1()}
 		</p>
 		<p class="card-meta body">
-			It brings scores, rehearsal tracks, assignments, and personal practice notes into one
-			place. Singers can practice with their part, accompaniment, and score in sync, while
-			groups can organize shared materials and homework.
+			{m.more_about_body2()}
 		</p>
 		<p class="card-meta body">
-			Built by
+			{m.more_built_by()}
 			<a class="text-link" href={portfolioUrl} target="_blank" rel="noreferrer">Maripi</a>
 		</p>
 	</section>
 
 	<section class="card">
-		<p class="card-eyebrow">Creating a group</p>
+		<p class="card-eyebrow">{m.more_creating_group_title()}</p>
 		<p class="card-meta body">
-			Group creation is available by request while Divisi is still small.
+			{m.more_creating_group_body1()}
 		</p>
 		<p class="card-meta body">
-			Each group needs dedicated setup for members, assignments, scores, audio, and shared
-			materials. For now, new groups are created intentionally so the app can stay stable and
-			useful.
+			{m.more_creating_group_body2()}
 		</p>
 		<p class="card-meta body">
-			If you would like to use Divisi with your choir, reach out to discuss setting up a
-			group.
+			{m.more_creating_group_body3()}
 		</p>
 	</section>
 </main>

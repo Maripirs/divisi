@@ -5,6 +5,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { initTheme } from '$lib/theme';
 	import SettingsDrawer from '$lib/components/SettingsDrawer.svelte';
+	import { m } from '$lib/paraglide/messages';
 
 	let { children } = $props();
 
@@ -39,7 +40,7 @@
 {#if showBackendStatus}
 	<div class="backend-status" role="status" aria-live="polite">
 		<span class="backend-status-spinner" aria-hidden="true"></span>
-		Waiting for backend…
+		{m.layout_waiting_for_backend()}
 	</div>
 {/if}
 

@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { setSessionCookie } from '$lib/server/session';
+import { lh } from '$lib/i18n';
 import type { PageServerLoad } from './$types';
 
 /** Landed here after the Backend's `/auth/oauth/{provider}/callback`
@@ -12,5 +13,5 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ url, cookies }) => {
 	const token = url.searchParams.get('token');
 	if (token) setSessionCookie(cookies, token);
-	throw redirect(303, token ? '/home' : '/login?oauth_error=1');
+	throw redirect(303, lh(token ? '/home' : '/login?oauth_error=1'));
 };

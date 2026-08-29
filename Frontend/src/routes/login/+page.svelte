@@ -2,6 +2,8 @@
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -28,19 +30,19 @@
 
 <main class="shell">
 	<header class="shell-header">
-		<h1>{mode === 'login' ? 'Log in' : 'Create account'}</h1>
+		<h1>{mode === 'login' ? m.login_title() : m.login_create_account()}</h1>
 	</header>
 
 	{#if page.url.searchParams.get('reset')}
-		<p class="success reset-success">Password updated — log in with your new one.</p>
+		<p class="success reset-success">{m.login_password_updated()}</p>
 	{/if}
 
 	<div class="tabs" role="tablist">
 		<button type="button" class="tab" class:active={mode === 'login'} onclick={() => (mode = 'login')}>
-			Log in
+			{m.login_title()}
 		</button>
 		<button type="button" class="tab" class:active={mode === 'register'} onclick={() => (mode = 'register')}>
-			Register
+			{m.login_register()}
 		</button>
 	</div>
 
@@ -59,16 +61,16 @@
 		<input type="hidden" name="redirectTo" value={redirectTo} />
 		{#if mode === 'register'}
 			<label class="field">
-				<span>Name</span>
+				<span>{m.login_name()}</span>
 				<input type="text" name="name" required autocomplete="name" />
 			</label>
 		{/if}
 		<label class="field">
-			<span>Email</span>
+			<span>{m.login_email()}</span>
 			<input type="email" name="email" required autocomplete="email" />
 		</label>
 		<label class="field">
-			<span>Password</span>
+			<span>{m.login_password()}</span>
 			<input
 				type="password"
 				name="password"
@@ -80,7 +82,7 @@
 		</label>
 		{#if mode === 'register'}
 			<label class="field">
-				<span>Confirm password</span>
+				<span>{m.login_confirm_password()}</span>
 				<input
 					type="password"
 					name="passwordConfirm"
@@ -91,12 +93,12 @@
 				/>
 			</label>
 			{#if passwordMismatch}
-				<p class="error">Passwords don't match.</p>
+				<p class="error">{m.login_passwords_dont_match()}</p>
 			{/if}
 		{/if}
 
 		{#if mode === 'login'}
-			<p class="forgot-link"><a href="/forgot-password">Forgot password?</a></p>
+			<p class="forgot-link"><a href={lh('/forgot-password')}>{m.login_forgot_password()}</a></p>
 		{/if}
 
 		{#if form?.error}
@@ -108,33 +110,33 @@
 			type="submit"
 			disabled={submitting || (mode === 'register' && (passwordMismatch || confirmPassword.length === 0))}
 		>
-			{submitting ? 'Please wait…' : mode === 'login' ? 'Log in' : 'Create account'}
+			{submitting ? m.login_please_wait() : mode === 'login' ? m.login_title() : m.login_create_account()}
 		</button>
 	</form>
 
 	{#if data.oauthProviders.google || data.oauthProviders.apple}
 		<div class="oauth-row">
-			<span class="oauth-divider">or</span>
+			<span class="oauth-divider">{m.login_or()}</span>
 			{#if data.oauthProviders.google}
 				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/google/start">
-					Continue with Google
+					{m.login_continue_with_google()}
 				</a>
 			{/if}
 			{#if data.oauthProviders.apple}
 				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/apple/start">
-					Continue with Apple
+					{m.login_continue_with_apple()}
 				</a>
 			{/if}
 		</div>
 	{/if}
 
 	{#if page.url.searchParams.get('oauth_error')}
-		<p class="error oauth-error">That sign-in attempt didn't go through. Please try again.</p>
+		<p class="error oauth-error">{m.login_oauth_error()}</p>
 	{/if}
 
 	<p class="note">
-		Browsing, playback, and joining a group with a code never require an account —
-		<a href="/welcome">back to welcome</a>.
+		{m.login_no_account_needed()}
+		<a href={lh('/welcome')}>{m.login_back_to_welcome()}</a>.
 	</p>
 </main>
 

@@ -1,12 +1,13 @@
 import { fail } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { m } from '$lib/paraglide/messages';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
 	default: async ({ request, fetch }) => {
 		const form = await request.formData();
 		const email = String(form.get('email') ?? '').trim();
-		if (!email) return fail(400, { error: 'Enter your email address' });
+		if (!email) return fail(400, { error: m.forgot_password_enter_email() });
 
 		// The Backend always returns the same generic response whether or
 		// not the email has an account (see its own `forgot_password` route
@@ -19,7 +20,7 @@ export const actions: Actions = {
 				body: JSON.stringify({ email })
 			});
 		} catch {
-			return fail(502, { error: "Couldn't reach the server. Please try again in a moment." });
+			return fail(502, { error: m.errors_could_not_reach_server() });
 		}
 		return { success: true };
 	}

@@ -455,6 +455,82 @@ exposed" convention.
   (`.certs/dev-*.pem`) — the dev frontend genuinely couldn't reach the
   Backend at all. Fixed to `https://localhost:8000`.
 
+### F8 — Spanish localization (/es) [~]
+
+At the human's direct request: a full Spanish version of the app, reached
+under `/es` (English stays unprefixed at the base locale), covering every
+route — not just a landing page. Built with Paraglide JS (inlang), SvelteKit's
+standard i18n toolkit, rather than hand-duplicated route files, so future
+pages only ever need their strings added once to `messages/en.json` +
+`messages/es.json`.
+
+**Mechanism:** `project.inlang/settings.json` declares `en` (base, no
+prefix) and `es` (prefixed) locales via the `plugin-message-format` plugin,
+reading `messages/{locale}.json`. `vite.config.ts`'s `paraglideVitePlugin`
+generates the typed `m.*()` message functions (git-ignored output,
+`src/lib/paraglide/`) plus the runtime, with `urlPatterns` mapping the root
+and every other path to an `/es`-prefixed vs. unprefixed pair depending on
+locale (`strategy: ['url', 'cookie', 'baseLocale']`). `src/hooks.ts`'s
+`reroute` de-localizes the incoming URL before route matching (so `/es/login`
+resolves to the same `+page.svelte` as `/login`); `src/hooks.server.ts` wraps
+the existing session-cookie handle with `paraglideMiddleware` (via
+`sequence()`) to detect the locale per-request and stamp `app.html`'s
+`%lang%`/`%dir%`. A new `<LanguageSwitcher>` (top-right on `/welcome`) links
+between locales via `localizeHref`.
+
+**The real gotcha, and why it needed its own helper:** Paraglide does **not**
+auto-localize plain `<a href>`/`goto()`/`redirect()` calls — only inbound URL
+matching is automatic. Without wrapping every internal path, a plain link
+would silently drop the `/es` prefix on the very next click (no cookie
+fallback is set up here to catch it). New `$lib/i18n.ts` exports `lh` (a thin
+`localizeHref` re-export, reading the current locale from Paraglide's
+async-local-storage-backed `getLocale()` so no locale param needs threading
+through call sites) — used at every internal `href`/`goto`/`redirect` site
+across the whole app. Verified live: `/es` root correctly redirects to
+`/es/welcome` (not `/welcome`), and every internal link on a rendered `/es`
+page stays `/es`-prefixed, including ones built from a server `redirect()`
+inside a form action.
+
+**Acceptance criteria:**
+- [x] Every route reachable both unprefixed (English) and under `/es`
+  (Spanish), with the correct `<html lang>`/`dir` and translated content
+- [x] A language switcher lets a visitor move between locales from any page,
+  preserving the current path
+- [x] Every internal navigation (links, redirects, form-action redirects)
+  stays within the currently-chosen locale — verified live via curl, not
+  just assumed from the mechanism
+- [x] `npm run check`/`build` both clean
+- [ ] Human/Playwright click-through of the Spanish UI (menus, forms, the
+  player's Practice Setup drawer) — not done this pass, same no-browser-in-
+  this-Windows-environment limitation as F5/F6's own expansions
+
+**Tasks — Claude:**
+- [x] Installed `@inlang/paraglide-js`; `project.inlang/settings.json`,
+  `messages/en.json`/`es.json` (~350 keys covering every route)
+- [x] `vite.config.ts` (`paraglideVitePlugin` + `urlPatterns`), `src/hooks.ts`
+  (new, `reroute`), `src/hooks.server.ts` (composed via `sequence()`),
+  `src/app.html` (`%lang%`/`%dir%`), `tsconfig.json` (`types: ["node"]` —
+  Paraglide's generated `server.js` needs `async_hooks`)
+- [x] New `$lib/i18n.ts` (`lh` helper) and `$lib/components/LanguageSwitcher.svelte`
+- [x] Every `.svelte`/`+page.server.ts` in the app (~30 route files + all
+  shared components: `AppHeader`, `BottomNav`, `SettingsDrawer`,
+  `PieceLibrary`, `Logo`, `PdfView`, `ScoreView`) converted from hardcoded
+  English strings to `m.*()` calls, and every internal
+  `href`/`goto`/`redirect` wrapped in `lh(...)`
+- [x] Deliberately left untranslated (not UI chrome): stored/persisted
+  content an admin types (a homework `range`'s literal `"Full piece"`
+  default, etc.) — translating those would make content language-dependent
+  at write time, not a display concern
+- [x] Verified live: `curl` against both `npm run build`'s output and
+  `npm run dev`, confirming `<html lang>` flips per prefix, real Spanish
+  text renders, the language switcher's hrefs are correct, and internal
+  links/redirects (including root's own auth redirect) stay locale-prefixed
+
+**Tasks — Human:**
+- [ ] Click through the Spanish UI for real (forms, the player drawer,
+  error states) — this pass is `check`/`build`/curl-verified only, no
+  browser was available in the environment that built it
+
 ## Backlog
 
 - **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
@@ -508,6 +584,7 @@ accounts.
 
 ## Log
 
+- 2026-08-29: Built F8 (Spanish localization, full app under `/es`), the human's direct request this session, on a Windows machine with no browser/Playwright available. Full detail in F8's own section above. Installed Paraglide JS (inlang) — `project.inlang/` + `messages/en.json`/`es.json` (~350 keys), `vite.config.ts`'s plugin with `urlPatterns` (base locale `en` unprefixed, `es` prefixed), `src/hooks.ts`'s `reroute` + `src/hooks.server.ts`'s `paraglideMiddleware` (composed with the existing session-cookie handle via `sequence()`), `%lang%`/`%dir%` in `app.html`, and a new `<LanguageSwitcher>`. The real work was converting every route (~30 files) and every shared component to `m.*()` calls instead of hardcoded strings, plus — the actual gotcha — wrapping every internal `href`/`goto`/`redirect` in a new `$lib/i18n.ts` `lh()` helper, since Paraglide only auto-localizes *inbound* URLs, not outbound links; without it, a plain link would've silently dropped the `/es` prefix on the very next click. Verified live via curl against both `npm run build`'s output and `npm run dev`: `<html lang>` flips correctly per prefix, real Spanish renders, the language switcher's hrefs are right, and internal navigation (including the root page's own auth redirect) stays locale-prefixed end to end. `npm run check` (0 errors, same pre-existing warning pattern)/`build` both clean. Not deployed to production; local-only, and not clicked through in a real browser — flagged as F8's own open Human task.
 - 2026-08-28: Deployed F7 to production (`divisi.maripi.net`, real `wrangler deploy`, confirmed live via a real curl round trip against `/join/9CJM7VRU` — banner text present, Weekly Notes correctly hidden by default for that group) and built `SettingsDrawer.svelte`'s "Change password" section — current password + new password (typed-twice client-side match check, same pattern as `/login`'s register form), posts to a new `/settings?/changePassword` action wired to the Backend's `PUT /auth/me/password` (see `Backend/plan.md`'s matching log entry). Same inline-edit/collapse-on-success shape as "Edit name" right above it in the same section — collapses back to a summary row on success, so (unlike the group page's page-visibility toggles) `use:enhance`'s default native `form.reset()` is harmless here, nothing needs to survive it. Also stood up an isolated Cloudflare Workers preview (`divisi-frontend-preview.mariapazmaluenda-564.workers.dev`, separate Worker name/config from the real `divisi-frontend`, no custom domain — zero risk to production routing) so the human could look at F7 before it went live; production Backend's `CORS_ORIGINS` briefly gained that preview origin to make it reachable at all, since Cloudflare Workers' `fetch` enforces CORS during SSR unlike plain Node. `npm run check`/`build` clean throughout; the whole password-change flow verified live via Playwright (mismatch blocks submit, old password 401s after a real change, new one logs in) — the human was away from their computer this entire session and explicitly authorized using it (see memory: a per-instance exception, not a changed default).
 - 2026-08-28: Built F7 (Weekly Notes tab + guest sign-in banner), the human's live requests this session. Full detail in the milestone's own section above — reuses B12's page-settings machinery exactly (see F6), Backend+Frontend both done, real E2E curl round trip on the Backend side. Verified live in a real browser via Playwright — the human was away from their computer and explicitly said to go ahead and use it for this session (not this project's usual convention; noted in memory as a per-instance exception, not a changed default). That live pass caught two real bugs no amount of `npm run check`/code reading would have: the page-visibility toggles' "resets after saving" report turned out to have a second, independent cause beyond the one a prior session already fixed (SvelteKit's `use:enhance` default `update()` calls a native `form.reset()`, wrong for a form that stays visible after saving — `pageSettingsDraft` state and the actual saved data were never wrong, only the display); and `note_date` displaying a day early in any UTC-behind timezone (local-time formatting on a value with no time-of-day meaning). Both fixed and reverified live. Also fixed a local-dev-only blocker found along the way: `Frontend/.env`'s `PUBLIC_API_BASE_URL` pointed at plain `http://localhost:8000` while the locally-running Backend is HTTPS-only, so the dev Frontend couldn't reach it at all — retargeted to `https://localhost:8000`. `npm run check`/`build` clean throughout. All Playwright-created test data deleted from the local dev DB afterward.
 - 2026-08-29: Added a regular weekly rehearsal schedule to groups (F6's "Expanded 2026-08-29" note above), at the human's request after they reported responsibility-date times "not getting stored or reflecting properly" — the Backend round trip checked out exactly right via a live curl test (see `Backend/plan.md`'s matching log entry), so this builds the requested fix (a "Next rehearsal" quick-fill anchored to a group-level day+time) rather than chasing a storage bug that didn't reproduce. `npm run check`/`build` clean; date math verified via a standalone script, not a real browser. Same session as, and pushed together with, the piece-uploads work below.

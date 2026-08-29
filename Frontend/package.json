@@ -15,6 +15,7 @@
 		"@sveltejs/adapter-cloudflare": "^7.2.9",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@types/node": "^26.4.0",
 		"@vitejs/plugin-basic-ssl": "^2.3.0",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
@@ -23,6 +24,7 @@
 		"wrangler": "^4.127.0"
 	},
 	"dependencies": {
+		"@inlang/paraglide-js": "^2.25.0",
 		"js-synthesizer": "^1.13.0",
 		"midi-file": "^1.2.4",
 		"opensheetmusicdisplay": "^2.1.2",

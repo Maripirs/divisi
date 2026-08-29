@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { backendJson } from '$lib/server/backend';
+import { lh } from '$lib/i18n';
 import type { GroupOut, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
@@ -12,7 +13,7 @@ import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 	const { user } = await parent();
 	if (!user) {
-		if (url.searchParams.get('guest') !== '1') throw redirect(303, '/welcome');
+		if (url.searchParams.get('guest') !== '1') throw redirect(303, lh('/welcome'));
 		return { groupSections: [] };
 	}
 

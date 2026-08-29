@@ -1,6 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { setSessionCookie } from '$lib/server/session';
+import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type { Actions, PageServerLoad } from './$types';
 
 interface OAuthProviders {
@@ -31,7 +33,7 @@ async function errorDetail(res: Response): Promise<string> {
 	} catch {
 		// Non-JSON error body — fall through to the generic message.
 	}
-	return `Request failed (${res.status})`;
+	return m.errors_request_failed({ status: res.status });
 }
 
 /** Logs in with `email`/`password` against the Backend, returning the
@@ -73,7 +75,7 @@ export const actions: Actions = {
 		if ('error' in result) return fail(401, { error: result.error, mode: 'login' as const });
 
 		setSessionCookie(cookies, result.token);
-		throw redirect(303, redirectTo);
+		throw redirect(303, lh(redirectTo));
 	},
 
 	register: async ({ request, cookies, fetch }) => {
@@ -89,7 +91,7 @@ export const actions: Actions = {
 		// typo, so it happens here rather than needing a second field on
 		// the Backend's own schema.
 		if (password !== passwordConfirm) {
-			return fail(400, { error: "Passwords don't match", mode: 'register' as const });
+			return fail(400, { error: m.login_passwords_dont_match(), mode: 'register' as const });
 		}
 
 		const registerRes = await fetch(`${PUBLIC_API_BASE_URL}/auth/register`, {
@@ -105,6 +107,6 @@ export const actions: Actions = {
 		if ('error' in result) return fail(401, { error: result.error, mode: 'register' as const });
 
 		setSessionCookie(cookies, result.token);
-		throw redirect(303, redirectTo);
+		throw redirect(303, lh(redirectTo));
 	}
 };

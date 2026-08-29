@@ -2,9 +2,36 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 export default defineConfig({
 	plugins: [
+		// i18n: generates the /es (Spanish) mirror of every route from the one
+		// route tree, plus the typed `m.*()` message functions — see
+		// `src/hooks.ts` (locale-prefix routing) and `src/hooks.server.ts`
+		// (locale detection/HTML lang attribute). `en` (base locale) stays
+		// unprefixed; only `es` gets a URL prefix — see `urlPatterns` below.
+		paraglideVitePlugin({
+			project: './project.inlang',
+			outdir: './src/lib/paraglide',
+			strategy: ['url', 'cookie', 'baseLocale'],
+			urlPatterns: [
+				{
+					pattern: '/',
+					localized: [
+						['es', '/es'],
+						['en', '/']
+					]
+				},
+				{
+					pattern: '/:path(.*)?',
+					localized: [
+						['es', '/es/:path(.*)?'],
+						['en', '/:path(.*)?']
+					]
+				}
+			]
+		}),
 		// Dev-only self-signed HTTPS: `AudioWorkletNodeSynthesizer` (player.ts)
 		// needs `AudioContext.audioWorklet`, which browsers only expose in a
 		// secure context (HTTPS or `localhost`). Testing over the LAN on a

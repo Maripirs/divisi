@@ -1,5 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
+import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type { GroupOut, HomeworkOut, ResponsibilityDateOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
@@ -22,7 +24,7 @@ async function groupJsonOrEmpty<T>(
 
 export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	const { user } = await parent();
-	if (!user) throw redirect(303, '/login?redirectTo=/home');
+	if (!user) throw redirect(303, lh('/login?redirectTo=/home'));
 
 	const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
 	const homeworkByGroup = await Promise.all(
@@ -45,7 +47,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 			if (b.due_date === null) return -1;
 			return a.due_date.localeCompare(b.due_date);
 		})
-		.map((hw) => ({ ...hw, groupName: groupNameById.get(hw.group_id) ?? 'Unknown group' }));
+		.map((hw) => ({ ...hw, groupName: groupNameById.get(hw.group_id) ?? m.home_unknown_group() }));
 
 	// Only upcoming, still-active dates that are actually relevant to this
 	// member: either they're already signed up for something on it, or it

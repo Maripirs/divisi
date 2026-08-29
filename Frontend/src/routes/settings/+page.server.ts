@@ -1,6 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { backendFetch, BackendApiError } from '$lib/server/backend';
 import { clearSessionCookie } from '$lib/server/session';
+import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type { Actions } from './$types';
 
 /** Both actions are targeted from `SettingsDrawer.svelte` (`action="/settings?/..."`)
@@ -11,7 +13,7 @@ export const actions: Actions = {
 	updateName: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const name = String(form.get('name') ?? '').trim();
-		if (!name) return fail(400, { error: 'Enter a name', form: 'updateName' });
+		if (!name) return fail(400, { error: m.settings_enter_name(), form: 'updateName' });
 
 		try {
 			await backendFetch(locals.token, '/auth/me', {
@@ -30,10 +32,10 @@ export const actions: Actions = {
 		const currentPassword = String(form.get('currentPassword') ?? '');
 		const newPassword = String(form.get('newPassword') ?? '');
 		if (!currentPassword || !newPassword) {
-			return fail(400, { error: 'Enter your current and new password', form: 'changePassword' });
+			return fail(400, { error: m.settings_enter_passwords(), form: 'changePassword' });
 		}
 		if (newPassword.length < 8) {
-			return fail(400, { error: 'New password must be at least 8 characters', form: 'changePassword' });
+			return fail(400, { error: m.settings_password_too_short(), form: 'changePassword' });
 		}
 
 		try {
@@ -59,6 +61,6 @@ export const actions: Actions = {
 			throw err;
 		}
 		clearSessionCookie(cookies);
-		throw redirect(303, '/welcome');
+		throw redirect(303, lh('/welcome'));
 	}
 };

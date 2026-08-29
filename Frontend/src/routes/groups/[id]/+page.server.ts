@@ -1,6 +1,8 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, backendJson, BackendApiError } from '$lib/server/backend';
+import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type {
 	GroupMemberOut,
 	GroupOut,
@@ -36,14 +38,14 @@ async function fetchPageOrDisabled<T>(promise: Promise<T>, fallback: T): Promise
 // both.
 export const load: PageServerLoad = async ({ parent, locals, fetch, params }) => {
 	const { user } = await parent();
-	if (!user) throw redirect(303, `/login?redirectTo=/groups/${params.id}`);
+	if (!user) throw redirect(303, lh(`/login?redirectTo=/groups/${params.id}`));
 
 	// No single-group GET exists on the Backend — `/groups` only lists the
 	// caller's own groups, so a group this user isn't in 404s here exactly
 	// like an unknown id would, which is the right behavior either way.
 	const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
 	const group = groups.find((g) => g.id === params.id);
-	if (!group) throw error(404, 'Group not found');
+	if (!group) throw error(404, m.errors_group_not_found());
 	const isAdmin = group.role === 'admin';
 
 	try {
@@ -174,7 +176,7 @@ export const actions: Actions = {
 		const rehearsalWeekday = weekdayRaw === '' ? null : Number(weekdayRaw);
 		const rehearsalTime = weekdayRaw === '' ? null : time;
 		if (rehearsalWeekday !== null && (!Number.isInteger(rehearsalWeekday) || !rehearsalTime)) {
-			return fail(400, { error: 'Choose a day and time', form: 'rehearsalSchedule' });
+			return fail(400, { error: m.rehearsal_choose_day_time(), form: 'rehearsalSchedule' });
 		}
 
 		try {
@@ -213,7 +215,7 @@ export const actions: Actions = {
 	addMember: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
 		const email = String(form.get('email') ?? '').trim();
-		if (!email) return fail(400, { error: 'Enter an email address', form: 'addMember' });
+		if (!email) return fail(400, { error: m.groups_enter_email(), form: 'addMember' });
 
 		try {
 			await backendFetch(
@@ -240,12 +242,12 @@ export const actions: Actions = {
 	removeMember: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
 		const userId = String(form.get('userId') ?? '');
-		if (!userId) return fail(400, { error: 'Missing member', form: 'removeMember' });
+		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'removeMember' });
 
 		try {
 			const me = await backendJson<{ id: string }>(locals.token, '/auth/me', undefined, fetch);
 			if (userId === me.id) {
-				return fail(400, { error: 'Use "Leave group" to remove yourself', form: 'removeMember' });
+				return fail(400, { error: m.groups_use_leave_group(), form: 'removeMember' });
 			}
 		} catch (err) {
 			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'removeMember' });
@@ -269,10 +271,10 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const pieceId = String(form.get('pieceId') ?? '');
 		const raw = String(form.get('defaultTempoBpm') ?? '').trim();
-		if (!pieceId) return fail(400, { error: 'Missing track', form: 'defaultTempo' });
+		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'defaultTempo' });
 		const defaultTempoBpm = raw ? Number(raw) : null;
 		if (raw && (!Number.isFinite(defaultTempoBpm) || defaultTempoBpm! <= 0)) {
-			return fail(400, { error: 'Enter a valid tempo', form: 'defaultTempo' });
+			return fail(400, { error: m.groups_enter_valid_tempo(), form: 'defaultTempo' });
 		}
 
 		try {
@@ -306,7 +308,7 @@ export const actions: Actions = {
 		const hasMusic = musicFile instanceof File && musicFile.size > 0;
 		const hasPdf = pdfFile instanceof File && pdfFile.size > 0;
 		if (!hasMusic && !hasPdf) {
-			return fail(400, { error: 'Provide a music file, a PDF, or both', form: 'uploadTrack' });
+			return fail(400, { error: m.upload_provide_file_or_pdf(), form: 'uploadTrack' });
 		}
 
 		const uploadBody = new FormData();
@@ -330,7 +332,7 @@ export const actions: Actions = {
 			});
 			if (!uploadRes.ok) {
 				const body = (await uploadRes.json().catch(() => ({}))) as { detail?: string };
-				return fail(uploadRes.status, { error: body.detail ?? `Upload failed (${uploadRes.status})`, form: 'uploadTrack' });
+				return fail(uploadRes.status, { error: body.detail ?? m.upload_failed({ status: uploadRes.status }), form: 'uploadTrack' });
 			}
 			const uploaded = (await uploadRes.json()) as { piece: { id: string }; version: { id: string } };
 			const versionId = uploaded.version.id;
@@ -356,7 +358,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const userId = String(form.get('userId') ?? '');
 		const role = form.get('role') === 'admin' ? 'admin' : 'member';
-		if (!userId) return fail(400, { error: 'Missing member', form: 'updateMemberRole' });
+		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'updateMemberRole' });
 
 		try {
 			await backendFetch(
@@ -378,7 +380,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const userId = String(form.get('userId') ?? '');
 		const title = String(form.get('title') ?? '').trim();
-		if (!userId) return fail(400, { error: 'Missing member', form: 'updateMemberTitle' });
+		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'updateMemberTitle' });
 
 		try {
 			await backendFetch(
@@ -406,7 +408,7 @@ export const actions: Actions = {
 			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'leaveGroup' });
 			throw err;
 		}
-		throw redirect(303, '/home');
+		throw redirect(303, lh('/home'));
 	},
 
 	// B13, admin-only: create a schedule with its roles in one call — the
@@ -416,7 +418,7 @@ export const actions: Actions = {
 	createResponsibilitySchedule: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
 		const name = String(form.get('scheduleName') ?? '').trim();
-		if (!name) return fail(400, { error: 'Enter a schedule name', form: 'createSchedule' });
+		if (!name) return fail(400, { error: m.groups_enter_schedule_name(), form: 'createSchedule' });
 
 		const roleNames = form.getAll('roleName').map((v) => String(v).trim());
 		const roleCounts = form.getAll('roleNeeded').map((v) => Number(v) || 1);
@@ -442,7 +444,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const scheduleId = String(form.get('scheduleId') ?? '');
 		const name = String(form.get('name') ?? '').trim();
-		if (!scheduleId || !name) return fail(400, { error: 'Enter a name', form: 'editSchedule' });
+		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_name(), form: 'editSchedule' });
 
 		try {
 			await backendFetch(
@@ -464,7 +466,7 @@ export const actions: Actions = {
 	deleteResponsibilitySchedule: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const scheduleId = String(form.get('scheduleId') ?? '');
-		if (!scheduleId) return fail(400, { error: 'Missing responsibility', form: 'editSchedule' });
+		if (!scheduleId) return fail(400, { error: m.groups_missing_responsibility(), form: 'editSchedule' });
 
 		try {
 			await backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'DELETE' }, fetch);
@@ -480,7 +482,7 @@ export const actions: Actions = {
 		const scheduleId = String(form.get('scheduleId') ?? '');
 		const name = String(form.get('name') ?? '').trim();
 		const neededCount = Number(form.get('neededCount')) || 1;
-		if (!scheduleId || !name) return fail(400, { error: 'Enter a role name', form: 'editSchedule' });
+		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
 
 		try {
 			await backendFetch(
@@ -501,7 +503,7 @@ export const actions: Actions = {
 		const roleId = String(form.get('roleId') ?? '');
 		const name = String(form.get('name') ?? '').trim();
 		const neededCount = Number(form.get('neededCount')) || 1;
-		if (!roleId || !name) return fail(400, { error: 'Enter a role name', form: 'editSchedule' });
+		if (!roleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
 
 		try {
 			await backendFetch(
@@ -520,7 +522,7 @@ export const actions: Actions = {
 	deleteResponsibilityRole: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const roleId = String(form.get('roleId') ?? '');
-		if (!roleId) return fail(400, { error: 'Missing role', form: 'editSchedule' });
+		if (!roleId) return fail(400, { error: m.groups_missing_role(), form: 'editSchedule' });
 
 		try {
 			await backendFetch(locals.token, `/responsibilities/roles/${roleId}`, { method: 'DELETE' }, fetch);
@@ -537,7 +539,7 @@ export const actions: Actions = {
 		const scheduleId = String(form.get('scheduleId') ?? '');
 		const dateInput = String(form.get('date') ?? '');
 		const notes = String(form.get('notes') ?? '').trim();
-		if (!scheduleId || !dateInput) return fail(400, { error: 'Choose a schedule and date', form: 'addDate' });
+		if (!scheduleId || !dateInput) return fail(400, { error: m.groups_choose_schedule_date(), form: 'addDate' });
 
 		try {
 			await backendFetch(
@@ -560,12 +562,12 @@ export const actions: Actions = {
 	updateResponsibilityDate: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const dateId = RESPONSIBILITY_DATE_ID(form);
-		if (!dateId) return fail(400, { error: 'Missing date' });
+		if (!dateId) return fail(400, { error: m.groups_missing_date() });
 
 		const body: { date?: string; notes?: string; locked?: boolean; canceled?: boolean } = {};
 		if (form.has('date')) {
 			const dateInput = String(form.get('date') ?? '');
-			if (!dateInput) return fail(400, { error: 'Choose a date', form: 'editDate' });
+			if (!dateInput) return fail(400, { error: m.groups_choose_date(), form: 'editDate' });
 			body.date = new Date(dateInput).toISOString();
 		}
 		if (form.has('notes')) body.notes = String(form.get('notes') ?? '').trim();
@@ -587,7 +589,7 @@ export const actions: Actions = {
 	deleteResponsibilityDate: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const dateId = RESPONSIBILITY_DATE_ID(form);
-		if (!dateId) return fail(400, { error: 'Missing date' });
+		if (!dateId) return fail(400, { error: m.groups_missing_date() });
 
 		try {
 			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'DELETE' }, fetch);
@@ -609,7 +611,7 @@ export const actions: Actions = {
 		const roleId = String(form.get('roleId') ?? '');
 		const userId = String(form.get('userId') ?? '').trim();
 		const name = String(form.get('name') ?? '').trim();
-		if (!dateId || !roleId) return fail(400, { error: 'Missing date or role' });
+		if (!dateId || !roleId) return fail(400, { error: m.groups_missing_date_or_role() });
 
 		try {
 			await backendFetch(
@@ -631,7 +633,7 @@ export const actions: Actions = {
 	removeResponsibilitySignup: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const signupId = String(form.get('signupId') ?? '');
-		if (!signupId) return fail(400, { error: 'Missing signup' });
+		if (!signupId) return fail(400, { error: m.groups_missing_signup() });
 
 		try {
 			await backendFetch(locals.token, `/responsibilities/signups/${signupId}`, { method: 'DELETE' }, fetch);
@@ -651,7 +653,7 @@ export const actions: Actions = {
 		const title = String(form.get('title') ?? '').trim();
 		const body = String(form.get('body') ?? '').trim();
 		const noteDateInput = String(form.get('noteDate') ?? '');
-		if (!title || !noteDateInput) return fail(400, { error: 'Enter a title and date', form: 'createWeeklyNote' });
+		if (!title || !noteDateInput) return fail(400, { error: m.groups_enter_title_date(), form: 'createWeeklyNote' });
 
 		try {
 			await backendFetch(
@@ -673,7 +675,7 @@ export const actions: Actions = {
 		const title = String(form.get('title') ?? '').trim();
 		const body = String(form.get('body') ?? '').trim();
 		const noteDateInput = String(form.get('noteDate') ?? '');
-		if (!noteId || !title || !noteDateInput) return fail(400, { error: 'Enter a title and date', form: 'editWeeklyNote' });
+		if (!noteId || !title || !noteDateInput) return fail(400, { error: m.groups_enter_title_date(), form: 'editWeeklyNote' });
 
 		try {
 			await backendFetch(
@@ -692,7 +694,7 @@ export const actions: Actions = {
 	deleteWeeklyNote: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const noteId = String(form.get('noteId') ?? '');
-		if (!noteId) return fail(400, { error: 'Missing note', form: 'editWeeklyNote' });
+		if (!noteId) return fail(400, { error: m.groups_missing_note(), form: 'editWeeklyNote' });
 
 		try {
 			await backendFetch(locals.token, `/weekly-notes/${noteId}`, { method: 'DELETE' }, fetch);

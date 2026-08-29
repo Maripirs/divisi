@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -13,14 +15,14 @@
 
 <main class="shell">
 	<header class="shell-header">
-		<h1>Reset password</h1>
+		<h1>{m.reset_password_title()}</h1>
 	</header>
 
 	{#if !data.token}
 		<section class="card">
-			<p class="card-eyebrow">Link missing or incomplete</p>
+			<p class="card-eyebrow">{m.reset_password_link_missing()}</p>
 			<p class="card-meta">
-				This page needs the link from your reset email — <a href="/forgot-password">request a new one</a>.
+				{m.reset_password_link_missing_body()} <a href={lh('/forgot-password')}>{m.reset_password_request_new()}</a>.
 			</p>
 		</section>
 	{:else}
@@ -37,11 +39,11 @@
 		>
 			<input type="hidden" name="token" value={data.token} />
 			<label class="field">
-				<span>New password</span>
+				<span>{m.reset_password_new_password()}</span>
 				<input type="password" name="password" bind:value={password} required minlength="8" autocomplete="new-password" />
 			</label>
 			<label class="field">
-				<span>Confirm new password</span>
+				<span>{m.reset_password_confirm_new_password()}</span>
 				<input
 					type="password"
 					name="passwordConfirm"
@@ -52,7 +54,7 @@
 				/>
 			</label>
 			{#if mismatch}
-				<p class="error">Passwords don't match.</p>
+				<p class="error">{m.login_passwords_dont_match()}</p>
 			{/if}
 
 			{#if form?.error}
@@ -64,12 +66,12 @@
 				type="submit"
 				disabled={submitting || mismatch || passwordConfirm.length === 0}
 			>
-				{submitting ? 'Saving…' : 'Set new password'}
+				{submitting ? m.reset_password_saving() : m.reset_password_set_new()}
 			</button>
 		</form>
 	{/if}
 
-	<p class="note"><a href="/login">Back to log in</a></p>
+	<p class="note"><a href={lh('/login')}>{m.forgot_password_back_to_login()}</a></p>
 </main>
 
 <style>

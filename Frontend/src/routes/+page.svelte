@@ -4,13 +4,15 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 </script>
 
 <main class="shell">
-	<AppHeader title="Library" />
+	<AppHeader title={m.library_title()} />
 
 	<!-- "Personal" (a user's own uploaded pieces) hidden until there's an
 	     actual upload feature — it used to just show the bundled demo
@@ -19,7 +21,7 @@
 
 	{#if !data.user}
 		<p class="empty-note login-note">
-			<a href="/login">Log in</a> to see your groups' shared rehearsal tracks here too.
+			<a href={lh('/login')}>{m.library_log_in()}</a> {m.library_log_in_note()}
 		</p>
 	{:else}
 		{#each data.groupSections as { group, pieces } (group.id)}
@@ -32,12 +34,12 @@
 			<section class="library-section">
 				<div class="library-section-head">
 					<h2>{group.name}</h2>
-					<a class="section-link" href="/groups/{group.id}">Open group</a>
+					<a class="section-link" href={lh(`/groups/${group.id}`)}>{m.library_open_group()}</a>
 				</div>
 				{#if playable.length > 0}
 					<PieceLibrary pieces={playable} />
 				{:else}
-					<p class="empty-note">No rehearsal tracks shared with this group yet.</p>
+					<p class="empty-note">{m.library_no_tracks()}</p>
 				{/if}
 			</section>
 		{/each}

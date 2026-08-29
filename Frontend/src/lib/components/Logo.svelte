@@ -1,5 +1,6 @@
 <script lang="ts">
 	import logoMask from '$lib/assets/divisi-logo-mask.png';
+	import { m } from '$lib/paraglide/messages';
 
 	interface Props {
 		size?: number;
@@ -14,7 +15,7 @@
 <span
 	class="logo"
 	role="img"
-	aria-label="Divisi logo"
+	aria-label={m.logo_aria_label()}
 	style="--logo-size: {size}px; --logo-mask: url({logoMask})"
 ></span>
 

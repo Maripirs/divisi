@@ -6,6 +6,8 @@
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -154,13 +156,13 @@
 		setTimeout(() => (joinLinkCopied = false), 2000);
 	}
 
-	const PAGE_LABELS: Record<GroupPage, string> = {
-		homework: 'Homework',
-		tracks: 'Rehearsal Tracks',
-		weekly_notes: 'Weekly Notes',
-		members: 'Members',
-		about: 'About',
-		responsibilities: 'Responsibilities'
+	const PAGE_LABELS: Record<GroupPage, () => string> = {
+		homework: m.homework_tab_title,
+		tracks: m.tracks_tab_title,
+		weekly_notes: m.weekly_notes_tab_title,
+		members: m.groups_members_tab_title,
+		about: m.groups_about_tab_title,
+		responsibilities: m.responsibilities_tab_title
 	};
 	const PAGE_ORDER: GroupPage[] = ['homework', 'tracks', 'weekly_notes', 'members', 'about', 'responsibilities'];
 	// Real two-way local state for the page-visibility form (matching the
@@ -183,7 +185,7 @@
 	);
 
 	function formatDate(iso: string | null) {
-		if (!iso) return 'No due date';
+		if (!iso) return m.home_no_due_date();
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 
@@ -204,13 +206,18 @@
 	// `date.weekday()`, what the Backend stores) — distinct from JS's own
 	// `Date.getDay()`, which is 0=Sunday..6=Saturday. Every place below that
 	// converts between the two says so explicitly.
-	const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+	const WEEKDAY_LABELS = [m.weekday_monday, m.weekday_tuesday, m.weekday_wednesday, m.weekday_thursday, m.weekday_friday, m.weekday_saturday, m.weekday_sunday];
+	// Plural/"on Wednesdays"-shaped form for the rendered schedule sentence
+	// below — kept as separate messages rather than an English-only "+s"
+	// suffix rule, since that doesn't hold in Spanish (e.g. "miércoles" is
+	// already both singular and plural).
+	const WEEKDAY_PLURAL_LABELS = [m.weekday_mondays, m.weekday_tuesdays, m.weekday_wednesdays, m.weekday_thursdays, m.weekday_fridays, m.weekday_saturdays, m.weekday_sundays];
 
 	function formatRehearsalSchedule(weekday: number, time: string): string {
 		const [hours, minutes] = time.split(':').map(Number);
 		const sample = new Date(2026, 0, 1, hours, minutes); // any date — only the time-of-day is used
 		const timeLabel = sample.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-		return `${WEEKDAY_LABELS[weekday]}s at ${timeLabel}`;
+		return m.rehearsal_schedule_label({ weekday: WEEKDAY_PLURAL_LABELS[weekday](), time: timeLabel });
 	}
 
 	// The Responsibilities tab's "Next rehearsal" quick-fill: the next
@@ -252,9 +259,9 @@
 	}
 
 	function coverageLabel(status: string) {
-		if (status === 'underfilled') return 'Needs volunteers';
-		if (status === 'overfilled') return 'Overfilled';
-		return 'Covered';
+		if (status === 'underfilled') return m.join_coverage_underfilled();
+		if (status === 'overfilled') return m.join_coverage_overfilled();
+		return m.join_coverage_covered();
 	}
 </script>
 
@@ -263,9 +270,9 @@
 
 	{#if showCreatedBanner}
 		<section class="card card--highlight">
-			<p class="card-eyebrow">{data.group.name} created</p>
-			<div class="list-row"><span>Join code</span><span class="dim">{data.group.join_code}</span></div>
-			<p class="card-note">Share the join code so singers can view rehearsal tracks with no login.</p>
+			<p class="card-eyebrow">{m.groups_created({ name: data.group.name })}</p>
+			<div class="list-row"><span>{m.groups_join_code()}</span><span class="dim">{data.group.join_code}</span></div>
+			<p class="card-note">{m.groups_share_join_code()}</p>
 			<div class="btn-row">
 				<button
 					type="button"
@@ -275,11 +282,11 @@
 						showCreatedBanner = false;
 					}}
 				>
-					Invite members
+					{m.groups_invite_members()}
 				</button>
-				<a class="btn btn-outline" href="/groups/{data.group.id}/admin/new-homework">Create homework</a>
+				<a class="btn btn-outline" href={lh(`/groups/${data.group.id}/admin/new-homework`)}>{m.groups_create_homework()}</a>
 				<button type="button" class="btn btn-primary" onclick={() => (showCreatedBanner = false)}>
-					View group
+					{m.groups_view_group()}
 				</button>
 			</div>
 		</section>
@@ -287,9 +294,9 @@
 
 	{#if isAdmin}
 		<div class="role-switch">
-			<span>Viewing as {mode === 'admin' ? 'Admin' : 'Member'}</span>
+			<span>{m.groups_viewing_as({ role: mode === 'admin' ? m.groups_role_admin() : m.groups_role_member() })}</span>
 			<button type="button" class="text-link" onclick={() => (mode = mode === 'admin' ? 'member' : 'admin')}>
-				Switch to {mode === 'admin' ? 'Member' : 'Admin'}
+				{m.groups_switch_to({ role: mode === 'admin' ? m.groups_role_member() : m.groups_role_admin() })}
 			</button>
 		</div>
 	{/if}
@@ -297,22 +304,22 @@
 	<div class="tabs" role="tablist">
 		{#each visibleTabs as t (t)}
 			<button class="tab" class:active={tab === t} onclick={() => (tab = t)}>
-				{#if t === 'primary'}{mode === 'admin' ? 'Assignments' : 'Homework'}
-				{:else if t === 'tracks'}{mode === 'admin' ? 'Tracks' : 'Rehearsal Tracks'}
-				{:else if t === 'weeklyNotes'}Weekly Notes
-				{:else if t === 'members'}Members
-				{:else if t === 'responsibilities'}Responsibilities
-				{:else}{mode === 'admin' ? 'Settings' : 'Info'}{/if}
+				{#if t === 'primary'}{mode === 'admin' ? m.groups_assignments() : m.homework_tab_title()}
+				{:else if t === 'tracks'}{mode === 'admin' ? m.groups_tracks() : m.tracks_tab_title()}
+				{:else if t === 'weeklyNotes'}{m.weekly_notes_tab_title()}
+				{:else if t === 'members'}{m.groups_members_tab_title()}
+				{:else if t === 'responsibilities'}{m.responsibilities_tab_title()}
+				{:else}{mode === 'admin' ? m.groups_settings() : m.groups_info()}{/if}
 			</button>
 		{/each}
 	</div>
 
 	{#if tab === 'primary'}
 		{#if mode === 'admin'}
-			<p class="tab-meta">{data.homework.length} active</p>
+			<p class="tab-meta">{m.groups_active_count({ count: data.homework.length })}</p>
 		{/if}
 		{#if data.homework.length === 0}
-			<p class="empty">No homework assigned yet.</p>
+			<p class="empty">{m.join_no_homework()}</p>
 		{:else}
 			{#each data.homework as hw (hw.id)}
 				<section class="card">
@@ -323,8 +330,8 @@
 						<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
 					{/if}
 					<div class="btn-row">
-						<a class="btn btn-primary" href="/groups/{data.group.id}/homework/{hw.id}">
-							{mode === 'admin' ? 'View' : 'View assignment'}
+						<a class="btn btn-primary" href={lh(`/groups/${data.group.id}/homework/${hw.id}`)}>
+							{mode === 'admin' ? m.groups_view() : m.groups_view_assignment()}
 						</a>
 					</div>
 				</section>
@@ -332,12 +339,12 @@
 		{/if}
 		{#if mode === 'admin'}
 			<div class="btn-row">
-				<a class="btn btn-outline" href="/groups/{data.group.id}/admin/new-homework">+ New homework</a>
+				<a class="btn btn-outline" href={lh(`/groups/${data.group.id}/admin/new-homework`)}>{m.groups_new_homework_short()}</a>
 			</div>
 		{/if}
 	{:else if tab === 'tracks'}
 		{#if mode === 'admin'}
-			<p class="tab-meta">{data.tracks.length} shared with this group</p>
+			<p class="tab-meta">{m.groups_shared_count({ count: data.tracks.length })}</p>
 		{/if}
 		<!-- Admin sees every distributed track, including ones with no
 		     practice file wired up yet (so they know what still needs
@@ -351,21 +358,21 @@
 				? data.tracks
 				: data.tracks.filter((track) => getPieceByTitle(track.title) || track.has_music || track.has_pdf)}
 		{#if visibleTracks.length === 0}
-			<p class="empty">No rehearsal tracks shared with this group yet.</p>
+			<p class="empty">{m.library_no_tracks()}</p>
 		{:else}
 			{#each visibleTracks as track (track.piece_id)}
 				{@const bundled = getPieceByTitle(track.title)}
 				{@const tempoQuery = track.default_tempo_bpm ? `?defaultTempo=${track.default_tempo_bpm}` : ''}
 				{@const practiceHref = bundled
-					? `/piece/${bundled.id}${tempoQuery}`
+					? lh(`/piece/${bundled.id}${tempoQuery}`)
 					: track.has_music || track.has_pdf
-						? `/piece/${track.piece_id}${tempoQuery}`
+						? lh(`/piece/${track.piece_id}${tempoQuery}`)
 						: null}
 				<section class="card track-card">
 					<div class="track-info">
 						<p class="card-title">{track.title}</p>
 						{#if mode === 'admin'}
-							<p class="card-meta">Status: {track.version_status}</p>
+							<p class="card-meta">{m.groups_status({ status: track.version_status })}</p>
 							{#if editingTempoPieceId === track.piece_id}
 								<form
 									method="POST"
@@ -388,19 +395,19 @@
 										bind:value={tempoDraft}
 										placeholder="e.g. 96"
 									/>
-									<button type="submit" class="btn btn-outline" disabled={savingTempo}>Save</button>
+									<button type="submit" class="btn btn-outline" disabled={savingTempo}>{m.action_save()}</button>
 									<button
 										type="button"
 										class="text-link"
 										onclick={() => (editingTempoPieceId = null)}
 										disabled={savingTempo}
 									>
-										Cancel
+										{m.action_cancel()}
 									</button>
 								</form>
 							{:else}
 								<p class="card-meta">
-									Default tempo: {track.default_tempo_bpm ? `${track.default_tempo_bpm} BPM` : "MIDI file's own tempo"}
+									{track.default_tempo_bpm ? m.groups_default_tempo({ bpm: track.default_tempo_bpm }) : m.groups_default_tempo_midi()}
 									<button
 										type="button"
 										class="text-link"
@@ -409,19 +416,19 @@
 											editingTempoPieceId = track.piece_id;
 										}}
 									>
-										{track.default_tempo_bpm ? 'Edit' : '+ Set default'}
+										{track.default_tempo_bpm ? m.drawer_edit() : m.groups_set_default()}
 									</button>
 								</p>
 							{/if}
 						{/if}
 						{#if !practiceHref}
 							<p class="card-note">
-								Practice isn't wired up for this track yet (see Frontend/plan.md's backlog).
+								{m.groups_practice_not_wired_up()}
 							</p>
 						{/if}
 					</div>
 					{#if practiceHref}
-						<a class="piece-action piece-action--primary" href={practiceHref} aria-label="Open player">
+						<a class="piece-action piece-action--primary" href={practiceHref} aria-label={m.join_open_player()}>
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 								<path d="M8 5v14l11-7z" />
 							</svg>
@@ -433,7 +440,7 @@
 		{#if mode === 'admin'}
 			{#if showUploadForm}
 				<section class="card">
-					<p class="card-eyebrow">Upload a track</p>
+					<p class="card-eyebrow">{m.groups_upload_track()}</p>
 					<form
 						method="POST"
 						action="?/uploadTrack"
@@ -448,38 +455,38 @@
 						}}
 					>
 						<label class="field">
-							<span>Name</span>
+							<span>{m.groups_upload_name()}</span>
 							<input name="title" required />
 						</label>
 						<label class="field">
-							<span>Author</span>
-							<input name="composer" placeholder="Optional" />
+							<span>{m.groups_upload_author()}</span>
+							<input name="composer" placeholder={m.groups_optional()} />
 						</label>
 						<label class="field">
-							<span>Music file (MIDI or MusicXML)</span>
+							<span>{m.groups_upload_music_file()}</span>
 							<input name="file" type="file" accept=".mid,.midi,.musicxml,.xml" bind:files={uploadMusicFiles} />
 						</label>
 						<label class="field">
-							<span>PDF</span>
+							<span>{m.groups_upload_pdf()}</span>
 							<input name="pdf_file" type="file" accept="application/pdf" bind:files={uploadPdfFiles} />
 						</label>
 						{#if !canSubmitUpload}
-							<p class="card-note">Provide a music file, a PDF, or both.</p>
+							<p class="card-note">{m.upload_provide_file_or_pdf()}</p>
 						{/if}
 						<label class="field">
-							<span>Default tempo</span>
+							<span>{m.groups_upload_default_tempo()}</span>
 							<input name="default_tempo_bpm" type="number" min="1" placeholder="e.g. 96" />
 						</label>
 						<label class="field">
-							<span>YouTube reference link</span>
-							<input name="youtube_url" type="url" placeholder="Optional" />
+							<span>{m.groups_upload_youtube()}</span>
+							<input name="youtube_url" type="url" placeholder={m.groups_optional()} />
 						</label>
 						{#if form?.form === 'uploadTrack' && form?.error}
 							<p class="error">{form.error}</p>
 						{/if}
 						<div class="btn-row">
 							<button class="btn btn-primary" type="submit" disabled={uploadingTrack || !canSubmitUpload}>
-								{uploadingTrack ? 'Uploading…' : 'Upload and share'}
+								{uploadingTrack ? m.groups_uploading() : m.groups_upload_and_share()}
 							</button>
 							<button
 								type="button"
@@ -487,7 +494,7 @@
 								onclick={() => (showUploadForm = false)}
 								disabled={uploadingTrack}
 							>
-								Cancel
+								{m.action_cancel()}
 							</button>
 						</div>
 					</form>
@@ -495,7 +502,7 @@
 			{:else}
 				<div class="btn-row">
 					<button type="button" class="btn btn-outline" onclick={() => (showUploadForm = true)}>
-						+ Upload track
+						{m.groups_upload_track_button()}
 					</button>
 				</div>
 			{/if}
@@ -503,7 +510,7 @@
 	{:else if tab === 'weeklyNotes'}
 		{#if mode === 'admin'}
 			<section class="card">
-				<p class="card-eyebrow">New note</p>
+				<p class="card-eyebrow">{m.groups_new_note()}</p>
 				<form
 					method="POST"
 					action="?/createWeeklyNote"
@@ -516,29 +523,29 @@
 					}}
 				>
 					<label class="field">
-						<span>Title</span>
-						<input name="title" placeholder="Week of Sept 1" required />
+						<span>{m.new_homework_title_field()}</span>
+						<input name="title" placeholder={m.groups_week_of_placeholder()} required />
 					</label>
 					<label class="field">
-						<span>Week of</span>
+						<span>{m.groups_week_of()}</span>
 						<input type="date" name="noteDate" required />
 					</label>
 					<label class="field">
-						<span>Note</span>
-						<textarea name="body" placeholder="Optional"></textarea>
+						<span>{m.groups_note()}</span>
+						<textarea name="body" placeholder={m.groups_optional()}></textarea>
 					</label>
 					{#if form?.form === 'createWeeklyNote' && form?.error}
 						<p class="error">{form.error}</p>
 					{/if}
 					<button class="btn btn-primary btn-block" type="submit" disabled={creatingWeeklyNote}>
-						{creatingWeeklyNote ? 'Posting…' : 'Post note'}
+						{creatingWeeklyNote ? m.groups_posting() : m.groups_post_note()}
 					</button>
 				</form>
 			</section>
 		{/if}
 
 		{#if data.weeklyNotes.length === 0}
-			<p class="empty">No weekly notes posted yet.</p>
+			<p class="empty">{m.join_no_weekly_notes()}</p>
 		{:else}
 			{#each data.weeklyNotes as n (n.id)}
 				<section class="card">
@@ -557,15 +564,15 @@
 						>
 							<input type="hidden" name="noteId" value={n.id} />
 							<label class="field">
-								<span>Title</span>
+								<span>{m.new_homework_title_field()}</span>
 								<input name="title" bind:value={weeklyNoteTitleDraft} required />
 							</label>
 							<label class="field">
-								<span>Week of</span>
+								<span>{m.groups_week_of()}</span>
 								<input type="date" name="noteDate" bind:value={weeklyNoteDateDraft} required />
 							</label>
 							<label class="field">
-								<span>Note</span>
+								<span>{m.groups_note()}</span>
 								<textarea name="body" bind:value={weeklyNoteBodyDraft}></textarea>
 							</label>
 							{#if form?.form === 'editWeeklyNote' && form?.error}
@@ -573,15 +580,15 @@
 							{/if}
 							<div class="btn-row">
 								<button type="button" class="btn btn-outline" onclick={() => (editingWeeklyNoteId = null)}>
-									Cancel
+									{m.action_cancel()}
 								</button>
 								<button type="submit" class="btn btn-primary" disabled={savingWeeklyNoteEdit}>
-									{savingWeeklyNoteEdit ? 'Saving…' : 'Save'}
+									{savingWeeklyNoteEdit ? m.reset_password_saving() : m.action_save()}
 								</button>
 							</div>
 						</form>
 					{:else}
-						<p class="card-eyebrow">Week of {formatNoteDate(n.note_date)}</p>
+						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.note_date) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
 							<p class="card-note">{n.body}</p>
@@ -599,14 +606,14 @@
 									editingWeeklyNoteId = n.id;
 								}}
 							>
-								Edit
+								{m.drawer_edit()}
 							</button>
 						</div>
 						{#if confirmingDeleteWeeklyNoteId === n.id}
 							<div class="btn-row">
-								<span class="dim">Delete this note?</span>
+								<span class="dim">{m.groups_delete_note_confirm()}</span>
 								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteWeeklyNoteId = null)}>
-									Cancel
+									{m.action_cancel()}
 								</button>
 								<form
 									method="POST"
@@ -617,7 +624,7 @@
 									}}
 								>
 									<input type="hidden" name="noteId" value={n.id} />
-									<button type="submit" class="btn btn-danger">Delete</button>
+									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
 								</form>
 							</div>
 						{:else}
@@ -626,7 +633,7 @@
 								class="text-link text-link--danger"
 								onclick={() => (confirmingDeleteWeeklyNoteId = n.id)}
 							>
-								Delete note
+								{m.groups_delete_note()}
 							</button>
 						{/if}
 					{/if}
@@ -638,7 +645,7 @@
 			{#each data.members as member (member.user_id)}
 				<div class="member-row">
 					<div class="member-identity">
-						<span>{member.name}{member.role === 'admin' ? ' (Admin)' : ''}</span>
+						<span>{member.name}{member.role === 'admin' ? ` (${m.groups_role_admin()})` : ''}</span>
 						{#if editingTitleUserId === member.user_id}
 							<form
 								method="POST"
@@ -655,8 +662,8 @@
 							>
 								<input type="hidden" name="userId" value={member.user_id} />
 								<input name="title" bind:value={titleDraft} placeholder="e.g. Soprano 2 — Section leader" />
-								<button type="submit" class="btn btn-outline" disabled={savingTitle}>Save</button>
-								<button type="button" class="text-link" onclick={() => (editingTitleUserId = null)}>Cancel</button>
+								<button type="submit" class="btn btn-outline" disabled={savingTitle}>{m.action_save()}</button>
+								<button type="button" class="text-link" onclick={() => (editingTitleUserId = null)}>{m.action_cancel()}</button>
 							</form>
 						{:else}
 							{#if member.title}
@@ -672,7 +679,7 @@
 										editingTitleUserId = member.user_id;
 									}}
 								>
-									{member.title ? 'Edit title' : '+ Add title'}
+									{member.title ? m.groups_edit_title() : m.groups_add_title()}
 								</button>
 							{/if}
 						{/if}
@@ -680,9 +687,9 @@
 					{#if mode === 'admin' && member.user_id !== data.user.id}
 						{#if confirmingRemoveMemberId === member.user_id}
 							<div class="member-actions">
-								<span class="dim">Remove?</span>
+								<span class="dim">{m.groups_remove_confirm()}</span>
 								<button type="button" class="text-link" onclick={() => (confirmingRemoveMemberId = null)}>
-									Cancel
+									{m.action_cancel()}
 								</button>
 								<form
 									method="POST"
@@ -693,7 +700,7 @@
 									}}
 								>
 									<input type="hidden" name="userId" value={member.user_id} />
-									<button type="submit" class="text-link text-link--danger">Confirm</button>
+									<button type="submit" class="text-link text-link--danger">{m.groups_confirm()}</button>
 								</form>
 							</div>
 						{:else}
@@ -702,11 +709,11 @@
 									<input type="hidden" name="userId" value={member.user_id} />
 									<input type="hidden" name="role" value={member.role === 'admin' ? 'member' : 'admin'} />
 									<button type="submit" class="text-link">
-										{member.role === 'admin' ? 'Remove admin' : 'Make admin'}
+										{member.role === 'admin' ? m.groups_remove_admin() : m.groups_make_admin()}
 									</button>
 								</form>
 								<button type="button" class="text-link" onclick={() => (confirmingRemoveMemberId = member.user_id)}>
-									Remove
+									{m.groups_remove()}
 								</button>
 							</div>
 						{/if}
@@ -725,7 +732,7 @@
 		</section>
 		{#if mode === 'admin'}
 			<section class="card">
-				<p class="card-eyebrow">Invite member</p>
+				<p class="card-eyebrow">{m.groups_invite_member()}</p>
 				<form
 					method="POST"
 					action="?/addMember"
@@ -739,17 +746,17 @@
 					}}
 				>
 					<label class="field">
-						<span>Email</span>
+						<span>{m.login_email()}</span>
 						<input type="email" name="email" bind:value={memberEmail} placeholder="singer@example.com" required />
 					</label>
 					{#if form?.form === 'addMember' && form?.error}
 						<p class="error">{form.error}</p>
 					{/if}
 					{#if form?.form === 'addMember' && form?.success}
-						<p class="success">Added.</p>
+						<p class="success">{m.groups_added()}</p>
 					{/if}
 					<button class="btn btn-primary btn-block" type="submit" disabled={addingMember}>
-						{addingMember ? 'Inviting…' : 'Invite member'}
+						{addingMember ? m.groups_inviting() : m.groups_invite_member()}
 					</button>
 				</form>
 			</section>
@@ -758,29 +765,29 @@
 		{#if mode === 'admin'}
 			{#each data.schedules as schedule (schedule.id)}
 				<section class="card">
-					<p class="card-eyebrow">Responsibility</p>
+					<p class="card-eyebrow">{m.responsibilities_singular()}</p>
 					<form method="POST" action="?/updateResponsibilitySchedule" use:enhance class="inline-edit-row">
 						<input type="hidden" name="scheduleId" value={schedule.id} />
 						<input name="name" value={schedule.name} required />
-						<button type="submit" class="btn btn-outline">Save</button>
+						<button type="submit" class="btn btn-outline">{m.action_save()}</button>
 					</form>
 
 					{#each schedule.roles as role (role.id)}
 						<form method="POST" action="?/updateResponsibilityRole" use:enhance class="inline-edit-row">
 							<input type="hidden" name="roleId" value={role.id} />
-							<input name="name" value={role.name} placeholder="Role" required />
+							<input name="name" value={role.name} placeholder={m.groups_role()} required />
 							<input name="neededCount" type="number" min="1" value={role.needed_count} />
-							<button type="submit" class="btn btn-outline">Save</button>
+							<button type="submit" class="btn btn-outline">{m.action_save()}</button>
 							<button type="submit" formaction="?/deleteResponsibilityRole" class="text-link text-link--danger">
-								Remove
+								{m.groups_remove()}
 							</button>
 						</form>
 					{/each}
 					<form method="POST" action="?/addResponsibilityRole" use:enhance class="inline-edit-row">
 						<input type="hidden" name="scheduleId" value={schedule.id} />
-						<input name="name" placeholder="New role" />
+						<input name="name" placeholder={m.groups_new_role()} />
 						<input name="neededCount" type="number" min="1" value="1" />
-						<button type="submit" class="btn btn-outline">+ Add role</button>
+						<button type="submit" class="btn btn-outline">{m.groups_add_role()}</button>
 					</form>
 
 					{#if form?.form === 'editSchedule' && form?.error}
@@ -788,10 +795,10 @@
 					{/if}
 
 					{#if confirmingDeleteScheduleId === schedule.id}
-						<p class="card-note">Deletes all its dates and signups too — this can't be undone.</p>
+						<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
 						<div class="btn-row">
 							<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteScheduleId = null)}>
-								Cancel
+								{m.action_cancel()}
 							</button>
 							<form
 								method="POST"
@@ -802,7 +809,7 @@
 								}}
 							>
 								<input type="hidden" name="scheduleId" value={schedule.id} />
-								<button type="submit" class="btn btn-danger">Delete responsibility</button>
+								<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
 							</form>
 						</div>
 					{:else}
@@ -811,17 +818,16 @@
 							class="text-link text-link--danger"
 							onclick={() => (confirmingDeleteScheduleId = schedule.id)}
 						>
-							Delete responsibility
+							{m.groups_delete_responsibility()}
 						</button>
 					{/if}
 				</section>
 			{/each}
 
 			<section class="card">
-				<p class="card-eyebrow">New responsibility</p>
+				<p class="card-eyebrow">{m.groups_new_responsibility()}</p>
 				<p class="card-note">
-					A category of volunteer work (e.g. "Snack and rehearsal support"), made up of one or
-					more roles. Add specific dates to it below once it's created.
+					{m.groups_new_responsibility_note()}
 				</p>
 				<form
 					method="POST"
@@ -836,29 +842,29 @@
 					}}
 				>
 					<label class="field">
-						<span>Name</span>
-						<input name="scheduleName" placeholder="Snack and rehearsal support" required />
+						<span>{m.groups_upload_name()}</span>
+						<input name="scheduleName" placeholder={m.groups_schedule_name_placeholder()} required />
 					</label>
 					{#each { length: roleRowCount } as _, i (i)}
 						<div class="role-row">
-							<input name="roleName" placeholder="Role (e.g. Snacks)" />
+							<input name="roleName" placeholder={m.groups_role_placeholder()} />
 							<input name="roleNeeded" type="number" min="1" value="1" />
 						</div>
 					{/each}
-					<button type="button" class="text-link" onclick={() => (roleRowCount += 1)}>+ Add role</button>
+					<button type="button" class="text-link" onclick={() => (roleRowCount += 1)}>{m.groups_add_role()}</button>
 					{#if form?.form === 'createSchedule' && form?.error}
 						<p class="error">{form.error}</p>
 					{/if}
 					<button class="btn btn-primary btn-block" type="submit" disabled={creatingSchedule}>
-						{creatingSchedule ? 'Creating…' : 'Create responsibility'}
+						{creatingSchedule ? m.groups_creating() : m.groups_create_responsibility()}
 					</button>
 				</form>
 			</section>
 
 			{#if data.schedules.length > 0}
 				<section class="card">
-					<p class="card-eyebrow">Add a date</p>
-					<p class="card-note">One occasion members can sign up for, under one of the responsibilities above.</p>
+					<p class="card-eyebrow">{m.groups_add_date()}</p>
+					<p class="card-note">{m.groups_add_date_note()}</p>
 					<form
 						method="POST"
 						action="?/addResponsibilityDate"
@@ -871,13 +877,13 @@
 						}}
 					>
 						<label class="field">
-							<span>Responsibility</span>
+							<span>{m.responsibilities_singular()}</span>
 							<select name="scheduleId">
 								{#each data.schedules as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
 							</select>
 						</label>
 						<label class="field">
-							<span>Date &amp; time</span>
+							<span>{m.groups_date_and_time()}</span>
 							<input type="datetime-local" name="date" bind:value={addDateDraft} required />
 						</label>
 						{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
@@ -890,18 +896,18 @@
 									addDateDraft = nextRehearsalDatetimeLocal(weekday, time);
 								}}
 							>
-								Use next rehearsal ({formatRehearsalSchedule(weekday, time)})
+								{m.groups_use_next_rehearsal({ schedule: formatRehearsalSchedule(weekday, time) })}
 							</button>
 						{/if}
 						<label class="field">
-							<span>Notes</span>
-							<input name="notes" placeholder="Optional" />
+							<span>{m.groups_note()}</span>
+							<input name="notes" placeholder={m.groups_optional()} />
 						</label>
 						{#if form?.form === 'addDate' && form?.error}
 							<p class="error">{form.error}</p>
 						{/if}
 						<button class="btn btn-primary btn-block" type="submit" disabled={addingDate}>
-							{addingDate ? 'Adding…' : 'Add date'}
+							{addingDate ? m.groups_adding() : m.groups_add_date()}
 						</button>
 					</form>
 				</section>
@@ -909,7 +915,7 @@
 		{/if}
 
 		{#if data.responsibilities.length === 0}
-			<p class="empty">No responsibilities scheduled yet.</p>
+			<p class="empty">{m.join_no_responsibilities()}</p>
 		{:else}
 			{#each data.responsibilities as d (d.id)}
 				<section class="card">
@@ -928,28 +934,28 @@
 						>
 							<input type="hidden" name="dateId" value={d.id} />
 							<label class="field">
-								<span>Date &amp; time</span>
+								<span>{m.groups_date_and_time()}</span>
 								<input type="datetime-local" name="date" bind:value={dateEditDraft} required />
 							</label>
 							<label class="field">
-								<span>Notes</span>
-								<input name="notes" bind:value={notesEditDraft} placeholder="Optional" />
+								<span>{m.groups_note()}</span>
+								<input name="notes" bind:value={notesEditDraft} placeholder={m.groups_optional()} />
 							</label>
 							{#if form?.form === 'editDate' && form?.error}
 								<p class="error">{form.error}</p>
 							{/if}
 							<div class="btn-row">
 								<button type="button" class="btn btn-outline" onclick={() => (editingDateId = null)}>
-									Cancel
+									{m.action_cancel()}
 								</button>
 								<button type="submit" class="btn btn-primary" disabled={savingDateEdit}>
-									{savingDateEdit ? 'Saving…' : 'Save'}
+									{savingDateEdit ? m.reset_password_saving() : m.action_save()}
 								</button>
 							</div>
 						</form>
 					{:else}
 						<p class="card-eyebrow">
-							{formatDateTime(d.date)}{#if d.canceled} · Canceled{:else if d.locked} · Locked{/if}
+							{formatDateTime(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
 						</p>
 						<p class="card-title">{d.schedule_name}</p>
 						{#if d.notes}
@@ -974,12 +980,12 @@
 									{#if mode === 'admin'}
 										<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
 											<input type="hidden" name="signupId" value={s.id} />
-											<button type="submit" class="text-link">Remove</button>
+											<button type="submit" class="text-link">{m.groups_remove()}</button>
 										</form>
 									{:else if s.user_id === data.user.id}
 										<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
 											<input type="hidden" name="signupId" value={s.id} />
-											<button type="submit" class="text-link">Remove me</button>
+											<button type="submit" class="text-link">{m.groups_remove_me()}</button>
 										</form>
 									{/if}
 								</div>
@@ -990,9 +996,9 @@
 										<input type="hidden" name="dateId" value={d.id} />
 										<input type="hidden" name="roleId" value={role.role_id} />
 										<select name="userId">
-											{#each data.members as m (m.user_id)}<option value={m.user_id}>{m.name}</option>{/each}
+											{#each data.members as mem (mem.user_id)}<option value={mem.user_id}>{mem.name}</option>{/each}
 										</select>
-										<button type="submit" class="btn btn-outline">Assign</button>
+										<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
 									</form>
 									<!-- For someone who isn't (and may never be) a group
 									     member — a name only, no account. See the Backend's
@@ -1002,15 +1008,15 @@
 									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
 										<input type="hidden" name="dateId" value={d.id} />
 										<input type="hidden" name="roleId" value={role.role_id} />
-										<input name="name" placeholder="Or type a name" />
-										<button type="submit" class="btn btn-outline">Assign</button>
+										<input name="name" placeholder={m.groups_or_type_name()} />
+										<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
 									</form>
 								</div>
 							{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
 								<form method="POST" action="?/signUpResponsibility" use:enhance>
 									<input type="hidden" name="dateId" value={d.id} />
 									<input type="hidden" name="roleId" value={role.role_id} />
-									<button type="submit" class="text-link">Sign up</button>
+									<button type="submit" class="text-link">{m.groups_sign_up()}</button>
 								</form>
 							{/if}
 						</div>
@@ -1026,24 +1032,24 @@
 									editingDateId = d.id;
 								}}
 							>
-								Edit
+								{m.drawer_edit()}
 							</button>
 							<form method="POST" action="?/updateResponsibilityDate" use:enhance>
 								<input type="hidden" name="dateId" value={d.id} />
 								<input type="hidden" name="locked" value={d.locked ? 'false' : 'true'} />
-								<button type="submit" class="btn btn-outline">{d.locked ? 'Unlock' : 'Lock'}</button>
+								<button type="submit" class="btn btn-outline">{d.locked ? m.groups_unlock() : m.groups_lock()}</button>
 							</form>
 							<form method="POST" action="?/updateResponsibilityDate" use:enhance>
 								<input type="hidden" name="dateId" value={d.id} />
 								<input type="hidden" name="canceled" value={d.canceled ? 'false' : 'true'} />
-								<button type="submit" class="btn btn-outline">{d.canceled ? 'Reinstate' : 'Cancel'}</button>
+								<button type="submit" class="btn btn-outline">{d.canceled ? m.groups_reinstate() : m.action_cancel()}</button>
 							</form>
 						</div>
 						{#if confirmingDeleteDateId === d.id}
 							<div class="btn-row">
-								<span class="dim">Delete this date?</span>
+								<span class="dim">{m.groups_delete_date_confirm()}</span>
 								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteDateId = null)}>
-									Cancel
+									{m.action_cancel()}
 								</button>
 								<form
 									method="POST"
@@ -1054,7 +1060,7 @@
 									}}
 								>
 									<input type="hidden" name="dateId" value={d.id} />
-									<button type="submit" class="btn btn-danger">Delete</button>
+									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
 								</form>
 							</div>
 						{:else}
@@ -1063,7 +1069,7 @@
 								class="text-link text-link--danger"
 								onclick={() => (confirmingDeleteDateId = d.id)}
 							>
-								Delete date
+								{m.groups_delete_date()}
 							</button>
 						{/if}
 					{/if}
@@ -1072,13 +1078,13 @@
 		{/if}
 	{:else if mode === 'admin'}
 		<section class="card">
-			<p class="card-eyebrow">Group settings</p>
-			<div class="list-row"><span>Join code</span><span class="dim">{data.group.join_code}</span></div>
+			<p class="card-eyebrow">{m.groups_settings()}</p>
+			<div class="list-row"><span>{m.groups_join_code()}</span><span class="dim">{data.group.join_code}</span></div>
 		</section>
 
 		<section class="card">
-			<p class="card-eyebrow">Description</p>
-			<p class="card-note">Shown on the Info tab members (and anyone with the join code) see.</p>
+			<p class="card-eyebrow">{m.groups_description()}</p>
+			<p class="card-note">{m.groups_description_note()}</p>
 			{#if editingDescription}
 				<form
 					method="POST"
@@ -1093,12 +1099,12 @@
 					}}
 				>
 					<label class="field">
-						<span>Description</span>
+						<span>{m.groups_description()}</span>
 						<textarea
 							name="description"
 							bind:value={descriptionDraft}
 							rows="4"
-							placeholder="Tell members (and anyone with the join code) about this group…"
+							placeholder={m.groups_description_placeholder()}
 						></textarea>
 					</label>
 					{#if form?.form === 'description' && form?.error}
@@ -1106,10 +1112,10 @@
 					{/if}
 					<div class="btn-row">
 						<button type="button" class="btn btn-outline" onclick={() => (editingDescription = false)}>
-							Cancel
+							{m.action_cancel()}
 						</button>
 						<button class="btn btn-primary" type="submit" disabled={savingDescription}>
-							{savingDescription ? 'Saving…' : 'Save'}
+							{savingDescription ? m.reset_password_saving() : m.action_save()}
 						</button>
 					</div>
 				</form>
@@ -1117,7 +1123,7 @@
 				{#if data.group.description}
 					<p class="card-meta body">{data.group.description}</p>
 				{:else}
-					<p class="card-note">No description yet.</p>
+					<p class="card-note">{m.groups_no_description()}</p>
 				{/if}
 				<button
 					type="button"
@@ -1127,16 +1133,15 @@
 						editingDescription = true;
 					}}
 				>
-					{data.group.description ? 'Edit description' : '+ Add description'}
+					{data.group.description ? m.groups_edit_description() : m.groups_add_description()}
 				</button>
 			{/if}
 		</section>
 
 		<section class="card">
-			<p class="card-eyebrow">Regular rehearsals</p>
+			<p class="card-eyebrow">{m.groups_rehearsals()}</p>
 			<p class="card-note">
-				Shown on the Info tab; the Responsibilities tab's "Next rehearsal" button anchors new
-				dates to this instead of typing one in by hand each time.
+				{m.groups_rehearsals_note()}
 			</p>
 			{#if editingRehearsal}
 				<form
@@ -1152,17 +1157,17 @@
 					}}
 				>
 					<label class="field">
-						<span>Day</span>
+						<span>{m.groups_day()}</span>
 						<select name="weekday" bind:value={rehearsalWeekdayDraft}>
-							<option value="">No regular rehearsal</option>
-							{#each WEEKDAY_LABELS as label, i (label)}
-								<option value={String(i)}>{label}</option>
+							<option value="">{m.groups_no_regular_rehearsal()}</option>
+							{#each WEEKDAY_LABELS as label, i (i)}
+								<option value={String(i)}>{label()}</option>
 							{/each}
 						</select>
 					</label>
 					{#if rehearsalWeekdayDraft !== ''}
 						<label class="field">
-							<span>Time</span>
+							<span>{m.groups_time()}</span>
 							<input type="time" name="time" bind:value={rehearsalTimeDraft} required />
 						</label>
 					{/if}
@@ -1171,10 +1176,10 @@
 					{/if}
 					<div class="btn-row">
 						<button type="button" class="btn btn-outline" onclick={() => (editingRehearsal = false)}>
-							Cancel
+							{m.action_cancel()}
 						</button>
 						<button class="btn btn-primary" type="submit" disabled={savingRehearsal}>
-							{savingRehearsal ? 'Saving…' : 'Save'}
+							{savingRehearsal ? m.reset_password_saving() : m.action_save()}
 						</button>
 					</div>
 				</form>
@@ -1182,7 +1187,7 @@
 				{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
 					<p class="card-meta">{formatRehearsalSchedule(data.group.rehearsal_weekday, data.group.rehearsal_time)}</p>
 				{:else}
-					<p class="card-note">No regular rehearsal set yet.</p>
+					<p class="card-note">{m.groups_no_regular_rehearsal_set()}</p>
 				{/if}
 				<button
 					type="button"
@@ -1193,16 +1198,15 @@
 						editingRehearsal = true;
 					}}
 				>
-					{data.group.rehearsal_weekday !== null ? 'Edit' : '+ Set regular rehearsal'}
+					{data.group.rehearsal_weekday !== null ? m.drawer_edit() : m.groups_set_regular_rehearsal()}
 				</button>
 			{/if}
 		</section>
 
 		<section class="card">
-			<p class="card-eyebrow">Guest access</p>
+			<p class="card-eyebrow">{m.groups_guest_access()}</p>
 			<p class="card-note">
-				Anyone with the join code (and password, if set) can view whatever pages below are set to
-				"Everyone" with no login. Nothing they do is saved to the Backend.
+				{m.groups_guest_access_note()}
 			</p>
 			<form
 				method="POST"
@@ -1217,17 +1221,17 @@
 				}}
 			>
 				<label class="field">
-					<span>{data.group.has_guest_password ? 'Change password' : 'Set a password'}</span>
+					<span>{data.group.has_guest_password ? m.groups_change_password() : m.groups_set_password()}</span>
 					<input
 						type="password"
 						name="guestPassword"
-						placeholder={data.group.has_guest_password ? 'Leave blank to keep current' : 'Leave blank for no password'}
+						placeholder={data.group.has_guest_password ? m.groups_leave_blank_keep() : m.groups_leave_blank_none()}
 					/>
 				</label>
 				{#if data.group.has_guest_password}
 					<label class="checkline">
 						<input type="checkbox" name="removePassword" bind:checked={removePassword} />
-						<span>Remove the password entirely</span>
+						<span>{m.groups_remove_password_entirely()}</span>
 					</label>
 				{/if}
 
@@ -1235,20 +1239,19 @@
 					<p class="error">{form.error}</p>
 				{/if}
 				{#if form?.form === 'guestSettings' && form?.success}
-					<p class="success">Saved.</p>
+					<p class="success">{m.groups_saved()}</p>
 				{/if}
 
 				<button class="btn btn-primary btn-block" type="submit" disabled={savingGuestSettings}>
-					{savingGuestSettings ? 'Saving…' : 'Save password'}
+					{savingGuestSettings ? m.reset_password_saving() : m.groups_save_password()}
 				</button>
 			</form>
 		</section>
 
 		<section class="card">
-			<p class="card-eyebrow">Page visibility</p>
+			<p class="card-eyebrow">{m.groups_page_visibility()}</p>
 			<p class="card-note">
-				Turn a page off entirely, or choose whether it's members-only or open to guests with the
-				join code. Admins can always see every page regardless of these settings.
+				{m.groups_page_visibility_note()}
 			</p>
 			<form
 				method="POST"
@@ -1277,11 +1280,11 @@
 					<div class="page-setting-row">
 						<label class="checkline">
 							<input type="checkbox" name="enabled_{setting.page}" bind:checked={setting.enabled} />
-							<span>{PAGE_LABELS[setting.page]}</span>
+							<span>{PAGE_LABELS[setting.page]()}</span>
 						</label>
 						<select name="audience_{setting.page}" bind:value={setting.audience}>
-							<option value="members">Members only</option>
-							<option value="everyone">Everyone (guests too)</option>
+							<option value="members">{m.groups_members_only()}</option>
+							<option value="everyone">{m.groups_everyone_guests_too()}</option>
 						</select>
 					</div>
 				{/each}
@@ -1290,17 +1293,17 @@
 					<p class="error">{form.error}</p>
 				{/if}
 				{#if form?.form === 'pageSettings' && form?.success}
-					<p class="success">Saved.</p>
+					<p class="success">{m.groups_saved()}</p>
 				{/if}
 
 				<button class="btn btn-primary btn-block" type="submit" disabled={savingPageSettings}>
-					{savingPageSettings ? 'Saving…' : 'Save page settings'}
+					{savingPageSettings ? m.reset_password_saving() : m.groups_save_page_settings()}
 				</button>
 			</form>
 		</section>
 	{:else}
 		<section class="card">
-			<p class="card-eyebrow">About</p>
+			<p class="card-eyebrow">{m.groups_about_tab_title()}</p>
 
 			{#if data.group.description}
 				<p class="card-meta body">{data.group.description}</p>
@@ -1308,39 +1311,39 @@
 
 			{#if data.group.rehearsal_weekday !== null && data.group.rehearsal_time !== null}
 				<div class="list-row">
-					<span>Regular rehearsals</span>
+					<span>{m.groups_rehearsals()}</span>
 					<span class="dim">{formatRehearsalSchedule(data.group.rehearsal_weekday, data.group.rehearsal_time)}</span>
 				</div>
 			{/if}
 
 			<p class="card-meta">
-				{data.tracks.length} rehearsal track{data.tracks.length === 1 ? '' : 's'} shared ·
-				{data.homework.length} active assignment{data.homework.length === 1 ? '' : 's'}
+				{data.tracks.length === 1 ? m.groups_tracks_shared_one({ count: data.tracks.length }) : m.groups_tracks_shared_other({ count: data.tracks.length })} ·
+				{data.homework.length === 1 ? m.groups_assignments_active_one({ count: data.homework.length }) : m.groups_assignments_active_other({ count: data.homework.length })}
 			</p>
 			<div class="list-row">
-				<span>Join code</span>
+				<span>{m.groups_join_code()}</span>
 				<span class="dim">{data.group.join_code}</span>
 			</div>
 			<div class="list-row">
-				<span>Join link</span>
+				<span>{m.groups_join_link()}</span>
 				<button type="button" class="text-link" onclick={() => copyJoinLink()}>
-					{joinLinkCopied ? 'Copied!' : 'Copy link'}
+					{joinLinkCopied ? m.groups_copied() : m.groups_copy_link()}
 				</button>
 			</div>
 		</section>
 
 		<section class="card">
 			{#if confirmingLeave}
-				<p class="card-eyebrow">Leave {data.group.name}?</p>
+				<p class="card-eyebrow">{m.groups_leave_confirm({ name: data.group.name })}</p>
 				<p class="card-note">
-					You'll lose access to its rehearsal tracks and homework until someone re-invites you.
+					{m.groups_leave_note()}
 				</p>
 				{#if form?.form === 'leaveGroup' && form?.error}
 					<p class="error">{form.error}</p>
 				{/if}
 				<div class="btn-row">
 					<button type="button" class="btn btn-outline" onclick={() => (confirmingLeave = false)} disabled={leavingGroup}>
-						Cancel
+						{m.action_cancel()}
 					</button>
 					<form
 						method="POST"
@@ -1354,13 +1357,13 @@
 						}}
 					>
 						<button type="submit" class="btn btn-danger" disabled={leavingGroup}>
-							{leavingGroup ? 'Leaving…' : 'Yes, leave group'}
+							{leavingGroup ? m.groups_leaving() : m.groups_yes_leave()}
 						</button>
 					</form>
 				</div>
 			{:else}
 				<button type="button" class="btn btn-outline btn-block" onclick={() => (confirmingLeave = true)}>
-					Leave group
+					{m.groups_leave_group()}
 				</button>
 			{/if}
 		</section>

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import type { PieceSummary } from '$lib/pieces/types';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	interface Props {
 		pieces: PieceSummary[];
@@ -9,7 +11,7 @@
 	let { pieces }: Props = $props();
 
 	function openPlayer(id: string) {
-		goto(`/piece/${id}`);
+		goto(lh(`/piece/${id}`));
 	}
 </script>
 
@@ -27,7 +29,7 @@
 			<button
 				class="piece-action piece-action--primary"
 				onclick={() => openPlayer(piece.id)}
-				aria-label="Open player"
+				aria-label={m.join_open_player()}
 			>
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 					<path d="M8 5v14l11-7z" />

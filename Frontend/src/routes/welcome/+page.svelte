@@ -1,19 +1,22 @@
 <script lang="ts">
 	import Logo from '$lib/components/Logo.svelte';
+	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	const steps = [
 		{
-			title: 'Join a choir or practice on your own',
-			body: 'Your choir can share rehearsal tracks and homework. You can also keep personal pieces in your own library.'
+			title: m.welcome_step1_title,
+			body: m.welcome_step1_body
 		},
 		{
-			title: 'Choose what you need to hear and see',
-			body: 'Practice your part alone, with accompaniment, or inside the full score.'
+			title: m.welcome_step2_title,
+			body: m.welcome_step2_body
 		},
 		{
-			title: 'Follow the music as it plays',
-			body: 'The score moves with the audio, so you always know where you are.'
+			title: m.welcome_step3_title,
+			body: m.welcome_step3_body
 		}
 		// Annotations are hidden app-wide for now (see Frontend/plan.md's F3
 		// log) — dropped from this step list too, so onboarding doesn't
@@ -22,35 +25,37 @@
 </script>
 
 <main class="shell welcome">
+	<LanguageSwitcher />
 	<div class="hero">
 		<Logo size={64} />
 		<h1>Divisi</h1>
-		<p class="tagline">The choir companion app</p>
-		<p class="pitch">Practice choral music with the score, audio, and your part in sync.</p>
-		<a class="btn btn-primary btn-block" href="/home">Get started</a>
+		<p class="tagline">{m.welcome_tagline()}</p>
+		<p class="pitch">{m.welcome_pitch()}</p>
+		<a class="btn btn-primary btn-block" href={lh('/home')}>{m.welcome_get_started()}</a>
 	</div>
 
 	<div class="card">
-		<p class="card-eyebrow">How Divisi works</p>
+		<p class="card-eyebrow">{m.welcome_how_it_works()}</p>
 		<ol class="steps">
-			{#each steps as step, i (step.title)}
+			{#each steps as step, i (i)}
 				<li>
 					<span class="step-number">{i + 1}</span>
-					<span class="step-text"><b>{step.title}.</b> {step.body}</span>
+					<span class="step-text"><b>{step.title()}.</b> {step.body()}</span>
 				</li>
 			{/each}
 		</ol>
 	</div>
 
 	<div class="btn-row">
-		<a class="btn btn-outline btn-block" href="/join">Join a group</a>
+		<a class="btn btn-outline btn-block" href={lh('/join')}>{m.welcome_join_group()}</a>
 	</div>
 
-	<p class="login-link">Already have an account? <a href="/login">Log in</a></p>
+	<p class="login-link">{m.welcome_already_have_account()} <a href={lh('/login')}>{m.welcome_log_in()}</a></p>
 </main>
 
 <style>
 	.welcome {
+		position: relative;
 		/* `.shell`'s own padding (6.5rem top / 5.5rem bottom) reserves room
 		   for the fixed `AppHeader`/`BottomNav` every other page has —
 		   Welcome has neither, so inheriting that padding was the actual

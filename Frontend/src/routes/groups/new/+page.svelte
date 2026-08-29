@@ -3,6 +3,8 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -12,8 +14,8 @@
 </script>
 
 <main class="shell">
-	<AppHeader title="Create group" />
-	<p class="crumbs"><a href="/home">Home</a> / Create group</p>
+	<AppHeader title={m.groups_new_title()} />
+	<p class="crumbs"><a href={lh('/home')}>{m.home_title()}</a> / {m.groups_new_title()}</p>
 
 	<form
 		method="POST"
@@ -27,10 +29,10 @@
 	>
 		<section class="card">
 			<label class="field">
-				<span>Group name</span>
+				<span>{m.groups_new_name()}</span>
 				<input type="text" name="name" bind:value={name} required placeholder="e.g. SFCC Chamber Choir" />
 			</label>
-			<p class="card-note">You'll be the group admin.</p>
+			<p class="card-note">{m.groups_new_admin_note()}</p>
 		</section>
 
 		{#if form?.error}
@@ -38,7 +40,7 @@
 		{/if}
 
 		<button class="btn btn-primary btn-block" type="submit" disabled={!name.trim() || submitting}>
-			{submitting ? 'Creating…' : 'Create group'}
+			{submitting ? m.groups_new_creating() : m.groups_new_title()}
 		</button>
 	</form>
 </main>

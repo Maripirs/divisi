@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { type DisplayMode, type VisualState } from '$lib/midi/types';
 	import { THEME_PALETTES, highlightedMutedInk, type ResolvedTheme } from '$lib/theme';
+	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time, so it can't trigger a
 	// runtime module resolution during SSR. OSMD manipulates the DOM
 	// directly and only ever gets *constructed* inside `onMount` below, but
@@ -703,9 +704,9 @@
 
 <div class="score-view" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'}>
 	<div class="zoom-controls">
-		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="Zoom out">−</button>
+		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
-		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in">+</button>
+		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
 	<div class="score-container" bind:this={container}></div>
 	{#if loadError}

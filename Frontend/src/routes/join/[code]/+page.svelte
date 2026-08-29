@@ -3,6 +3,8 @@
 	import Logo from '$lib/components/Logo.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -31,13 +33,13 @@
 	}
 
 	function formatDueDate(iso: string | null) {
-		return iso ? formatDate(iso) : 'No due date';
+		return iso ? formatDate(iso) : m.home_no_due_date();
 	}
 
 	function coverageLabel(status: string) {
-		if (status === 'underfilled') return 'Needs volunteers';
-		if (status === 'overfilled') return 'Overfilled';
-		return 'Covered';
+		if (status === 'underfilled') return m.join_coverage_underfilled();
+		if (status === 'overfilled') return m.join_coverage_overfilled();
+		return m.join_coverage_covered();
 	}
 </script>
 
@@ -50,44 +52,42 @@
 
 	{#if data.error === 'not-found'}
 		<section class="card">
-			<p class="card-title">Code not found</p>
+			<p class="card-title">{m.join_code_not_found()}</p>
 			<p class="card-meta">
-				"{data.code}" doesn't match any group. Double-check the code with your choir admin and
-				try again.
+				{m.join_code_not_found_body({ code: data.code })}
 			</p>
-			<a class="btn btn-outline btn-block" href="/join">Try another code</a>
+			<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_try_another_code()}</a>
 		</section>
 	{:else if data.error === 'password-required'}
 		<section class="card">
-			<p class="card-title">Password required</p>
-			<p class="card-meta">This group's admin protected it with a password. Ask them for it.</p>
+			<p class="card-title">{m.join_password_required()}</p>
+			<p class="card-meta">{m.join_password_required_body()}</p>
 			<form method="GET">
 				<label class="field">
-					<span>Password</span>
+					<span>{m.login_password()}</span>
 					<input type="password" name="password" required autofocus />
 				</label>
-				<button class="btn btn-primary btn-block" type="submit">Continue</button>
+				<button class="btn btn-primary btn-block" type="submit">{m.join_continue()}</button>
 			</form>
 		</section>
 	{:else if data.error === 'server'}
 		<section class="card">
-			<p class="card-title">Something went wrong</p>
-			<p class="card-meta">Couldn't reach the server. Please try again in a moment.</p>
-			<a class="btn btn-outline btn-block" href="/join">Back</a>
+			<p class="card-title">{m.join_something_went_wrong()}</p>
+			<p class="card-meta">{m.errors_could_not_reach_server()}</p>
+			<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_back()}</a>
 		</section>
 	{:else if data.group}
-		<AppHeader title={data.group.groupName} homeHref="/join/{data.code}" />
+		<AppHeader title={data.group.groupName} homeHref={lh(`/join/${data.code}`)} />
 
 		{#if !bannerDismissed}
 			<section class="card card--highlight">
 				<p class="card-note">
-					Browsing as a guest. Sign in for full member access, including homework, signing up
-					for responsibilities, and the members list.
+					{m.join_guest_banner()}
 				</p>
 				<div class="btn-row">
-					<a class="btn btn-primary" href="/login?redirectTo=/join/{data.code}">Sign in</a>
-					<button type="button" class="btn btn-outline" onclick={() => (bannerDismissed = true)} aria-label="Dismiss">
-						Not now
+					<a class="btn btn-primary" href={lh(`/login?redirectTo=/join/${data.code}`)}>{m.join_sign_in()}</a>
+					<button type="button" class="btn btn-outline" onclick={() => (bannerDismissed = true)} aria-label={m.join_dismiss()}>
+						{m.join_not_now()}
 					</button>
 				</div>
 			</section>
@@ -96,21 +96,21 @@
 		{#if data.homeworkVisible || data.responsibilitiesVisible || data.weeklyNotesVisible}
 			<div class="tabs" role="tablist">
 				<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
-					Rehearsal Tracks
+					{m.tracks_tab_title()}
 				</button>
 				{#if data.homeworkVisible}
 					<button class="tab" class:active={tab === 'homework'} onclick={() => (tab = 'homework')}>
-						Homework
+						{m.homework_tab_title()}
 					</button>
 				{/if}
 				{#if data.weeklyNotesVisible}
 					<button class="tab" class:active={tab === 'weeklyNotes'} onclick={() => (tab = 'weeklyNotes')}>
-						Weekly Notes
+						{m.weekly_notes_tab_title()}
 					</button>
 				{/if}
 				{#if data.responsibilitiesVisible}
 					<button class="tab" class:active={tab === 'responsibilities'} onclick={() => (tab = 'responsibilities')}>
-						Responsibilities
+						{m.responsibilities_tab_title()}
 					</button>
 				{/if}
 			</div>
@@ -118,7 +118,7 @@
 
 		{#if tab === 'homework' && data.homeworkVisible}
 			{#if data.homework.length === 0}
-				<p class="empty">No homework assigned yet.</p>
+				<p class="empty">{m.join_no_homework()}</p>
 			{:else}
 				{#each data.homework as hw (hw.id)}
 					<section class="card">
@@ -133,11 +133,11 @@
 			{/if}
 		{:else if tab === 'weeklyNotes' && data.weeklyNotesVisible}
 			{#if data.weeklyNotes.length === 0}
-				<p class="empty">No weekly notes posted yet.</p>
+				<p class="empty">{m.join_no_weekly_notes()}</p>
 			{:else}
 				{#each data.weeklyNotes as n (n.id)}
 					<section class="card">
-						<p class="card-eyebrow">Week of {formatNoteDate(n.noteDate)}</p>
+						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.noteDate) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
 							<p class="card-note">{n.body}</p>
@@ -150,12 +150,12 @@
 			     Backend's `ResponsibilityGuestRoleCoverageOut`), so this is
 			     read-only, no sign-up action like the member group page has. -->
 			{#if data.responsibilities.length === 0}
-				<p class="empty">No responsibilities scheduled yet.</p>
+				<p class="empty">{m.join_no_responsibilities()}</p>
 			{:else}
 				{#each data.responsibilities as d (d.id)}
 					<section class="card">
 						<p class="card-eyebrow">
-							{formatDateTime(d.date)}{#if d.canceled} · Canceled{:else if d.locked} · Locked{/if}
+							{formatDateTime(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
 						</p>
 						<p class="card-title">{d.scheduleName}</p>
 						{#if d.notes}
@@ -177,7 +177,7 @@
 			     circle-play icon button as the personal Library. -->
 			{@const visiblePieces = data.group.pieces.filter((piece) => getPieceByTitle(piece.title))}
 			{#if visiblePieces.length === 0}
-				<p class="empty">No rehearsal tracks shared with this group yet.</p>
+				<p class="empty">{m.library_no_tracks()}</p>
 			{:else}
 				{#each visiblePieces as piece (piece.pieceId)}
 					{@const bundled = getPieceByTitle(piece.title)}
@@ -185,12 +185,12 @@
 						<section class="card track-card">
 							<div class="track-info">
 								<p class="card-title">{piece.title}</p>
-								<p class="card-meta">Shared {formatDate(piece.distributedAt)}</p>
+								<p class="card-meta">{m.join_shared({ date: formatDate(piece.distributedAt) })}</p>
 							</div>
 							<a
 								class="piece-action piece-action--primary"
-								href="/piece/{bundled.id}?guest=1&code={data.code}"
-								aria-label="Open player"
+								href={lh(`/piece/${bundled.id}?guest=1&code=${data.code}`)}
+								aria-label={m.join_open_player()}
 							>
 								<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 									<path d="M8 5v14l11-7z" />

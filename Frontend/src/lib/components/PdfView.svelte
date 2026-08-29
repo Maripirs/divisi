@@ -6,6 +6,7 @@
 	// SvelteKit's SSR can't statically import, and this route already
 	// disables SSR (`+page.ts`) for exactly this reason.
 	import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+	import { m } from '$lib/paraglide/messages';
 
 	/**
 	 * Renders a PDF with our own zoom controls (+/- buttons and a two-finger
@@ -271,11 +272,11 @@
 		{#if loading}
 			<div class="status-card">
 				<div class="spinner" aria-hidden="true"></div>
-				<p>Loading PDF...</p>
+				<p>{m.pdf_loading()}</p>
 			</div>
 		{:else if loadError}
 			<div class="status-card status-card--error">
-				<p>Couldn't load the PDF.</p>
+				<p>{m.pdf_load_error()}</p>
 				<p class="status-detail">{loadError}</p>
 			</div>
 		{:else}
@@ -288,9 +289,9 @@
 	</div>
 
 	<div class="zoom-controls">
-		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="Zoom out">−</button>
+		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
-		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="Zoom in">+</button>
+		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
 </div>
 

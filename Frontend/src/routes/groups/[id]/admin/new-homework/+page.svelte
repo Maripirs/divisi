@@ -3,6 +3,8 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -25,11 +27,11 @@
 </script>
 
 <main class="shell">
-	<AppHeader title="New homework" />
-	<p class="crumbs"><a href="/groups/{data.group.id}?view=admin">{data.group.name} / Admin</a></p>
+	<AppHeader title={m.new_homework_title()} />
+	<p class="crumbs"><a href={lh(`/groups/${data.group.id}?view=admin`)}>{data.group.name} / {m.new_homework_admin()}</a></p>
 
 	{#if data.tracks.length === 0}
-		<p class="empty">No rehearsal tracks shared with this group yet — nothing to assign homework against.</p>
+		<p class="empty">{m.new_homework_no_tracks()}</p>
 	{:else}
 		<form
 			method="POST"
@@ -43,9 +45,9 @@
 		>
 			<section class="card">
 				<label class="field">
-					<span>Piece</span>
+					<span>{m.new_homework_piece()}</span>
 					<select name="pieceId" bind:value={pieceId} onchange={onPieceChange} required>
-						<option value="" disabled>Choose piece</option>
+						<option value="" disabled>{m.new_homework_choose_piece()}</option>
 						{#each data.tracks as track (track.piece_id)}
 							<option value={track.piece_id}>{track.title}</option>
 						{/each}
@@ -53,16 +55,16 @@
 				</label>
 
 				<label class="field">
-					<span>Title</span>
+					<span>{m.new_homework_title_field()}</span>
 					<input type="text" name="title" bind:value={title} required placeholder="e.g. Lacrymosa" />
 				</label>
 
 				<div class="field">
-					<span>Range</span>
+					<span>{m.new_homework_range()}</span>
 					<input type="hidden" name="rangeMode" value={rangeMode} />
 					<div class="tabs range-tabs">
 						<button type="button" class="tab" class:active={rangeMode === 'full'} onclick={() => (rangeMode = 'full')}>
-							Full piece
+							{m.new_homework_full_piece()}
 						</button>
 						<button
 							type="button"
@@ -70,25 +72,25 @@
 							class:active={rangeMode === 'measures'}
 							onclick={() => (rangeMode = 'measures')}
 						>
-							Measures
+							{m.new_homework_measures()}
 						</button>
 					</div>
 					{#if rangeMode === 'measures'}
 						<div class="measure-row">
-							<input type="number" name="measureFrom" min="1" placeholder="From" bind:value={measureFrom} />
-							<span>to</span>
-							<input type="number" name="measureTo" min="1" placeholder="To" bind:value={measureTo} />
+							<input type="number" name="measureFrom" min="1" placeholder={m.new_homework_from()} bind:value={measureFrom} />
+							<span>{m.new_homework_to()}</span>
+							<input type="number" name="measureTo" min="1" placeholder={m.new_homework_to()} bind:value={measureTo} />
 						</div>
 					{/if}
 				</div>
 
 				<label class="field">
-					<span>Due date</span>
+					<span>{m.new_homework_due_date()}</span>
 					<input type="date" name="dueDate" bind:value={dueDate} />
 				</label>
 
 				<label class="field">
-					<span>Instructions</span>
+					<span>{m.new_homework_instructions()}</span>
 					<textarea name="instructions" bind:value={instructions} placeholder="Focus on entrances after rests…"
 					></textarea>
 				</label>
@@ -99,7 +101,7 @@
 			{/if}
 
 			<button class="btn btn-primary btn-block" type="submit" disabled={!pieceId || !title || submitting}>
-				{submitting ? 'Assigning…' : 'Assign'}
+				{submitting ? m.new_homework_assigning() : m.new_homework_assign()}
 			</button>
 		</form>
 	{/if}

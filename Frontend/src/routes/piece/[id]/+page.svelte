@@ -25,6 +25,8 @@
 	import { highlightedMutedInk, resolvedTheme } from '$lib/theme';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	let { data }: { data: { id: string; remote: RemotePieceMeta | null } } = $props();
 	// The keyed markup remounts this component whenever the route id changes,
@@ -68,39 +70,39 @@
 	// Singer-facing labels per UX_WIREFRAME.md's "Practice View Labels" —
 	// these are the same DisplayMode values (flat/highlighted/solo/custom)
 	// the converter/mixer logic already uses, just relabeled in the UI.
-	const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
-		flat: 'Everyone',
-		highlighted: 'My part + others',
-		solo: 'My part',
-		custom: 'Custom'
+	const DISPLAY_MODE_LABELS: Record<DisplayMode, () => string> = {
+		flat: m.display_mode_everyone,
+		highlighted: m.display_mode_highlighted,
+		solo: m.display_mode_solo,
+		custom: m.mode_custom
 	};
 
 	// Names for the audio-balance presets — the "Minus Me" one is the
 	// standard rehearsal/karaoke term for a track missing just one part.
-	const MIX_MODE_LABELS: Record<MixMode, string> = {
-		everyone: 'Everyone',
-		minusMe: 'Minus Me',
-		mostlyMe: 'Mostly Me',
-		custom: 'Custom'
+	const MIX_MODE_LABELS: Record<MixMode, () => string> = {
+		everyone: m.mix_mode_everyone,
+		minusMe: m.mix_mode_minus_me,
+		mostlyMe: m.mix_mode_mostly_me,
+		custom: m.mode_custom
 	};
 
 	// Same labels/pattern as the Settings page's "Default voice" dropdown.
-	const VOICE_PART_LABELS: Record<VoicePart, string> = {
-		soprano: 'Soprano',
-		alto: 'Alto',
-		tenor: 'Tenor',
-		bass: 'Bass'
+	const VOICE_PART_LABELS: Record<VoicePart, () => string> = {
+		soprano: m.voice_soprano,
+		alto: m.voice_alto,
+		tenor: m.voice_tenor,
+		bass: m.voice_bass
 	};
 
-	const VISUAL_STATE_LABELS: Record<VisualState, string> = {
-		off: 'Off',
-		muted: 'Muted',
-		active: 'Active'
+	const VISUAL_STATE_LABELS: Record<VisualState, () => string> = {
+		off: m.piece_visual_off,
+		muted: m.piece_visual_muted,
+		active: m.piece_visual_active
 	};
 
-	const VIEW_MODE_LABELS: Record<ViewMode, string> = {
-		player: 'Player',
-		pdf: 'PDF'
+	const VIEW_MODE_LABELS: Record<ViewMode, () => string> = {
+		player: m.piece_view_player,
+		pdf: m.settings_view_pdf
 	};
 
 	type LoadState =
@@ -619,7 +621,7 @@
 
 	function describeBalance(value: number): string {
 		const diff = Math.round((value - 0.5) * 200);
-		if (Math.abs(diff) < 4) return 'Even';
+		if (Math.abs(diff) < 4) return m.piece_balance_even();
 		return diff > 0 ? `+${diff}%` : `${diff}%`;
 	}
 
@@ -691,7 +693,7 @@
 	}
 
 	function mixLabel(part: MixPart): string {
-		if (part === 'accompaniment') return 'Accomp.';
+		if (part === 'accompaniment') return m.piece_accomp_short();
 		return parsed?.parts.find((p) => p.id === part)?.label ?? part;
 	}
 
@@ -710,8 +712,8 @@
 	// who arrived via a specific group's join code (`guestJoinCode` set) goes
 	// back to that group's page, not the unrelated demo library.
 	function backToLibrary() {
-		if (guestJoinCode) goto(`/join/${encodeURIComponent(guestJoinCode)}`);
-		else goto(page.data.user ? '/' : '/?guest=1');
+		if (guestJoinCode) goto(lh(`/join/${encodeURIComponent(guestJoinCode)}`));
+		else goto(lh(page.data.user ? '/' : '/?guest=1'));
 	}
 </script>
 
@@ -720,7 +722,7 @@
 {#key data.id}
 	<div class="player-shell">
 		<header class="top-bar">
-			<button class="icon-btn" onclick={backToLibrary} aria-label="Back to library">
+			<button class="icon-btn" onclick={backToLibrary} aria-label={m.piece_back_to_library()}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M15 18l-6-6 6-6" />
 				</svg>
@@ -741,7 +743,7 @@
 					loadState.kind !== 'noVisibleTracks'
 				}
 				onclick={() => (menuOpen = true)}
-				aria-label="Open Practice Setup"
+				aria-label={m.piece_open_practice_setup()}
 			>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M4 7h16M4 12h16M4 17h16" />
@@ -754,11 +756,11 @@
 			     music-file/PDF this piece has — not gated behind the
 			     player/PDF toggle above, per the human's explicit call. -->
 			<details class="youtube-disclosure">
-				<summary>Reference recording</summary>
+				<summary>{m.piece_reference_recording()}</summary>
 				<div class="youtube-embed">
 					<iframe
 						src={toYoutubeEmbedUrl(piece.youtubeUrl)}
-						title="Reference recording"
+						title={m.piece_reference_recording()}
 						frameborder="0"
 						allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
 						allowfullscreen
@@ -780,22 +782,22 @@
 				{#if loadState.kind === 'loading'}
 					<div class="status-card">
 						<div class="spinner" aria-hidden="true"></div>
-						<p>Loading score...</p>
+						<p>{m.piece_loading_score()}</p>
 					</div>
 				{:else if loadState.kind === 'notFound'}
 					<div class="status-card status-card--error">
-						<p>No piece found with that id.</p>
-						<button class="text-link" onclick={backToLibrary}>Back to library</button>
+						<p>{m.piece_not_found()}</p>
+						<button class="text-link" onclick={backToLibrary}>{m.piece_back_to_library()}</button>
 					</div>
 				{:else if loadState.kind === 'error'}
 					<div class="status-card status-card--error">
-						<p>Couldn't load the piece.</p>
+						<p>{m.piece_load_error()}</p>
 						<p class="status-detail">{loadState.message}</p>
 					</div>
 				{:else if loadState.kind === 'noNotesForVoicePart'}
-					<p class="empty-note">No notes for {mixLabel(loadState.part)} in this file.</p>
+					<p class="empty-note">{m.piece_no_notes_for_part({ part: mixLabel(loadState.part) })}</p>
 				{:else if loadState.kind === 'noVisibleTracks'}
-					<p class="empty-note">No visible tracks selected.</p>
+					<p class="empty-note">{m.piece_no_visible_tracks()}</p>
 				{:else}
 					<div class="score-card">
 						<ScoreView
@@ -823,7 +825,7 @@
 
 		{#if loadState.kind === 'ready' || loadState.kind === 'noNotesForVoicePart' || loadState.kind === 'noVisibleTracks'}
 			<footer class="bottom-bar">
-				<button class="play-btn" onclick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'}>
+				<button class="play-btn" onclick={togglePlay} aria-label={isPlaying ? m.piece_pause() : m.piece_play()}>
 					{#if isPlaying}
 						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
 							<path d="M6 5h4v14H6zM14 5h4v14h-4z" />
@@ -843,7 +845,7 @@
 						min="0"
 						max={durationMs}
 						value={positionMs}
-						aria-label="Seek"
+						aria-label={m.piece_seek()}
 						oninput={(e) => seek(Number((e.target as HTMLInputElement).value))}
 					/>
 					<div class="time-row">
@@ -853,7 +855,7 @@
 				</div>
 
 				{#if viewMode === 'player'}
-					<button class="icon-btn" onclick={() => scoreView?.scrollCursorIntoView()} aria-label="Scroll to cursor">
+					<button class="icon-btn" onclick={() => scoreView?.scrollCursorIntoView()} aria-label={m.piece_scroll_to_cursor()}>
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<circle cx="12" cy="12" r="3" />
 							<path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
@@ -868,11 +870,11 @@
 			     applies to the current piece, per UX_WIREFRAME.md's
 			     Redundancy Rules ("Do not call the player drawer Settings").
 			     The account-wide screen keeps the "Settings" name. -->
-			<button class="menu-backdrop" onclick={() => (menuOpen = false)} aria-label="Close Practice Setup"></button>
-			<aside class="menu-drawer" aria-label="Practice Setup">
+			<button class="menu-backdrop" onclick={() => (menuOpen = false)} aria-label={m.piece_close_practice_setup()}></button>
+			<aside class="menu-drawer" aria-label={m.piece_practice_setup()}>
 				<header class="menu-header">
-					<h2>Practice Setup</h2>
-					<button class="icon-btn" onclick={() => (menuOpen = false)} aria-label="Close Practice Setup">
+					<h2>{m.piece_practice_setup()}</h2>
+					<button class="icon-btn" onclick={() => (menuOpen = false)} aria-label={m.piece_close_practice_setup()}>
 						<svg viewBox="0 0 24 24" aria-hidden="true">
 							<path d="M18 6 6 18M6 6l12 12" />
 						</svg>
@@ -880,13 +882,13 @@
 				</header>
 
 				<section class="menu-section">
-					<h3>Tempo</h3>
+					<h3>{m.piece_tempo()}</h3>
 					<div class="tempo-row">
 						<button
 							type="button"
 							class="tempo-step-btn"
 							disabled={tempoBpm <= MIN_TEMPO_BPM}
-							aria-label="Decrease tempo"
+							aria-label={m.piece_decrease_tempo()}
 							onclick={() => stepTempo(-1)}
 						>
 							<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -898,7 +900,7 @@
 							type="button"
 							class="tempo-step-btn"
 							disabled={tempoBpm >= MAX_TEMPO_BPM}
-							aria-label="Increase tempo"
+							aria-label={m.piece_increase_tempo()}
 							onclick={() => stepTempo(1)}
 						>
 							<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -908,27 +910,27 @@
 					</div>
 					{#if adminDefaultTempo !== null && tempoBpm !== adminDefaultTempo}
 						<button type="button" class="text-link default-link" onclick={() => setTempo(adminDefaultTempo)}>
-							Reset to default ({adminDefaultTempo} BPM)
+							{m.piece_reset_to_default({ bpm: adminDefaultTempo })}
 						</button>
 					{/if}
 				</section>
 
 				<section class="menu-section">
-					<h3>Your Part</h3>
+					<h3>{m.piece_your_part()}</h3>
 					<select
 						class="your-part-select"
-						aria-label="Your part"
+						aria-label={m.piece_your_part()}
 						value={voicePart}
 						onchange={(e) => setFocus((e.target as HTMLSelectElement).value as VoicePart)}
 					>
 						{#each VOICE_PARTS as part (part)}
-							<option value={part}>{VOICE_PART_LABELS[part]}</option>
+							<option value={part}>{VOICE_PART_LABELS[part]()}</option>
 						{/each}
 					</select>
 					{#if desksForFocus.length > 1}
-						<p class="subsection-hint">Do you sing a specific desk?</p>
-						<div class="segmented" role="group" aria-label="Desk">
-							<button class:active={subPart === null} onclick={() => setSubPart(null)}>All</button>
+						<p class="subsection-hint">{m.piece_specific_desk()}</p>
+						<div class="segmented" role="group" aria-label={m.piece_desk()}>
+							<button class:active={subPart === null} onclick={() => setSubPart(null)}>{m.piece_all()}</button>
 							{#each desksForFocus as desk (desk.id)}
 								<button class:active={subPart === desk.id} onclick={() => setSubPart(desk.id)}>
 									{desk.label}
@@ -944,17 +946,17 @@
 					     just one of the two has nothing to toggle, so it skips
 					     straight to that view with no menu section at all. -->
 					<section class="menu-section">
-						<h3>View</h3>
-						<div class="segmented" role="group" aria-label="View">
+						<h3>{m.settings_view()}</h3>
+						<div class="segmented" role="group" aria-label={m.settings_view()}>
 							{#each availableViewModes as mode (mode)}
 								<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
-									{VIEW_MODE_LABELS[mode]}
+									{VIEW_MODE_LABELS[mode]()}
 								</button>
 							{/each}
 						</div>
 						{#if !viewMatchesDefault}
 							<button type="button" class="text-link default-link" onclick={saveViewAsDefault}>
-								{defaultFlash.view ? 'Saved as default ✓' : 'Make this my default'}
+								{defaultFlash.view ? m.piece_saved_as_default() : m.piece_make_my_default()}
 							</button>
 						{/if}
 					</section>
@@ -962,17 +964,17 @@
 
 				{#if viewMode === 'player'}
 					<section class="menu-section">
-						<h3>Display</h3>
-						<div class="segmented" role="group" aria-label="Display mode">
+						<h3>{m.settings_display()}</h3>
+						<div class="segmented" role="group" aria-label={m.piece_display_mode()}>
 							{#each DISPLAY_MODES as mode (mode)}
 								<button class:active={displayMode === mode} onclick={() => setDisplayMode(mode)}>
-									{DISPLAY_MODE_LABELS[mode]}
+									{DISPLAY_MODE_LABELS[mode]()}
 								</button>
 							{/each}
 						</div>
 						{#if displayMode !== 'custom' && !displayMatchesDefault}
 							<button type="button" class="text-link default-link" onclick={saveDisplayAsDefault}>
-								{defaultFlash.display ? 'Saved as default ✓' : 'Make this my default'}
+								{defaultFlash.display ? m.piece_saved_as_default() : m.piece_make_my_default()}
 							</button>
 						{/if}
 					</section>
@@ -983,11 +985,11 @@
 				     Settings). -->
 
 				<section class="menu-section">
-					<h3>Mix</h3>
-					<div class="segmented" role="group" aria-label="Mix mode">
+					<h3>{m.piece_mix()}</h3>
+					<div class="segmented" role="group" aria-label={m.piece_mix_mode()}>
 						{#each MIX_MODES as mode (mode)}
 							<button class:active={mixMode === mode} onclick={() => setMixMode(mode)}>
-								{MIX_MODE_LABELS[mode]}
+								{MIX_MODE_LABELS[mode]()}
 							</button>
 						{/each}
 					</div>
@@ -1002,8 +1004,8 @@
 										class:visual-state-btn--off={visualStateFor(part.id) === 'off'}
 										class:visual-state-btn--muted={visualStateFor(part.id) === 'muted'}
 										class:visual-state-btn--active={visualStateFor(part.id) === 'active'}
-										aria-label={`${part.label} visual state: ${VISUAL_STATE_LABELS[visualStateFor(part.id)]}`}
-										title={VISUAL_STATE_LABELS[visualStateFor(part.id)]}
+										aria-label={m.piece_visual_state_label({ part: part.label, state: VISUAL_STATE_LABELS[visualStateFor(part.id)]() })}
+										title={VISUAL_STATE_LABELS[visualStateFor(part.id)]()}
 										onclick={() => cycleVisualState(part.id)}
 									>
 										<svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1023,7 +1025,7 @@
 										max="1"
 										step="0.01"
 										value={balance[part.id]}
-										aria-label="{part.label} balance"
+										aria-label={m.piece_balance_label({ part: part.label })}
 										oninput={(e) => setBalance(part.id, Number((e.target as HTMLInputElement).value))}
 									/>
 									<span class="balance-value">{describeBalance(balance[part.id])}</span>
@@ -1034,7 +1036,7 @@
 					{/if}
 					{#if !mixMatchesDefault}
 						<button type="button" class="text-link default-link" onclick={saveMixAsDefault}>
-							{defaultFlash.mix ? 'Saved as default ✓' : 'Make this my default'}
+							{defaultFlash.mix ? m.piece_saved_as_default() : m.piece_make_my_default()}
 						</button>
 					{/if}
 				</section>

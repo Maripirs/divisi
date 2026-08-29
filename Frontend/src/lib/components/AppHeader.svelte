@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Logo from './Logo.svelte';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	// Shell chrome for the main app screens (Home/Library/Groups/a group's
 	// own page/Settings) per UX_WIREFRAME.md's "Navigation And Brand"
@@ -16,17 +18,18 @@
 	// Settings drawer (`SettingsDrawer.svelte`, mounted once in the root
 	// layout) in place, rather than navigating to a `/settings` page — same
 	// button everywhere, no per-page href needed for it anymore.
-	let { title, homeHref = '/home' }: { title: string; homeHref?: string } = $props();
+	let { title, homeHref }: { title: string; homeHref?: string } = $props();
+	let resolvedHomeHref = $derived(homeHref ?? lh('/home'));
 </script>
 
 <header class="app-shell-header">
 	<div class="app-shell-header-inner">
 		<div class="brand-row">
-			<a class="brand" href={homeHref} aria-label="Divisi home">
+			<a class="brand" href={resolvedHomeHref} aria-label={m.app_header_home_label()}>
 				<Logo size={22} />
 				<span>Divisi</span>
 			</a>
-			<button class="settings-link" onclick={() => (settingsDrawer.open = true)} aria-label="Settings">
+			<button class="settings-link" onclick={() => (settingsDrawer.open = true)} aria-label={m.settings_title()}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<circle cx="12" cy="12" r="3" />
 					<path

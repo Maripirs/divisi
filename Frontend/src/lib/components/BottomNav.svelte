@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
+	import { deLocalizeUrl } from '$lib/paraglide/runtime';
 
 	// Home | Library only — per UX_WIREFRAME.md's "Navigation And
 	// Brand" direction, "Me" is gone from here; its contents (account,
@@ -14,20 +17,31 @@
 	// non-guest hit on `/` there). No query param needed once logged in — a
 	// bare `/` always reaches the library directly.
 	const items = $derived([
-		{ href: '/home', label: 'Home', icon: 'home' },
-		{ href: page.data.user ? '/' : '/?guest=1', label: 'Library', icon: 'library' }
+		{ href: lh('/home'), rawHref: '/home', label: m.bottom_nav_home(), icon: 'home' },
+		{
+			href: lh(page.data.user ? '/' : '/?guest=1'),
+			rawHref: '/',
+			label: m.bottom_nav_library(),
+			icon: 'library'
+		}
 	] as const);
 
-	function isActive(href: string): boolean {
-		const path = page.url.pathname;
-		if (href === '/' || href === '/?guest=1') return path === '/';
-		return path === href || path.startsWith(href + '/');
+	// Compares against the *canonical* (de-localized) path — `page.url` is
+	// the raw request URL and DOES carry `/es`, but `reroute` (see
+	// `src/hooks.ts`) means the same route also matches with no prefix
+	// depending on how it was reached, so comparing the localized `href`
+	// directly would miss a match half the time. `deLocalizeUrl` collapses
+	// both to the same canonical form first.
+	function isActive(rawHref: string): boolean {
+		const path = deLocalizeUrl(page.url).pathname;
+		if (rawHref === '/') return path === '/';
+		return path === rawHref || path.startsWith(rawHref + '/');
 	}
 </script>
 
-<nav class="bottom-nav" aria-label="Primary">
-	{#each items as item (item.href)}
-		<a href={item.href} class:active={isActive(item.href)} aria-current={isActive(item.href) ? 'page' : undefined}>
+<nav class="bottom-nav" aria-label={m.bottom_nav_primary()}>
+	{#each items as item (item.rawHref)}
+		<a href={item.href} class:active={isActive(item.rawHref)} aria-current={isActive(item.rawHref) ? 'page' : undefined}>
 			{#if item.icon === 'home'}
 				<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8" /><path d="M5 10v10h14V10" /></svg>
 			{:else if item.icon === 'library'}

@@ -11,6 +11,8 @@
 	// (including one that doesn't otherwise import this) — imported here
 	// directly rather than relying on the current page to have brought it in.
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 
 	// Same account-wide screen `/settings` used to be as its own page — now a
 	// slide-in drawer over whatever page it was opened from (triggered by
@@ -25,31 +27,36 @@
 
 	const user = $derived(page.data.user as { name: string; email: string } | null | undefined);
 
-	const VOICE_PART_LABELS: Record<VoicePart, string> = {
-		soprano: 'Soprano',
-		alto: 'Alto',
-		tenor: 'Tenor',
-		bass: 'Bass'
+	const VOICE_PART_LABELS: Record<VoicePart, () => string> = {
+		soprano: m.voice_soprano,
+		alto: m.voice_alto,
+		tenor: m.voice_tenor,
+		bass: m.voice_bass
 	};
-	const DISPLAY_MODE_LABELS: Record<Exclude<DisplayMode, 'custom'>, string> = {
-		flat: 'Everyone',
-		highlighted: 'My part + others',
-		solo: 'My part'
+	const DISPLAY_MODE_LABELS: Record<Exclude<DisplayMode, 'custom'>, () => string> = {
+		flat: m.display_mode_everyone,
+		highlighted: m.display_mode_highlighted,
+		solo: m.display_mode_solo
 	};
 	const DEFAULT_DISPLAY_MODES = Object.keys(DISPLAY_MODE_LABELS) as Array<keyof typeof DISPLAY_MODE_LABELS>;
-	const VIEW_MODE_LABELS: Record<ViewMode, string> = {
-		player: 'Score',
-		pdf: 'PDF'
+	const VIEW_MODE_LABELS: Record<ViewMode, () => string> = {
+		player: m.settings_view_score,
+		pdf: m.settings_view_pdf
 	};
-	const MIX_MODE_LABELS: Record<Exclude<MixMode, 'custom'>, string> = {
-		everyone: 'Everyone',
-		minusMe: 'Minus Me',
-		mostlyMe: 'Mostly Me'
+	const MIX_MODE_LABELS: Record<Exclude<MixMode, 'custom'>, () => string> = {
+		everyone: m.mix_mode_everyone,
+		minusMe: m.mix_mode_minus_me,
+		mostlyMe: m.mix_mode_mostly_me
 	};
 	const DEFAULT_MIX_MODES = Object.keys(MIX_MODE_LABELS) as Array<keyof typeof MIX_MODE_LABELS>;
 
 	const DESK_OPTIONS = [1, 2, 3, 4];
-	const DESK_LABELS: Record<number, string> = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+	const DESK_LABELS: Record<number, () => string> = {
+		1: m.desk_1st,
+		2: m.desk_2nd,
+		3: m.desk_3rd,
+		4: m.desk_4th
+	};
 
 	function updatePlayerDefaults(next: Partial<PlayerDefaults>) {
 		setPlayerDefaults({ ...$playerDefaults, ...next });
@@ -92,11 +99,11 @@
 </script>
 
 {#if settingsDrawer.open}
-	<button class="menu-backdrop" onclick={close} aria-label="Close Settings"></button>
-	<aside class="menu-drawer" aria-label="Settings">
+	<button class="menu-backdrop" onclick={close} aria-label={m.settings_close()}></button>
+	<aside class="menu-drawer" aria-label={m.settings_title()}>
 		<header class="menu-header">
-			<h2>Settings</h2>
-			<button class="icon-btn" onclick={close} aria-label="Close Settings">
+			<h2>{m.settings_title()}</h2>
+			<button class="icon-btn" onclick={close} aria-label={m.settings_close()}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M18 6 6 18M6 6l12 12" />
 				</svg>
@@ -104,7 +111,7 @@
 		</header>
 
 		<section class="menu-section">
-			<h3>Account</h3>
+			<h3>{m.settings_account()}</h3>
 			{#if user}
 				{#if editingName}
 					<form
@@ -117,7 +124,7 @@
 							return async ({ result }) => {
 								savingName = false;
 								if (result.type === 'failure') {
-									nameError = (result.data as { error?: string } | undefined)?.error ?? 'Could not update name';
+									nameError = (result.data as { error?: string } | undefined)?.error ?? m.drawer_could_not_update_name();
 									return;
 								}
 								if (result.type === 'success') {
@@ -129,16 +136,16 @@
 					>
 						<input name="name" bind:value={nameDraft} required />
 						<button type="submit" class="btn btn-outline" disabled={savingName}>
-							{savingName ? 'Saving…' : 'Save'}
+							{savingName ? m.reset_password_saving() : m.action_save()}
 						</button>
 						<button type="button" class="text-link" onclick={() => (editingName = false)} disabled={savingName}>
-							Cancel
+							{m.action_cancel()}
 						</button>
 					</form>
 					{#if nameError}<p class="error">{nameError}</p>{/if}
 				{:else}
 					<div class="list-row">
-						<span>Name</span>
+						<span>{m.login_name()}</span>
 						<span class="value-with-action">
 							<span class="dim">{user.name}</span>
 							<button
@@ -149,12 +156,12 @@
 									editingName = true;
 								}}
 							>
-								Edit
+								{m.drawer_edit()}
 							</button>
 						</span>
 					</div>
 				{/if}
-				<div class="list-row"><span>Email</span><span class="dim">{user.email}</span></div>
+				<div class="list-row"><span>{m.login_email()}</span><span class="dim">{user.email}</span></div>
 
 				{#if changingPassword}
 					<form
@@ -168,7 +175,7 @@
 								savingPassword = false;
 								if (result.type === 'failure') {
 									passwordError =
-										(result.data as { error?: string } | undefined)?.error ?? 'Could not change password';
+										(result.data as { error?: string } | undefined)?.error ?? m.drawer_could_not_change_password();
 									return;
 								}
 								if (result.type === 'success') {
@@ -189,18 +196,18 @@
 						}}
 					>
 						<label class="field">
-							<span>Current password</span>
+							<span>{m.drawer_current_password()}</span>
 							<input type="password" name="currentPassword" bind:value={currentPasswordDraft} required autocomplete="current-password" />
 						</label>
 						<label class="field">
-							<span>New password</span>
+							<span>{m.reset_password_new_password()}</span>
 							<input type="password" name="newPassword" bind:value={newPasswordDraft} required minlength="8" autocomplete="new-password" />
 						</label>
 						<label class="field">
-							<span>Confirm new password</span>
+							<span>{m.reset_password_confirm_new_password()}</span>
 							<input type="password" bind:value={confirmNewPasswordDraft} required minlength="8" autocomplete="new-password" />
 						</label>
-						{#if passwordMismatch}<p class="error">Passwords don't match</p>{/if}
+						{#if passwordMismatch}<p class="error">{m.login_passwords_dont_match()}</p>{/if}
 						{#if passwordError}<p class="error">{passwordError}</p>{/if}
 						<div class="btn-row">
 							<button
@@ -215,22 +222,22 @@
 								}}
 								disabled={savingPassword}
 							>
-								Cancel
+								{m.action_cancel()}
 							</button>
 							<button
 								type="submit"
 								class="btn btn-outline"
 								disabled={savingPassword || passwordMismatch || newPasswordDraft.length < 8}
 							>
-								{savingPassword ? 'Saving…' : 'Save'}
+								{savingPassword ? m.reset_password_saving() : m.action_save()}
 							</button>
 						</div>
 					</form>
 				{:else}
 					<div class="list-row">
-						<span>Password</span>
+						<span>{m.login_password()}</span>
 						<span class="value-with-action">
-							{#if passwordChanged}<span class="dim">Changed</span>{/if}
+							{#if passwordChanged}<span class="dim">{m.drawer_changed()}</span>{/if}
 							<button
 								type="button"
 								class="text-link"
@@ -239,50 +246,49 @@
 									changingPassword = true;
 								}}
 							>
-								Change
+								{m.drawer_change()}
 							</button>
 						</span>
 					</div>
 				{/if}
 			{:else}
 				<p class="card-meta">
-					You're browsing as a guest — nothing here leaves this device. Create an account (or
-					log in to one) to keep it and your groups everywhere you sign in.
+					{m.settings_guest_note()}
 				</p>
 				<div class="btn-row">
-					<a class="btn btn-primary" href="/login?mode=register" onclick={close}>Create an account</a>
-					<a class="btn btn-outline" href="/login" onclick={close}>Log in</a>
+					<a class="btn btn-primary" href={lh('/login?mode=register')} onclick={close}>{m.settings_create_account()}</a>
+					<a class="btn btn-outline" href={lh('/login')} onclick={close}>{m.login_title()}</a>
 				</div>
 			{/if}
 		</section>
 
 		<section class="menu-section">
-			<h3>Theme</h3>
+			<h3>{m.settings_theme()}</h3>
 			<label class="field">
-				<span>Appearance</span>
+				<span>{m.settings_appearance()}</span>
 				<select value={$themeMode} onchange={(e) => setThemeMode((e.currentTarget as HTMLSelectElement).value as ThemeMode)}>
-					<option value="system">System</option>
-					<option value="light">Light</option>
-					<option value="dark">Dark</option>
+					<option value="system">{m.settings_theme_system()}</option>
+					<option value="light">{m.settings_theme_light()}</option>
+					<option value="dark">{m.settings_theme_dark()}</option>
 				</select>
 			</label>
 		</section>
 
 		<section class="menu-section">
-			<h3>Practice defaults</h3>
+			<h3>{m.settings_practice_defaults()}</h3>
 			<label class="field">
-				<span>Voice</span>
+				<span>{m.settings_voice()}</span>
 				<select
 					value={$playerDefaults.voicePart}
 					onchange={(e) => updatePlayerDefaults({ voicePart: (e.currentTarget as HTMLSelectElement).value as VoicePart })}
 				>
 					{#each PLAYER_VOICE_PARTS as part (part)}
-						<option value={part}>{VOICE_PART_LABELS[part]}</option>
+						<option value={part}>{VOICE_PART_LABELS[part]()}</option>
 					{/each}
 				</select>
 			</label>
 			<label class="field field--sub">
-				<span>Split part</span>
+				<span>{m.settings_split_part()}</span>
 				<select
 					value={$playerDefaults.voiceDesk ?? ''}
 					onchange={(e) => {
@@ -290,14 +296,14 @@
 						updatePlayerDefaults({ voiceDesk: raw === '' ? null : Number(raw) });
 					}}
 				>
-					<option value="">Whole section</option>
+					<option value="">{m.settings_whole_section()}</option>
 					{#each DESK_OPTIONS as desk (desk)}
-						<option value={desk}>{DESK_LABELS[desk]}</option>
+						<option value={desk}>{DESK_LABELS[desk]()}</option>
 					{/each}
 				</select>
 			</label>
 			<label class="field">
-				<span>Display</span>
+				<span>{m.settings_display()}</span>
 				<select
 					value={$playerDefaults.displayMode}
 					onchange={(e) =>
@@ -306,12 +312,12 @@
 						})}
 				>
 					{#each DEFAULT_DISPLAY_MODES as mode (mode)}
-						<option value={mode}>{DISPLAY_MODE_LABELS[mode]}</option>
+						<option value={mode}>{DISPLAY_MODE_LABELS[mode]()}</option>
 					{/each}
 				</select>
 			</label>
 			<label class="field">
-				<span>Sound mixing</span>
+				<span>{m.settings_sound_mixing()}</span>
 				<select
 					value={$playerDefaults.mixMode}
 					onchange={(e) =>
@@ -320,56 +326,54 @@
 						})}
 				>
 					{#each DEFAULT_MIX_MODES as mode (mode)}
-						<option value={mode}>{MIX_MODE_LABELS[mode]}</option>
+						<option value={mode}>{MIX_MODE_LABELS[mode]()}</option>
 					{/each}
 				</select>
 			</label>
 			<label class="field">
-				<span>View</span>
+				<span>{m.settings_view()}</span>
 				<select
 					value={$playerDefaults.viewMode}
 					onchange={(e) => updatePlayerDefaults({ viewMode: (e.currentTarget as HTMLSelectElement).value as ViewMode })}
 				>
 					{#each VIEW_MODES as mode (mode)}
-						<option value={mode}>{VIEW_MODE_LABELS[mode]}</option>
+						<option value={mode}>{VIEW_MODE_LABELS[mode]()}</option>
 					{/each}
 				</select>
 			</label>
 		</section>
 
 		<section class="menu-section">
-			<h3>Playback</h3>
+			<h3>{m.settings_playback()}</h3>
 			<label class="toggle-row">
-				<span>Keep screen awake while practicing</span>
+				<span>{m.settings_keep_screen_awake()}</span>
 				<input type="checkbox" bind:checked={keepScreenAwake} />
 			</label>
 			<label class="toggle-row">
-				<span>Count-in before playback</span>
+				<span>{m.settings_count_in()}</span>
 				<input type="checkbox" bind:checked={countIn} />
 			</label>
 			<label class="toggle-row">
-				<span>Background audio</span>
+				<span>{m.settings_background_audio()}</span>
 				<input type="checkbox" bind:checked={backgroundAudio} />
 			</label>
 		</section>
 
 		<section class="menu-section">
-			<a class="list-row-link" href="/settings/more" onclick={close}>
-				<span>More</span>
-				<span class="dim">About Divisi, portfolio</span>
+			<a class="list-row-link" href={lh('/settings/more')} onclick={close}>
+				<span>{m.settings_more()}</span>
+				<span class="dim">{m.settings_more_note()}</span>
 			</a>
 		</section>
 
 		{#if user}
 			<form method="POST" action="/logout">
-				<button class="btn btn-danger btn-block" type="submit">Log out</button>
+				<button class="btn btn-danger btn-block" type="submit">{m.settings_log_out()}</button>
 			</form>
 
 			{#if confirmingDelete}
 				<p class="card-note">
-					This permanently deletes your account and anything genuinely yours (private notes,
-					personal pieces). Content you created for a group — homework, responsibility
-					schedules — stays for the group, just no longer attributed to you.
+					{m.drawer_delete_account_warning()}
 				</p>
 				{#if deleteError}<p class="error">{deleteError}</p>{/if}
 				<div class="btn-row">
@@ -379,7 +383,7 @@
 						onclick={() => (confirmingDelete = false)}
 						disabled={deletingAccount}
 					>
-						Cancel
+						{m.action_cancel()}
 					</button>
 					<form
 						method="POST"
@@ -391,7 +395,7 @@
 								if (result.type === 'failure') {
 									deletingAccount = false;
 									deleteError =
-										(result.data as { error?: string } | undefined)?.error ?? 'Could not delete account';
+										(result.data as { error?: string } | undefined)?.error ?? m.drawer_could_not_delete_account();
 									return;
 								}
 								if (result.type === 'redirect') {
@@ -402,7 +406,7 @@
 						}}
 					>
 						<button type="submit" class="btn btn-danger" disabled={deletingAccount}>
-							{deletingAccount ? 'Deleting…' : 'Yes, delete account'}
+							{deletingAccount ? m.drawer_deleting() : m.drawer_yes_delete_account()}
 						</button>
 					</form>
 				</div>
@@ -412,7 +416,7 @@
 					class="text-link text-link--danger delete-account-link"
 					onclick={() => (confirmingDelete = true)}
 				>
-					Delete account
+					{m.drawer_delete_account()}
 				</button>
 			{/if}
 		{/if}

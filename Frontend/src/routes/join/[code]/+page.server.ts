@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
+import { lh } from '$lib/i18n';
 import type { GroupOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
@@ -14,7 +15,7 @@ export const load: PageServerLoad = async ({ params, locals, fetch }) => {
 	try {
 		const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
 		const member = groups.find((g) => g.join_code === code);
-		if (member) throw redirect(303, `/groups/${member.id}`);
+		if (member) throw redirect(303, lh(`/groups/${member.id}`));
 	} catch (err) {
 		// An expired/invalid token here just means "treat as logged out" —
 		// the root layout load already handles clearing the cookie; this

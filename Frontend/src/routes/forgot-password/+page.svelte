@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import '$lib/styles/shell.css';
+	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
@@ -11,17 +13,16 @@
 
 <main class="shell">
 	<header class="shell-header">
-		<h1>Forgot password</h1>
+		<h1>{m.forgot_password_title()}</h1>
 	</header>
 
 	{#if form?.success}
 		<section class="card">
-			<p class="card-eyebrow">Check your email</p>
+			<p class="card-eyebrow">{m.forgot_password_check_email()}</p>
 			<p class="card-meta">
-				If an account exists for that address, a reset link is on its way. It's good for one
-				hour.
+				{m.forgot_password_check_email_body()}
 			</p>
-			<a class="btn btn-outline btn-block" href="/login">Back to log in</a>
+			<a class="btn btn-outline btn-block" href={lh('/login')}>{m.forgot_password_back_to_login()}</a>
 		</section>
 	{:else}
 		<form
@@ -35,9 +36,9 @@
 				};
 			}}
 		>
-			<p class="card-note">Enter the email you signed up with and we'll send a reset link.</p>
+			<p class="card-note">{m.forgot_password_instructions()}</p>
 			<label class="field">
-				<span>Email</span>
+				<span>{m.login_email()}</span>
 				<input type="email" name="email" bind:value={email} required autocomplete="email" />
 			</label>
 
@@ -46,12 +47,12 @@
 			{/if}
 
 			<button class="btn btn-primary btn-block" type="submit" disabled={submitting || !email.trim()}>
-				{submitting ? 'Sending…' : 'Send reset link'}
+				{submitting ? m.forgot_password_sending() : m.forgot_password_send_link()}
 			</button>
 		</form>
 	{/if}
 
-	<p class="note"><a href="/login">Back to log in</a></p>
+	<p class="note"><a href={lh('/login')}>{m.forgot_password_back_to_login()}</a></p>
 </main>
 
 <style>

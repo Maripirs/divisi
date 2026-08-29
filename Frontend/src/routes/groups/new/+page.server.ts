@@ -1,5 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
+import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type { GroupOut } from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -9,14 +11,14 @@ import type { Actions, PageServerLoad } from './$types';
 // it can actually save. See Frontend/plan.md's log for the note.
 export const load: PageServerLoad = async ({ parent }) => {
 	const { user } = await parent();
-	if (!user) throw redirect(303, '/login?redirectTo=/groups/new');
+	if (!user) throw redirect(303, lh('/login?redirectTo=/groups/new'));
 };
 
 export const actions: Actions = {
 	default: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const name = String(form.get('name') ?? '').trim();
-		if (!name) return fail(400, { error: 'Enter a group name' });
+		if (!name) return fail(400, { error: m.groups_new_enter_name() });
 
 		let group: GroupOut;
 		try {
@@ -31,6 +33,6 @@ export const actions: Actions = {
 			throw err;
 		}
 
-		throw redirect(303, `/groups/${group.id}?view=admin&created=1`);
+		throw redirect(303, lh(`/groups/${group.id}?view=admin&created=1`));
 	}
 };
