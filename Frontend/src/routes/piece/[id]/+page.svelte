@@ -69,7 +69,6 @@
 	const MIX_MODE_LABELS: Record<MixMode, string> = {
 		everyone: 'Everyone',
 		minusMe: 'Minus Me',
-		myPart: 'My Part',
 		mostlyMe: 'Mostly Me',
 		custom: 'Custom'
 	};
@@ -506,19 +505,20 @@
 
 	// 0.5 is this app's "normal" per-part volume (see `describeBalance`,
 	// which labels it "Even") — so "Everyone" leaves every bucket there,
-	// "Minus Me"/"My Part" just cut the non-focus or focus buckets to
-	// silence rather than boosting anything above normal. "Mostly Me" is
-	// the first preset that actually deviates from that: focus part
-	// boosted to full (1), everyone else turned down low but still
-	// audible (0.15, not silenced like "My Part") -- singing along with a
-	// quiet backing track, per the human's own description of it.
+	// "Minus Me" just cuts the non-focus buckets to silence rather than
+	// boosting anything above normal. "Mostly Me" is the first preset that
+	// actually deviates from that: focus part boosted to full (1),
+	// everyone else turned down low but still audible (0.15) -- singing
+	// along with a quiet backing track, per the human's own description
+	// of it. ("My Part" — focus-only, everyone else silenced — used to be
+	// a preset here too; removed per the human's call, true solo is still
+	// reachable via the Custom sliders if someone wants it.)
 	function presetBalances(mode: Exclude<MixMode, 'custom'>, focusPart: VoicePart): Record<MixPart, number> {
 		return Object.fromEntries(
 			(parsed?.parts ?? []).map((part) => {
 				let value: number;
 				if (mode === 'everyone') value = 0.5;
 				else if (mode === 'minusMe') value = isFocusPart(part, focusPart) ? 0 : 0.5;
-				else if (mode === 'myPart') value = isFocusPart(part, focusPart) ? 0.5 : 0;
 				else value = isFocusPart(part, focusPart) ? 1 : 0.15; // mostlyMe
 				return [part.id, value];
 			})
@@ -526,7 +526,7 @@
 	}
 
 	function matchingMixMode(balances: Record<MixPart, number>, focusPart: VoicePart): MixMode {
-		const presetModes: Exclude<MixMode, 'custom'>[] = ['everyone', 'minusMe', 'myPart', 'mostlyMe'];
+		const presetModes: Exclude<MixMode, 'custom'>[] = ['everyone', 'minusMe', 'mostlyMe'];
 		return presetModes.find((mode) => sameBalances(balances, presetBalances(mode, focusPart))) ?? 'custom';
 	}
 

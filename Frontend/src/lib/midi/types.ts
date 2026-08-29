@@ -58,7 +58,7 @@ export type VisualState = (typeof VISUAL_STATES)[number];
  * *playback* — the audio counterpart to `DisplayMode`. `'custom'` is the
  * only mode where the per-part volume sliders are shown; the other three
  * are one-tap presets that set every bucket's volume at once. */
-export const MIX_MODES = ['everyone', 'minusMe', 'myPart', 'mostlyMe', 'custom'] as const;
+export const MIX_MODES = ['everyone', 'minusMe', 'mostlyMe', 'custom'] as const;
 export type MixMode = (typeof MIX_MODES)[number];
 
 /** A single sung note, already resolved to a mixer bucket and to

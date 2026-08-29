@@ -51,7 +51,6 @@
 	const MIX_MODE_LABELS: Record<Exclude<MixMode, 'custom'>, string> = {
 		everyone: 'Everyone',
 		minusMe: 'Minus Me',
-		myPart: 'My Part',
 		mostlyMe: 'Mostly Me'
 	};
 	const DEFAULT_MIX_MODES = Object.keys(MIX_MODE_LABELS) as Array<keyof typeof MIX_MODE_LABELS>;
