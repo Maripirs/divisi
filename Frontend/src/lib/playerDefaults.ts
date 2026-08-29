@@ -76,10 +76,25 @@ export const DEFAULT_PLAYER_DEFAULTS: PlayerDefaults = {
 	voicePart: 'soprano',
 	voiceDesk: null,
 	displayMode: 'solo',
-	mixMode: 'everyone',
+	mixMode: 'mostlyMe',
 	viewMode: 'player',
 	mix: DEFAULT_MIX
 };
+
+// Same breakpoint app.css already uses for its own mobile/desktop split —
+// a first-time visitor's display default follows screen size: small
+// screens default to solo (dense notation is hard to read at that size
+// with every part visible), bigger screens default to Highlighted (My
+// part + others), since there's room to show everyone without it
+// crowding the score.
+const SMALL_SCREEN_QUERY = '(max-width: 768px)';
+
+function firstTimeDefaults(): PlayerDefaults {
+	if (!browser || !window.matchMedia(SMALL_SCREEN_QUERY).matches) {
+		return { ...DEFAULT_PLAYER_DEFAULTS, displayMode: 'highlighted' };
+	}
+	return DEFAULT_PLAYER_DEFAULTS;
+}
 
 function isVoicePart(value: unknown): value is VoicePart {
 	return VOICE_PARTS.includes(value as VoicePart);
@@ -121,7 +136,7 @@ function sanitizeMix(value: unknown): MixDefaults {
 function loadDefaults(): PlayerDefaults {
 	if (!browser) return DEFAULT_PLAYER_DEFAULTS;
 	const raw = window.localStorage.getItem(STORAGE_KEY);
-	if (!raw) return DEFAULT_PLAYER_DEFAULTS;
+	if (!raw) return firstTimeDefaults();
 	try {
 		const parsed = JSON.parse(raw) as Partial<Record<keyof PlayerDefaults, unknown>>;
 		return {
