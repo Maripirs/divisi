@@ -193,6 +193,10 @@ class Piece(Base):
     # practice-tempo preference, which stays a per-piece, per-browser
     # `localStorage` value on the Frontend, never written here.
     default_tempo_bpm: Mapped[int | None] = mapped_column(nullable=True)
+    # Piece-level, not per-version: neither is a revision concern. `None`
+    # means nothing set yet.
+    composer: Mapped[str | None] = mapped_column(String, nullable=True)
+    youtube_url: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -209,7 +213,13 @@ class PieceVersion(Base):
     status: Mapped[VersionStatus] = mapped_column(
         SAEnum(VersionStatus, native_enum=False), nullable=False, default=VersionStatus.draft
     )
-    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable: a version can be PDF-only, with no playable music file at
+    # all. At least one of `file_path`/`pdf_file_path` is required — that
+    # rule lives at the API layer (upload_piece/upload_version), not a DB
+    # constraint, matching this codebase's general style of keeping DB
+    # constraints minimal.
+    file_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    pdf_file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -83,6 +83,17 @@
 	let editingTempoPieceId = $state<string | null>(null);
 	let tempoDraft = $state('');
 	let savingTempo = $state(false);
+	// F5: Tracks tab (admin only) upload form — click-to-reveal, same pattern
+	// as the other create forms on this page.
+	let showUploadForm = $state(false);
+	let uploadingTrack = $state(false);
+	// Client-side mirror of the Backend's "at least one of music/PDF"
+	// validation — real enforcement stays server-side (`form?.error`
+	// below), this just keeps the submit button honest before that round
+	// trip.
+	let uploadMusicFiles = $state<FileList | null>(null);
+	let uploadPdfFiles = $state<FileList | null>(null);
+	let canSubmitUpload = $derived(!!uploadMusicFiles?.length || !!uploadPdfFiles?.length);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
@@ -289,16 +300,25 @@
 		<!-- Admin sees every distributed track, including ones with no
 		     practice file wired up yet (so they know what still needs
 		     fixing) — a member just gets nothing to look at for those, since
-		     there's nothing they could do about it anyway. -->
-		{@const visibleTracks = mode === 'admin' ? data.tracks : data.tracks.filter((track) => getPieceByTitle(track.title))}
+		     there's nothing they could do about it anyway. F5: a track is
+		     practicable either by title-matching a bundled fixture (the old
+		     path) or, now, by being a real Backend piece with its own music
+		     file/PDF — either is enough. -->
+		{@const visibleTracks =
+			mode === 'admin'
+				? data.tracks
+				: data.tracks.filter((track) => getPieceByTitle(track.title) || track.has_music || track.has_pdf)}
 		{#if visibleTracks.length === 0}
 			<p class="empty">No rehearsal tracks shared with this group yet.</p>
 		{:else}
 			{#each visibleTracks as track (track.piece_id)}
 				{@const bundled = getPieceByTitle(track.title)}
+				{@const tempoQuery = track.default_tempo_bpm ? `?defaultTempo=${track.default_tempo_bpm}` : ''}
 				{@const practiceHref = bundled
-					? `/piece/${bundled.id}${track.default_tempo_bpm ? `?defaultTempo=${track.default_tempo_bpm}` : ''}`
-					: null}
+					? `/piece/${bundled.id}${tempoQuery}`
+					: track.has_music || track.has_pdf
+						? `/piece/${track.piece_id}${tempoQuery}`
+						: null}
 				<section class="card track-card">
 					<div class="track-info">
 						<p class="card-title">{track.title}</p>
@@ -352,7 +372,7 @@
 								</p>
 							{/if}
 						{/if}
-						{#if !bundled}
+						{#if !practiceHref}
 							<p class="card-note">
 								Practice isn't wired up for this track yet (see Frontend/plan.md's backlog).
 							</p>
@@ -369,10 +389,74 @@
 			{/each}
 		{/if}
 		{#if mode === 'admin'}
-			<p class="card-note">
-				Upload a piece via the Backend's `/library/pieces` upload endpoint, then distribute it to
-				this group — no in-app upload UI yet.
-			</p>
+			{#if showUploadForm}
+				<section class="card">
+					<p class="card-eyebrow">Upload a track</p>
+					<form
+						method="POST"
+						action="?/uploadTrack"
+						enctype="multipart/form-data"
+						use:enhance={() => {
+							uploadingTrack = true;
+							return async ({ update }) => {
+								uploadingTrack = false;
+								showUploadForm = false;
+								await update();
+							};
+						}}
+					>
+						<label class="field">
+							<span>Name</span>
+							<input name="title" required />
+						</label>
+						<label class="field">
+							<span>Author</span>
+							<input name="composer" placeholder="Optional" />
+						</label>
+						<label class="field">
+							<span>Music file (MIDI or MusicXML)</span>
+							<input name="file" type="file" accept=".mid,.midi,.musicxml,.xml" bind:files={uploadMusicFiles} />
+						</label>
+						<label class="field">
+							<span>PDF</span>
+							<input name="pdf_file" type="file" accept="application/pdf" bind:files={uploadPdfFiles} />
+						</label>
+						{#if !canSubmitUpload}
+							<p class="card-note">Provide a music file, a PDF, or both.</p>
+						{/if}
+						<label class="field">
+							<span>Default tempo</span>
+							<input name="default_tempo_bpm" type="number" min="1" placeholder="e.g. 96" />
+						</label>
+						<label class="field">
+							<span>YouTube reference link</span>
+							<input name="youtube_url" type="url" placeholder="Optional" />
+						</label>
+						{#if form?.form === 'uploadTrack' && form?.error}
+							<p class="error">{form.error}</p>
+						{/if}
+						<div class="btn-row">
+							<button class="btn btn-primary" type="submit" disabled={uploadingTrack || !canSubmitUpload}>
+								{uploadingTrack ? 'Uploading…' : 'Upload and share'}
+							</button>
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => (showUploadForm = false)}
+								disabled={uploadingTrack}
+							>
+								Cancel
+							</button>
+						</div>
+					</form>
+				</section>
+			{:else}
+				<div class="btn-row">
+					<button type="button" class="btn btn-outline" onclick={() => (showUploadForm = true)}>
+						+ Upload track
+					</button>
+				</div>
+			{/if}
 		{/if}
 	{:else if tab === 'weeklyNotes'}
 		{#if mode === 'admin'}

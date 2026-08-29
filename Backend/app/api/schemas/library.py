@@ -14,6 +14,8 @@ class PieceOut(BaseModel):
     owner_type: OwnerType
     owner_id: str
     default_tempo_bpm: int | None = None
+    composer: str | None = None
+    youtube_url: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -63,6 +65,13 @@ class LibraryEntryOut(BaseModel):
     version_source: VersionSource
     version_created_at: datetime
     default_tempo_bpm: int | None = None
+    composer: str | None = None
+    youtube_url: str | None = None
+    # Computed booleans, not raw paths — never leak a storage-relative path
+    # to the client. The Frontend uses these to decide what to render, and
+    # reaches actual bytes only through the file-serving routes below.
+    has_music: bool = False
+    has_pdf: bool = False
 
 
 class GuestPieceOut(BaseModel):

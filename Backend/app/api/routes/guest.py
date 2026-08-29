@@ -244,6 +244,42 @@ def get_guest_piece_manifest(
     )
 
 
+@router.get("/{join_code}/pieces/{piece_id}/file")
+def get_guest_piece_file(
+    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+) -> FileResponse:
+    """F5: raw music-file bytes for this group's currently-distributed
+    version of a piece. Same join-code/password/page-settings gate as the
+    manifest route; 404s cleanly when that version has no music file."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
+    version = _latest_distributed_version(group.id, piece_id, db)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
+    if version.file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no music file")
+    return FileResponse(resolve_source_path(version.file_path))
+
+
+@router.get("/{join_code}/pieces/{piece_id}/pdf")
+def get_guest_piece_pdf(
+    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+) -> FileResponse:
+    """Raw PDF bytes for this group's currently-distributed version of a
+    piece. Same gate as the manifest route; 404s cleanly when that version
+    has no PDF."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
+    version = _latest_distributed_version(group.id, piece_id, db)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
+    if version.pdf_file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no PDF")
+    return FileResponse(resolve_source_path(version.pdf_file_path))
+
+
 @router.get("/{join_code}/pieces/{piece_id}/renders/{filename}")
 def get_guest_render_file(
     join_code: str, piece_id: str, filename: str, password: str | None = None, db: Session = Depends(get_db)

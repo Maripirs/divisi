@@ -1,4 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, backendJson, BackendApiError } from '$lib/server/backend';
 import type {
 	GroupMemberOut,
@@ -257,6 +258,67 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'defaultTempo' };
+	},
+
+	// F5, admin-only: uploads a real track (music file, PDF, or both) and
+	// immediately makes it visible on this group's Tracks tab. Posts
+	// straight to the Backend rather than through `backendFetch` — that
+	// helper force-sets `Content-Type: application/json` whenever a body is
+	// present, but a multipart body needs the browser/fetch's own generated
+	// `multipart/form-data; boundary=...` header instead. Chains
+	// submit → approve → distribute on the new version automatically: the
+	// uploading admin already has review authority over their own group's
+	// content, so this collapses what would otherwise be 4 manual calls
+	// into "upload and it's on the Tracks tab".
+	uploadTrack: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const musicFile = form.get('file');
+		const pdfFile = form.get('pdf_file');
+		const hasMusic = musicFile instanceof File && musicFile.size > 0;
+		const hasPdf = pdfFile instanceof File && pdfFile.size > 0;
+		if (!hasMusic && !hasPdf) {
+			return fail(400, { error: 'Provide a music file, a PDF, or both', form: 'uploadTrack' });
+		}
+
+		const uploadBody = new FormData();
+		uploadBody.set('title', String(form.get('title') ?? ''));
+		uploadBody.set('owner_type', 'group');
+		uploadBody.set('group_id', params.id);
+		const composer = String(form.get('composer') ?? '').trim();
+		if (composer) uploadBody.set('composer', composer);
+		const youtubeUrl = String(form.get('youtube_url') ?? '').trim();
+		if (youtubeUrl) uploadBody.set('youtube_url', youtubeUrl);
+		const defaultTempoBpm = String(form.get('default_tempo_bpm') ?? '').trim();
+		if (defaultTempoBpm) uploadBody.set('default_tempo_bpm', defaultTempoBpm);
+		if (hasMusic) uploadBody.set('file', musicFile);
+		if (hasPdf) uploadBody.set('pdf_file', pdfFile);
+
+		try {
+			const uploadRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${locals.token}` },
+				body: uploadBody
+			});
+			if (!uploadRes.ok) {
+				const body = (await uploadRes.json().catch(() => ({}))) as { detail?: string };
+				return fail(uploadRes.status, { error: body.detail ?? `Upload failed (${uploadRes.status})`, form: 'uploadTrack' });
+			}
+			const uploaded = (await uploadRes.json()) as { piece: { id: string }; version: { id: string } };
+			const versionId = uploaded.version.id;
+
+			await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
+			await backendFetch(locals.token, `/library/versions/${versionId}/approve`, { method: 'POST' }, fetch);
+			await backendFetch(
+				locals.token,
+				`/library/pieces/${uploaded.piece.id}/versions/${versionId}/distribute`,
+				{ method: 'POST' },
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'uploadTrack' });
+			throw err;
+		}
+		return { success: true, form: 'uploadTrack' };
 	},
 
 	// Admin-only; promoting is always allowed, demoting the last admin gets

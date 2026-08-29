@@ -240,6 +240,49 @@ def test_guest_join_code_404s_when_tracks_page_disabled(client):
     assert client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/manifest").status_code == 404
 
 
+def _create_group_with_distributed_pdf_only_piece(client, admin_headers, title="Score Only"):
+    group = client.post("/groups", json={"name": "PDF Choir"}, headers=admin_headers).json()
+    upload = client.post(
+        "/library/pieces",
+        data={"title": title, "owner_type": "group", "group_id": group["id"]},
+        files={"pdf_file": ("piece.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=admin_headers,
+    )
+    piece_id = upload.json()["piece"]["id"]
+    version_id = upload.json()["version"]["id"]
+    client.post(f"/library/versions/{version_id}/submit", headers=admin_headers)
+    client.post(f"/library/versions/{version_id}/approve", headers=admin_headers)
+    client.post(f"/library/pieces/{piece_id}/versions/{version_id}/distribute", headers=admin_headers)
+    return group, piece_id, version_id
+
+
+def test_guest_can_fetch_music_file_for_a_distributed_piece(client):
+    admin_headers = _register_and_login(client, "gfile-admin@example.com")
+    group, piece_id, version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/file")
+    assert response.status_code == 200
+
+    no_pdf = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/pdf")
+    assert no_pdf.status_code == 404
+
+
+def test_guest_can_fetch_pdf_for_a_pdf_only_distributed_piece(client):
+    admin_headers = _register_and_login(client, "gpdf-admin@example.com")
+    group, piece_id, version_id = _create_group_with_distributed_pdf_only_piece(client, admin_headers)
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/pdf")
+    assert response.status_code == 200
+
+    no_music = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/file")
+    assert no_music.status_code == 404
+
+
+def test_guest_file_routes_404_for_unknown_join_code(client):
+    assert client.get("/guest/NOTAREAL/pieces/whatever/file").status_code == 404
+    assert client.get("/guest/NOTAREAL/pieces/whatever/pdf").status_code == 404
+
+
 def test_guest_endpoints_are_rate_limited(client):
     admin_headers = _register_and_login(client, "admin4@example.com")
     group = client.post("/groups", json={"name": "Choir4"}, headers=admin_headers).json()

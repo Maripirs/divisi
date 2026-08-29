@@ -103,20 +103,34 @@ def update_default_tempo(
     return piece
 
 
+def _save_upload(file: UploadFile | None, data: bytes) -> str | None:
+    if file is None:
+        return None
+    suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
+    return save_file(data, suffix=suffix)
+
+
 @router.post("/pieces", response_model=PieceUploadOut, status_code=status.HTTP_201_CREATED)
 async def upload_piece(
     title: str = Form(...),
     owner_type: OwnerType = Form(...),
     group_id: str | None = Form(None),
-    file: UploadFile = File(...),
+    composer: str | None = Form(None),
+    youtube_url: str | None = Form(None),
+    default_tempo_bpm: int | None = Form(None),
+    file: UploadFile | None = File(None),
+    pdf_file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PieceUploadOut:
+    if file is None and pdf_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a music file, a PDF, or both"
+        )
     owner_id = resolve_new_piece_owner_id(owner_type, group_id, current_user.id, db)
 
-    data = await file.read()
-    suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
-    file_path = save_file(data, suffix=suffix)
+    file_path = _save_upload(file, await file.read()) if file is not None else None
+    pdf_file_path = _save_upload(pdf_file, await pdf_file.read()) if pdf_file is not None else None
 
     piece, version = create_piece_with_version(
         title=title,
@@ -124,6 +138,10 @@ async def upload_piece(
         owner_id=owner_id,
         created_by=current_user.id,
         file_path=file_path,
+        pdf_file_path=pdf_file_path,
+        composer=composer,
+        youtube_url=youtube_url,
+        default_tempo_bpm=default_tempo_bpm,
         db=db,
     )
     return PieceUploadOut(piece=piece, version=version)
@@ -134,19 +152,28 @@ async def upload_piece(
 )
 async def upload_version(
     piece_id: str,
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    pdf_file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PieceVersionOut:
+    if file is None and pdf_file is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a music file, a PDF, or both"
+        )
     piece = _get_piece_or_404(piece_id, db)
     _require_piece_access(piece, current_user, db)
 
-    data = await file.read()
-    suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
-    file_path = save_file(data, suffix=suffix)
+    file_path = _save_upload(file, await file.read()) if file is not None else None
+    pdf_file_path = _save_upload(pdf_file, await pdf_file.read()) if pdf_file is not None else None
 
     version = add_version(
-        piece=piece, created_by=current_user.id, file_path=file_path, source=VersionSource.modification, db=db
+        piece=piece,
+        created_by=current_user.id,
+        file_path=file_path,
+        pdf_file_path=pdf_file_path,
+        source=VersionSource.modification,
+        db=db,
     )
     return version
 
@@ -275,6 +302,10 @@ def list_my_library(
                 version_source=latest.source,
                 version_created_at=latest.created_at,
                 default_tempo_bpm=piece.default_tempo_bpm,
+                composer=piece.composer,
+                youtube_url=piece.youtube_url,
+                has_music=latest.file_path is not None,
+                has_pdf=latest.pdf_file_path is not None,
             )
         )
 
@@ -307,10 +338,47 @@ def list_my_library(
                     version_source=version.source,
                     version_created_at=version.created_at,
                     default_tempo_bpm=piece.default_tempo_bpm,
+                    composer=piece.composer,
+                    youtube_url=piece.youtube_url,
+                    has_music=version.file_path is not None,
+                    has_pdf=version.pdf_file_path is not None,
                 )
             )
 
     return entries
+
+
+@router.get("/versions/{version_id}/file")
+def get_version_file(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """F5: raw music-file bytes (MIDI/MusicXML) for a version. Same access
+    gate as the manifest route; 404s cleanly when this version has no
+    music file (PDF-only)."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_piece_access(piece, current_user, db)
+    if version.file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no music file")
+    return FileResponse(resolve_source_path(version.file_path))
+
+
+@router.get("/versions/{version_id}/pdf")
+def get_version_pdf(
+    version_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Raw PDF bytes for a version. Same access gate as the manifest route;
+    404s cleanly when this version has no PDF."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_piece_access(piece, current_user, db)
+    if version.pdf_file_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no PDF")
+    return FileResponse(resolve_source_path(version.pdf_file_path))
 
 
 @router.get("/versions/{version_id}/manifest", response_model=RenderManifestOut)

@@ -71,9 +71,26 @@ def resolve_new_piece_owner_id(
 
 
 def create_piece_with_version(
-    *, title: str, owner_type: OwnerType, owner_id: str, created_by: str, file_path: str, db: Session
+    *,
+    title: str,
+    owner_type: OwnerType,
+    owner_id: str,
+    created_by: str,
+    file_path: str | None,
+    db: Session,
+    composer: str | None = None,
+    youtube_url: str | None = None,
+    default_tempo_bpm: int | None = None,
+    pdf_file_path: str | None = None,
 ) -> tuple[Piece, PieceVersion]:
-    piece = Piece(title=title, owner_type=owner_type, owner_id=owner_id)
+    piece = Piece(
+        title=title,
+        owner_type=owner_type,
+        owner_id=owner_id,
+        composer=composer,
+        youtube_url=youtube_url,
+        default_tempo_bpm=default_tempo_bpm,
+    )
     db.add(piece)
     db.flush()
     version = PieceVersion(
@@ -82,6 +99,7 @@ def create_piece_with_version(
         source=VersionSource.original,
         status=VersionStatus.draft,
         file_path=file_path,
+        pdf_file_path=pdf_file_path,
     )
     db.add(version)
     db.commit()
@@ -91,7 +109,13 @@ def create_piece_with_version(
 
 
 def add_version(
-    *, piece: Piece, created_by: str, file_path: str, source: VersionSource, db: Session
+    *,
+    piece: Piece,
+    created_by: str,
+    file_path: str | None,
+    source: VersionSource,
+    db: Session,
+    pdf_file_path: str | None = None,
 ) -> PieceVersion:
     version = PieceVersion(
         piece_id=piece.id,
@@ -99,6 +123,7 @@ def add_version(
         source=source,
         status=VersionStatus.draft,
         file_path=file_path,
+        pdf_file_path=pdf_file_path,
     )
     db.add(version)
     db.commit()

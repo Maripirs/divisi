@@ -21,15 +21,26 @@
 		type VoicePart
 	} from '$lib/midi/types';
 	import { getPiece } from '$lib/pieces/registry';
+	import { buildRemotePiece, type RemotePieceMeta } from '$lib/pieces/remotePiece';
 	import { highlightedMutedInk, resolvedTheme } from '$lib/theme';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 
-	let { data }: { data: { id: string } } = $props();
+	let { data }: { data: { id: string; remote: RemotePieceMeta | null } } = $props();
 	// The keyed markup remounts this component whenever the route id changes,
-	// so capturing the matching piece once per mount is intentional.
+	// so capturing the matching piece once per mount is intentional. Bundled
+	// fixtures win a same-id collision (can't happen in practice — fixture
+	// ids are short slugs, real Backend piece ids are UUIDs — but bundled
+	// first matches this file's existing behavior before F5).
 	// svelte-ignore state_referenced_locally
-	const piece = getPiece(data.id);
+	const piece = getPiece(data.id) ?? (data.remote ? buildRemotePiece(data.remote) : undefined);
+	// F5: a piece can carry a music file, a PDF, or both — the player adapts
+	// to whichever subset this piece actually has. Every bundled fixture has
+	// both today, so this is a no-op for them (both stay true, exactly like
+	// before F5 existed).
+	const hasPlayer = !!piece?.load;
+	const hasPdfPane = !!piece?.pdfUrl;
+	const availableViewModes = VIEW_MODES.filter((mode) => (mode === 'player' ? hasPlayer : hasPdfPane));
 
 	// Reached via a join-code link (`routes/join/[code]`) rather than a
 	// logged-in dashboard — same player, same "Make this my default" (per
@@ -98,9 +109,14 @@
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
 		| { kind: 'noVisibleTracks' }
-		| { kind: 'noNotesForVoicePart'; part: MixPart };
+		| { kind: 'noNotesForVoicePart'; part: MixPart }
+		// F5: a piece with no music file (PDF-only) never parses anything —
+		// nothing in the allow-lists below ever matches this, so the menu
+		// button/bottom playback bar stay correctly hidden, same as they'd be
+		// mid-load, with no special-casing needed at each check site.
+		| { kind: 'pdfOnly' };
 
-	let loadState = $state<LoadState>(piece ? { kind: 'loading' } : { kind: 'notFound' });
+	let loadState = $state<LoadState>(!piece ? { kind: 'notFound' } : hasPlayer ? { kind: 'loading' } : { kind: 'pdfOnly' });
 	let parsed: ParsedMIDI | undefined;
 	let player: MidiPlayer | undefined;
 
@@ -126,7 +142,12 @@
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
-	let viewMode = $state<ViewMode>(initialDefaults.viewMode);
+	// F5: forced to whichever single pane exists when a piece doesn't have
+	// both — a stale/default 'pdf'/'player' pick from before this piece was
+	// opened must never select a pane this piece doesn't have.
+	let viewMode = $state<ViewMode>(
+		!hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode
+	);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
 	let tempoBpm = $state(120);
@@ -206,11 +227,20 @@
 		if (stored.visualStates) visualStates = stored.visualStates;
 		if (stored.mixMode) mixMode = stored.mixMode;
 		if (stored.balance) balance = stored.balance;
-		if (stored.viewMode) viewMode = stored.viewMode;
+		// F5: only ever restore a stored viewMode this piece can actually
+		// show — a persisted 'pdf' pick must never win for a piece that
+		// (now) has no PDF, and vice versa.
+		if (stored.viewMode && availableViewModes.includes(stored.viewMode)) viewMode = stored.viewMode;
 		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
 		if (stored.pdfZoomLevel !== undefined) pdfZoomLevel = Math.min(2, Math.max(0.5, stored.pdfZoomLevel));
+		// F5: PDF-only piece — no music file to parse or play, so there's
+		// nothing left for the MIDI/audio pipeline below to do. Captured to a
+		// local rather than narrowing `piece.load` itself, which TS won't
+		// carry across the `await` below.
+		const load = piece.load;
+		if (!load) return;
 		try {
-			const [fetchedPlayer, loadedPiece] = await Promise.all([MidiPlayer.create(), piece.load()]);
+			const [fetchedPlayer, loadedPiece] = await Promise.all([MidiPlayer.create(), load()]);
 			if (destroyed) {
 				fetchedPlayer.destroy();
 				return;
@@ -642,6 +672,24 @@
 		return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 	}
 
+	// F5: converts whatever YouTube URL shape an admin pasted in the upload
+	// form (`watch?v=`, `youtu.be/`, already an `/embed/` link) into an
+	// embeddable URL — falls back to the input unchanged if no video id is
+	// recognizable, so a malformed link just fails to embed rather than
+	// throwing.
+	function toYoutubeEmbedUrl(url: string): string {
+		try {
+			const parsed = new URL(url);
+			if (parsed.pathname.startsWith('/embed/')) return url;
+			const id = parsed.hostname.includes('youtu.be')
+				? parsed.pathname.slice(1)
+				: (parsed.searchParams.get('v') ?? '');
+			return id ? `https://www.youtube.com/embed/${id}` : url;
+		} catch {
+			return url;
+		}
+	}
+
 	function mixLabel(part: MixPart): string {
 		if (part === 'accompaniment') return 'Accomp.';
 		return parsed?.parts.find((p) => p.id === part)?.label ?? part;
@@ -680,7 +728,7 @@
 
 			<div class="top-bar-title">
 				<h1>{piece?.title ?? 'Divisi'}</h1>
-				{#if piece}
+				{#if piece?.composer}
 					<p>{piece.composer}</p>
 				{/if}
 			</div>
@@ -701,6 +749,24 @@
 			</button>
 		</header>
 
+		{#if piece?.youtubeUrl}
+			<!-- F5: reference-audio link, shown regardless of which of
+			     music-file/PDF this piece has — not gated behind the
+			     player/PDF toggle above, per the human's explicit call. -->
+			<details class="youtube-disclosure">
+				<summary>Reference recording</summary>
+				<div class="youtube-embed">
+					<iframe
+						src={toYoutubeEmbedUrl(piece.youtubeUrl)}
+						title="Reference recording"
+						frameborder="0"
+						allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+						allowfullscreen
+					></iframe>
+				</div>
+			</details>
+		{/if}
+
 		<main class="score-area">
 			<!-- Both panes stay mounted once shown, toggling only via `hidden` —
 			     switching view modes used to swap them with an {#if}, which tore
@@ -709,6 +775,7 @@
 			     the synth's audio callback (js-synthesizer runs on a
 			     ScriptProcessorNode, not an AudioWorklet, so it's not immune to
 			     main-thread jank). -->
+			{#if hasPlayer || !piece}
 			<div class="view-pane" class:hidden={viewMode !== 'player'}>
 				{#if loadState.kind === 'loading'}
 					<div class="status-card">
@@ -744,7 +811,8 @@
 					</div>
 				{/if}
 			</div>
-			{#if piece}
+			{/if}
+			{#if piece?.pdfUrl}
 				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
 					<div class="pdf-card">
 						<PdfView pdfUrl={piece.pdfUrl} bind:zoom={pdfZoomLevel} active={viewMode === 'pdf'} />
@@ -870,21 +938,27 @@
 					{/if}
 				</section>
 
-				<section class="menu-section">
-					<h3>View</h3>
-					<div class="segmented" role="group" aria-label="View">
-						{#each VIEW_MODES as mode (mode)}
-							<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
-								{VIEW_MODE_LABELS[mode]}
+				{#if availableViewModes.length > 1}
+					<!-- F5: only rendered when this piece actually has both a
+					     music file and a PDF to toggle between — a piece with
+					     just one of the two has nothing to toggle, so it skips
+					     straight to that view with no menu section at all. -->
+					<section class="menu-section">
+						<h3>View</h3>
+						<div class="segmented" role="group" aria-label="View">
+							{#each availableViewModes as mode (mode)}
+								<button class:active={viewMode === mode} onclick={() => setViewMode(mode)}>
+									{VIEW_MODE_LABELS[mode]}
+								</button>
+							{/each}
+						</div>
+						{#if !viewMatchesDefault}
+							<button type="button" class="text-link default-link" onclick={saveViewAsDefault}>
+								{defaultFlash.view ? 'Saved as default ✓' : 'Make this my default'}
 							</button>
-						{/each}
-					</div>
-					{#if !viewMatchesDefault}
-						<button type="button" class="text-link default-link" onclick={saveViewAsDefault}>
-							{defaultFlash.view ? 'Saved as default ✓' : 'Make this my default'}
-						</button>
-					{/if}
-				</section>
+						{/if}
+					</section>
+				{/if}
 
 				{#if viewMode === 'player'}
 					<section class="menu-section">
@@ -1052,6 +1126,35 @@
 		stroke-width: 2;
 		stroke-linecap: round;
 		stroke-linejoin: round;
+	}
+
+	.youtube-disclosure {
+		flex: 0 0 auto;
+		padding: 0 1rem;
+	}
+
+	.youtube-disclosure summary {
+		cursor: pointer;
+		padding: 0.5rem 0;
+		font-size: 0.875rem;
+		color: var(--text-muted, inherit);
+	}
+
+	.youtube-embed {
+		position: relative;
+		width: 100%;
+		max-width: 32rem;
+		aspect-ratio: 16 / 9;
+		margin: 0 auto 0.75rem;
+	}
+
+	.youtube-embed iframe {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border: 0;
+		border-radius: 0.5rem;
 	}
 
 	.score-area {

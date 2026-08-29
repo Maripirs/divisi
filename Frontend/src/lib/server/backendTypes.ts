@@ -124,4 +124,10 @@ export interface LibraryEntryOut {
 	version_source: VersionSource;
 	version_created_at: string;
 	default_tempo_bpm: number | null;
+	composer: string | null;
+	youtube_url: string | null;
+	/** Computed by the Backend, never a raw storage path — see
+	 * `Backend/app/api/schemas/library.py`'s `LibraryEntryOut`. */
+	has_music: boolean;
+	has_pdf: boolean;
 }

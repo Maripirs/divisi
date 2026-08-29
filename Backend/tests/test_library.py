@@ -8,11 +8,32 @@ def _register_and_login(client, email, name="Name", password="hunter22"):
     return {"Authorization": f"Bearer {token}"}
 
 
-def _upload_file(client, headers, title="Ave Maria", owner_type="user", group_id=None):
+def _upload_file(
+    client,
+    headers,
+    title="Ave Maria",
+    owner_type="user",
+    group_id=None,
+    include_music=True,
+    include_pdf=False,
+    composer=None,
+    youtube_url=None,
+    default_tempo_bpm=None,
+):
     data = {"title": title, "owner_type": owner_type}
     if group_id:
         data["group_id"] = group_id
-    files = {"file": ("piece.xml", io.BytesIO(b"<musicxml/>"), "application/xml")}
+    if composer is not None:
+        data["composer"] = composer
+    if youtube_url is not None:
+        data["youtube_url"] = youtube_url
+    if default_tempo_bpm is not None:
+        data["default_tempo_bpm"] = default_tempo_bpm
+    files = {}
+    if include_music:
+        files["file"] = ("piece.xml", io.BytesIO(b"<musicxml/>"), "application/xml")
+    if include_pdf:
+        files["pdf_file"] = ("piece.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")
     return client.post("/library/pieces", data=data, files=files, headers=headers)
 
 
@@ -168,3 +189,102 @@ def test_default_tempo_non_owner_and_non_admin_forbidden(client):
     )
     assert admin_res.status_code == 200
     assert admin_res.json()["default_tempo_bpm"] == 90
+
+
+# --- Real piece uploads: MIDI/MusicXML + PDF + reference audio ---
+
+
+def test_upload_music_only(client):
+    headers = _register_and_login(client, "musiconly@example.com")
+    upload = _upload_file(client, headers, include_music=True, include_pdf=False)
+    assert upload.status_code == 201
+    version = upload.json()["version"]
+    assert version["id"]
+
+    library = client.get("/library/pieces", headers=headers)
+    entry = library.json()[0]
+    assert entry["has_music"] is True
+    assert entry["has_pdf"] is False
+
+
+def test_upload_pdf_only(client):
+    headers = _register_and_login(client, "pdfonly@example.com")
+    upload = _upload_file(client, headers, include_music=False, include_pdf=True)
+    assert upload.status_code == 201
+
+    library = client.get("/library/pieces", headers=headers)
+    entry = library.json()[0]
+    assert entry["has_music"] is False
+    assert entry["has_pdf"] is True
+
+
+def test_upload_music_and_pdf(client):
+    headers = _register_and_login(client, "both@example.com")
+    upload = _upload_file(client, headers, include_music=True, include_pdf=True)
+    assert upload.status_code == 201
+
+    library = client.get("/library/pieces", headers=headers)
+    entry = library.json()[0]
+    assert entry["has_music"] is True
+    assert entry["has_pdf"] is True
+
+
+def test_upload_neither_music_nor_pdf_rejected(client):
+    headers = _register_and_login(client, "neither@example.com")
+    upload = _upload_file(client, headers, include_music=False, include_pdf=False)
+    assert upload.status_code == 400
+
+
+def test_upload_composer_youtube_and_default_tempo_round_trip(client):
+    headers = _register_and_login(client, "metadata@example.com")
+    upload = _upload_file(
+        client,
+        headers,
+        composer="W. A. Mozart",
+        youtube_url="https://youtube.com/watch?v=abc123",
+        default_tempo_bpm=88,
+    )
+    assert upload.status_code == 201
+    piece = upload.json()["piece"]
+    assert piece["composer"] == "W. A. Mozart"
+    assert piece["youtube_url"] == "https://youtube.com/watch?v=abc123"
+    assert piece["default_tempo_bpm"] == 88
+
+    library = client.get("/library/pieces", headers=headers)
+    entry = library.json()[0]
+    assert entry["composer"] == "W. A. Mozart"
+    assert entry["youtube_url"] == "https://youtube.com/watch?v=abc123"
+
+
+def test_version_file_route_200_when_present_404_when_absent(client):
+    headers = _register_and_login(client, "filesroute@example.com")
+    upload = _upload_file(client, headers, include_music=True, include_pdf=False)
+    version_id = upload.json()["version"]["id"]
+
+    music = client.get(f"/library/versions/{version_id}/file", headers=headers)
+    assert music.status_code == 200
+
+    pdf = client.get(f"/library/versions/{version_id}/pdf", headers=headers)
+    assert pdf.status_code == 404
+
+
+def test_version_pdf_route_200_when_present_404_when_absent(client):
+    headers = _register_and_login(client, "pdfroute@example.com")
+    upload = _upload_file(client, headers, include_music=False, include_pdf=True)
+    version_id = upload.json()["version"]["id"]
+
+    pdf = client.get(f"/library/versions/{version_id}/pdf", headers=headers)
+    assert pdf.status_code == 200
+
+    music = client.get(f"/library/versions/{version_id}/file", headers=headers)
+    assert music.status_code == 404
+
+
+def test_version_file_routes_access_gated_like_manifest(client):
+    owner_headers = _register_and_login(client, "fileowner@example.com")
+    stranger_headers = _register_and_login(client, "filestranger@example.com")
+    upload = _upload_file(client, owner_headers, include_music=True, include_pdf=True)
+    version_id = upload.json()["version"]["id"]
+
+    assert client.get(f"/library/versions/{version_id}/file", headers=stranger_headers).status_code == 403
+    assert client.get(f"/library/versions/{version_id}/pdf", headers=stranger_headers).status_code == 403
