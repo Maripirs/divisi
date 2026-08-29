@@ -81,7 +81,7 @@
 		{#if !bannerDismissed}
 			<section class="card card--highlight">
 				<p class="card-note">
-					Browsing as a guest — sign in for full member access, including homework, signing up
+					Browsing as a guest. Sign in for full member access, including homework, signing up
 					for responsibilities, and the members list.
 				</p>
 				<div class="btn-row">
