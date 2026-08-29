@@ -36,10 +36,13 @@ async function loadRemoteMusicFile(url: string): Promise<ParsedMIDI> {
  * exists when it has a music file, so a PDF-only piece is a valid `Piece`
  * with no `load` at all (see `types.ts`). Both proxy routes below
  * (`/piece/[id]/file`, `/piece/[id]/pdf`) attach the caller's own session
- * server-side, so no token/query param needs to leak into these URLs. */
-export function buildRemotePiece(meta: RemotePieceMeta): Piece {
-	const fileUrl = `/piece/${meta.pieceId}/file`;
-	const pdfUrl = `/piece/${meta.pieceId}/pdf`;
+ * server-side for a logged-in member, so no token needs to leak into
+ * these URLs — a guest instead carries `guestCode` through as a query
+ * param, since there's no session for the proxy route to attach. */
+export function buildRemotePiece(meta: RemotePieceMeta, guestCode?: string | null): Piece {
+	const suffix = guestCode ? `?code=${encodeURIComponent(guestCode)}` : '';
+	const fileUrl = `/piece/${meta.pieceId}/file${suffix}`;
+	const pdfUrl = `/piece/${meta.pieceId}/pdf${suffix}`;
 	return {
 		id: meta.pieceId,
 		title: meta.title,

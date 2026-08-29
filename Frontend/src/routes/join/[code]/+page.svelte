@@ -175,29 +175,30 @@
 			     pieces that actually have a practice file wired up (no dead
 			     "not wired up" entries), each its own card with the same
 			     circle-play icon button as the personal Library. -->
-			{@const visiblePieces = data.group.pieces.filter((piece) => getPieceByTitle(piece.title))}
+			{@const visiblePieces = data.group.pieces.filter(
+				(piece) => getPieceByTitle(piece.title) || piece.hasMusic || piece.hasPdf
+			)}
 			{#if visiblePieces.length === 0}
 				<p class="empty">{m.library_no_tracks()}</p>
 			{:else}
 				{#each visiblePieces as piece (piece.pieceId)}
 					{@const bundled = getPieceByTitle(piece.title)}
-					{#if bundled}
-						<section class="card track-card">
-							<div class="track-info">
-								<p class="card-title">{piece.title}</p>
-								<p class="card-meta">{m.join_shared({ date: formatDate(piece.distributedAt) })}</p>
-							</div>
-							<a
-								class="piece-action piece-action--primary"
-								href={lh(`/piece/${bundled.id}?guest=1&code=${data.code}`)}
-								aria-label={m.join_open_player()}
-							>
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-									<path d="M8 5v14l11-7z" />
-								</svg>
-							</a>
-						</section>
-					{/if}
+					{@const practiceId = bundled ? bundled.id : piece.pieceId}
+					<section class="card track-card">
+						<div class="track-info">
+							<p class="card-title">{piece.title}</p>
+							<p class="card-meta">{m.join_shared({ date: formatDate(piece.distributedAt) })}</p>
+						</div>
+						<a
+							class="piece-action piece-action--primary"
+							href={lh(`/piece/${practiceId}?guest=1&code=${data.code}`)}
+							aria-label={m.join_open_player()}
+						>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+								<path d="M8 5v14l11-7z" />
+							</svg>
+						</a>
+					</section>
 				{/each}
 			{/if}
 		{/if}

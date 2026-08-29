@@ -66,7 +66,16 @@ def test_resolve_join_code_lists_distributed_pieces_no_auth(client):
     body = response.json()
     assert body["group_name"] == "Choir"
     assert body["pieces"] == [
-        {"piece_id": piece_id, "title": "Requiem", "version_id": version_id, "distributed_at": body["pieces"][0]["distributed_at"]}
+        {
+            "piece_id": piece_id,
+            "title": "Requiem",
+            "version_id": version_id,
+            "distributed_at": body["pieces"][0]["distributed_at"],
+            "composer": None,
+            "youtube_url": None,
+            "has_music": True,
+            "has_pdf": False,
+        }
     ]
 
 
