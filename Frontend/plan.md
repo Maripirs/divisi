@@ -2,7 +2,7 @@
 
 Separate from `Backend/plan.md` (the API/data model this talks to) and the native
 iOS app — **paused/backlogged** as of 2026-08-27 in favor of this web player; see
-the condensed "iOS app" section below. Milestones prefixed `F` to avoid clashing
+the condensed "iOS app" section below.  Milestones prefixed `F` to avoid clashing
 with the Backend's `B`-prefixed and the iOS app's `M`-prefixed milestones.
 
 **Why a website first:** the earliest useful version of Divisi is choir members
@@ -17,29 +17,29 @@ access to the audio clock.
 
 **Sequencing call (2026-08-27):** prove the player itself out — entirely
 frontend-only, against a bundled fixture MIDI file, no Backend/account wiring at
-all — before spending any effort connecting it to real groups or logins. If the
-playback+notation experience isn't genuinely better than PlayScore, nothing else
-matters yet.
+all — before spending any effort connecting it to real groups or logins.
 
 **Stack:** SvelteKit — lean/compiles-away runtime, good fit for a UI that's mostly
-live audio/animation state (sliders, moving cursor) rather than a big component
-tree; small bundle matters for a page choir members open on their phones.
+live audio/animation state, small bundle matters for a page choir members open on
+their phones.
 
-**Current milestone:** F5 (wire the player to real Backend-rendered pieces), inserted ahead of F4's remaining annotation work at the human's direction, started 2026-08-27. F2, F3, and F4 all still pending human review.
+**Status:** F1, F6, F7, F9, F10 fully done and approved. F2/F3/F4/F5/F8 are built and
+`check`/`build`-clean but each still has at least one open "human confirms in a real
+browser" item — most of this Frontend's recent work was built on a Windows machine
+with no browser/Playwright available, so that's the recurring blocker across the
+board, not a code gap. See the status table under Milestones.
 
 ## UI/UX conventions
 
-Condensed 2026-08-28 from the now-deleted `UX_WIREFRAME.md` (repo cleanup —
-its screen mockups were one-time input already built and covered by the Log
-below; these are the *standing rules* worth keeping as a reference for
-future UI work, since several log entries above and below still cite them
-by name).
+Condensed 2026-08-28 from the now-deleted `UX_WIREFRAME.md` — these are the
+*standing rules* worth keeping as a reference, since several log entries cite
+them by name.
 
 **Navigation and brand:**
 - Divisi is persistent app chrome (top-left `AppHeader` brand), never a
   repeated centered page title
 - Global account/settings access lives top-right as the gear button
-  (`Settings`) — currently a drawer, see F6's Settings-drawer work below
+  (`Settings`) — a drawer (see F6)
 - Page titles name the current place: Home, Library, a specific group's
   name, Settings — not the app name again
 - Bottom nav: Home | Library only (no "Me" — its contents live under
@@ -71,65 +71,66 @@ supported? Should roles/responsibility templates be reusable across groups?
 
 ## Milestones
 
+| # | Milestone | Status |
+|---|---|---|
+| F1 | Standalone playback + notation prototype | ✅ Approved — reads as more accurate/pleasant than PlayScore |
+| F2 | Guest access to real pieces via the Backend | ⏳ Built; human hasn't confirmed the join flow in a real browser yet |
+| F3 | App-shell UI screens (fixture data) | ⏳ Built; human hasn't looked over the screens yet |
+| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built except annotation create/share UI; human hasn't confirmed login/groups/homework yet |
+| F5 | Wire the player to real Backend pieces (+ real uploads: MIDI/PDF/YouTube) | ⏳ Built and curl/check-verified; nobody has clicked through the actual upload/practice flow yet (no browser on the build machine) |
+| F6 | Group page settings + Responsibilities | ✅ Built; human hasn't done a live-app walkthrough (`check`/`build` only) |
+| F7 | Weekly Notes tab + guest sign-in banner | ✅ Done — Playwright-verified live |
+| F8 | Spanish localization (`/es`) | ⏳ Built and curl/check-verified; human hasn't clicked through the Spanish UI in a real browser |
+| F9 | Graceful error handling app-wide | ✅ Done — live-verified including a real Backend-down/recovered cycle |
+| F10 | Lock down bundled pieces (security fix) | ✅ Done — closed a real hole where 5+ real choir pieces were publicly fetchable with no auth |
+
 ### F1 — Standalone playback + notation prototype [x]
 
-No backend, no accounts — everything driven from a bundled MIDI fixture file (reuse
-one of the iOS app's `Fixtures/*.mid`), so the core "is this actually accurate and
-pleasant to use" bet gets proven before any wiring work. This merges what were
-separately-drafted F2/F3/F4 milestones, since without a backend gating them there's
-no real reason to split them yet.
-
-Audio approach for *this milestone only*: client-side MIDI parsing + in-browser
-synthesis via the Web Audio API (a WASM soundfont synth, same GM-soundfont concept
-as iOS) — not the server-rendered stems originally planned for production (see
-Backend `B7`). That was the right call for accuracy at scale, but it requires a
-backend, which this milestone deliberately has none of. Revisit stems vs.
-in-browser synthesis once this prototype proves the UX out; the sync-accuracy
-mechanism (everything scheduled off one `AudioContext` clock) works the same either
-way, so nothing here is wasted if the answer changes later.
+No backend, no accounts — everything driven from a bundled MIDI fixture file, so the
+core "is this actually accurate and pleasant to use" bet gets proven before any
+wiring work. Audio approach for *this milestone only*: client-side MIDI parsing +
+in-browser synthesis via the Web Audio API (a WASM soundfont synth) — not the
+server-rendered stems originally planned for production (see Backend `B7`). That was
+the right call for accuracy at scale, but it requires a backend, which this milestone
+deliberately has none of.
 
 **Acceptance criteria:**
-- [x] Given a bundled fixture MIDI file, the app parses it client-side (voice-part assignment, tempo/time-sig — porting the iOS `MIDIParser` heuristic) and plays it back audibly, all SATB parts + any accompaniment synthesized in-browser
+- [x] Given a bundled fixture MIDI file, the app parses it client-side and plays it back audibly, all SATB parts + any accompaniment synthesized in-browser
 - [x] All parts start in sample-accurate sync and stay in sync for the full piece length — no audible drift by the end
 - [x] Play/pause/seek are immediate and accurate, driven off `AudioContext.currentTime` — no polled position readout in the critical path
 - [x] Real engraved notation (OSMD) renders with a moving cursor tracking that same clock, no perceptible lag
-- [x] Flat/highlighted/solo display modes (full SATB no emphasis / full SATB with chosen part tinted / chosen part only), switchable without ever restarting or repositioning audio
-- [x] The score scrolls for pieces longer than one screen, and genuinely zooms in/out (verified by hand in a real browser — the iOS zoom bug was exactly an unverified assumption like this)
-- [x] A balance slider per SATB part adjusts that part's volume live during playback, from quieter-than-the-rest through even to louder-than-the-rest
-- [x] Audio keeps playing when the browser tab is backgrounded or the phone screen locks — confirmed on a real phone after routing playback through a real `<audio>` element (see log)
+- [x] Flat/highlighted/solo display modes, switchable without ever restarting or repositioning audio
+- [x] The score scrolls for pieces longer than one screen, and genuinely zooms in/out (verified by hand in a real browser)
+- [x] A balance slider per SATB part adjusts that part's volume live during playback
+- [x] Audio keeps playing when the browser tab is backgrounded or the phone screen locks — confirmed on a real phone after routing playback through a real `<audio>` element
 - [x] Human confirms it reads as more accurate/pleasant than PlayScore on the same piece, before any Backend/account wiring is invested
 
 **Tasks — Claude:**
 - [x] Scaffold SvelteKit project under `Frontend/`
-- [x] Port MIDI parsing to TS (`src/lib/midi/parser.ts`, using the `midi-file` npm package rather than hand-rolled byte parsing) — replicates the iOS `MIDIParser`'s track→voice-part heuristic; verified against all 4 real `Fixtures/*.mid` files (note counts/timing/voice-part assignment match)
-- [x] Port `MusicXMLConverter`'s quantization/tie/measure-splitting logic to TS (`src/lib/midi/musicXmlConverter.ts`) — verified against the same fixtures (multi-part measure counts equal, highlight coloring correct)
-- [x] Client-side synthesis: `js-synthesizer` (WASM FluidSynth) + the same `TimGM6mb.sf2` soundfont the iOS app used
-- [x] Web Audio API player (`src/lib/audio/player.ts`) — **architecture changed from the original plan**: instead of one `GainNode` per part, the whole piece is fed to a single FluidSynth player instance (more accurate — sample-scheduled by the synth itself, not hand-timed), and live per-part balance is a MIDI CC7 (channel-volume) message sent to that part's channel. Channel numbers are assigned by a new `playbackMidiBuilder.ts` (0=S/1=A/2=T/3=B) rather than trusting the source file's own channels — needed because the project's own synthetic dev fixtures put every track on channel 0, which would've made per-channel volume control impossible to target; verified via a round-trip (parse → rebuild → re-parse) test against all fixtures. Play/pause/seek read `AudioContext.currentTime` directly, no polling.
-- [x] Embed OSMD directly (npm package, no bridge layer needed) in `ScoreView.svelte`, drive the cursor off the shared clock via `requestAnimationFrame` — required disabling SSR for this route (`+page.ts`'s `export const ssr = false`) and dynamically `import()`ing OSMD inside `onMount`, since it's a CJS/DOM-only package that can't be statically imported under SvelteKit's SSR
-- [x] Flat/highlighted/solo display-mode picker, wired to the already-ported converter
-- [x] Media Session API integration for background/lock-screen playback controls (basic play/pause + metadata)
-- [x] Scrolling/zoom: normal page scroll already shows a full multi-system score; added dedicated −/%/+ zoom controls to `ScoreView.svelte` (0.5×–2×, cursor re-shown correctly after each re-render) — verified with Playwright that zoom changes reflow the score (viewBox narrows/height grows as expected)
+- [x] Port MIDI parsing to TS (`src/lib/midi/parser.ts`, `midi-file` npm package) — replicates the iOS `MIDIParser`'s track→voice-part heuristic; verified against all 4 real `Fixtures/*.mid` files
+- [x] Port `MusicXMLConverter`'s quantization/tie/measure-splitting logic to TS (`src/lib/midi/musicXmlConverter.ts`)
+- [x] Client-side synthesis: `js-synthesizer` (WASM FluidSynth) + `TimGM6mb.sf2`
+- [x] Web Audio API player (`src/lib/audio/player.ts`) — architecture changed from the original plan: the whole piece is fed to a single FluidSynth player instance, live per-part balance is a MIDI CC7 message sent to that part's channel (channel numbers assigned by `playbackMidiBuilder.ts`, since the project's own synthetic dev fixtures put every track on channel 0)
+- [x] Embed OSMD directly in `ScoreView.svelte`, drive the cursor off the shared clock via `requestAnimationFrame` — required disabling SSR for this route and dynamically `import()`ing OSMD
+- [x] Flat/highlighted/solo display-mode picker
+- [x] Media Session API integration for background/lock-screen playback controls
+- [x] Scrolling/zoom controls on `ScoreView.svelte` (0.5×–2×)
 - [x] `Frontend/README.md` with local-run instructions
-- [x] Visual polish pass: replaced the bare-functional layout with a designed one (card shell, light/dark design tokens via `prefers-color-scheme`, segmented pickers, circular play/pause button, filled seek scrubber, collapsible "Mix" balance panel with qualitative +/−% labels) — styling only, no functional changes
-- [x] `Piece` registry (`src/lib/pieces/{types,registry}.ts`): a `{id, title, composer, load()}` contract so a library/picker screen (frontend/ui-shell branch) can list pieces without caring which parser produced them
-- [x] MusicXML importer (`src/lib/musicxml/parser.ts`) for pieces whose only clean source is a score export — see log for why "The Challenge of Thor" needed this instead of a MIDI-parser fix
+- [x] Visual polish pass: card shell, light/dark design tokens, segmented pickers, circular play/pause, filled seek scrubber, collapsible "Mix" balance panel
+- [x] `Piece` registry (`src/lib/pieces/{types,registry}.ts`): a `{id, title, composer, load()}` contract
+- [x] MusicXML importer (`src/lib/musicxml/parser.ts`) for pieces whose only clean source is a score export
 
 **Tasks — Human:**
 - [x] Try it end-to-end and compare directly against PlayScore on the same piece; sign off before Backend wiring starts
 
 ### F2 — Guest access to real pieces via the Backend [~]
 
-**Depends on Backend B6** (join code + public guest endpoints — built). Swaps F1's
-bundled fixture for a real group's actual distributed pieces, reached via a
-shareable join link, still no login required. **Scope narrowed 2026-08-27 at the
-human's direction**: this milestone now covers only the join-code listing route.
-Wiring F1's player itself to the Backend (B7's rendered stems, replacing the
-bundled fixture) is backlogged separately — see Backlog.
-
-**Scope extended 2026-08-27** alongside F4: guests now also see a group's homework
-(when the admin has opted into that via Backend B10), and a group with an optional
-guest password prompts for it. Still no login, and still nothing a guest does writes
-anything — every guest call is a plain `GET` against `/guest/*`.
+**Depends on Backend B6** (join code + public guest endpoints). Swaps F1's bundled
+fixture for a real group's actual distributed pieces, reached via a shareable join
+link, still no login required. Scope narrowed 2026-08-27 to just the join-code
+listing route — wiring F1's player to Backend-rendered pieces is F5. Extended
+2026-08-27 alongside F4: guests also see a group's homework (when opted in via
+Backend B10), and a password-protected group prompts for it.
 
 **Acceptance criteria:**
 - [x] Visiting a valid join-code URL shows that group's distributed pieces, with no login
@@ -138,70 +139,60 @@ anything — every guest call is a plain `GET` against `/guest/*`.
 - [x] Homework only appears in the guest view for groups that opted into `guest_homework_visible`
 - [ ] Human confirms the join flow (including a password-protected group) in a real browser before this is considered done
 
-**Tasks — Claude (added 2026-08-27):**
-- [x] `$lib/api/guest.ts`: `listGuestHomework`, password param threaded through `resolveJoinCode`
-- [x] `/join/[code]`: password-prompt state on 401, tabbed Homework/Rehearsal Tracks view (Homework tab only rendered when the guest homework call succeeds, i.e. the group opted in)
-
 **Tasks — Claude:**
-- [x] Backend: add CORS middleware (`app/main.py`/`app/core/config.py`, `cors_origins` setting) — no cross-origin allowance existed at all before this, so the browser couldn't call the guest API from the Frontend dev origin
-- [x] Frontend: `PUBLIC_API_BASE_URL` env var (`.env.example` + local `.env`), `src/lib/api/guest.ts` (typed client for `GET /guest/{code}`, distinguishing a not-found code from other API errors)
-- [x] Routes: `/join` (code-entry form) and `/join/[code]` (resolves the code server-side via a `+page.ts` load, renders the group's distributed piece titles or the not-found/server-error/empty states)
-- [x] Wired `/groups`' dead "Join a group with a code" button (previously linked to `/`) to `/join`
-- [x] Verified against a real local Backend (`docker-compose up postgres` + `alembic upgrade head` + `uvicorn`): registered a user, created a group, uploaded/approved/distributed a piece, confirmed the join code resolves correctly via the running Frontend dev server (SSR fetch, real network call — not mocked) for both a valid code and an unknown one; test data cleaned up after
+- [x] `$lib/api/guest.ts`: `listGuestHomework`, password param threaded through `resolveJoinCode`
+- [x] `/join/[code]`: password-prompt state on 401, tabbed Homework/Rehearsal Tracks view
+- [x] Backend: CORS middleware — no cross-origin allowance existed before this
+- [x] Frontend: `PUBLIC_API_BASE_URL` env var, `src/lib/api/guest.ts` typed client
+- [x] Routes: `/join` (code-entry form) and `/join/[code]` (resolves the code server-side)
+- [x] Wired `/groups`' dead "Join a group with a code" button to `/join`
+- [x] Verified against a real local Backend: registered a user, created a group, uploaded/approved/distributed a piece, confirmed the join code resolves correctly for both a valid code and an unknown one via a real SSR network call
 
 **Tasks — Human:**
 - [ ] Look over `/join` and `/join/[code]` in a real browser before this is considered done
 
 ### F3 — App-shell UI screens (fixture data) [?]
 
-Inserted ahead of the old F3 (renumbered F4) at the human's direction: build every
-screen from `UX_WIREFRAME.md` other than the already-approved practice player, as
-real routes against local fixture data — same "prove the UI before wiring a
-backend milestone that hasn't been scoped for these screens yet" call F1 made for
-the player. Started from a low-fidelity wireframe artifact covering all ten
-screens, reviewed by the human, before any code was written.
+Built every screen from `UX_WIREFRAME.md` other than the already-approved practice
+player, as real routes against local fixture data — same "prove the UI before wiring
+a backend milestone" call F1 made for the player. Started from a low-fidelity
+wireframe artifact covering all ten screens, reviewed by the human, before any code
+was written.
 
 **Acceptance criteria:**
-- [x] Every UX_WIREFRAME.md screen besides the practice player has a real route, styled with the same design tokens as the rest of the app (`app.css`), reachable via the bottom nav / in-page links, not just a direct URL
+- [x] Every UX_WIREFRAME.md screen besides the practice player has a real route, styled with the same design tokens as the rest of the app, reachable via the bottom nav / in-page links, not just a direct URL
 - [x] All new routes read from local fixture data only (`lib/fixtures/appData.ts`) — no Backend calls added, consistent with F2 not being wired yet
 - [x] `npm run check` and `npm run build` both clean
 - [ ] Human confirms the screens read as intended in a real browser, light and dark
 
 **Tasks — Claude:**
-- [x] Recolored the flat-black `divisi-logo` source into a CSS-mask asset (`lib/assets/divisi-logo-mask.png`, alpha = inverted source luminance) painted via `background-color: var(--accent)` in a new `Logo.svelte`, so it tracks the live accent token (theme swap, future custom palettes) instead of a color baked into the raster
+- [x] Recolored the flat-black `divisi-logo` source into a CSS-mask asset painted via `background-color: var(--accent)`, so it tracks the live accent token
 - [x] `lib/fixtures/appData.ts`: Groups/Homework/Members/Annotations/Settings fixture data
-- [x] `lib/styles/shell.css`: shared card/button/tab/list/field/bottom-nav classes for the new screens, built on the existing `app.css` tokens rather than one-off per-route styling
+- [x] `lib/styles/shell.css`: shared card/button/tab/list/field/bottom-nav classes
 - [x] Routes: `/welcome`, `/home`, `/groups`, `/groups/[id]` (tabbed Homework / Rehearsal Tracks / Members / Info), `/groups/[id]/homework/[hwId]`, `/groups/[id]/admin`, `/groups/[id]/admin/new-homework`, `/settings`
-- [x] `AnnotationModal.svelte`: reusable add-annotation sheet (position, note, visibility), wired from Homework Detail's "My annotations" resource — deliberately not wired into the practice player itself, since that screen was signed off as-is this session
-- [x] `BottomNav.svelte` shared across Home/Library/Groups/Me; linked in from the pre-existing `/` and `/sfcc` pages so the new screens are reachable from the app, not only by typing a URL
+- [x] `AnnotationModal.svelte`: reusable add-annotation sheet, wired from Homework Detail
+- [x] `BottomNav.svelte` shared across Home/Library/Groups/Me
 
 **Tasks — Human:**
 - [ ] Look over the new screens in a real browser (light + dark) and flag anything to change before this becomes the real navigation
 
 ### F4 — Login + wire groups/home/library to the real Backend [~]
 
-**Scope expanded 2026-08-27** at the human's direction, beyond the original "login +
-annotations": also replaces F3's fixture data (`lib/fixtures/appData.ts`) with real
-Backend calls for groups, membership/info, homework (new Backend B9, added alongside
-this), and "my library" listings. Depends on Backend B2 (auth, already built) and the
-new B9 (homework, started alongside this).
+Scope expanded 2026-08-27 beyond "login + annotations": also replaces F3's fixture
+data with real Backend calls for groups, membership/info, homework (Backend B9), and
+"my library" listings. Depends on Backend B2 (auth) and B9 (homework).
 
-**Explicitly still out of scope** (flagged, not silently dropped): actually
-*practicing* a real Backend-sourced piece. The player (`/piece/[id]`) only knows how
-to load pieces from the bundled `lib/pieces/registry.ts` (parses a local MIDI/
-MusicXML file client-side) — a real Backend `Piece` is an uploaded file meant to be
-played back via B7's server-rendered stems, a different loading path entirely. That
-wiring is the pre-existing Backlog item below ("Wire F1's player to the Backend"),
-unchanged by this milestone. Real Backend pieces now show up for real in group/
-library listings (title + review status), just without a working Practice button yet.
-Home's "Continue practice" card also stays on its existing bundled-demo behavior — no
-backend concept for "last opened piece" exists, and building one wasn't in scope for
-this milestone (see Backlog).
+**Explicitly still out of scope:** actually *practicing* a real Backend-sourced
+piece — that's F5, a different loading path entirely (the player's registry only
+loaded bundled files until F5). Real Backend pieces show up for real in group/
+library listings now, just without a working Practice button until F5. Home's
+"Continue practice" card also stays on its existing bundled-demo behavior — no
+backend concept for "last opened piece" exists (see Backlog).
 
 **Acceptance criteria:**
-- [x] A guest can register/log in without losing their place — a `redirectTo` carried through `/login` (from wherever a protected page bounced them) lands them back there, not just at `/home`
+- [x] A guest can register/log in without losing their place — `redirectTo` carries through `/login` back to wherever a protected page bounced them
 - [x] Session stored via an httpOnly cookie through a SvelteKit server route, not `localStorage`
-- [x] `/groups`, `/groups/[id]` (Members/Info/Rehearsal Tracks tabs), `/groups/[id]/admin`, and `/home`'s "My groups"/"Due soon" sections read real data from the Backend, not `lib/fixtures/appData.ts`
+- [x] `/groups`, `/groups/[id]`, `/groups/[id]/admin`, and `/home`'s "My groups"/"Due soon" sections read real data from the Backend
 - [x] Homework tab, homework detail, and "+ Add homework" read/write real data via Backend B9
 - [x] The root library (`/`) shows each group's real distributed pieces (title + review status) alongside the existing bundled demo pieces
 - [x] Browsing, playback, and customization of the existing bundled/demo pieces remain fully guest-accessible — login is opt-in, never a gate
@@ -209,583 +200,319 @@ this milestone (see Backlog).
 - [ ] Human confirms login, group browsing, and homework in a real browser
 
 **Tasks — Claude:**
-- [x] Login/register UI (new `/login` route) against Backend B2's endpoints; session via an httpOnly cookie set by a SvelteKit server route (not `localStorage`, to keep the token off the page's JS), read in `hooks.server.ts` for every authenticated `load`
-- [x] `src/lib/server/backend.ts`: authenticated server-side fetch helper (attaches the session cookie's token as `Authorization: Bearer`), used from each rewired route's `+page.server.ts`
-- [x] Rewire `/groups`, `/groups/[id]`, `/groups/[id]/admin`, `/home`'s groups/due-soon sections off real `/groups` / `/groups/{id}/members` calls
-- [x] Rewire Homework tab, homework detail, and "+ Add homework" off the new Backend B9 endpoints
-- [x] Rewire `/`'s per-group sections off real `/library/pieces`, filtered to that group, shown read-only (title + status, no Practice/PDF action) until the backlogged player-to-Backend wiring lands
-- [x] `/settings`: real logged-in user (name/email) and a real logout (clears the session cookie)
-- [ ] Annotation UI: create/view at a score position, reusing the same whole-notes-timestamp position already used for the cursor; respects B5's private-by-default + explicit-share model
+- [x] Login/register UI (`/login`) against Backend B2's endpoints; session via an httpOnly cookie set by a SvelteKit server route, read in `hooks.server.ts` for every authenticated `load`
+- [x] `src/lib/server/backend.ts`: authenticated server-side fetch helper
+- [x] Rewired `/groups`, `/groups/[id]`, `/groups/[id]/admin`, `/home`'s groups/due-soon sections
+- [x] Rewired Homework tab, homework detail, and "+ Add homework"
+- [x] Rewired `/`'s per-group sections off real `/library/pieces`, shown read-only until F5 lands
+- [x] `/settings`: real logged-in user (name/email) and a real logout
+- [ ] Annotation UI: create/view at a score position, respecting B5's private-by-default + explicit-share model
 - [ ] Share/unshare UI against B5's existing endpoints
 
 ### F5 — Wire the player to real Backend pieces (client-side, same pipeline as the bundled demo) [~]
 
-**Rewritten 2026-08-28, replacing the original stems/manifest design below**, after
-the human questioned the premise directly: do we actually need a "better" (server-
-rendered) player at all? Tracing why B7 (server-rendered stems) existed in the first
-place — F1's own log says it was for "accuracy at scale," an assumption that the
-in-browser soundfont synth wouldn't sound good enough for production. That premise
-was never retested: F1 shipped and was approved specifically *because* the in-browser
-synth already sounds good. So the real gap isn't rendering quality — it's that the
-already-working client-side player (parse → `ParsedMIDI` → `MidiPlayer` → `ScoreView`)
-only knows how to load a bundled static file, never anything from the Backend.
+**Rewritten 2026-08-28**, replacing the original stems/manifest design, after the
+human questioned the premise directly: do we actually need a "better" (server-
+rendered) player at all? F1's own in-browser soundfont synth already sounds good —
+shipped and approved on that basis — so B7's server-rendered stems were never
+actually needed for quality. The real gap is that the existing client-side player
+only knew how to load a bundled static file, never anything from the Backend.
 
-**New scope:** teach the existing player to fetch a real piece's raw source file
-(MIDI or MusicXML, whichever it actually is) from the Backend and run it through the
-exact same parse/synth/render pipeline already used for every bundled piece — no new
-audio engine, no stems, no manifest, no `StemPlayer`. `MidiPlayer`, `ScoreView`, the
-mixer/display-mode UI, and per-piece `localStorage` persistence all stay completely
-untouched; only *where the bytes come from* changes. B7's rendering pipeline isn't
-deleted (it's built, tested, harmless sitting unused) — just no longer something the
-Frontend wires up to. Same human direction as before on guest parity: a guest's
-experience should be identical to a member's, and guest preferences already never
-reach the Backend (confirmed — `playerDefaults.ts` is `localStorage`-only for
-everyone, nothing to special-case).
+**Scope:** teach the existing player to fetch a real piece's raw source file (MIDI
+or MusicXML) from the Backend and run it through the exact same parse/synth/render
+pipeline already used for every bundled piece — no new audio engine, no stems, no
+manifest. `MidiPlayer`, `ScoreView`, the mixer/display-mode UI, and per-piece
+`localStorage` persistence all stay completely untouched; only *where the bytes come
+from* changes. B7's rendering pipeline isn't deleted — just no longer something the
+Frontend wires up to. Guest parity: a guest's experience is identical to a member's
+(guest preferences already never reach the Backend — `playerDefaults.ts` is
+`localStorage`-only for everyone).
 
-**Small Backend addition needed** (not yet built): a raw-file endpoint, mirroring the
-existing manifest endpoints' access gates but skipping `is_midi_file`/rendering
-entirely — `GET /library/versions/{id}/file` (authenticated, same
-`_require_piece_access` gate as the manifest route) and `GET
-/guest/{join_code}/pieces/{piece_id}/file` (guest, same gating as the guest manifest
-route) — both just `FileResponse(resolve_source_path(version.file_path))`. Much
-smaller than B7's manifest/render-cache machinery.
-
-**Frontend shape:** a new `Piece` implementation (alongside the bundled registry's
-static entries) whose `load()` fetches that raw-file URL instead of a bundled static
-asset, sniffs MIDI vs. MusicXML by magic bytes (`MThd` → MIDI, else treat as UTF-8
-MusicXML text — no new metadata needed from the Backend for this), and calls the
-same `parseMidiFile`/`parseMusicXmlFile` either way. Needs `Piece`/`PieceSummary`
-(`src/lib/pieces/types.ts`) widened slightly: `pdfUrl` becomes optional (a real
-Backend piece has no PDF concept in the data model at all) and `collection` gains a
-case for these. Auth handling differs by caller, same as everywhere else in this
-app: the guest path fetches straight from the Backend's public origin (CORS already
-proven working); the authenticated path goes through a new same-origin proxy route
-(`/piece/[id]/file/+server.ts`) that attaches `locals.token` server-side, so the
-session token never has to reach client JS.
-
-**Explicitly out of scope, unchanged from the original plan:** live tempo control
-isn't affected either way — it was never actually blocked on this, since the
-in-browser synth (not a pre-rendered stem) is what's driving playback regardless of
-where the source file came from.
+**Shape:** a new `Piece` implementation whose `load()` fetches the raw-file URL,
+sniffs MIDI vs. MusicXML by magic bytes (`MThd` → MIDI, else MusicXML text), and
+calls the existing parsers. The guest path fetches straight from the Backend's
+public origin (CORS already proven working); the authenticated path goes through a
+same-origin proxy route (`/piece/[id]/file/+server.ts`) that attaches `locals.token`
+server-side, so the session token never reaches client JS.
 
 **Acceptance criteria:**
 - [ ] A logged-in group member can open a real Backend-distributed piece from `/groups/[id]`'s Rehearsal Tracks tab or `/`'s per-group section and hear it play, in sync, for the whole piece's length — same accuracy bar as the bundled demo, because it's the same player
 - [ ] The same piece's notation renders with a moving cursor, using the existing `musicXmlConverter`/`ScoreView` path unchanged
-- [ ] The existing per-part balance/mute controls, display modes, and tempo slider all work against a real Backend piece exactly like they do against the bundled demo — no piece-source-specific UI branching visible to the user
-- [ ] A guest who joined via `/join/[code]` can open and fully practice any of that group's distributed pieces the same way, with no login — including a password-protected group's pieces, once the password's already been accepted
-- [ ] A real Backend piece whose title happens to match a bundled registry entry (the existing `getPieceByTitle()` path) still resolves to the bundled asset, not a redundant Backend fetch — no behavior change for that case
+- [ ] The existing per-part balance/mute controls, display modes, and tempo slider all work against a real Backend piece exactly like they do against the bundled demo
+- [ ] A guest who joined via `/join/[code]` can open and fully practice any of that group's distributed pieces the same way, with no login — including a password-protected group's pieces
+- [ ] A real Backend piece whose title happens to match a bundled registry entry still resolves to the bundled asset, not a redundant Backend fetch
 - [ ] `npm run check` and `npm run build` both clean
 - [ ] Human confirms a real distributed piece sounds and looks right, played both as a logged-in member and as a guest via a join code
 
 **Tasks — Claude:**
 - [ ] Backend: `GET /library/versions/{id}/file` and `GET /guest/{join_code}/pieces/{piece_id}/file` — raw source file, same access gates as the existing manifest routes, no rendering
 - [ ] `src/lib/pieces/types.ts`: widen `pdfUrl` to optional, extend `collection` for a real-Backend-piece case
-- [ ] New `Piece` factory (e.g. `src/lib/pieces/remotePiece.ts`) whose `load()` fetches raw bytes from a given URL, sniffs MIDI (`MThd` magic bytes) vs. MusicXML, and parses with the existing `parseMidiFile`/`parseMusicXmlFile` — no new audio/rendering code at all
-- [ ] `/piece/[id]/file/+server.ts` (new): authenticated proxy — attaches `locals.token`, forwards to the Backend's versions/file route, streams the response back
-- [ ] `/piece/[id]/+page.server.ts` (new): resolves whether `data.id` is a bundled registry id (unchanged path) or a real Backend piece belonging to one of the user's groups (via the existing `/library/pieces` listing, already used elsewhere) — if the latter and no bundled title match, constructs a remote `Piece` pointed at the new proxy route
-- [ ] New guest route `/join/[code]/piece/[id]`: resolves a remote `Piece` from the guest raw-file endpoint directly (client-side fetch, no proxy needed — no auth to protect); reuses the existing player UI rather than duplicating it (share the component; the guest load just produces the same `Piece`-shaped data the existing route already consumes)
-- [ ] Wire real "Play" links: `/groups/[id]`'s Rehearsal Tracks tab and `/`'s per-group sections point a real Backend piece at `/piece/[id]` instead of "Practice not wired up yet"; `/join/[code]`'s Rehearsal Tracks tab gets a real per-piece link to `/join/[code]/piece/[id]`
-- [ ] Verify against the real live Backend (`divisi.onrender.com`, not mocked): open a real distributed piece with a MIDI source (e.g. one of the two `Fixtures/*.mid`-backed pieces) both as the owning member and as a guest via its join code
+- [ ] New `Piece` factory (`src/lib/pieces/remotePiece.ts`) whose `load()` fetches raw bytes, sniffs MIDI vs. MusicXML, parses with the existing parsers
+- [ ] `/piece/[id]/file/+server.ts` (new): authenticated proxy — attaches `locals.token`, streams the Backend response back
+- [ ] `/piece/[id]/+page.server.ts` (new): resolves bundled-registry vs. real Backend piece (via `/library/pieces`) — constructs a remote `Piece` when neither the bundled title nor a bundled id matches
+- [ ] New guest route `/join/[code]/piece/[id]`: resolves a remote `Piece` from the guest raw-file endpoint directly (client-side fetch, no proxy needed), reuses the existing player UI
+- [ ] Wire real "Play" links on `/groups/[id]`'s Rehearsal Tracks tab, `/`'s per-group sections, and `/join/[code]`'s Rehearsal Tracks tab
+- [ ] Verify against the real live Backend (`divisi.onrender.com`, not mocked): open a real distributed piece both as the owning member and as a guest via its join code
 
 **Tasks — Human:**
-- [ ] Listen to a real distributed piece played through this path (both as a member and as a guest) and confirm it sounds right — should be indistinguishable from the bundled demo, since it's the exact same player
+- [ ] Listen to a real distributed piece played through this path (both as a member and as a guest) and confirm it sounds right
 
 **Expanded 2026-08-29 (real piece uploads — MIDI/MusicXML + PDF + reference audio),
-built on a Windows machine with no browser/Playwright available in that
-environment** — everything below is `npm run check`/`build`-verified and
-Backend-curl-verified end to end, but the actual in-app interaction (upload
-form, player/PDF toggle, YouTube embed) has **not** been clicked through by
-a human or Playwright yet. Treat this expansion's own acceptance criteria
-as unverified until someone actually does that.
+built on a Windows machine with no browser/Playwright available** — everything below
+is `npm run check`/`build`-verified and Backend-curl-verified end to end, but the
+actual in-app interaction (upload form, player/PDF toggle, YouTube embed) has **not**
+been clicked through by a human or Playwright yet.
 
 - [x] `src/lib/pieces/types.ts`: `pdfUrl`/`load` both optional now, `collection` gained `'group'`, added `youtubeUrl`
 - [x] `src/lib/pieces/remotePiece.ts`: builds a `Piece` from Backend metadata — `pdfUrl` only when `has_pdf`, `load` only when `has_music`
 - [x] `/piece/[id]/file/+server.ts` and `.../pdf/+server.ts`: authenticated proxies, resolve the piece's current version via `/library/pieces` first
-- [x] `/piece/[id]/+page.server.ts`: resolves bundled-registry vs. real Backend piece via `/library/pieces`; returns `remote: null` (falls back to bundled-only, unchanged) for a guest with no session, since this route is also reached via join-code links with no `locals.token`
-- [x] `/piece/[id]/+page.svelte`: player/PDF panes and the View-mode toggle are now conditional on `hasPlayer`/`hasPdfPane` — a piece with just one of the two skips the toggle and shows that view directly; a stored `viewMode` from before can no longer select a pane the current piece doesn't have. YouTube embed (`<details>` disclosure, not gated behind the toggle) shows whenever `youtubeUrl` is set.
-- [x] `/groups/[id]/+page.svelte` + `+page.server.ts`: admin-only click-to-reveal upload form (Name/Author/Music file/PDF/Default tempo/YouTube) on the Tracks tab, `uploadTrack` action posts multipart directly (not through `backendFetch`, which force-sets a JSON `Content-Type`) and chains submit→approve→distribute; a track's Practice link now works for any track with `has_music`/`has_pdf`, not just ones title-matching a bundled fixture
-- [ ] Guest-side wiring for genuinely-new real pieces (PDF/music-file/YouTube via join code) — deliberately **not** built this pass; the Backend's guest file/pdf routes exist and are tested, but `/join/[code]` still only resolves pieces via the old bundled-title-match path, same as before this expansion
-- [ ] A human (or Playwright) actually clicking through: upload a track, open it as a member, confirm the right view(s) show for music-only/PDF-only/both, confirm the YouTube embed renders, confirm a PDF-only piece has no dead Practice Setup menu
-- Storage stays local-disk this pass (see `Backend/plan.md`'s Backlog) — same already-documented ephemeral-disk limitation as every other upload, not a new regression
+- [x] `/piece/[id]/+page.server.ts`: resolves bundled-registry vs. real Backend piece; returns `remote: null` for a guest with no session (this route is also reached via join-code links)
+- [x] `/piece/[id]/+page.svelte`: player/PDF panes and the View-mode toggle are now conditional on `hasPlayer`/`hasPdfPane`; YouTube embed shows whenever `youtubeUrl` is set
+- [x] `/groups/[id]/+page.svelte` + `+page.server.ts`: admin-only click-to-reveal upload form (Name/Author/Music file/PDF/Default tempo/YouTube); a track's Practice link now works for any track with `has_music`/`has_pdf`, not just bundled-title matches
+- [ ] Guest-side wiring for genuinely-new real pieces via join code — deliberately not built this pass, closed in the follow-up entry logged below
+- [ ] A human (or Playwright) actually clicking through: upload a track, open it as a member, confirm the right view(s) show, confirm the YouTube embed renders
+- Storage stays local-disk this pass — same already-documented ephemeral-disk limitation as every other upload
 
-### F6 — Group page settings + Responsibilities [?]
+### F6 — Group page settings + Responsibilities [x]
 
-**Backend-driven, independent of F5's in-progress work above** (different concern —
-group/admin surface, not the player) — the Backend's B12 (per-page group settings,
-replacing the old single `guest_homework_visible` flag) and B13 (Responsibilities:
-admin-run volunteer signup sheets) shipped with no Frontend wiring at all. Brings
-both over.
+Backend-driven — the Backend's B12 (per-page group settings) and B13
+(Responsibilities) shipped with no Frontend wiring at all. Brings both over.
 
 **Acceptance criteria:**
-- [x] Group admin's Settings tab shows all 5 pages (Homework, Rehearsal Tracks,
-  Members, About, Responsibilities) with independent enabled/audience
-  (members-only vs. everyone) controls, replacing the old single "show homework to
-  guests" checkbox
-- [x] A member whose group has a page disabled just doesn't see that tab, instead of
-  the whole group page (or Home, which aggregates homework across groups) failing —
-  a real gap B12 introduced (its member-facing routes now 403 a non-admin once a
-  page's disabled, and neither `/groups/[id]` nor `/home` was written expecting
-  that)
-- [x] A group's Responsibilities tab lets a member see upcoming dates with per-role
-  coverage and sign up/remove their own signup (blocked once a date's locked or
-  canceled); an admin can additionally create schedules + roles, add dates,
-  lock/cancel dates, and assign/remove any member's signup
-- [x] Guests (via `/join/[code]`) see a read-only Responsibilities tab (coverage
-  only, no names) when a group's admin opted it into `audience: everyone` — same
-  shape as the existing guest Homework tab
+- [x] Group admin's Settings tab shows all 5 pages (Homework, Rehearsal Tracks, Members, About, Responsibilities) with independent enabled/audience controls, replacing the old single "show homework to guests" checkbox
+- [x] A member whose group has a page disabled just doesn't see that tab, instead of the whole group page (or Home) failing
+- [x] A group's Responsibilities tab lets a member see upcoming dates with per-role coverage and sign up/remove their own signup; an admin can additionally create schedules + roles, add dates, lock/cancel dates, and assign/remove any member's signup
+- [x] Guests (via `/join/[code]`) see a read-only Responsibilities tab when a group's admin opted it into `audience: everyone`
 - [x] `npm run check` and `npm run build` both clean
 
 **Tasks — Claude:**
-- [x] `backendTypes.ts`: dropped `GroupOut.guest_homework_visible` (Backend removed
-  the column); added `GroupPage`/`PageAudience`/`GroupPageSettingOut` and the
-  `Responsibility*` types
-- [x] `$lib/api/guest.ts`: `listGuestResponsibilityDates()`, same
-  "404 means not exposed to guests" convention as `listGuestHomework`
-- [x] `/groups/[id]/+page.server.ts`: `fetchPageOrDisabled()` wraps the
-  homework/members/responsibilities fetches so a disabled page just hides its tab;
-  admin-only fetch of `page-settings` + `responsibilities/schedules`; new actions
-  `updatePageSettings`, `createResponsibilitySchedule`, `addResponsibilityDate`,
-  `updateResponsibilityDate` (lock/cancel), `signUpResponsibility`,
-  `removeResponsibilitySignup`; `updateGuestSettings` narrowed to just the password
-  now that visibility lives in `updatePageSettings`
-- [x] `/groups/[id]/+page.svelte`: 5th "Responsibilities" tab (member + admin
-  views); admin Settings tab's page-visibility grid; tab bar now filters to what's
-  actually visible per `data.*Enabled`
-- [x] `/home/+page.server.ts`: same disabled-page guard as the group page, since it
-  independently fetches each group's homework
-- [x] `/join/[code]/+page.ts` + `+page.svelte`: guest Responsibilities tab
-  (read-only coverage, no sign-up action — the guest route returns no signup
-  identities)
-- [x] Ad hoc fixes from live look at the group page: Rehearsal Tracks now uses the
-  same circle-play icon button as the personal Library instead of a text "Practice"
-  button, and hides version status from members (admin-only); the personal Library
-  now hides tracks with no practice file wired up instead of listing them as a dead
-  "not wired up" card, matching the group page's own member-view behavior
+- [x] `backendTypes.ts`: dropped `GroupOut.guest_homework_visible`; added `GroupPage`/`PageAudience`/`GroupPageSettingOut` and the `Responsibility*` types
+- [x] `$lib/api/guest.ts`: `listGuestResponsibilityDates()`
+- [x] `/groups/[id]/+page.server.ts`: `fetchPageOrDisabled()` wraps homework/members/responsibilities fetches so a disabled page just hides its tab; new page-settings/responsibility actions
+- [x] `/groups/[id]/+page.svelte`: 5th "Responsibilities" tab; admin Settings tab's page-visibility grid
+- [x] `/home/+page.server.ts`: same disabled-page guard as the group page
+- [x] `/join/[code]`: guest Responsibilities tab (read-only coverage, no sign-up)
+- [x] Ad hoc fixes from a live look: Rehearsal Tracks uses the same circle-play icon as the personal Library, hides version status from members; personal Library hides tracks with no practice file wired up instead of listing them as a dead card
 
 **Tasks — Human:**
-- [ ] Look at the built pages (page-settings grid, Responsibilities tab as member/
-  admin/guest) and confirm the UI reads right — no live-app walkthrough done this
-  pass, `npm run check`/`build` only
+- [ ] Look at the built pages (page-settings grid, Responsibilities tab as member/admin/guest) and confirm the UI reads right — no live-app walkthrough done this pass, `npm run check`/`build` only
 
 **Expanded 2026-08-29 (regular rehearsal schedule):** admin-editable "Regular
-rehearsals" card on the Info/About tab (day + `<input type="time">`, e.g.
-"Wednesdays at 7:00 PM"), shown read-only to members/guests in the same
-tab's info card. The Responsibilities "Add a date"/"Edit date" forms gain a
-"Use next rehearsal" button that computes the next upcoming occurrence
-entirely client-side (against the browser's own local clock — no timezone
-round trip, matching how the existing `datetime-local` inputs already
-behave) and fills the date field with it. New `?/updateRehearsalSchedule`
-action. `npm run check` (0 errors, same warning pattern the file's other
-`*Draft` seed-from-prop `$state`s already trigger)/`build` both clean; the
-weekday math itself verified with a standalone script covering "today is
-the day, time hasn't passed", "today is the day, time already passed"
-(correctly rolls to next week), and two different target weekdays — not
-clicked through in an actual browser (same no-browser-on-Windows
-limitation as F5's expansion above).
+rehearsals" card on the Info/About tab (day + time), shown read-only to
+members/guests. The Responsibilities "Add a date"/"Edit date" forms gain a
+"Use next rehearsal" button that computes the next upcoming occurrence entirely
+client-side. `check`/`build` clean; the weekday math verified with a standalone
+script — not clicked through in an actual browser.
 
-- [ ] Human: confirm the "Use next rehearsal" button and the About-tab
-  editor actually look/behave right in a real browser
+- [ ] Human: confirm the "Use next rehearsal" button and the About-tab editor actually look/behave right in a real browser
 
-### F7 — Weekly Notes tab + guest sign-in banner [?]
+### F7 — Weekly Notes tab + guest sign-in banner [x]
 
-Two asks direct from the human: (1) a 6th group page, "Weekly Notes" — dated
-bulletin entries (title/body/"week of" date) admins post, members read, with
-full history rather than one running note; (2) a dismissible banner on
-`/join/[code]` nudging anonymous guests to sign in. Weekly Notes reuses B12's
-per-page `enabled`/`audience` machinery exactly (see F6) — same default
-(members-only, admin can open to guests), same guest-route "404 means not
-exposed" convention.
+Two asks direct from the human: a 6th group page ("Weekly Notes" — dated bulletin
+entries admins post, members read, with full history) and a dismissible banner on
+`/join/[code]` nudging anonymous guests to sign in. Reuses B12's per-page machinery
+exactly.
 
 **Acceptance criteria:**
-- [x] Group admin can post/edit/delete dated notes from a new "Weekly Notes"
-  tab; members see them read-only, newest first
+- [x] Group admin can post/edit/delete dated notes from a new "Weekly Notes" tab; members see them read-only, newest first
 - [x] The new page shows up in the admin Settings page-visibility grid
-  alongside the other 5, independently enabled/audience-controlled
-- [x] Guests (`/join/[code]`) see a read-only Weekly Notes tab only when the
-  admin opted it into `audience: everyone`
-- [x] `/join/[code]` shows a dismissible banner (guests only) pointing at
-  `/login?redirectTo=/join/{code}`; dismissal doesn't persist (guests aren't
-  tracked, so it reappears each visit, per the human's explicit call)
-- [x] `npm run check`/`build` clean; verified live via Playwright (human was
-  away from their computer and explicitly authorized it for this session —
-  not this project's default, see memory)
+- [x] Guests see a read-only Weekly Notes tab only when the admin opted it into `audience: everyone`
+- [x] `/join/[code]` shows a dismissible banner (guests only) pointing at `/login?redirectTo=...`; dismissal doesn't persist (reappears each visit, per the human's call)
+- [x] `npm run check`/`build` clean; verified live via Playwright (human was away and explicitly authorized it for this session — not this project's default)
 
 **Tasks — Claude:**
-- [x] Backend: `WeeklyNote` model + migration (chains off `a7e2c9f4b3d8`,
-  seeds a `weekly_notes` `GroupPageSettings` row per existing group);
-  `GroupPage.weekly_notes` added to `DEFAULT_AUDIENCE`; new
-  `app/api/routes/weekly_notes.py` (create/list/edit/delete, mirrors
-  `homework.py` + `groups.py`'s `update_description` full-replace shape for
-  the PUT homework never needed); guest route on `guest.py`. 120/120
-  `pytest`; `alembic upgrade head`/`downgrade -1`/`upgrade head` clean
-  against the real Postgres container; a live curl round trip against the
-  running local Backend (create → member 403 → list → guest 404-by-default →
-  guest visible after toggle → edit → delete).
-- [x] Frontend: `backendTypes.ts`/`$lib/api/guest.ts` gained `WeeklyNoteOut`/
-  `GuestWeeklyNote`; `/groups/[id]/+page.server.ts` + `+page.svelte`: 6th tab,
-  three new actions, `PAGE_LABELS`/`PAGE_ORDER` extended; `/join/[code]`:
-  guest tab + the sign-in banner (no new component — `.card.card--highlight`,
-  matching the codebase's existing inline-`$state` convention over
-  componentizing one-off UI).
-- [x] Two real bugs caught live via Playwright, not just `npm run check`
-  (neither would have been caught by type-checking or a code read):
-  1. **Page-visibility toggles visually "reset" after saving, for real this
-     time.** A prior session (see this file's own 2026-08-28 log entry
-     below) found and fixed *one* real cause (`bind:` vs a one-way
-     `checked={...}`) but a second, independent cause was still live in
-     production: SvelteKit's `use:enhance` default `update()` behavior
-     calls the native `form.reset()` on every successful submit — harmless
-     for a "type something, submit, clear it" form, but wrong for this one,
-     which stays visible after saving. A native reset snaps every
-     checkbox/select back to its bare-markup default (unchecked / first
-     option) without going through Svelte's own reactivity (`bind:` never
-     fires, so `pageSettingsDraft` itself — and the actually-saved data —
-     was never wrong, only the display). Confirmed via the Backend's own
-     `GET /page-settings` mid-repro: real data was correct throughout, this
-     was 100% a display bug. Fixed with `update({ reset: false })`.
-  2. **`note_date` displayed a day early.** `formatDate` converts to local
-     time; `note_date` is a date-only value with no time-of-day meaning,
-     round-tripped as UTC midnight — any timezone behind UTC rolled the
-     display back a calendar day (a Sept 1 note showed "Aug 31"). New
-     `formatNoteDate` pins the display to UTC (`Intl`'s `timeZone: 'UTC'`
-     option) instead.
-- [x] Local dev fix, unrelated to the feature itself but blocking testing
-  it: `Frontend/.env`'s `PUBLIC_API_BASE_URL` was `http://localhost:8000`
-  while the locally-running Backend `uvicorn` is HTTPS-only
-  (`.certs/dev-*.pem`) — the dev frontend genuinely couldn't reach the
-  Backend at all. Fixed to `https://localhost:8000`.
+- [x] Backend: `WeeklyNote` model + migration, guest route, mirrors `homework.py`'s shape. 120/120 `pytest`; live curl round trip.
+- [x] Frontend: 6th tab, three new actions, guest tab + sign-in banner
+- [x] Two real bugs caught live via Playwright, neither would have been caught by type-checking:
+  1. Page-visibility toggles visually "reset" after saving — a second, independent cause beyond one a prior session already fixed: `use:enhance`'s default `update()` calls a native `form.reset()`, snapping checkboxes back without going through Svelte's reactivity (the saved data was never wrong, only the display). Fixed with `update({ reset: false })`.
+  2. `note_date` displayed a day early in any UTC-behind timezone (local-time formatting on a date-only UTC-midnight value). New `formatNoteDate` pins the display to UTC.
+- [x] Local dev fix: `Frontend/.env`'s `PUBLIC_API_BASE_URL` was HTTP while the local Backend is HTTPS-only — fixed to `https://localhost:8000`
 
-### F8 — Spanish localization (/es) [~]
+### F8 — Spanish localization (`/es`) [~]
 
-At the human's direct request: a full Spanish version of the app, reached
-under `/es` (English stays unprefixed at the base locale), covering every
-route — not just a landing page. Built with Paraglide JS (inlang), SvelteKit's
-standard i18n toolkit, rather than hand-duplicated route files, so future
-pages only ever need their strings added once to `messages/en.json` +
-`messages/es.json`.
+At the human's direct request: a full Spanish version of the app under `/es`
+(English stays unprefixed), covering every route. Built with Paraglide JS (inlang)
+rather than hand-duplicated route files.
 
-**Mechanism:** `project.inlang/settings.json` declares `en` (base, no
-prefix) and `es` (prefixed) locales via the `plugin-message-format` plugin,
-reading `messages/{locale}.json`. `vite.config.ts`'s `paraglideVitePlugin`
-generates the typed `m.*()` message functions (git-ignored output,
-`src/lib/paraglide/`) plus the runtime, with `urlPatterns` mapping the root
-and every other path to an `/es`-prefixed vs. unprefixed pair depending on
-locale (`strategy: ['url', 'cookie', 'baseLocale']`). `src/hooks.ts`'s
-`reroute` de-localizes the incoming URL before route matching (so `/es/login`
-resolves to the same `+page.svelte` as `/login`); `src/hooks.server.ts` wraps
-the existing session-cookie handle with `paraglideMiddleware` (via
-`sequence()`) to detect the locale per-request and stamp `app.html`'s
-`%lang%`/`%dir%`. A new `<LanguageSwitcher>` (top-right on `/welcome`) links
-between locales via `localizeHref`.
+**Mechanism:** `project.inlang/settings.json` declares `en` (base, unprefixed) and
+`es` (prefixed) locales via `messages/{locale}.json`. `vite.config.ts`'s
+`paraglideVitePlugin` generates typed `m.*()` message functions plus `urlPatterns`
+mapping every path to its localized form. `src/hooks.ts`'s `reroute` de-localizes
+incoming URLs before route matching; `src/hooks.server.ts` composes
+`paraglideMiddleware` with the existing session-cookie handle. A `<LanguageSwitcher>`
+links between locales via `localizeHref`.
 
-**The real gotcha, and why it needed its own helper:** Paraglide does **not**
-auto-localize plain `<a href>`/`goto()`/`redirect()` calls — only inbound URL
-matching is automatic. Without wrapping every internal path, a plain link
-would silently drop the `/es` prefix on the very next click (no cookie
-fallback is set up here to catch it). New `$lib/i18n.ts` exports `lh` (a thin
-`localizeHref` re-export, reading the current locale from Paraglide's
-async-local-storage-backed `getLocale()` so no locale param needs threading
-through call sites) — used at every internal `href`/`goto`/`redirect` site
-across the whole app. Verified live: `/es` root correctly redirects to
-`/es/welcome` (not `/welcome`), and every internal link on a rendered `/es`
-page stays `/es`-prefixed, including ones built from a server `redirect()`
-inside a form action.
+**The real gotcha:** Paraglide does **not** auto-localize plain `<a href>`/`goto()`/
+`redirect()` — only inbound URL matching is automatic. `$lib/i18n.ts`'s `lh()`
+(a thin `localizeHref` re-export) wraps every internal `href`/`goto`/`redirect` site
+across the app so links don't silently drop the `/es` prefix on the next click.
 
 **Acceptance criteria:**
-- [x] Every route reachable both unprefixed (English) and under `/es`
-  (Spanish), with the correct `<html lang>`/`dir` and translated content
-- [x] A language switcher lets a visitor move between locales from any page,
-  preserving the current path
-- [x] Every internal navigation (links, redirects, form-action redirects)
-  stays within the currently-chosen locale — verified live via curl, not
-  just assumed from the mechanism
+- [x] Every route reachable both unprefixed (English) and under `/es` (Spanish), with correct `<html lang>`/`dir` and translated content
+- [x] A language switcher lets a visitor move between locales from any page, preserving the current path
+- [x] Every internal navigation stays within the currently-chosen locale — verified live via curl
 - [x] `npm run check`/`build` both clean
-- [ ] Human/Playwright click-through of the Spanish UI (menus, forms, the
-  player's Practice Setup drawer) — not done this pass, same no-browser-in-
-  this-Windows-environment limitation as F5/F6's own expansions
+- [ ] Human/Playwright click-through of the Spanish UI (menus, forms, the player's Practice Setup drawer) — not done this pass, no browser in this Windows environment
 
 **Tasks — Claude:**
-- [x] Installed `@inlang/paraglide-js`; `project.inlang/settings.json`,
-  `messages/en.json`/`es.json` (~350 keys covering every route)
-- [x] `vite.config.ts` (`paraglideVitePlugin` + `urlPatterns`), `src/hooks.ts`
-  (new, `reroute`), `src/hooks.server.ts` (composed via `sequence()`),
-  `src/app.html` (`%lang%`/`%dir%`), `tsconfig.json` (`types: ["node"]` —
-  Paraglide's generated `server.js` needs `async_hooks`)
+- [x] Installed `@inlang/paraglide-js`; `project.inlang/settings.json`, `messages/en.json`/`es.json` (~350 keys)
+- [x] `vite.config.ts`, `src/hooks.ts` (new, `reroute`), `src/hooks.server.ts` (composed via `sequence()`), `src/app.html`, `tsconfig.json` (`types: ["node"]` — Paraglide's generated `server.js` needs `async_hooks`)
 - [x] New `$lib/i18n.ts` (`lh` helper) and `$lib/components/LanguageSwitcher.svelte`
-- [x] Every `.svelte`/`+page.server.ts` in the app (~30 route files + all
-  shared components: `AppHeader`, `BottomNav`, `SettingsDrawer`,
-  `PieceLibrary`, `Logo`, `PdfView`, `ScoreView`) converted from hardcoded
-  English strings to `m.*()` calls, and every internal
-  `href`/`goto`/`redirect` wrapped in `lh(...)`
-- [x] Deliberately left untranslated (not UI chrome): stored/persisted
-  content an admin types (a homework `range`'s literal `"Full piece"`
-  default, etc.) — translating those would make content language-dependent
-  at write time, not a display concern
-- [x] Verified live: `curl` against both `npm run build`'s output and
-  `npm run dev`, confirming `<html lang>` flips per prefix, real Spanish
-  text renders, the language switcher's hrefs are correct, and internal
-  links/redirects (including root's own auth redirect) stay locale-prefixed
+- [x] Every `.svelte`/`+page.server.ts` (~30 route files + shared components) converted to `m.*()` calls, every internal `href`/`goto`/`redirect` wrapped in `lh(...)`
+- [x] Deliberately left untranslated: stored/persisted content an admin types (e.g. a homework `range`'s literal default) — translating those would make content language-dependent at write time
+- [x] Verified live via curl against both `build` output and `dev`
 
 **Tasks — Human:**
-- [ ] Click through the Spanish UI for real (forms, the player drawer,
-  error states) — this pass is `check`/`build`/curl-verified only, no
-  browser was available in the environment that built it
+- [ ] Click through the Spanish UI for real (forms, the player drawer, error states) — this pass is `check`/`build`/curl-verified only
 
 ### F9 — Graceful error handling app-wide [x]
 
-At the human's direct request: make every error path show something reasonable
-instead of crashing or silently misbehaving. Scoped to Frontend only (Backend's
-own error responses/status codes untouched) — two threads: (1) no branded
-`+error.svelte` existed anywhere, so any thrown `error(status, ...)` (404s,
-403s) rendered SvelteKit's bare default page; (2) a genuine network failure
-(Backend down/unreachable — `fetch` itself throwing, not just resolving to a
-non-2xx response) wasn't distinguished from a real HTTP error at several call
-sites, so it surfaced as an unhandled exception instead of a message.
+At the human's direct request: every error path shows something reasonable instead
+of crashing or silently misbehaving. Two threads: (1) no branded `+error.svelte`
+existed, so any thrown `error(status, ...)` rendered SvelteKit's bare default page;
+(2) a genuine network failure (Backend unreachable) wasn't distinguished from a real
+HTTP error at several call sites.
 
 **Mechanism:**
-- New root `src/routes/+error.svelte` — branded, localized (`m.*()`/`lh()`
-  like every other page), status-aware (404/403/401/503/generic), reusing
-  `shell.css`'s `.card`/`.btn` visual language. Applies app-wide since it
-  sits at the route root.
-- `$lib/server/backend.ts`'s `backendFetch` now wraps its own `fetchFn(...)`
-  call in try/catch, converting a genuine network failure into the *same*
-  `BackendApiError` shape (a synthetic `status: 503`, friendly translated
-  message) that a resolved non-2xx response already produces — every
-  existing `catch (err) { if (err instanceof BackendApiError) ... }` call
-  site across the app (there are many) gets this for free, no per-file
-  changes needed. `$lib/api/guest.ts` got the equivalent (`guestFetch`
-  helper wrapping all 4 guest-API functions, `GuestApiError` status 503).
-- Every *raw* (not going through either wrapper) `fetch()` call site that
-  wasn't already guarded got the same try/catch treatment individually:
-  `login`'s `login()` helper + register action, `reset-password`'s action,
-  `groups/[id]`'s `uploadTrack` action, `piece/[id]`'s guest resolver, and
-  both `piece/[id]/file|pdf/+server.ts` proxy routes (these return a clean
-  `503` `Response` instead of throwing, since `+server.ts` endpoints don't
-  go through `+error.svelte` — verified via `grep` that no raw
-  `fetch()` call anywhere in the app was left unguarded).
-- Deliberately **not** changed: the root `+layout.server.ts`'s existing
-  fail-open behavior (any `/auth/me` failure — 401 or otherwise — quietly
-  resolves to `user: null` rather than throwing). Tried making it throw for
-  non-401 failures first, to avoid a Backend blip silently looking like a
-  logged-out session; reverted after realizing this load runs for *every*
-  route including fully public ones (`/welcome`, `/join`) — throwing there
-  would block pages that need no user at all over a transient hiccup, a
-  worse regression than the one being fixed. The session cookie itself is
-  untouched on anything but a real 401, so a blip is self-healing: the same
-  cookie resolves normally again once the Backend recovers, no forced
-  re-login.
+- New root `src/routes/+error.svelte` — branded, localized, status-aware (404/403/401/503/generic)
+- `$lib/server/backend.ts`'s `backendFetch` now wraps its `fetchFn(...)` call in try/catch, converting a genuine network failure into the same `BackendApiError` shape a resolved non-2xx response already produces — every existing catch site gets this for free. `$lib/api/guest.ts` got the equivalent (`guestFetch`).
+- Every raw `fetch()` call site not already guarded got the same try/catch treatment individually (login, register, reset-password, `uploadTrack`, the guest resolver, both file/pdf proxy routes)
+- Deliberately **not** changed: the root `+layout.server.ts`'s fail-open behavior (any `/auth/me` failure quietly resolves to `user: null`). Tried making it throw for non-401 failures first, reverted after realizing this load runs for every route including fully public ones — throwing there would block pages needing no user at all over a transient blip.
 
 **Acceptance criteria:**
-- [x] Every thrown `error(status, ...)` (404, 403, etc.) renders a branded,
-  localized page instead of SvelteKit's default
-- [x] A genuine Backend-unreachable failure shows a friendly, translated
-  message ("Can't reach the server") instead of crashing, at every call
-  site in the app — forms, page loads, and the piece-file/PDF proxy routes
-- [x] A session survives a transient Backend outage — no forced re-login,
-  same cookie works again once it recovers
+- [x] Every thrown `error(status, ...)` renders a branded, localized page instead of SvelteKit's default
+- [x] A genuine Backend-unreachable failure shows a friendly, translated message at every call site
+- [x] A session survives a transient Backend outage — no forced re-login
 - [x] `npm run check`/`build` both clean
-- [x] Verified live, not just by inspection: registered/logged in, killed
-  the local Backend mid-session, confirmed a form action fails gracefully
-  (register → 503 + friendly message, no crash, no false-positive login),
-  confirmed the guest join-code path degrades gracefully in both locales,
-  confirmed a nonexistent group renders the new branded 404 in both
-  locales, restarted the Backend, confirmed the *same* pre-outage session
-  cookie resolves normally again with zero re-login
+- [x] Verified live: registered/logged in, killed the local Backend mid-session, confirmed graceful failure + no false-positive login, confirmed the guest path degrades gracefully in both locales, confirmed a nonexistent group renders the branded 404, restarted the Backend, confirmed the same session cookie resolves normally again
 
 **Tasks — Claude:**
 - [x] `src/routes/+error.svelte` (new) + 6 new message keys
-- [x] `$lib/server/backend.ts`'s `backendFetch`, `$lib/api/guest.ts`'s new
-  `guestFetch` helper (used by all 4 guest-API functions)
-- [x] Guarded every previously-unguarded raw `fetch()`: `login`,
-  `reset-password`, `groups/[id]`'s upload action, `piece/[id]`'s guest
-  resolver, `piece/[id]/file|pdf/+server.ts`
-- [x] Live-verified via curl against the real local dev server + Postgres,
-  including a real Backend-down/Backend-recovered cycle — not just
-  `check`/`build`
+- [x] `backendFetch`, `guestFetch` helper
+- [x] Guarded every previously-unguarded raw `fetch()`
+- [x] Live-verified via curl against the real local dev server + Postgres, including a real Backend-down/recovered cycle
 
 ### F10 — Lock down `$lib/pieces/registry.ts`'s bundled pieces [x]
 
-At the human's direct request ("some of them might have restricted privileges
-and we might not want them publicly available... let's keep challenge of thor
-the way it's routed as an example, but let's protect the rest under their
-owners and invite links"). The real hole: `registry.ts`'s bundled `PIECES`
-array held every SFCC piece (Der Abend, Proserpine, Les djinns, Eglamore, The
-Fay's Song — real choir repertoire, not public-domain demo content) as static
-files under `static/fixtures/SFCC/`, fetchable by anyone with zero auth by
-direct URL, and `getPiece(data.id)` in `piece/[id]/+page.svelte` checked this
-bundled registry *before* the already-correctly-gated Backend `remote` piece
-(member session or guest join code — built in F5/B10-B12, confirmed still
-correct: `/library/pieces` scopes to the caller's own groups,
-`/guest/{code}/pieces/{id}/*` re-checks the piece is actually distributed to
-*that* group, both check a group guest password when set). So `/piece/
-der-abend` (or any of the other four, or `/fixtures/SFCC/....pdf` directly)
-worked for a fully anonymous visitor — the Backend-side gating was never even
-reached. Confirmed via `Backend/plan.md`'s own log that all 7 SFCC pieces
-already have real `Piece`/`PieceVersion`/`Distribution` rows owned by the
-human's real group ("San Francisco City Chorus") — the fix didn't need any
-new Backend modeling, just removing the public bypass on the Frontend.
+At the human's direct request ("some of them might have restricted privileges... let's
+keep challenge of thor the way it's routed as an example, but let's protect the rest
+under their owners and invite links"). The real hole: `registry.ts`'s bundled `PIECES`
+array held 5 real SFCC choir pieces as static files, fetchable by anyone with zero
+auth by direct URL — and `piece/[id]/+page.svelte` checked this bundled registry
+*before* the already-correctly-gated Backend `remote` piece, so the Backend-side
+gating (member session or guest join code, confirmed still correct) was never even
+reached.
 
 **Mechanism:**
-- `registry.ts`'s `PIECES` pruned from 7 entries to 2: Lacrymosa (public
-  demo, per the human's choice to keep it alongside Thor rather than migrate
-  it — it isn't owned by any real group today) and Challenge of Thor (kept
-  exactly as before, at the human's explicit request, as a worked example of
-  this direct-URL/no-auth path).
-- Deleted the other 5 pieces' PDF/MusicXML files from `static/fixtures/SFCC/`
-  outright — pruning the registry alone wasn't enough, since Cloudflare's
-  asset binding serves anything under `static/` regardless of whether any
-  route references it. Also deleted `The-Frost-Myth_SATB-Score.*`, which had
-  no registry entry at all but was sitting in the same public directory
-  (an 8th real SFCC piece, already only reachable through the real Backend
-  path per a pre-existing gap noted in `Backend/plan.md`'s log — this closes
-  that leak too, not just the registry-matched ones).
-- No routing/gating logic changed anywhere — `getPiece(id) ?? (remote ? ...
-  : undefined)` in `piece/[id]/+page.server.ts`/`+page.svelte` was already
-  correct; once the registry only has 2 entries, everything else falls
-  through to the real gated path automatically.
-- Found and fixed a real regression this would otherwise have caused: `/`'s
-  personal-library group sections only ever rendered a piece if
-  `getPieceByTitle` matched the bundled registry, with no `has_music`/
-  `has_pdf` fallback (unlike the group Tracks tab and guest join page, which
-  both already had one from F5). Once the 5 pieces left the registry, a
-  logged-in member's own distributed repertoire would've silently vanished
-  from `/` even though they still had full legitimate access via
-  `/groups/[id]`. Fixed by building a `Piece` via `remotePiece.ts`'s
-  `buildRemotePiece()` for any library entry with no bundled match, same
-  `has_music || has_pdf` gate the other two consumers use.
-- Tempo: the 5 migrated pieces lost their registry `tempoOverrideBPM` (their
-  MusicXML exports carry no `<sound tempo>` at all — see F1's log). The
-  Backend's `Piece.default_tempo_bpm` is the real replacement and the group
-  Tracks tab already has a "Set default tempo" admin control wired to it —
-  left for the human to fill in themselves rather than me reaching into
-  production data: Der Abend 58, Proserpine 80, Les djinns 138, Eglamore
-  141, The Fay's Song 100 (same values as the removed overrides).
+- `registry.ts`'s `PIECES` pruned from 7 entries to 2: Lacrymosa (not owned by any real group, kept public per the human's choice) and Challenge of Thor (kept exactly as before, as a worked example of this direct-URL/no-auth path)
+- Deleted the other 5 pieces' PDF/MusicXML files from `static/fixtures/SFCC/` outright — pruning the registry alone wasn't enough, since Cloudflare's asset binding serves anything under `static/` regardless of routing. Also deleted an 8th real SFCC piece (`The-Frost-Myth`) that had no registry entry at all but sat in the same public directory.
+- No routing/gating logic changed anywhere — once the registry only has 2 entries, everything else falls through to the real gated path automatically
+- Found and fixed a real regression this would otherwise have caused: `/`'s personal-library section only ever rendered a piece via a bundled-registry title match, with no `has_music`/`has_pdf` fallback (unlike the group Tracks tab and guest join page). Fixed by building a `Piece` via `remotePiece.ts`'s `buildRemotePiece()` for any library entry with no bundled match.
+- The 5 migrated pieces lost their registry `tempoOverrideBPM` (their MusicXML exports carry no tempo data). The Backend's `Piece.default_tempo_bpm` is the real replacement — left for the human to fill in via the Tracks tab (Der Abend 58, Proserpine 80, Les djinns 138, Eglamore 141, The Fay's Song 100, same values as the removed overrides)
 
 **Acceptance criteria:**
-- [x] Only Lacrymosa and Challenge of Thor remain reachable with no login and
-  no invite code, by direct URL or otherwise
-- [x] The other 5 registry pieces + The Frost Myth have no public static file
-  left to fetch directly
-- [x] A group member still sees their group's full distributed repertoire on
-  `/`, `/groups/[id]`, and the player — via the real Backend piece now, not
-  the bundled fixture
-- [x] A guest with a valid join code (and group password, if set) still gets
-  the same access as before; an invalid/missing code does not
+- [x] Only Lacrymosa and Challenge of Thor remain reachable with no login and no invite code, by direct URL or otherwise
+- [x] The other 5 registry pieces + The Frost Myth have no public static file left to fetch directly
+- [x] A group member still sees their group's full distributed repertoire on `/`, `/groups/[id]`, and the player — via the real Backend piece now
+- [x] A guest with a valid join code (and group password, if set) still gets the same access as before
 - [x] `npm run check`/`build` both clean
 
 **Tasks — Claude:**
 - [x] Pruned `registry.ts`'s `PIECES` to Lacrymosa + Challenge of Thor
 - [x] Deleted the other 5 pieces' + The Frost Myth's public static files
-- [x] Fixed `/`'s personal-library section to fall back to a real Backend
-  piece via `buildRemotePiece()`, matching the Tracks tab/join page pattern
+- [x] Fixed `/`'s personal-library section to fall back to a real Backend piece via `buildRemotePiece()`
 - [x] `check`/`build` clean
 
 **Tasks — Human:**
-- [ ] Set the 5 migrated pieces' default tempo via the group's Tracks tab
-  (values above) — nothing plays at the wrong tempo until this is done, it
-  just falls back to whatever the player's own default is
+- [ ] Set the 5 migrated pieces' default tempo via the group's Tracks tab (values above) — nothing plays at the wrong tempo until this is done, it just falls back to the player's own default
 
 ## Backlog
 
-- **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
-- Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only, unaddressed by F4's real-data wiring).
-- Admin default tempo (group Tracks tab → `player/[id]`'s "Reset to default") only rides along on the group Tracks tab's and personal Library's practice links so far — the guest join page's practice link doesn't carry `?defaultTempo=` yet since `GuestPieceOut` doesn't expose `default_tempo_bpm`.
-- Admin's Assignments/Tracks tabs have no edit/delete UI yet (Backend supports `DELETE /homework/{id}`; there's no equivalent for tracks). Not attempted this session — stayed scoped to navigation/structure, not new CRUD surface.
-- `/groups/new`'s form only asks for a name — the original wireframe's Create Group Flow also mocked up a description and a default-sections checklist, but the Backend's `GroupCreate` schema has no fields for either yet.
-- Preserve fully independent polyphonic notation in the player-generated MusicXML. Same-onset notes now render as MusicXML chords, including the collapsed accompaniment staff, but truly independent overlapping rhythms on one staff still need a multi-voice representation rather than the current single-timeline simplification.
-- Live tempo control for F5's stem-backed pieces (F5 leaves it out — see that milestone's note on why it's a real time-stretching problem, not a rate multiplier like the MIDI-synth player has).
-- **Fix the live production Backend URL** (see 2026-08-27 Log entry below): the deployed `divisi-frontend` Worker was built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in (confirmed via a live 500 on `/join/[code]`) — a human step, deploying is staying manual at the human's direction (2026-08-27). Once the real Backend URL exists (`backend/deploy` branch/worktree, still in progress), redeploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy` instead of a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold.
+- **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's repo cleanup as the Frontend equivalent of the Backend's `schemas.py` split, deliberately not attempted unsupervised — splitting live `$state`/reactive bindings with no way to visually verify a refactor is a real regression risk. A natural split: one child component per tab, each taking its slice of `data` as props, parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
+- Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only)
+- Admin default tempo only rides along on the group Tracks tab's and personal Library's practice links so far — the guest join page's practice link doesn't carry `?defaultTempo=` yet since `GuestPieceOut` doesn't expose `default_tempo_bpm`
+- Admin's Assignments/Tracks tabs have no edit/delete UI yet (Backend supports `DELETE /homework/{id}`; no equivalent for tracks)
+- `/groups/new`'s form only asks for a name — the Backend's `GroupCreate` schema has no fields yet for a description or default-sections checklist
+- Preserve fully independent polyphonic notation in the player-generated MusicXML — same-onset notes render as chords now, but truly independent overlapping rhythms on one staff still need a multi-voice representation
+- Live tempo control for F5's stem-backed pieces — a real time-stretching problem, not a rate multiplier like the MIDI-synth player has
+- Guest-side wiring for genuinely-new real pieces via join code (see F5's "Expanded" note) — closed via the fix logged 2026-08-29 below; kept here only if a similar gap resurfaces for a future upload path
+- **Fix the live production Backend URL if it ever regresses**: the deployed Worker was once built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in — always deploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy`, never a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold
 
 ## iOS app (paused 2026-08-27, moved here from root `plan.md`)
 
-Condensed 2026-08-28 during repo cleanup — the root-level `plan.md` (the
-native Swift/SwiftUI app this project pivoted away from, see the "Why a
-website first" note above) was deleted since it's a fully separate,
-already-frozen sub-project whose only forward-looking content was the
-portability constraint below; the day-by-day build log stays in git
-history if anyone ever needs it.
+Condensed 2026-08-28 during repo cleanup — the root-level `plan.md` (the native
+Swift/SwiftUI app this project pivoted away from) was deleted since it's a fully
+separate, already-frozen sub-project; the day-by-day build log stays in git history.
 
-**What existed:** M1 (Xcode/xcodegen scaffold) → M2 (MIDI parsing via
-AudioToolbox's `MusicSequence`/`MusicEventIterator`, not
-`AVAudioSequencer` — `AVMIDIMetaEvent` couldn't expose lyric/track-name
-payload bytes) → M3 (playback via `AVAudioSequencer`/`AVAudioEngine`,
-verified surviving backgrounding on a real device) → M4 (in-app
-follow-along: OpenSheetMusicDisplay in a `WKWebView`, flat/highlighted/
-solo display modes, per-part balance mixing — frozen mid-milestone with
-zoom controls and seek/scrub both confirmed broken, never fixed) — M5
-through M7 (SwiftUI shell, PiP piano-roll renderer, PiP controller) were
-never started. The MIDI-parsing heuristics and `MusicXMLConverter`
-quantization math carried over conceptually into this Frontend's own
-`$lib/midi`/`$lib/musicxml` — same problem, rewritten in TypeScript.
+**What existed:** M1 (Xcode/xcodegen scaffold) → M2 (MIDI parsing via AudioToolbox's
+`MusicSequence`/`MusicEventIterator`, not `AVAudioSequencer` — `AVMIDIMetaEvent`
+couldn't expose lyric/track-name payload bytes) → M3 (playback via
+`AVAudioSequencer`/`AVAudioEngine`, verified surviving backgrounding on a real
+device) → M4 (in-app follow-along: OpenSheetMusicDisplay in a `WKWebView`, flat/
+highlighted/solo display modes, per-part balance mixing — frozen mid-milestone with
+zoom controls and seek/scrub both confirmed broken, never fixed) — M5 through M7
+(SwiftUI shell, PiP piano-roll renderer, PiP controller) were never started. The
+MIDI-parsing heuristics and `MusicXMLConverter` quantization math carried over
+conceptually into this Frontend's own `$lib/midi`/`$lib/musicxml`, rewritten in TS.
 
-**Standing constraint, if iOS work ever resumes:** keep pure-algorithm
-Swift (MIDI-parsing rules, `MusicXMLConverter`'s quantization math,
-`DivisiSyncEngine`'s poll→cursor-index math) free of Foundation/UIKit
-types where the logic itself doesn't need them — plain data in, plain
-data/strings out. Costs nothing now; turns a future Android port into
-translation rather than redesign. No Kotlin Multiplatform or cross-platform
-framework (React Native/Flutter) until Android work actually starts —
-speculative infra otherwise, and would fight native audio-timing/PiP work
-already invested. (Also recorded in this session's own persistent memory,
+**Standing constraint, if iOS work ever resumes:** keep pure-algorithm Swift free of
+Foundation/UIKit types where the logic itself doesn't need them — plain data in,
+plain data/strings out. Turns a future Android port into translation rather than
+redesign. No Kotlin Multiplatform or cross-platform framework until Android work
+actually starts. (Also recorded in this session's own persistent memory,
 `divisi-android-portability.md`.)
 
-**Fixture provenance:** the `Fixtures/*.mid` files (still used by this
-Frontend and the Backend) are synthetic, generated via `Fixtures/generate.py`
-(mido) approximating the opening of Mozart's Requiem's "Requiem aeternam"
-— not a verified transcription, sourced this way because CPDL/8notes/
-MuseScore/smallchurchmusic all blocked automated fetching or required
-accounts.
+**Fixture provenance:** the `Fixtures/*.mid` files (still used by this Frontend and
+the Backend) are synthetic, generated via `Fixtures/generate.py` (mido)
+approximating the opening of Mozart's Requiem's "Requiem aeternam" — not a verified
+transcription, since CPDL/8notes/MuseScore/smallchurchmusic all blocked automated
+fetching or required accounts.
 
 ## Log
 
-- 2026-08-29: Built F10 (locked down `$lib/pieces/registry.ts`'s bundled pieces), the human's direct follow-up request right after F9, flagging that `piece/<name>` routing "is not safe nor scalable" and asking to keep Challenge of Thor public as an example while protecting the rest "under their owners and invite links". Traced the actual hole: `registry.ts`'s bundled `PIECES` array held all 7 SFCC choir pieces as static files under `static/fixtures/SFCC/`, served with zero auth by Cloudflare's asset binding regardless of app routing, and `piece/[id]/+page.svelte` checked this bundled registry by id *before* the already-correct Backend-gated `remote` piece — so any anonymous visitor could open `/piece/der-abend` (or fetch the PDF directly) and get full access, completely bypassing the member/guest-code gating F5/B10-B12 already built and that I confirmed is still correct (group-scoped `/library/pieces`, `/guest/{code}/pieces/{id}/*` re-checking the piece is actually distributed to that specific group, guest password enforced when set). Also confirmed via `Backend/plan.md`'s own log that all 7 SFCC pieces already have real `Piece`/`PieceVersion`/`Distribution` rows owned by the human's actual group ("San Francisco City Chorus") — so this needed zero Backend changes, only removing the Frontend's public bypass. Per the human's answers to two scoping questions: Lacrymosa (not owned by any real group, unlike the SFCC 7) stays public alongside Thor rather than being migrated or removed; the 5 migrated pieces' tempo (lost along with their registry `tempoOverrideBPM` overrides) gets set by the human themselves afterward via the group Tracks tab's existing "Set default tempo" control, not by me reaching into production data — logged the 5 target BPM values for them to enter. Pruned `PIECES` to just Lacrymosa + Thor, deleted the other 5 pieces' PDF/MusicXML from `static/fixtures/SFCC/` (registry pruning alone doesn't stop direct-URL fetches — the files themselves had to go), and also deleted `The-Frost-Myth_SATB-Score.*`, an 8th real SFCC piece that had no registry entry at all but was sitting in the same public directory unreferenced. Along the way, caught and fixed a real regression this change would otherwise have introduced: `/`'s personal-library section only rendered a piece via `getPieceByTitle`'s bundled-registry match, with no `has_music`/`has_pdf` fallback to a real Backend piece (unlike the group Tracks tab and guest join page, which both already had one) — once the 5 pieces left the registry, a member's own legitimately-owned repertoire would've silently vanished from `/` even with full access still intact via `/groups/[id]`. Fixed by building a `Piece` through `remotePiece.ts`'s `buildRemotePiece()` for any library entry with no bundled match, matching the same gate the other two consumers already use. No routing/gating logic needed to change anywhere else — `getPiece(id) ?? (remote ? ... : undefined)` was already correct; shrinking the registry to 2 entries was enough for everything else to fall through to the real gated path on its own. `npm run check` (0 errors)/`build` both clean.
-- 2026-08-29: Built F9 (graceful error handling app-wide), the human's direct follow-up request this session right after F8, again on a Windows machine with no browser available. Two parts, matching how the human scoped it: (1) a branded `+error.svelte` at the routes root — replaces SvelteKit's default unstyled crash/404 page with the app's own shell/logo, a status-appropriate title (`error_404_title`/`error_403_title`/`error_503_title`/generic fallback) and a "back to home" link built through `lh()` so it stays locale-correct even on a hard crash; (2) normalized handling of genuine network failures (Backend unreachable) versus resolved-but-non-2xx responses, which were already handled. `backendFetch` (`$lib/server/backend.ts`) and a new `guestFetch` helper (`$lib/api/guest.ts`) now catch the raw `fetch()` throw and re-raise it as a synthetic 503 `BackendApiError`/`GuestApiError` with a translated `errors_could_not_reach_server` message, so every call site that already does `catch (err) { if (err instanceof XApiError) }` got the fix for free. Swept the rest of the repo by hand for raw unguarded `fetch()` calls that don't go through either wrapper and fixed each: `login/+page.server.ts` (both the login helper and the register action), `reset-password/+page.server.ts`, `piece/[id]/+page.server.ts`'s guest resolver (falls back to `remote: null`, same as a bad code), both `piece/[id]/file` and `.../pdf` proxy routes (return a clean 503 instead of an unhandled exception), and `groups/[id]/+page.server.ts`'s track-upload action. Considered and explicitly reverted a more aggressive change to the root `+layout.server.ts` — throwing on any non-401 `BackendApiError` there (to show the new error page instead of quietly treating an outage as logged-out) sounded right until I noticed that load runs for every route including fully public ones (`/welcome`, `/join`), so it would've blocked pages needing no user at all over a transient blip; kept the original fail-open `return { user: null }` for non-401 cases and only improved the doc comment explaining why. Verified live: `npm run check` (0 errors) and `build` both clean; a real kill-Backend/restart-Backend cycle against local dev confirmed a 404 renders the branded page in both `en` and `es`, register/login fail with the translated "can't reach the server" message instead of a raw exception while the Backend is down, and once it's back the same session cookie resolves normally again with no forced re-login — self-healing as designed. Not clicked through in a real browser (none available here), same caveat as F8.
-- 2026-08-29: Built F8 (Spanish localization, full app under `/es`), the human's direct request this session, on a Windows machine with no browser/Playwright available. Full detail in F8's own section above. Installed Paraglide JS (inlang) — `project.inlang/` + `messages/en.json`/`es.json` (~350 keys), `vite.config.ts`'s plugin with `urlPatterns` (base locale `en` unprefixed, `es` prefixed), `src/hooks.ts`'s `reroute` + `src/hooks.server.ts`'s `paraglideMiddleware` (composed with the existing session-cookie handle via `sequence()`), `%lang%`/`%dir%` in `app.html`, and a new `<LanguageSwitcher>`. The real work was converting every route (~30 files) and every shared component to `m.*()` calls instead of hardcoded strings, plus — the actual gotcha — wrapping every internal `href`/`goto`/`redirect` in a new `$lib/i18n.ts` `lh()` helper, since Paraglide only auto-localizes *inbound* URLs, not outbound links; without it, a plain link would've silently dropped the `/es` prefix on the very next click. Verified live via curl against both `npm run build`'s output and `npm run dev`: `<html lang>` flips correctly per prefix, real Spanish renders, the language switcher's hrefs are right, and internal navigation (including the root page's own auth redirect) stays locale-prefixed end to end. `npm run check` (0 errors, same pre-existing warning pattern)/`build` both clean. Not deployed to production; local-only, and not clicked through in a real browser — flagged as F8's own open Human task. Merged on top of the Mac session's guest-piece-upload fix below (same day) — its `join/[code]/+page.svelte` fix (dropping the dead `{#if bundled}` gate, a real `practiceId` fallback for non-bundled pieces) is preserved as-is, with F8's translations layered onto it.
-- 2026-08-29: Fixed a real gap in the Windows session's F5/piece-uploads work (see the merged-in Log entry below and `Backend/plan.md`'s matching one) — asked to deploy the Frontend and click through it for real via Playwright, since the Windows session had no browser available on their end. Real Backend pieces (uploaded via the new group Tracks-tab form) worked cleanly for a logged-in member but were **completely unreachable as a guest**, a real regression against F5's own acceptance criteria ("a guest... can open and fully practice any of that group's distributed pieces the same way, with no login"): `join/[code]/+page.svelte`'s `visiblePieces` filter only ever matched bundled fixture titles (never `has_music`/`has_pdf`, which didn't exist on `GuestPiece` at all yet); `piece/[id]/+page.server.ts`'s own comment said a guest explicitly falls back to `remote: null`; both `file`/`pdf` proxy routes unconditionally attached `locals.token` (`undefined` for a guest → guaranteed 401 against the Backend even if the listing/routing gaps above were fixed). Backend's guest file/pdf routes themselves were already built and correct — just nothing on the Frontend ever reached them. Fixed all four: widened the guest listing filter (same `has_music||has_pdf` pattern already used on the member Tracks tab), gave `piece/[id]/+page.server.ts` a real guest branch (resolves through the guest group listing via `?code=` instead of the authenticated `/library/pieces` lookup), branched both proxy routes on `locals.token` presence (proxying to the Backend's guest routes when absent), and threaded the join code through `remotePiece.ts`'s proxy URLs so a guest's file/pdf requests carry it. `npm run check`/`build` clean. Verified live via Playwright against the real local dev server + Postgres: full upload flow (music+PDF+YouTube link, music-only, PDF-only) as admin, then the same three pieces opened by a completely anonymous guest via join code — real MIDI parses and plays, real PDF renders, matching the member experience exactly, zero JS errors throughout. Also confirmed live on production (`divisi.maripi.net`) with a real curl round trip through the actual proxy routes. Test data cleaned up from both local and production Postgres after. Deployed straight to production myself rather than waiting on the human's own planned Backend push — see `Backend/plan.md`'s matching entry for why.
-- 2026-08-28: Deployed F7 to production (`divisi.maripi.net`, real `wrangler deploy`, confirmed live via a real curl round trip against `/join/9CJM7VRU` — banner text present, Weekly Notes correctly hidden by default for that group) and built `SettingsDrawer.svelte`'s "Change password" section — current password + new password (typed-twice client-side match check, same pattern as `/login`'s register form), posts to a new `/settings?/changePassword` action wired to the Backend's `PUT /auth/me/password` (see `Backend/plan.md`'s matching log entry). Same inline-edit/collapse-on-success shape as "Edit name" right above it in the same section — collapses back to a summary row on success, so (unlike the group page's page-visibility toggles) `use:enhance`'s default native `form.reset()` is harmless here, nothing needs to survive it. Also stood up an isolated Cloudflare Workers preview (`divisi-frontend-preview.mariapazmaluenda-564.workers.dev`, separate Worker name/config from the real `divisi-frontend`, no custom domain — zero risk to production routing) so the human could look at F7 before it went live; production Backend's `CORS_ORIGINS` briefly gained that preview origin to make it reachable at all, since Cloudflare Workers' `fetch` enforces CORS during SSR unlike plain Node. `npm run check`/`build` clean throughout; the whole password-change flow verified live via Playwright (mismatch blocks submit, old password 401s after a real change, new one logs in) — the human was away from their computer this entire session and explicitly authorized using it (see memory: a per-instance exception, not a changed default).
-- 2026-08-28: Built F7 (Weekly Notes tab + guest sign-in banner), the human's live requests this session. Full detail in the milestone's own section above — reuses B12's page-settings machinery exactly (see F6), Backend+Frontend both done, real E2E curl round trip on the Backend side. Verified live in a real browser via Playwright — the human was away from their computer and explicitly said to go ahead and use it for this session (not this project's usual convention; noted in memory as a per-instance exception, not a changed default). That live pass caught two real bugs no amount of `npm run check`/code reading would have: the page-visibility toggles' "resets after saving" report turned out to have a second, independent cause beyond the one a prior session already fixed (SvelteKit's `use:enhance` default `update()` calls a native `form.reset()`, wrong for a form that stays visible after saving — `pageSettingsDraft` state and the actual saved data were never wrong, only the display); and `note_date` displaying a day early in any UTC-behind timezone (local-time formatting on a value with no time-of-day meaning). Both fixed and reverified live. Also fixed a local-dev-only blocker found along the way: `Frontend/.env`'s `PUBLIC_API_BASE_URL` pointed at plain `http://localhost:8000` while the locally-running Backend is HTTPS-only, so the dev Frontend couldn't reach it at all — retargeted to `https://localhost:8000`. `npm run check`/`build` clean throughout. All Playwright-created test data deleted from the local dev DB afterward.
-- 2026-08-29: Added a regular weekly rehearsal schedule to groups (F6's "Expanded 2026-08-29" note above), at the human's request after they reported responsibility-date times "not getting stored or reflecting properly" — the Backend round trip checked out exactly right via a live curl test (see `Backend/plan.md`'s matching log entry), so this builds the requested fix (a "Next rehearsal" quick-fill anchored to a group-level day+time) rather than chasing a storage bug that didn't reproduce. `npm run check`/`build` clean; date math verified via a standalone script, not a real browser. Same session as, and pushed together with, the piece-uploads work below.
-- 2026-08-29: Built F5's expanded scope (real piece uploads — MIDI/MusicXML + PDF + reference audio; original F5 was music-file-only) on a Windows machine with **no browser/Playwright available in that environment** — see F5's "Expanded 2026-08-29" note above for the full change list and, critically, what's still unverified because of that (the actual upload form / player-PDF-toggle / YouTube-embed interaction has not been clicked through by anyone yet, only `npm run check`/`build` clean + the Backend side curl-verified). Backend side (same session, see `Backend/plan.md`'s matching log entry) fully built and curl-verified first. `npm run check` (0 errors, same 7 pre-existing warnings) and `npm run build` both clean. Deliberately left for a human or a Playwright-capable session: actually opening the upload form and confirming a music-only/PDF-only/both piece each show the right view, and that a group member — not just the admin who uploaded it — can practice one. Not deployed; local-only, on top of a fresh `git clone` of this repo (two `"`-quoted fixture PDFs couldn't check out on Windows — OS filename restriction, not a repo problem, harmless for this work).
-- 2026-08-28: Deploying tonight's batch to production, closing out `HANDOFF.md`'s two open bugs (now deleted) plus a round of live-testing fixes on top. Account: Settings drawer gained inline "Edit" name and a "Delete account" click-to-confirm (now living directly under Log out, small/underlined/not bold, rather than up in the Account section where it read as easy to miss), both posting to a new `src/routes/settings/+page.server.ts`. Tempo defaults: the group Tracks admin UI can now set a piece's default tempo (`PUT /library/pieces/{id}/default-tempo`), and the practice link carries `?defaultTempo=` through to the player, which seeds its starting tempo and shows "Reset to default". `ScoreView.svelte`'s two HANDOFF bugs: (1) the current-note accent color was landing on VexFlow's wrapping `<g>` groups instead of the actual painted leaf shapes inside them (confirmed live: noteheads/flags/accidentals/dots stayed unpainted while stems — whose own getter already drilled to the leaf — worked) — `paintableLeaves()` now drills into every one of them (noteheads, stems, flags, and the shared modifiers group covering accidentals/dots/articulations). (2) cursor-follow was scrolling `.score-container`, which only actually scrolls horizontally — vertical scroll lives on an ancestor (`.score-area`) — rewritten to walk up to whichever ancestor actually scrolls per axis, and to recenter on every new system (via OSMD's own scroll-independent `cursorElement.style.top`, constant within a system) rather than only once the cursor visually left the viewport, per the human's live-testing ask. Also fixed while testing: zoom controls now `position: sticky` so they stay anchored at the top instead of scrolling away with the score; `PdfView` retries its layout-dependent base-scale calc a few animation frames if the container's width isn't ready yet (a reload-specific race — fast enough, e.g. served from cache, to run before the page's own layout settles, unlike a plain navigation's slower fetch); and a real concurrent-render bug where zoom/resize/load could all trigger `page.render()` on the same canvas at once — pdf.js throws on that, silently aborting everything after whichever page was mid-render ("only the first page shows and stays that way") — fixed by tracking and cancelling any in-flight `RenderTask` per canvas before starting a new one, rather than just the existing after-the-fact `renderToken` check (which only ever runs between pages, not during one). Global: added a mobile-only `app.css` rule forcing text-entry fields to `font-size: 16px` — the actual iOS Safari zoom-on-focus trigger, so this covers every current and future component's inputs in one place instead of per-component. `/settings/more` copy rewritten to the human's supplied text (about/creating-a-group sections, "Built by Maripi" as the portfolio link itself rather than a separate line). `npm run check`/`build` clean throughout; `ScoreView`/`PdfView` fixes verified live by the human (not Playwright, per this project's own convention), not just statically reasoned from the OSMD/pdf.js bundle source.
-- **2026-08-28, morning summary (read this first):** overnight, unsupervised, per explicit direction before bed. Frontend half of B14 (register now requires the password twice, new `/forgot-password` + `/reset-password` pages, `/login/oauth-callback`, conditional OAuth buttons) is live in production — see `Backend/plan.md`'s matching morning-summary entry for the fuller picture and what needs you specifically (an env var, an email provider, OAuth credentials). Repo cleanup: this file gained a "UI/UX conventions" reference section and an "iOS app (paused)" section, both condensed from three now-deleted root-level docs so nothing was actually lost. Two things flagged for you rather than acted on: `ScoreView`'s zoom-loses-scroll-position bug got a real fix (see below), but "cursor following is not quite working" had no specifics to safely act on — needs a repro next session; and `groups/[id]/+page.svelte` (1000+ lines, 6 tabs in one component) is a real modularization candidate, deliberately not attempted blind overnight with no way to visually verify a live-`$state` refactor — see Backlog.
-- 2026-08-28: Frontend half of Backend B14 (account security), working autonomously overnight per the human's direction before bed. `/login`'s register mode now requires the password twice (client-side match check disables the submit button; the `register` action re-checks server-side too, since the Backend's `UserCreate` only ever takes one password field). New `/forgot-password` (email → generic "check your email" response either way) and `/reset-password?token=...` (new password + confirm, redirects to `/login?reset=1` on success) pages. New `/login/oauth-callback`: moves the JWT the Backend's OAuth callback redirects back with into the same httpOnly session cookie `/login` itself sets — `/login`'s own load now fetches `GET /auth/oauth/providers` and only renders a "Continue with Google/Apple" button when that provider is actually configured (neither is, tonight, so neither shows — verified, not just assumed). Also, separate from B14 entirely: the human flagged the player's zoom losing their scroll position ("zoom level should stay anchored, not get lost when scrolling") — `ScoreView`'s zoom re-render now measures the viewport's vertical-center position as a fraction of content height before `osmd.render()` and restores it after, so zooming keeps roughly the same music in view instead of jumping back near the top. Their other note ("cursor following is not quite working as I would like") had no specifics to act on — left alone rather than guessing at changes to code with a real history of cursor-sync bugs (see F1's log); needs a repro/more detail next session. `npm run check`/`build` clean; the full forgot/reset-password round trip verified for real through the actual running dev server's form actions (not just curl-to-Backend), including the password-mismatch and oauth-callback-with-no-token paths.
-- 2026-08-28: Deployed F6 (plus everything added to it from live testing tonight — settings-as-a-drawer, member role management/remove-with-confirm, responsibility edit/delete, group description, home-group pinning removed, Home's "Upcoming responsibilities") to production. Chased down one real bug live: "saving page settings reset all the checkmarks" turned out to be a one-way `checked={...}`/`selected={...}` binding with no `bind:` — a re-render mid-submit (e.g. `savingPageSettings` flipping) reapplied the stale value straight from `data`, discarding whatever had just been clicked before the form's `FormData` was captured; fixed by making the page-settings form driven by real local `$state`. Root-caused an earlier "group gives me a 404" report to something unrelated to this session's code at all: the local dev Backend had been running since before this session's B12/B13 routes existed, with no `--reload`, so `/groups/{id}/responsibilities/dates` genuinely didn't exist on the running process; separately, no local Postgres was up at all (the project's own `docker compose` Postgres, not started this session) — both fixed by restarting the Backend with `--reload` and starting its Postgres container (an existing, 2-day-old data volume, not a fresh one). Deploy: committed to `frontend/guest-mode-polish` (two commits, Backend + Frontend), pushed to `main` and `backend/deploy` (Render auto-deploys on commit — see `Backend/plan.md`'s matching log entry for the migration verification), then `PUBLIC_API_BASE_URL=https://divisi.onrender.com npm run build && npx wrangler deploy` — deliberately not relying on the local `.env` (left pointed at `localhost:8000` for continued local dev, per this session's earlier "let's test it locally" call), confirmed the real URL was actually baked into the built output (`grep`, not just trusting the env var was picked up) before deploying. Verified live end-to-end against the real production `divisi.maripi.net` → `divisi.onrender.com`: `/join/9CJM7VRU` (the real San Francisco City Chorus group) returns 200 and renders the real group name. `npm run check`/`build` both clean throughout.
-- 2026-08-28: Added and built F6 (group page settings + Responsibilities), at the human's direction to catch the Frontend up on the Backend's B12/B13, which shipped backend-only. Along the way, fixed a real correctness gap B12 introduced that nothing had caught yet: `/groups/[id]` and `/home` both called member-facing routes (`/groups/{id}/homework`, `/groups/{id}/members`) unconditionally, but those now 403 a non-admin member once their group's admin disables that page — previously impossible, since no such per-page disable existed before B12. Both routes now treat a 403 there as "hide this tab"/"no homework from this group" instead of failing the whole load. Two small ad hoc fixes landed alongside from the human's live look at the in-progress group page: Rehearsal Tracks' member view now uses the same circle-play icon button as the personal Library (was a text "Practice" link) and hides version status (admin-only info); the personal Library now hides tracks with no practice file wired up entirely instead of listing them as a dead-end card, matching the group page's own member-view behavior. `npm run check` (0 errors) and `npm run build` both clean. Not verified against a running app this pass (see memory — asked the human to look instead of using Playwright).
-- 2026-08-28: Rewrote F5 after the human questioned its premise directly ("I don't think we need a better renderer do you?"). The original design (B7 server-rendered stems, a new `StemPlayer` audio engine) was built on F1's own assumption that in-browser synthesis wouldn't be "accurate at scale" — an assumption never actually retested, since F1 shipped and was approved specifically because the in-browser synth already sounded good. New scope: teach the existing bundled-demo player to load a real Backend piece's raw MIDI/MusicXML file instead of a static asset, reusing `MidiPlayer`/`ScoreView`/the mixer UI completely unchanged — no stems, no manifest, no new audio engine. Needs one small new Backend endpoint (raw file, not a render) rather than B7's manifest/render-cache machinery. Deleted `src/lib/api/manifest.ts`/`src/lib/server/manifest.ts` (built for the old design in the previous session, never committed, nothing referenced them) rather than leaving dead code for an abandoned approach sitting in the tree. B7 itself isn't touched/removed — still built and harmless, just no longer something the Frontend wires up to.
-- 2026-08-27: Investigated the human's "how do we make the good demo experience a robust build" question and found a real, live production bug: `divisi.maripi.net` (the actual Cloudflare Workers deployment) 500s on `/join/[code]` and, almost certainly, every other Backend-touching route (login, groups, homework) — confirmed live with `curl`. Root cause: the deployed build was produced with whatever was in the deploying machine's local, gitignored `.env` at the time (`PUBLIC_API_BASE_URL=http://localhost:8000`), which is obviously unreachable from Cloudflare's network. The bundled-demo player reads as "working" in production purely because it makes zero Backend calls (bundled MIDI/MusicXML as static assets) — it was never actually exercising the broken path, which is exactly why this went unnoticed. First pass added a `deploy` job (`wrangler deploy` on merge to `main`) alongside CI checks, but the human then said deploys should stay manual — dropped that job entirely rather than leave an auto-deploy path nobody wants sitting in the repo. Landed instead: `.github/workflows/frontend-ci.yml` (repo root, since Backend/Frontend/App share one repo) — one check-only `build` job (`npm run check` + `npm run build`) on every push/PR touching `Frontend/**`, needing zero secrets (falls back to a placeholder `PUBLIC_API_BASE_URL` since this job never deploys anything). The actual production fix is still a pending manual step — build with `PUBLIC_API_BASE_URL=<real-backend-url>` set explicitly before `wrangler deploy`, once `backend/deploy` (a separate, already-in-progress worktree/branch — Render + Neon) produces a real URL; tracked in Backlog. Deliberately did not touch Backend deploy itself.
-- 2026-08-27: UX pass following `UX_WIREFRAME.md`'s "Implementation Direction For Claude" (navigation/brand/naming/redundancy rules), at the human's direction. New `AppHeader.svelte` (Divisi brand top-left + Settings gear top-right, page title below) replaces the ad hoc per-route headers on Home/Library/Groups/Settings and the new merged group page; `BottomNav` dropped "Me" down to Home | Library | Groups, its contents (account, defaults, logout) already lived under `/settings`. Merged `/groups/[id]/admin` into `/groups/[id]` itself as a `Viewing as Member / Switch to Admin` toggle (`mode` state, `?view=admin` deep-linkable) — per the wireframe's "admin mode should be a view of the group, not a separate destination"; one shared load feeds both instead of two near-duplicate `+page.server.ts`s. Default view on open is Member even for an admin (the human's call on the doc's own open question). Admin mode's Members tab gained a real "Invite member" form (Backend's `POST /groups/{id}/members` existed but was never wired to any UI before this). `/groups/[id]/admin` now just redirects to `?view=admin` for old links. Built the previously-missing "create a group" flow (`/groups/new`, name only — Backend's `GroupCreate` has no description/default-sections fields yet, noted in Backlog) with a one-time "created" banner (join code + quick links) on landing back on the group page, closing the backlog item from F4's log. Home's quick actions no longer show "Join group" once the user already belongs to one (redundancy rule). Player's Practice Setup drawer (`/piece/[id]`) relabeled from "Settings" to "Practice Setup" throughout (aria-labels, heading) and its display-mode picker to the wireframe's singer-facing labels (Everyone / My part / My part + others), leaving the underlying `DisplayMode` values and player logic untouched — pure text. `npm run check` (0 errors) and `npm run build` both clean throughout. No Playwright verification this session (see memory — asked the human to look instead); dev server left running.
-- 2026-08-27: Two follow-up UI trims from the human's live look at the above pass. Removed `PieceLibrary.svelte`'s separate "PDF" button — the player already has its own PDF-vs-score view toggle, so it was a redundant second entry point to the same file; card actions are now just "Player". Removed the Theme picker from the player's Practice Setup drawer — theme is account-wide (Settings already has a "Default theme" picker backed by the same `$lib/theme` store), not a per-piece setting, so having it in both places duplicated a control rather than scoping it. Neither change touches the underlying theme store or PDF viewer, just where their controls are surfaced.
-- 2026-08-27 (Backend, ad hoc): Created the real San Francisco City Chorus group in the local dev Backend (the human's own account as admin), then distributed 6 of the 7 bundled/registry pieces to it as real approved+distributed rehearsal tracks (all but Lacrymosa, per the human's request) — done by calling the same `Piece`/`PieceVersion`/`Distribution` model code the API's upload→submit→approve→distribute flow uses, directly against the running local Postgres (no HTTP round trip, since neither the human's nor a service login/password was available). Also added `getPieceByTitle()` to `lib/pieces/registry.ts` so a Backend track whose title matches one of these bundled pieces gets a real working Practice button in both the group page's Rehearsal Tracks tab and `/`'s per-group library sections (via `PieceLibrary`), instead of the generic "not wired up" note — narrower than the full "wire the player to the Backend" backlog item (still bundled-fixture playback, not the Backend's own uploaded file), but closes the visible gap for tracks that happen to already exist as bundled pieces.
-- 2026-08-27: F4 built (login + wire groups/home/library to the Backend), plus F2's guest view extended in the same session — see `Backend/plan.md`'s B9/B10 log entries for the paired Backend work (Homework model, guest password + homework-visibility toggle). Auth infra: `hooks.server.ts` reads the `divisi_session` httpOnly cookie into `locals.token`; root `+layout.server.ts` resolves it to a real user once per navigation via `/auth/me`, self-healing (clears the cookie) on a 401; `/login` (register/login tabs, `$app/forms` actions) sets the cookie server-side and redirects to a `redirectTo` carried from whichever protected page bounced the visitor there (guarded against open-redirect — only same-site paths honored); `/logout` is a POST-only route. `$lib/server/backend.ts`/`backendTypes.ts`: authenticated fetch helper + shared DTO types for every rewired route. Rewired `/groups`, `/groups/[id]` (Homework/Rehearsal Tracks/Members/Info tabs), `/groups/[id]/admin` (+ new "New homework" form, a real POST), `/groups/[id]/homework/[hwId]`, `/home` (My groups + Due soon, aggregated across all the user's groups), and `/`'s per-group library sections — all off real Backend data instead of `lib/fixtures/appData.ts`. Real Backend-sourced pieces show up in listings (title + review status) but have no working Practice button yet — that's the pre-existing "wire the player to the Backend" backlog item, unchanged and explicitly out of scope here; homework detail and group tracks screens say so rather than silently omitting the piece. `/settings` now shows the real logged-in user and a real logout. Root `/` and the bundled/demo player stay fully guest-accessible with no login gate, per this milestone's own acceptance criteria. Mid-session, extended scope twice at the human's direction: (1) a "choir guest mode" richer view — `/join/[code]` (F2) now has Homework/Rehearsal Tracks tabs, sourced only from the public `/guest/*` routes, still zero login and zero writes; (2) a per-group guest password + a `guest_homework_visible` opt-in toggle (Backend B10), surfaced as a password-prompt state on `/join/[code]` and a "Guest access" settings form on `/groups/[id]/admin` (partial-patch semantics — toggling homework visibility doesn't require re-entering/clearing the password, since the API never lets it read the current one back to resend). Found and fixed one real bug via live testing (not just `pytest`): the guest-settings endpoint's first version required both fields on every call, which would have silently forced admins to always resend a password to change anything else — caught by a curl smoke test against the real running Backend, not the unit tests (which happened to always send both fields), fixed by making it a true partial patch (`model_fields_set`). Verified end-to-end against the real local Backend + a real (non-Playwright, per this project's own convention) `curl`-driven session: register → login (cookie set, confirmed via `Set-Cookie` header) → real group/homework data on `/home`/`/groups`/`/groups/[id]` → new-homework form POST lands in the Backend and re-renders → guest-settings partial-patch round-tripped correctly live → guest join flow password-gates correctly (401 without/right password 200) and homework tab only appears once opted in → uploaded/distributed a real piece and confirmed it renders in both the group's Rehearsal Tracks tab and `/`'s library → logout clears the session and protected pages redirect again → `redirectTo` round-trips a deep link through login and back. `npm run check` (0 errors) and `npm run build` both clean throughout. Annotation UI (this milestone's other original task, from Backend B5) not started this session — milestone stays `[~]`, not `[?]`, until that's done too. No "create a group" UI exists anywhere in the app (pre-existing gap, not introduced here) — noted as a real backlog item since it now blocks a brand-new user from doing anything but joining via someone else's code.
-- 2026-08-27: Started F2, scope narrowed to guest access/listing only at the human's direction — the player-to-stems wiring (F2's other original task) is backlogged instead (see Backlog for why: it's a real audio-architecture change, not a drop-in data swap). Backend had no CORS middleware at all, so added `CORSMiddleware` + a `cors_origins` setting (`Backend/app/main.py`/`app/core/config.py`) before the browser could call it cross-origin. Built `src/lib/api/guest.ts` (typed client for B6's `GET /guest/{code}`), `/join` (code entry) and `/join/[code]` (server-loaded via `+page.ts`, shows the group's distributed piece titles, or a not-found/server-error/empty state), and pointed `/groups`' previously-dead "Join a group with a code" button (it linked to `/`) at `/join`. Verified against a real running local Backend, not mocked: started `docker-compose up postgres` + `alembic upgrade head` + `uvicorn` locally, drove the full admin flow via curl (register → login → create group → upload/submit/approve/distribute a piece) to get a real join code, then confirmed the already-running Frontend dev server resolved it correctly (real SSR network call) — both the valid-code and unknown-code paths render as intended. Test data cleaned from the local dev DB afterward. `npm run check` and `npm run build` both clean. Left the local Backend (`uvicorn`, port 8000) and Frontend (`vite dev`, port 5173) running for the human to look at directly.
-- 2026-08-27: Two small follow-ups from the human's first pass over F3. (1) Hid annotations app-wide per the human's request, rather than deleting them: removed Home's "Recent annotations" card, Homework Detail's "My annotations" resource + its `AnnotationModal` trigger, Settings' "Privacy" section, and the onboarding step on `/welcome` that promised the feature — `AnnotationModal.svelte` and the `Annotation`/`RECENT_ANNOTATIONS`/`annotationSharingDefault` fixture data are untouched and still exported, just unreferenced from any route, so this is a quick revert whenever annotations actually ship (F4). (2) Added a "Log out" button to `/settings` (the bottom-nav "Me" screen) — no real session exists yet (login isn't wired until F4), so for now it just navigates to `/welcome`; added a `.btn-danger` class to `lib/styles/shell.css` for it, the first destructive-styled action in the new UI shell. Also fixed a real bug the human caught: the new `BottomNav`/`PieceLibrary` inline `<svg>` icons had no explicit `width`/`height` attributes, so they'd briefly render at the browser's ~300px SVG fallback size before their scoped CSS applied — most noticeable on the Home icon's roof-shaped path, which blown up like that reads as a big arrow. Fixed by sizing every icon `<svg>` directly rather than relying on CSS alone (left the practice player's own icons untouched — same pattern, but that screen was signed off as-is). Also swapped `favicon.svg` off the default SvelteKit scaffold logo: now two accent-recolored raster variants of `divisi-logo` (light `#4f46e5` / dark `#818cf8`, matching `app.css`'s tokens) swapped via `prefers-color-scheme` inside the SVG — a static favicon can't read the page's live CSS custom properties the way `Logo.svelte`'s CSS-mask trick does, so this bakes both variants instead of computing one. `npm run check` and `npm run build` clean throughout.
-- 2026-08-27: Fixed the Library page per the human's first-look feedback on F3: the redesigned `/` had piled three plain stacked text links ("SFCC pieces"/"Go to Home"/"Welcome screen") under the piece grid, on top of the new bottom nav — read as redundant. Answered UX_WIREFRAME.md's own open question ("should personal and group pieces live in one library with filters, or separate spaces?") by folding everything into one page: `/` now renders a "Personal" section (the old demo grid) followed by one section per real group from `lib/fixtures/appData.ts`'s `GROUPS`, each showing that group's actual shared pieces (or an explicit empty state) with an "Open group" link through to `/groups/[id]`. Deleted the standalone `/sfcc` route entirely, since its whole content was now a second copy of the SFCC section on `/` — the same list living at two URLs was exactly the redundancy being fixed, not a separate issue. `/welcome` is intentionally no longer linked from the library — it's a first-run/onboarding screen, not steady-state nav, matching real product intent; still reachable directly. `npm run check` and `npm run build` both clean.
-- 2026-08-27: Built out the app-shell UI (new F3, inserted ahead of login/annotations) after the human confirmed the already-built practice player needed no changes. First produced a low-fidelity wireframe artifact covering all ten screens from `UX_WIREFRAME.md` (phone-frame mockups, grouped by flow, with the real `divisi-logo` embedded) for the human to review before writing any app code — confirmed as the right call given how much of the product model (Personal vs. Groups, homework-as-task-wrapper-not-new-media-type, annotation sharing states) only existed in prose before this. Recolored that logo from its flat black source into a CSS-mask asset (`lib/assets/divisi-logo-mask.png`) so it paints through `var(--accent)` and repaints live on theme swap, rather than a color baked into the PNG — used in both the wireframe artifact and the app's new `Logo.svelte`. Then built every remaining screen as a real route against new local fixture data (`lib/fixtures/appData.ts`) rather than wiring the Backend now, matching F1's own "prove the UI before wiring a backend milestone" precedent — the human explicitly chose this over jumping ahead to real Backend integration when asked. New shared pieces: `lib/styles/shell.css` (card/button/tab/list/field/bottom-nav classes reused across every new route, built on `app.css`'s existing tokens), `BottomNav.svelte`, `AnnotationModal.svelte` (a reusable add-annotation sheet, wired from Homework Detail only — deliberately left out of the practice player itself). Routes added: `/welcome`, `/home`, `/groups`, `/groups/[id]` (tabbed Homework/Rehearsal Tracks/Members/Info — Rehearsal Tracks reuses the existing `PieceLibrary` component), `/groups/[id]/homework/[hwId]`, `/groups/[id]/admin`, `/groups/[id]/admin/new-homework`; linked in from the pre-existing `/` and `/sfcc` pages so the new screens are actually reachable in the app, not just directly-URLed. `npm run check` and `npm run build` both clean. No Playwright verification this session (see memory — ask the human to look instead); milestone marked `[?]` pending that review.
-- 2026-08-27: Score-view gesture/nav polish, plus a PDF-viewer rewrite forced by a real mobile limitation. Added two-finger pinch-to-zoom to `ScoreView.svelte`, driving the same `zoom` state as the existing +/− buttons; native pinch-zoom disabled only on the score's own container (`touch-action: pan-x pan-y`) so it can't scale the app's fixed top/bottom bars. Added a "bring me to cursor" button by the scrubber that scrolls the cursor into view and engages OSMD's own native `FollowCursor`/`cursor.follow` mechanism (cheap property flips, no custom scroll-loop needed) so the view keeps tracking playback until the human scrolls/drags manually, at which point it disengages. Every zoom level (score and, later, PDF) now persists per piece alongside the other settings. Fixed a mobile-Safari-only rubber-band bug where overscrolling past the score bounced the whole page past the fixed shell, briefly revealing space below the anchored bars (`overscroll-behavior: contain`/`none`). Then hit a real platform wall on the PDF side: mobile Safari's `<iframe>`-embedded PDF viewer turned out to be a stripped-down build with no toolbar and no pinch-zoom at all — confirmed not fixable from outside the iframe, since it's the browser's own native plugin. Replaced the iframe entirely with a new `PdfView.svelte` built on `pdfjs-dist`, rendering each page onto its own `<canvas>` with the exact same zoom UX as the score view (matching +/− buttons, matching pinch gesture, matching persisted zoom-per-piece). Along the way: fixed a sizing bug where the page wrapper's fixed width meant a zoomed-in (wider) canvas overflowed visually without ever growing the container's scrollable area, so horizontal scroll silently did nothing (`width: max-content` floored at 100%, not a plain block div); and added `touch-action: manipulation` globally to `<button>` elements to stop accidental double-tap-zoom on controls — confirmed this isn't an accessibility regression, since pinch-zoom stays available everywhere for anyone who needs it, `manipulation` only removes double-tap-zoom specifically on tappable buttons. Also fixed two related regressions surfaced by the PDF-vs-player view toggle: switching back to Player looked blank because OSMD's `autoResize` only recalculates on a real `window` resize event (not a ResizeObserver), so it never noticed regaining a real width after being `display: none` — fixed by dispatching a synthetic resize event on switch-back; and that redraw (like any real window resize) turned out to silently revert the cursor to OSMD's bare default, since OSMD's own resize handling redraws on an internal ~200ms debounce without ever calling back into our custom cursor styling/muted-staff repaint — fixed with our own slightly-longer-than-200ms debounced reapply in `ScoreView.svelte`, which now also covers genuine window/orientation resizes, a latent bug that almost certainly predated this session. `npm run check` and `npm run build` both clean throughout.
-- 2026-08-27: Closed the other open backlog item: migrated `player.ts` off `js-synthesizer`'s plain `Synthesizer` (main-thread `ScriptProcessorNode`) to its `AudioWorkletNodeSynthesizer` variant (dedicated audio-rendering thread), the real fix for the class of glitch where heavy main-thread work (e.g. a display-mode-triggered OSMD re-render) could stall the synth callback audibly. `MidiPlayer.create()` now registers the worklet processor into the `AudioContext`'s own AudioWorklet global scope via `audioContext.audioWorklet.addModule(...)` (`libfluidsynth-2.4.6.js` then `js-synthesizer.worklet.js`, copied from `node_modules/js-synthesizer/dist/` into `static/vendor/` alongside the existing main-thread bundle) before constructing `new window.JSSynth.AudioWorkletNodeSynthesizer()` and calling `createAudioNode(context)` — one arg now, not `(context, frameCount)`, since the worklet's render quantum isn't caller-tunable. Everything downstream (`loadSFont`/`resetPlayer`/`addSMFDataToPlayer`/`playPlayer`/`seekPlayer`/`midiControl`/`setPlayerTempo`) kept its exact call shape, matching the feasibility check already recorded here. `npm run check` and `npm run build` both clean; the worklet vendor file confirmed present in the built client output. Done in an isolated git worktree (`../divisi-audioworklet`, branch `frontend/f1-audioworklet`) rather than the main working copy, since another session had uncommitted changes sitting there at the time — human verified the result by ear against a real dev server before this was committed.
-- 2026-08-27: F1 approved and closed; moved to F2. The last open acceptance criterion (backgrounded/lock-screen audio) failed when the human actually tested it on a real phone — playback stopped the moment the tab was backgrounded, the expected iOS Safari behavior for plain Web Audio API output, since iOS only grants continued background execution to genuine `HTMLMediaElement` playback (Media Session API controls alone don't grant that, they just attach to media the OS already considers "playing"). Fixed in `player.ts` by rerouting the synth's output: `createAudioNode` now connects to a `MediaStreamAudioDestinationNode` instead of `context.destination`, and that stream feeds a real `<audio>` element (created once in `MidiPlayer.create()`, appended hidden to `document.body`) which is what actually reaches the speakers. `play()` calls `audioEl.play()` and `context.resume()` together before any other `await`, so the `<audio>` element's play() call still originates from the same user tap iOS's autoplay gate requires — calling it after an earlier await breaks that gesture chain. `pause()`/`stop()`/`destroy()` updated to mirror state on the audio element too. Confirmed on a real phone: playback continues with the screen locked. `npm run check` clean. With that, every F1 acceptance criterion is confirmed — human approved F1 as MVP-done.
-- 2026-08-27: Settings/player polish pass, plus two real bugfixes found along the way; human then signed off F1 as MVP-done. Added a PDF-vs-player view toggle to the settings drawer (both panes now stay permanently mounted once first shown, switching only via CSS visibility — an earlier `{#if}`-swap version tore down OSMD's whole SVG tree and re-fetched the PDF on every toggle, stalling the main thread long enough to audibly glitch the synth, since `js-synthesizer` runs its callback on a `ScriptProcessorNode`, not an AudioWorklet). Replaced the tempo slider with a +/− stepper, and extended per-piece `localStorage` persistence (keyed `divisi:settings:<id>`) to every user-adjustable setting — tempo, voice focus, display mode, per-part visual states, balance, and view mode — so they survive a refresh instead of resetting to soprano/solo every time. Added Space (play/pause) and ←/→ (seek one measure, computed from the piece's real time signature) as global keyboard shortcuts. Found and fixed a real MusicXML tempo-parsing bug while chasing a "tempo sounds off" report: `readPart()` seeded each part's own note-timing tempo from a hardcoded 120 BPM default, only updated if *that part's own* XML stream carried a `<sound tempo>` direction — since real exports put the tempo marking on one part only (confirmed by checking all 7 fixtures: Lacrymosa has it on soprano only, the other 6 SFCC pieces have none at all), every other part was silently timing its notes off the wrong default, racing ahead of or lagging the correctly-timed part. Fixed by seeding every part from one document-wide tempo pre-scan, matching how the MIDI parser already handles it globally. Added a `tempoOverrideBPM` mechanism in `registry.ts` for the 6 pieces with zero tempo data in their MusicXML at all (nothing to parse — the human supplies the real value by ear/PDF); Thor set to 104 BPM, five more pieces still pending a value from the human. Also chased a cursor-rendering report through two iterations: first found a `scaleY(1.75)` transform meant to give the playback cursor a "couple pixels over" overhang instead scaled proportionally to whatever height OSMD's cursor was covering, ballooning badly once flat/highlighted mode made it span multiple staves; the first fix (additive top/height math read from the cursor `<img>` element) introduced a worse bug — reading `.height` back returned the CSS-styled value the fix had itself just set rather than OSMD's native attribute, so the cursor grew a little taller every single animation frame during playback. Settled on the simplest correct fix per the human's own suggestion: only apply the scale-up when exactly one staff is visible (solo mode), and leave OSMD's native geometry completely untouched otherwise — no manual geometry math at all. `npm run check` clean throughout; no Playwright verification this session (see memory: too token-expensive for this kind of check, ask the human to look instead). Per the human's sign-off ("quite happy with the player right now for MVP"), marked F1 pending review — every acceptance criterion confirmed except backgrounded/lock-screen playback, which is wired via the Media Session API but has never been independently confirmed on a real device.
-- 2026-08-27: Cleaned up a tangled git state from the parallel-worktree period: `backend/b6-guest-access` (the checked-out branch at the time) had accumulated a full round of uncommitted Frontend work (library/SFCC reorg, chord-grouping fixes) on top of it, while a `frontend/ui-shell` worktree had been removed without ever committing its own work, leaving only a stray `divisi-ui-shell-unmerged.patch` at the repo root that no longer applied cleanly against the moved-on code. Committed the uncommitted work, fast-forward-merged into `main` (verified all of `frontend/f1-player`/`frontend/ui-shell`/`frontend/musicxml-importer`/`backend/b7-rendering-pipeline`'s content was already superseded before deleting them), then hand-recovered the one substantive thing the patch had that wasn't anywhere else — a live tempo control — since the patch's other hunks (an old pre-restructuring `+page.svelte`, a stale `musicXmlConverter.ts`) were dead weight. `MidiPlayer.setTempo(bpm)` drives FluidSynth's own tempo scaling (`Constants.PlayerSetTempoType.ExternalBpm`) rather than reloading the SMF, re-anchoring the position clock so musical position stays continuous across a live change; wired to a new Tempo slider (40–240 BPM) in the settings drawer. Repo is now just `main`, no other branches or worktrees.
-- 2026-08-27: Wired lyrics all the way through to the rendered score. Both parsers had already been extracting `MIDILyricEvent`s into `ParsedMIDI.lyrics` since the MusicXML-importer work, but `musicXmlConverter.ts` never consumed them. `attachLyrics()` pairs each lyric event to its note by nearest onset timestamp (tolerant of a few ms of jitter from tick-to-ms rounding), then the lyric rides through quantization/chord-grouping/tie-splitting as a field alongside pitches, emitted as a standard MusicXML `<lyric>` that OSMD renders natively — one syllable per chord (not per stacked pitch) and only on the first fragment of a tied group. Verified with a synthetic script (no bundled fixture had lyric data yet) covering a divisi chord case. Investigated getting "The Challenge of Thor" real lyrics from its PDF at the human's prompt: the PDF's text layer genuinely has the words, but they're interleaved with notation glyphs in no positionally-recoverable order without real per-glyph coordinate matching against noteheads — parked as not worth it for one piece. Then the human pointed out Lacrymosa's source MuseScore project shows lyrics, which led to finding `Fixtures/mozart-lacrymosa-from-requiem-satb-with-piano.mxl` already sitting in `Fixtures/` — its MIDI export had dropped the lyrics but its MusicXML export (decompressed to a plain `.musicxml` fixture) kept all 341 lyric events. Swapped the registry entry to load Lacrymosa via the MusicXML importer instead of the MIDI parser (same `ParsedMIDI` shape, so playback/converter/player are unaffected; the unused `.mid` was left in place rather than deleted). Verified against the real running dev server with Playwright: full soprano line ("Lacrymosa, dies illa, qua resurget ex favilla, judicandus homo reus...") renders under the staff, transport/duration intact. Thor still has no digitized lyrics anywhere (MIDI, MusicXML, and PlayScore capture all lack them) — would need either a fresh MusicXML export with lyrics or the harder PDF-glyph-matching approach above.
-- 2026-08-27: Continued the fixture/library/player push after the first F1 commit. Extracted newly supplied PlayScore packages into useful public fixtures and reorganized static assets into `static/fixtures/demo/` (Mozart Requiem demo) and `static/fixtures/SFCC/` (SFCC PDFs + MusicXML exports). The library now gives each piece separate `Player` and `PDF` actions; `/` shows demos only, and `/sfcc` shows the SFCC pieces. "The Frost Myth" is kept as PDF/MusicXML in the fixture folder but is not yet connected to the player because its exported structure does not map cleanly into the current SATB + collapsed-accompaniment player model.
-- 2026-08-27: Upgraded the mixer/visual model from fixed Full score/Highlighted/Solo-only behavior to presets plus per-track custom visualization. Every mixer row has a lightbulb cycling `Off` / `Muted` / `Active`; Full score, Highlighted, and Solo are now presets over that state, while manual changes become Custom. Muted staff treatment was made robust by repainting rendered OSMD staff bands (notes, rests, clefs, symbols, and especially staff lines) rather than relying only on MusicXML note colors. The score and app themes now share the same small accent palette, with light/dark/system theme selection and a purple vertical cursor matching the play button.
-- 2026-08-27: Added accompaniment visualization while keeping accompaniment collapsed to one mixer item. The parser still collects non-SATB/multi-staff material into `backingNotes`, playback still uses the full collapsed backing bucket, and the score can now show `Accomp.` via the same lightbulb state as the voices. Current implementation renders it as one simplified bass-clef cue staff by taking one low note per backing onset; this is readable for practice context but is not a faithful grand-staff piano engraving. This is also where the current player limitation is explicit: the generated player MusicXML does not yet represent multiple simultaneous notes on one staff/track as chords.
-- 2026-08-27: Fixed same-onset stacked-note display in the generated player notation. `musicXmlConverter.ts` now groups notes that quantize to the same start unit into MusicXML chords using `<chord/>`, and the accompaniment visual path feeds all collapsed `backingNotes` into that grouping instead of reducing each onset to a single bass cue note. This means piano/accompaniment hits and divisi notes that begin together can render as stacked notes. Still open: independent overlapping rhythms that start at different times on the same staff need real multi-voice MusicXML, not just chord grouping.
-- 2026-08-27: Deployment was started, then stopped at the human's request. A private/free Sites project target was created and `Frontend/.openai/hosting.json` was added with its `project_id`, but no version was saved or deployed. Attempted installation of the Cloudflare adapter was interrupted before it changed `package.json` or `package-lock.json`. Current blocker for free Sites deployment: the app is plain SvelteKit with adapter-auto output, while Sites packaging expects a Cloudflare-worker-compatible `dist/server/index.js` bundle; finish by adding the proper adapter/build shape only if the human resumes deployment.
-- 2026-08-27: Landed the MusicXML importer (`src/lib/musicxml/parser.ts`) that "The Challenge of Thor" needed. Its MIDI export puts every part + accompaniment on one track split across 12 channels with no track names — even after generalizing the channel-splitting that currently only fires for SMF format 0, the mean-pitch fallback would still see 12 unnamed candidates for 4 remaining voice parts and refuse to guess (by design — see `assignVoiceParts`'s ambiguity check). Its MusicXML export has real per-part structure instead (5 `<part>`s: P1–P4 single-staff, P5 `<staves>2</staves>`), even though the part *names* are equally useless ("Part 1".."Part 5", `print-object="no"`). Excluding multi-staff parts (a grand staff is never a single vocal line) before the same name-then-mean-pitch heuristic turns that into a clean 4-candidates-for-4-parts match. Extracted the heuristic itself (`assignVoiceParts` and its helpers) out of `midi/parser.ts` into `notation/voicePartAssignment.ts` so both parsers share one implementation rather than risking drift between two copies. New parser returns the exact same `ParsedMIDI` shape the MIDI parser does — `playbackMidiBuilder`, `musicXmlConverter`, and everything else downstream work unchanged; verified by calling all three (`convert`, `convertAllParts`, `buildPlaybackMidi`) against the parsed piece with no errors. Correctness verified two ways: per-part output note counts match a hand-computed expectation from the raw XML exactly (raw `<note>` count minus rests minus tie-stops, per part: 253/265/282/280 for S/A/T/B, all exact), and voice-part ranges come out correctly ordered high→low (soprano 61–81, alto 53–76, tenor 47–69, bass 41–63). Wired into `lib/pieces/registry.ts`, replacing its placeholder. Work done in the `divisi-musicxml-importer` git worktree (branch `frontend/musicxml-importer`, off `frontend/f1-player`) — see that branch's history for the commit; a parallel `divisi-ui-shell` worktree (branch `frontend/ui-shell`) is doing the routes/library/player-shell restructuring in a second session.
-- 2026-08-27: Split Frontend work into git worktrees so the MusicXML importer and the UI restructuring (library screen, full-bleed player layout, anchored transport bar, expandable settings menu) could proceed in parallel without file conflicts. Landed the shared contract first: `src/lib/pieces/{types,registry}.ts` — a `Piece` (`id`/`title`/`composer`/`load()`) interface plus a static registry, so the UI side can build the library/player screens against real piece summaries without depending on which parser backs a given piece. Also committed all prior uncommitted Frontend work to a new `frontend/f1-player` branch off `main` (previously sitting untracked on `backend/b6-guest-access`, mixed in with unrelated iOS changes), and separately committed that branch's own dangling iOS diff (M4: display modes, mixer rework, scrolling, zoom — already narrated in the root `plan.md`'s log but never committed).
-- 2026-08-27: Redesigned the F1 UI from the bare-functional smoke-test layout to a real designed one, per the human's request after confirming the player itself works. New global `src/app.css` (design tokens, light/dark via `prefers-color-scheme`, shared range-input skin); `+page.svelte` rebuilt around a card shell — circular play/pause button with SVG icons, a filled/gradient seek scrubber, pill-style segmented pickers for voice part and display mode, and a collapsible "Mix" panel showing each part's balance as a qualitative `+N%`/`Even`/`-N%` label instead of a bare slider. `ScoreView.svelte`'s zoom controls and score container restyled to match. Purely visual — no changes to player/sync logic. Verified with a Playwright smoke run against the real dev server at both a phone-width (420px) and desktop viewport, light and dark `prefers-color-scheme`: page loads with no console errors, Play toggles to Pause and audio position advances, voice-part and display-mode pickers switch live, full-score mode renders all 4 SATB staves with the cursor visible. `npm run check` clean.
-- 2026-08-27: Added click-to-seek per human request — clicking a note in `ScoreView.svelte` now seeks playback there. Converts the click's screen-pixel offset within the score container into OSMD's internal coordinate space (`10 * Zoom` px per unit — OSMD's own documented hit-testing conversion, `unitInPixels`; confirmed empirically that `Zoom` alone accounts for `autoResize`'s container-fit scaling too, since it's the same value driving the rendered viewBox), hit-tests via `GraphicSheet.GetNearestNote`, and reports the matched note's `getAbsoluteTimestamp().RealValue` (the same whole-notes unit the cursor already uses) up to the parent via a new `onNoteClick` prop — `ScoreView` never seeks itself, staying consistent with `positionWholeNotes` being parent-owned. `+page.svelte` wires it to the existing `seek()`. Verified with Playwright: clicking well into the first system jumped playback from 0:00 to 0:14, actual audio position (not just display).
-- 2026-08-27: Fixed a cursor-flicker bug the human caught while trying the dev build (green OSMD cursor jumping back to the start then snapping forward, repeatedly). Root cause: `setCursorTimestamp` in `ScoreView.svelte` stepped the cursor forward with `next()` until its timestamp reached-or-passed the playback target, which routinely overshoots (OSMD's cursor lands on discrete note onsets, not arbitrary times) — next `requestAnimationFrame` tick, the still-behind target read as "target < current cursor time" and triggered a full `cursor.reset()` to the start, every frame, for as long as target sat inside that overshot gap. Fixed by backing off an overshooting step with `cursor.previous()` so the cursor always lands on the last note at-or-before target. Verified via Playwright: sampled the cursor DOM element's position over 4s of real playback, confirmed monotonic advancement with no backward jumps. Also moved the play/pause button and scrubber above the part/display-mode pickers per human feedback (transport controls belong at the top, not buried below the pickers).
-- 2026-08-27: Finished F1's remaining Claude tasks — zoom controls (−/%/+, 0.5×–2×) added to `ScoreView.svelte`, driven by OSMD's `Zoom` property with a re-render + explicit `cursor.show()` afterward (OSMD rebuilds the whole graphical sheet, including the cursor element, on `render()`, so the cursor doesn't survive a zoom change on its own). Verified via a headless-Chromium (Playwright) run: zoom buttons change the rendered `viewBox` (narrows/grows in the expected direction) and reflow the score into more/taller systems; the outer SVG's pixel width staying fixed is expected (`autoResize` fills the container) and isn't a bug. Rewrote `Frontend/README.md` (was still the `sv create` scaffold default) with real project docs — requirements, dev/build/check commands, project layout, known gaps. `npm run check` clean. Only the Human task (try it end-to-end vs. PlayScore) remains before F1 is done.
-- 2026-08-27: Built and verified a working F1 prototype end-to-end. `npx sv create` scaffold (SvelteKit, TS, minimal template); ported `MIDIParser`/`MusicXMLConverter` to TS (`src/lib/midi/`), verified against all 4 real `Fixtures/*.mid` files including the actual Mozart Lacrymosa piece. Audio: `js-synthesizer` (WASM FluidSynth) loaded via vendored `<script>` tags (its CJS/WASM glue isn't bundler-friendly per its own docs) rather than npm-imported; discovered mid-build that this project's synthetic dev fixtures put every MIDI track on channel 0 (would break per-part volume, which needs distinct channels), so added `playbackMidiBuilder.ts` to rebuild a fresh MIDI blob from already-parsed notes with deterministic channel assignment (0=S/1=A/2=T/3=B) — verified via a parse→rebuild→re-parse round trip. Player drives position off `AudioContext.currentTime` directly, no polling; per-part balance is a live MIDI CC7 message, not a `GainNode` (architecture change from the original plan — see F1's task list). `ScoreView.svelte` embeds OSMD directly; needed `export const ssr = false` on this route plus a dynamic `import()` inside `onMount`, since OSMD is a CJS/DOM-only package SvelteKit's SSR can't statically import. Verified with a headless-Chromium (Playwright) run against the real dev server: page loads with no JS errors, clicking Play advances both the position readout and the button state, full multi-system score renders correctly in Solo mode with the cursor on the first note. Zoom controls and `Frontend/README.md` still open; flat/highlighted modes and background/lock-screen audio are implemented but not yet independently re-verified this pass (flat/highlighted reuse already-verified conversion logic; background audio needs a real device, same as the Human task below). Dev server left running at `localhost:5173` for the human to look at directly.
-- 2026-08-27: Reprioritized per the human: prove out playback+notation entirely frontend-only first, no Backend or account wiring, before connecting anything real. Collapsed the old F2/F3/F4 drafts (audio playback, notation sync, per-voice customization) into a single new F1 that works against a bundled fixture MIDI file using in-browser MIDI synthesis instead of the originally-planned server-rendered stems (stems still the production plan — see F1's note and Backend B7 — but that needs a backend, which this milestone deliberately doesn't have). Old F1 (guest access) demoted to F2, now also picking up "wire the real Backend once it exists." Old F5 (login+annotations) renumbered to F3, unchanged. Backend B6/B7 stay as planned in `Backend/plan.md`; nothing there changes, this is purely a Frontend sequencing call.
-- 2026-08-27: Detailed F2–F5 (pre-reprioritization). F2 (Web Audio API player, stems mixed live via `GainNode`s, one shared `AudioContext` clock) and F3 (OSMD embedded directly, no bridge, cursor driven off that same clock) needed a new Backend milestone to feed them — added B7 (MIDI→audio+notation rendering pipeline) to `Backend/plan.md`, porting the iOS app's proven `MIDIParser`/`MusicXMLConverter` design server-side. F4 (balance/mute) built on F2's per-stem gain nodes. F5 (login+annotations) needs no new backend work — B2/B5 already cover it, just needs frontend wiring.
-- 2026-08-27: Detailed F1 (scaffold + guest access) with real acceptance criteria/tasks, after two decisions with the human: stack is SvelteKit, and guest access works via a shareable join link/code (no public group directory). F1 needs a Backend addition that didn't exist at all — a join code on `Group` plus public unauthenticated endpoints — added as `Backend/plan.md`'s new B6 (renumbering the old B6/OMR to B7, since guest access is now the more urgent piece). F2–F5 still name-only.
-- 2026-08-27: Project started as part of a product pivot — Divisi's iOS app (root
-  `plan.md`) paused/backlogged in favor of this web player. Drafted milestone-name-only
-  skeleton per the human's stated priorities (guest access, accurate synced player,
-  customizable background-listenable tracks, login only for annotations). Framework
-  choice, audio architecture (stems vs. in-browser synthesis), and guest-access
-  mechanism (join link/code vs. open listing) are all still open — to be resolved
-  while detailing F1/F2.
+*Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-29: Built F10 (locked down the bundled piece registry), the human's direct follow-up after F9. See F10's own section for the full mechanism/fix. `npm run check` (0 errors)/`build` both clean.
+- 2026-08-29: Built F9 (graceful error handling app-wide). See F9's own section. Verified live via a real kill-Backend/restart-Backend cycle in both locales.
+- 2026-08-29: Built F8 (Spanish localization). See F8's own section. Not deployed to production; local-only, not clicked through in a real browser. Merged on top of the same-day guest-piece-upload fix below (its `join/[code]/+page.svelte` fix preserved, F8's translations layered on top).
+- 2026-08-29: Fixed a real F5 gap: real Backend pieces worked for a logged-in member but were **completely unreachable as a guest** — the guest listing filter, `piece/[id]`'s guest branch, and both file/pdf proxy routes all assumed a member session. Fixed all four (widened the guest filter, added a real guest branch, branched the proxies on `locals.token` presence, threaded the join code through `remotePiece.ts`). Verified live via Playwright (full upload→guest-practice flow, zero JS errors) and via curl against production. Deployed straight to production.
+- 2026-08-28: Deployed F7 to production; built `SettingsDrawer.svelte`'s "Change password" section against the Backend's `PUT /auth/me/password`. Stood up an isolated Cloudflare Workers preview so the human could look at F7 before it went live. Verified live via Playwright (human was away and explicitly authorized it for this session — not this project's default).
+- 2026-08-28: Built F7 (Weekly Notes tab + guest sign-in banner). Live Playwright pass caught two real bugs no amount of `check`/code-reading would have — see F7's own section for both.
+- 2026-08-29: Added a regular weekly rehearsal schedule (F6's "Expanded" note) after the human reported responsibility-date times "not getting stored or reflecting properly" — the Backend round trip checked out exactly right via curl, so this builds the requested "Next rehearsal" quick-fill rather than chasing a bug that didn't reproduce.
+- 2026-08-29: Built F5's expanded scope (real piece uploads) on a Windows machine with no browser/Playwright available — see F5's "Expanded" note for what's still unverified because of that. Not deployed; local-only, on top of a fresh `git clone` (two `"`-quoted fixture PDFs couldn't check out on Windows, an OS filename restriction, harmless here).
+- 2026-08-28: Deployed a round of live-testing fixes to production: Settings drawer inline "Edit name" + click-to-confirm "Delete account"; admin default-tempo control + `?defaultTempo=` on practice links; two real `ScoreView.svelte` bugs (current-note accent color landing on VexFlow's wrapping `<g>` groups instead of the leaf shapes; cursor-follow scrolling the wrong ancestor); sticky zoom controls; a `PdfView` layout race on reload; a real concurrent-`page.render()` race in `PdfView` (pdf.js throws if you call it twice on the same canvas — now tracks and cancels any in-flight `RenderTask` first); a mobile Safari `font-size: 16px` fix for the iOS zoom-on-focus-in-input trigger. Verified live by the human, not Playwright (project convention).
+- 2026-08-28: **Morning summary** — overnight, unsupervised, per explicit direction before bed. Frontend half of Backend B14 shipped to production (register-twice, forgot/reset-password pages, oauth-callback route, conditional OAuth buttons). Repo cleanup: this file gained the "UI/UX conventions" and "iOS app" reference sections, condensed from three now-deleted root-level docs. Two things flagged rather than acted on: a real `ScoreView` zoom-loses-scroll-position bug got fixed, but "cursor following isn't quite right" had no specifics to safely act on; `groups/[id]/+page.svelte` (1000+ lines) flagged as a modularization candidate, deliberately not touched blind overnight — see Backlog.
+- 2026-08-28: Frontend half of B14 (account security) built overnight. Also fixed, separate from B14: `ScoreView`'s zoom now keeps roughly the same music in view instead of jumping back near the top (measures the viewport's vertical-center as a fraction of content height before/after `osmd.render()`). The human's other note ("cursor following isn't quite working") had no specifics to act on — left alone rather than guessing, given a real history of cursor-sync bugs.
+- 2026-08-28: Deployed F6 plus everything added to it from live testing (settings-as-a-drawer, member role management, responsibility edit/delete, group description, Home's "Upcoming responsibilities"). Chased down a real bug live: "saving page settings reset all the checkmarks" was a one-way `checked={...}` binding with no `bind:` — fixed by making the form driven by real local `$state`.
+- 2026-08-28: Built F6 (group page settings + Responsibilities), to catch the Frontend up on Backend B12/B13. Fixed a real correctness gap B12 introduced: `/groups/[id]` and `/home` both called member-facing routes unconditionally, which now 403 a non-admin once their group's admin disables that page — both routes now treat a 403 there as "hide this tab" instead of failing the whole load.
+- 2026-08-28: Rewrote F5 after the human questioned its premise directly ("I don't think we need a better renderer do you?"). See F5's own section for the full reasoning. Deleted `src/lib/api/manifest.ts`/`src/lib/server/manifest.ts` (built for the abandoned stems design, never committed, nothing referenced them).
+- 2026-08-27: Found and fixed a real live production bug while investigating "how do we make the good demo experience a robust build": `divisi.maripi.net` 500s on every Backend-touching route because the deployed build was produced with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in from whatever the deploying machine's local `.env` held. The bundled-demo player masked this since it makes zero Backend calls. Added CI (`frontend-ci.yml`, check-only, no secrets needed) but dropped an initial auto-deploy job after the human said deploys should stay manual. The actual production fix is a manual step, tracked in Backlog.
+- 2026-08-27: UX pass following `UX_WIREFRAME.md`'s "Implementation Direction" (navigation/brand/naming/redundancy rules) — new `AppHeader.svelte`, `BottomNav` dropped to Home | Library | Groups, merged `/groups/[id]/admin` into `/groups/[id]` as a Member/Admin view toggle, built the previously-missing `/groups/new` flow, relabeled the player's drawer from "Settings" to "Practice Setup." Two follow-up trims from the human's live look: removed `PieceLibrary`'s redundant PDF button and the Theme picker from the player drawer (Theme lives in Settings only).
+- 2026-08-27 (Backend, ad hoc): Created the real San Francisco City Chorus group in the local dev Backend and distributed 6 of the 7 bundled pieces to it as real approved+distributed tracks. Added `getPieceByTitle()` so a Backend track whose title matches a bundled piece gets a real working Practice button.
+- 2026-08-27: F4 built (login + wire groups/home/library to the Backend), plus F2's guest view extended in the same session — see Backend `B9`/`B10`'s log entries for the paired work. Found and fixed one real bug via live curl testing (not caught by `pytest`): the guest-settings endpoint originally required both fields on every call, which would've forced admins to resend a password just to change anything else — fixed to a true partial patch.
+- 2026-08-27: Started F2 (scope narrowed to guest listing only — the player-to-stems wiring backlogged, see F5's later rewrite for why). Added CORS middleware to the Backend. Verified against a real running local Backend, not mocked.
+- 2026-08-27: Two follow-ups from the human's first pass over F3: hid annotations app-wide per request (code untouched, just unreferenced, so it's a quick revert once F4 ships them for real); added a "Log out" button to `/settings`. Also fixed a real bug the human caught: new inline `<svg>` icons had no explicit `width`/`height`, so they briefly rendered at the browser's ~300px SVG fallback size before scoped CSS applied.
+- 2026-08-27: Fixed the Library page per first-look feedback on F3 — folded three separate stacked links into one page with a Personal section plus one section per real group; deleted the now-redundant standalone `/sfcc` route.
+- 2026-08-27: Built the app-shell UI (F3). Produced a low-fidelity wireframe artifact covering all ten screens for human review before writing any app code. Built every screen as a real route against new local fixture data, matching F1's "prove the UI before wiring a backend" precedent.
+- 2026-08-27: Score-view gesture/nav polish plus a forced PDF-viewer rewrite: mobile Safari's `<iframe>`-embedded PDF viewer turned out to have no toolbar and no pinch-zoom at all (a platform limitation, not fixable from outside the iframe) — replaced with a new `PdfView.svelte` on `pdfjs-dist`, matching the score view's zoom UX. Also added pinch-to-zoom to `ScoreView`, a "bring me to cursor" button, and fixed a mobile-Safari rubber-band overscroll bug and two view-toggle regressions (OSMD not noticing regained width, cursor styling reverting on resize).
+- 2026-08-27: Migrated `player.ts` off `js-synthesizer`'s main-thread `Synthesizer` to its `AudioWorkletNodeSynthesizer` variant (dedicated audio-rendering thread) — the real fix for audible glitches when heavy main-thread work (e.g. a display-mode-triggered OSMD re-render) stalled the synth callback. Done in an isolated worktree; human verified by ear against a real dev server.
+- 2026-08-27: F1 approved and closed; moved to F2. The last open acceptance criterion (backgrounded/lock-screen audio) failed on first real-phone test — fixed by rerouting the synth's output through a real `<audio>` element (iOS only grants background execution to genuine `HTMLMediaElement` playback, not plain Web Audio output). Confirmed on a real phone afterward.
+- 2026-08-27: Settings/player polish pass plus two real bugfixes found along the way, then human signed off F1 as MVP-done: PDF-vs-player view toggle (both panes stay mounted, switching via CSS visibility, since the earlier `{#if}`-swap version stalled the main thread long enough to audibly glitch the synth); a real MusicXML tempo-parsing bug (only one part's XML stream carries the `<sound tempo>` marking, so every other part was silently timing off a hardcoded 120 BPM default — fixed by seeding every part from one document-wide tempo pre-scan); a cursor-scaling bug in solo mode, fixed per the human's own suggested simplest approach (only scale up when exactly one staff is visible, otherwise leave OSMD's native geometry untouched).
+- 2026-08-27: Cleaned up a tangled git-worktree state from the parallel-development period (uncommitted work merged/committed, dead branches deleted, one substantive orphaned change — live tempo control — hand-recovered from a stale patch file rather than lost).
+- 2026-08-27: Wired lyrics through to the rendered score (`attachLyrics()` pairs each lyric event to its note by nearest onset). Swapped Lacrymosa to load via the MusicXML importer instead of the MIDI parser specifically to keep its lyrics (its MIDI export had dropped them, its MusicXML export kept all 341 events). Thor still has no digitized lyrics anywhere.
+- 2026-08-27: Reorganized fixture/library assets (`static/fixtures/demo/`, `static/fixtures/SFCC/`); gave each library piece separate Player/PDF actions.
+- 2026-08-27: Upgraded the mixer/visual model from fixed Full/Highlighted/Solo to presets plus per-track custom state (Off/Muted/Active per part); made muted-staff treatment robust by repainting rendered OSMD staff bands directly rather than relying only on MusicXML note colors; unified score/app theme palette.
+- 2026-08-27: Added accompaniment visualization (one simplified bass-clef cue staff) while keeping accompaniment collapsed to one mixer item — not a faithful grand-staff engraving, a known simplification.
+- 2026-08-27: Fixed same-onset stacked-note display — `musicXmlConverter.ts` now groups same-start-unit notes into MusicXML chords. Still open: independent overlapping rhythms starting at different times on one staff need real multi-voice MusicXML.
+- 2026-08-27: Deployment attempt started then stopped at the human's request (Cloudflare Sites project target created, no version deployed) — current blocker is that Sites packaging expects a Cloudflare-worker-compatible bundle, plain SvelteKit adapter-auto output doesn't match; resume only if the human picks this back up.
+- 2026-08-27: Landed the MusicXML importer that "The Challenge of Thor" needed — its MIDI export has no usable track structure for the voice-part heuristic, but its MusicXML export has real per-part structure. Extracted the shared voice-part-assignment heuristic out of the MIDI parser so both parsers use one implementation. Correctness verified two ways: per-part note counts matched a hand-computed expectation from the raw XML exactly, and voice-part ranges came out correctly ordered high→low.
+- 2026-08-27: Split Frontend work into git worktrees so the MusicXML importer and UI restructuring could proceed in parallel. Landed the shared `Piece` contract (`src/lib/pieces/{types,registry}.ts`) first.
+- 2026-08-27: Redesigned the F1 UI from the bare-functional smoke-test layout to a real designed one (design tokens, card shell, circular play/pause, segmented pickers). Purely visual — no player/sync logic changed. Verified with Playwright at phone and desktop widths, light and dark.
+- 2026-08-27: Added click-to-seek (hit-tests OSMD's graphical sheet via its documented pixel-to-unit conversion, seeks to the matched note's timestamp).
+- 2026-08-27: Fixed a cursor-flicker bug (an overshooting `next()` step was triggering a full `cursor.reset()` every frame) — fixed by backing off with `cursor.previous()` when a step overshoots the target.
+- 2026-08-27: Finished F1's remaining Claude tasks — zoom controls, real `README.md`. Only the human's PlayScore-comparison task remained before F1 was done.
+- 2026-08-27: Built and verified a working F1 prototype end-to-end — SvelteKit scaffold, ported `MIDIParser`/`MusicXMLConverter` to TS, `js-synthesizer` (WASM FluidSynth) loaded via vendored `<script>` tags (not npm-imported, per its own bundler-unfriendliness), `playbackMidiBuilder.ts` added after discovering this project's dev fixtures put every MIDI track on channel 0 (would've broken per-part volume). Verified via headless-Chromium Playwright run against the real dev server.
+- 2026-08-27: Reprioritized per the human: prove out playback+notation entirely frontend-only first. Collapsed the old F2/F3/F4 drafts into a single new F1. Old F1 (guest access) demoted to F2; old F5 (login+annotations) renumbered to F3.
+- 2026-08-27: Detailed F2–F5 (pre-reprioritization) and added Backend B7 (rendering pipeline) to feed them.
+- 2026-08-27: Detailed F1 (scaffold + guest access) after deciding on SvelteKit and shareable join-link guest access; added Backend B6 for the join-code endpoints.
+- 2026-08-27: Project started as part of a product pivot — Divisi's iOS app paused/backlogged in favor of this web player. Drafted a milestone-name-only skeleton per the human's stated priorities.
