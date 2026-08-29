@@ -45,11 +45,16 @@ async function login(
 	password: string,
 	fetchFn: typeof fetch
 ): Promise<{ token: string } | { error: string }> {
-	const res = await fetchFn(`${PUBLIC_API_BASE_URL}/auth/login`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ email, password })
-	});
+	let res: Response;
+	try {
+		res = await fetchFn(`${PUBLIC_API_BASE_URL}/auth/login`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password })
+		});
+	} catch {
+		return { error: m.errors_could_not_reach_server() };
+	}
 	if (!res.ok) return { error: await errorDetail(res) };
 	const body = (await res.json()) as { access_token: string };
 	return { token: body.access_token };
@@ -94,11 +99,16 @@ export const actions: Actions = {
 			return fail(400, { error: m.login_passwords_dont_match(), mode: 'register' as const });
 		}
 
-		const registerRes = await fetch(`${PUBLIC_API_BASE_URL}/auth/register`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ email, name, password })
-		});
+		let registerRes: Response;
+		try {
+			registerRes = await fetch(`${PUBLIC_API_BASE_URL}/auth/register`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email, name, password })
+			});
+		} catch {
+			return fail(503, { error: m.errors_could_not_reach_server(), mode: 'register' as const });
+		}
 		if (!registerRes.ok) {
 			return fail(registerRes.status, { error: await errorDetail(registerRes), mode: 'register' as const });
 		}

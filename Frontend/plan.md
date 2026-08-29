@@ -531,6 +531,78 @@ inside a form action.
   error states) — this pass is `check`/`build`/curl-verified only, no
   browser was available in the environment that built it
 
+### F9 — Graceful error handling app-wide [x]
+
+At the human's direct request: make every error path show something reasonable
+instead of crashing or silently misbehaving. Scoped to Frontend only (Backend's
+own error responses/status codes untouched) — two threads: (1) no branded
+`+error.svelte` existed anywhere, so any thrown `error(status, ...)` (404s,
+403s) rendered SvelteKit's bare default page; (2) a genuine network failure
+(Backend down/unreachable — `fetch` itself throwing, not just resolving to a
+non-2xx response) wasn't distinguished from a real HTTP error at several call
+sites, so it surfaced as an unhandled exception instead of a message.
+
+**Mechanism:**
+- New root `src/routes/+error.svelte` — branded, localized (`m.*()`/`lh()`
+  like every other page), status-aware (404/403/401/503/generic), reusing
+  `shell.css`'s `.card`/`.btn` visual language. Applies app-wide since it
+  sits at the route root.
+- `$lib/server/backend.ts`'s `backendFetch` now wraps its own `fetchFn(...)`
+  call in try/catch, converting a genuine network failure into the *same*
+  `BackendApiError` shape (a synthetic `status: 503`, friendly translated
+  message) that a resolved non-2xx response already produces — every
+  existing `catch (err) { if (err instanceof BackendApiError) ... }` call
+  site across the app (there are many) gets this for free, no per-file
+  changes needed. `$lib/api/guest.ts` got the equivalent (`guestFetch`
+  helper wrapping all 4 guest-API functions, `GuestApiError` status 503).
+- Every *raw* (not going through either wrapper) `fetch()` call site that
+  wasn't already guarded got the same try/catch treatment individually:
+  `login`'s `login()` helper + register action, `reset-password`'s action,
+  `groups/[id]`'s `uploadTrack` action, `piece/[id]`'s guest resolver, and
+  both `piece/[id]/file|pdf/+server.ts` proxy routes (these return a clean
+  `503` `Response` instead of throwing, since `+server.ts` endpoints don't
+  go through `+error.svelte` — verified via `grep` that no raw
+  `fetch()` call anywhere in the app was left unguarded).
+- Deliberately **not** changed: the root `+layout.server.ts`'s existing
+  fail-open behavior (any `/auth/me` failure — 401 or otherwise — quietly
+  resolves to `user: null` rather than throwing). Tried making it throw for
+  non-401 failures first, to avoid a Backend blip silently looking like a
+  logged-out session; reverted after realizing this load runs for *every*
+  route including fully public ones (`/welcome`, `/join`) — throwing there
+  would block pages that need no user at all over a transient hiccup, a
+  worse regression than the one being fixed. The session cookie itself is
+  untouched on anything but a real 401, so a blip is self-healing: the same
+  cookie resolves normally again once the Backend recovers, no forced
+  re-login.
+
+**Acceptance criteria:**
+- [x] Every thrown `error(status, ...)` (404, 403, etc.) renders a branded,
+  localized page instead of SvelteKit's default
+- [x] A genuine Backend-unreachable failure shows a friendly, translated
+  message ("Can't reach the server") instead of crashing, at every call
+  site in the app — forms, page loads, and the piece-file/PDF proxy routes
+- [x] A session survives a transient Backend outage — no forced re-login,
+  same cookie works again once it recovers
+- [x] `npm run check`/`build` both clean
+- [x] Verified live, not just by inspection: registered/logged in, killed
+  the local Backend mid-session, confirmed a form action fails gracefully
+  (register → 503 + friendly message, no crash, no false-positive login),
+  confirmed the guest join-code path degrades gracefully in both locales,
+  confirmed a nonexistent group renders the new branded 404 in both
+  locales, restarted the Backend, confirmed the *same* pre-outage session
+  cookie resolves normally again with zero re-login
+
+**Tasks — Claude:**
+- [x] `src/routes/+error.svelte` (new) + 6 new message keys
+- [x] `$lib/server/backend.ts`'s `backendFetch`, `$lib/api/guest.ts`'s new
+  `guestFetch` helper (used by all 4 guest-API functions)
+- [x] Guarded every previously-unguarded raw `fetch()`: `login`,
+  `reset-password`, `groups/[id]`'s upload action, `piece/[id]`'s guest
+  resolver, `piece/[id]/file|pdf/+server.ts`
+- [x] Live-verified via curl against the real local dev server + Postgres,
+  including a real Backend-down/Backend-recovered cycle — not just
+  `check`/`build`
+
 ## Backlog
 
 - **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines now, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's overnight repo cleanup as the obvious Frontend equivalent to the Backend's `schemas.py` split, deliberately *not* attempted the same night: splitting live `$state`/reactive bindings in a file that had just been through hours of active live-testing, with no Playwright and no one awake to visually verify a refactor, is a real regression risk for a session that can't check its own work. A natural split: one child component per tab (`ResponsibilitiesTab.svelte`, `MembersTab.svelte`, ...), each taking its slice of `data` as props and its own local edit/confirm state, with the parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
@@ -584,6 +656,7 @@ accounts.
 
 ## Log
 
+- 2026-08-29: Built F9 (graceful error handling app-wide), the human's direct follow-up request this session right after F8, again on a Windows machine with no browser available. Two parts, matching how the human scoped it: (1) a branded `+error.svelte` at the routes root — replaces SvelteKit's default unstyled crash/404 page with the app's own shell/logo, a status-appropriate title (`error_404_title`/`error_403_title`/`error_503_title`/generic fallback) and a "back to home" link built through `lh()` so it stays locale-correct even on a hard crash; (2) normalized handling of genuine network failures (Backend unreachable) versus resolved-but-non-2xx responses, which were already handled. `backendFetch` (`$lib/server/backend.ts`) and a new `guestFetch` helper (`$lib/api/guest.ts`) now catch the raw `fetch()` throw and re-raise it as a synthetic 503 `BackendApiError`/`GuestApiError` with a translated `errors_could_not_reach_server` message, so every call site that already does `catch (err) { if (err instanceof XApiError) }` got the fix for free. Swept the rest of the repo by hand for raw unguarded `fetch()` calls that don't go through either wrapper and fixed each: `login/+page.server.ts` (both the login helper and the register action), `reset-password/+page.server.ts`, `piece/[id]/+page.server.ts`'s guest resolver (falls back to `remote: null`, same as a bad code), both `piece/[id]/file` and `.../pdf` proxy routes (return a clean 503 instead of an unhandled exception), and `groups/[id]/+page.server.ts`'s track-upload action. Considered and explicitly reverted a more aggressive change to the root `+layout.server.ts` — throwing on any non-401 `BackendApiError` there (to show the new error page instead of quietly treating an outage as logged-out) sounded right until I noticed that load runs for every route including fully public ones (`/welcome`, `/join`), so it would've blocked pages needing no user at all over a transient blip; kept the original fail-open `return { user: null }` for non-401 cases and only improved the doc comment explaining why. Verified live: `npm run check` (0 errors) and `build` both clean; a real kill-Backend/restart-Backend cycle against local dev confirmed a 404 renders the branded page in both `en` and `es`, register/login fail with the translated "can't reach the server" message instead of a raw exception while the Backend is down, and once it's back the same session cookie resolves normally again with no forced re-login — self-healing as designed. Not clicked through in a real browser (none available here), same caveat as F8.
 - 2026-08-29: Built F8 (Spanish localization, full app under `/es`), the human's direct request this session, on a Windows machine with no browser/Playwright available. Full detail in F8's own section above. Installed Paraglide JS (inlang) — `project.inlang/` + `messages/en.json`/`es.json` (~350 keys), `vite.config.ts`'s plugin with `urlPatterns` (base locale `en` unprefixed, `es` prefixed), `src/hooks.ts`'s `reroute` + `src/hooks.server.ts`'s `paraglideMiddleware` (composed with the existing session-cookie handle via `sequence()`), `%lang%`/`%dir%` in `app.html`, and a new `<LanguageSwitcher>`. The real work was converting every route (~30 files) and every shared component to `m.*()` calls instead of hardcoded strings, plus — the actual gotcha — wrapping every internal `href`/`goto`/`redirect` in a new `$lib/i18n.ts` `lh()` helper, since Paraglide only auto-localizes *inbound* URLs, not outbound links; without it, a plain link would've silently dropped the `/es` prefix on the very next click. Verified live via curl against both `npm run build`'s output and `npm run dev`: `<html lang>` flips correctly per prefix, real Spanish renders, the language switcher's hrefs are right, and internal navigation (including the root page's own auth redirect) stays locale-prefixed end to end. `npm run check` (0 errors, same pre-existing warning pattern)/`build` both clean. Not deployed to production; local-only, and not clicked through in a real browser — flagged as F8's own open Human task. Merged on top of the Mac session's guest-piece-upload fix below (same day) — its `join/[code]/+page.svelte` fix (dropping the dead `{#if bundled}` gate, a real `practiceId` fallback for non-bundled pieces) is preserved as-is, with F8's translations layered onto it.
 - 2026-08-29: Fixed a real gap in the Windows session's F5/piece-uploads work (see the merged-in Log entry below and `Backend/plan.md`'s matching one) — asked to deploy the Frontend and click through it for real via Playwright, since the Windows session had no browser available on their end. Real Backend pieces (uploaded via the new group Tracks-tab form) worked cleanly for a logged-in member but were **completely unreachable as a guest**, a real regression against F5's own acceptance criteria ("a guest... can open and fully practice any of that group's distributed pieces the same way, with no login"): `join/[code]/+page.svelte`'s `visiblePieces` filter only ever matched bundled fixture titles (never `has_music`/`has_pdf`, which didn't exist on `GuestPiece` at all yet); `piece/[id]/+page.server.ts`'s own comment said a guest explicitly falls back to `remote: null`; both `file`/`pdf` proxy routes unconditionally attached `locals.token` (`undefined` for a guest → guaranteed 401 against the Backend even if the listing/routing gaps above were fixed). Backend's guest file/pdf routes themselves were already built and correct — just nothing on the Frontend ever reached them. Fixed all four: widened the guest listing filter (same `has_music||has_pdf` pattern already used on the member Tracks tab), gave `piece/[id]/+page.server.ts` a real guest branch (resolves through the guest group listing via `?code=` instead of the authenticated `/library/pieces` lookup), branched both proxy routes on `locals.token` presence (proxying to the Backend's guest routes when absent), and threaded the join code through `remotePiece.ts`'s proxy URLs so a guest's file/pdf requests carry it. `npm run check`/`build` clean. Verified live via Playwright against the real local dev server + Postgres: full upload flow (music+PDF+YouTube link, music-only, PDF-only) as admin, then the same three pieces opened by a completely anonymous guest via join code — real MIDI parses and plays, real PDF renders, matching the member experience exactly, zero JS errors throughout. Also confirmed live on production (`divisi.maripi.net`) with a real curl round trip through the actual proxy routes. Test data cleaned up from both local and production Postgres after. Deployed straight to production myself rather than waiting on the human's own planned Backend push — see `Backend/plan.md`'s matching entry for why.
 - 2026-08-28: Deployed F7 to production (`divisi.maripi.net`, real `wrangler deploy`, confirmed live via a real curl round trip against `/join/9CJM7VRU` — banner text present, Weekly Notes correctly hidden by default for that group) and built `SettingsDrawer.svelte`'s "Change password" section — current password + new password (typed-twice client-side match check, same pattern as `/login`'s register form), posts to a new `/settings?/changePassword` action wired to the Backend's `PUT /auth/me/password` (see `Backend/plan.md`'s matching log entry). Same inline-edit/collapse-on-success shape as "Edit name" right above it in the same section — collapses back to a summary row on success, so (unlike the group page's page-visibility toggles) `use:enhance`'s default native `form.reset()` is harmless here, nothing needs to survive it. Also stood up an isolated Cloudflare Workers preview (`divisi-frontend-preview.mariapazmaluenda-564.workers.dev`, separate Worker name/config from the real `divisi-frontend`, no custom domain — zero risk to production routing) so the human could look at F7 before it went live; production Backend's `CORS_ORIGINS` briefly gained that preview origin to make it reachable at all, since Cloudflare Workers' `fetch` enforces CORS during SSR unlike plain Node. `npm run check`/`build` clean throughout; the whole password-change flow verified live via Playwright (mismatch blocks submit, old password 401s after a real change, new one logs in) — the human was away from their computer this entire session and explicitly authorized using it (see memory: a per-instance exception, not a changed default).

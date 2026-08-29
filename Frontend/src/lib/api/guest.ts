@@ -1,4 +1,5 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { m } from '$lib/paraglide/messages';
 
 /** Mirrors the Backend's `GuestPieceOut`/`GuestGroupOut` (B6) — one of a
  * group's currently-distributed pieces, as seen by an unauthenticated guest
@@ -161,10 +162,24 @@ function guestUrl(path: string, password?: string): string {
 	return url.toString();
 }
 
+/** Wraps the raw `fetch` call so a genuine network failure (Backend down,
+ * DNS/connection error — `fetch` itself throwing rather than resolving to
+ * any response) surfaces as the same `GuestApiError` shape every caller
+ * already knows how to handle, instead of an unhandled exception. Distinct
+ * from a resolved-but-non-2xx response, which callers check via `res.ok`/
+ * `res.status` themselves afterward. */
+async function guestFetch(url: string, fetchFn: typeof fetch): Promise<Response> {
+	try {
+		return await fetchFn(url);
+	} catch {
+		throw new GuestApiError(503, m.errors_could_not_reach_server());
+	}
+}
+
 async function throwForStatus(res: Response, code: string): Promise<never> {
 	if (res.status === 404) throw new JoinCodeNotFoundError(code);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
-	throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+	throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 }
 
 /** Resolves a group's join code (see Backend `app/core/join_codes.py`) to
@@ -172,7 +187,7 @@ async function throwForStatus(res: Response, code: string): Promise<never> {
  * token sent or required (a `password` is only needed if the group's admin
  * set one via B10). */
 export async function resolveJoinCode(code: string, { password, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestGroup> {
-	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}`, password));
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}`, password), fetchFn);
 	if (!res.ok) await throwForStatus(res, code);
 
 	const body: GuestGroupResponse = await res.json();
@@ -199,9 +214,9 @@ export async function resolveJoinCode(code: string, { password, fetchFn = fetch 
  * with `status === 404`), which callers should treat as "no homework tab"
  * rather than a real error. */
 export async function listGuestHomework(code: string, { password, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestHomework[]> {
-	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}/homework`, password));
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/homework`, password), fetchFn);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
-	if (!res.ok) throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestHomeworkResponse[] = await res.json();
 	return body.map((hw) => ({
@@ -223,9 +238,9 @@ export async function listGuestResponsibilityDates(
 	code: string,
 	{ password, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestResponsibilityDate[]> {
-	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, password));
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, password), fetchFn);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
-	if (!res.ok) throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestResponsibilityDateResponse[] = await res.json();
 	return body.map((d) => ({
@@ -254,9 +269,9 @@ export async function listGuestWeeklyNotes(
 	code: string,
 	{ password, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestWeeklyNote[]> {
-	const res = await fetchFn(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, password));
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, password), fetchFn);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
-	if (!res.ok) throw new GuestApiError(res.status, `Guest API returned ${res.status}`);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestWeeklyNoteResponse[] = await res.json();
 	return body.map((n) => ({

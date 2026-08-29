@@ -417,5 +417,12 @@
 	"piece_mix": "Mix",
 	"piece_mix_mode": "Mix mode",
 	"piece_visual_state_label": "{part} visual state: {state}",
-	"piece_balance_label": "{part} balance"
+	"piece_balance_label": "{part} balance",
+
+	"error_404_title": "Page not found",
+	"error_403_title": "Not allowed",
+	"error_503_title": "Can't reach the server",
+	"error_generic_title": "Something went wrong",
+	"error_generic_body": "Please try again in a moment.",
+	"error_back_home": "Back to home"
 }

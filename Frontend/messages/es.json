@@ -417,5 +417,12 @@
 	"piece_mix": "Mezcla",
 	"piece_mix_mode": "Modo de mezcla",
 	"piece_visual_state_label": "Estado visual de {part}: {state}",
-	"piece_balance_label": "Balance de {part}"
+	"piece_balance_label": "Balance de {part}",
+
+	"error_404_title": "Página no encontrada",
+	"error_403_title": "No permitido",
+	"error_503_title": "No se pudo conectar con el servidor",
+	"error_generic_title": "Algo salió mal",
+	"error_generic_body": "Inténtalo de nuevo en un momento.",
+	"error_back_home": "Volver al inicio"
 }

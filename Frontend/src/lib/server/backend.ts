@@ -1,9 +1,16 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { m } from '$lib/paraglide/messages';
 
 /** Any non-2xx response from an authenticated Backend call. Carries the
  * real HTTP status so callers can tell "not found" (404) from "not allowed"
  * (403) apart, same distinction `$lib/api/guest.ts` draws for the
- * unauthenticated guest routes. */
+ * unauthenticated guest routes. Also the shape a genuine network failure
+ * (Backend unreachable, DNS/connection error — not a real HTTP response at
+ * all) gets normalized into, via `backendFetch`'s own catch below — a
+ * synthetic `status: 503` with a friendly, translated message, so every
+ * existing `catch (err) { if (err instanceof BackendApiError) ... }` call
+ * site across the app already handles it gracefully with no changes of its
+ * own needed. */
 export class BackendApiError extends Error {
 	constructor(
 		public readonly status: number,
@@ -21,7 +28,7 @@ async function errorDetail(res: Response): Promise<string> {
 	} catch {
 		// Non-JSON error body — fall through to the generic message.
 	}
-	return `Backend returned ${res.status}`;
+	return m.errors_request_failed({ status: res.status });
 }
 
 /** Server-only authenticated fetch against the Backend API — `token` comes
@@ -39,7 +46,18 @@ export async function backendFetch(
 	if (token) headers.set('Authorization', `Bearer ${token}`);
 	if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-	const res = await fetchFn(`${PUBLIC_API_BASE_URL}${path}`, { ...init, headers });
+	let res: Response;
+	try {
+		res = await fetchFn(`${PUBLIC_API_BASE_URL}${path}`, { ...init, headers });
+	} catch {
+		// The Backend is down/unreachable, or a real network error — `fetch`
+		// itself threw rather than resolving to any response at all (e.g.
+		// Render's free tier cold-starting past a client timeout). Distinct
+		// from a resolved-but-non-2xx response below; normalized into the
+		// same `BackendApiError` shape (a synthetic 503) so callers don't
+		// need to special-case it.
+		throw new BackendApiError(503, m.errors_could_not_reach_server());
+	}
 	if (!res.ok) {
 		throw new BackendApiError(res.status, await errorDetail(res));
 	}

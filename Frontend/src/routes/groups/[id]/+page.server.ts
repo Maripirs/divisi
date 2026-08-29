@@ -325,11 +325,16 @@ export const actions: Actions = {
 		if (hasPdf) uploadBody.set('pdf_file', pdfFile);
 
 		try {
-			const uploadRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
-				method: 'POST',
-				headers: { Authorization: `Bearer ${locals.token}` },
-				body: uploadBody
-			});
+			let uploadRes: Response;
+			try {
+				uploadRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
+					method: 'POST',
+					headers: { Authorization: `Bearer ${locals.token}` },
+					body: uploadBody
+				});
+			} catch {
+				return fail(503, { error: m.errors_could_not_reach_server(), form: 'uploadTrack' });
+			}
 			if (!uploadRes.ok) {
 				const body = (await uploadRes.json().catch(() => ({}))) as { detail?: string };
 				return fail(uploadRes.status, { error: body.detail ?? m.upload_failed({ status: uploadRes.status }), form: 'uploadTrack' });

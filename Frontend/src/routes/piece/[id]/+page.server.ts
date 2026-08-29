@@ -24,7 +24,15 @@ async function resolveGuestRemote(
 	code: string,
 	fetchFn: typeof fetch
 ): Promise<RemotePieceMeta | null> {
-	const res = await fetchFn(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}`);
+	let res: Response;
+	try {
+		res = await fetchFn(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}`);
+	} catch {
+		// Backend unreachable — same fallback as a genuine 404/bad code: no
+		// remote piece to resolve, so the player falls back to the bundled
+		// registry only (see the caller's own `remote: null` doc comment).
+		return null;
+	}
 	if (!res.ok) return null;
 	const body = (await res.json()) as { pieces: GuestPieceResponse[] };
 	const entry = body.pieces.find((p) => p.piece_id === pieceId);

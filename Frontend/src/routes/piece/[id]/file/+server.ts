@@ -12,23 +12,34 @@ import type { RequestHandler } from './$types';
  * `GET /guest/{code}/pieces/{id}/file` instead, already keyed by piece id,
  * no version lookup needed. */
 export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
-	if (!locals.token) {
-		const code = url.searchParams.get('code');
-		if (!code) return new Response(null, { status: 401 });
-		const res = await fetch(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${params.id}/file`);
+	try {
+		if (!locals.token) {
+			const code = url.searchParams.get('code');
+			if (!code) return new Response(null, { status: 401 });
+			const res = await fetch(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${params.id}/file`);
+			return new Response(res.body, { status: res.status, headers: res.headers });
+		}
+
+		const library = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
+			headers: { Authorization: `Bearer ${locals.token}` }
+		});
+		if (!library.ok) return new Response(null, { status: library.status });
+		const entries = (await library.json()) as Array<{ piece_id: string; version_id: string }>;
+		const entry = entries.find((e) => e.piece_id === params.id);
+		if (!entry) return new Response(null, { status: 404 });
+
+		const res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${entry.version_id}/file`, {
+			headers: { Authorization: `Bearer ${locals.token}` }
+		});
 		return new Response(res.body, { status: res.status, headers: res.headers });
+	} catch {
+		// The Backend is unreachable — a real network failure, not a
+		// resolved-but-non-2xx response (those are already handled by the
+		// `!res.ok` checks above via the real status they carry). The
+		// player's own `loadRemoteMusicFile`/`PdfView` already show a
+		// friendly load-error state for a failed fetch, so a clean 503 here
+		// (rather than an unhandled exception reaching the platform) is all
+		// this proxy needs to do.
+		return new Response(null, { status: 503 });
 	}
-
-	const library = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
-		headers: { Authorization: `Bearer ${locals.token}` }
-	});
-	if (!library.ok) return new Response(null, { status: library.status });
-	const entries = (await library.json()) as Array<{ piece_id: string; version_id: string }>;
-	const entry = entries.find((e) => e.piece_id === params.id);
-	if (!entry) return new Response(null, { status: 404 });
-
-	const res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${entry.version_id}/file`, {
-		headers: { Authorization: `Bearer ${locals.token}` }
-	});
-	return new Response(res.body, { status: res.status, headers: res.headers });
 };

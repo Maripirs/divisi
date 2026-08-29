@@ -27,11 +27,16 @@ export const actions: Actions = {
 		if (!token) return fail(400, { error: m.reset_password_missing_link() });
 		if (password !== passwordConfirm) return fail(400, { error: m.login_passwords_dont_match() });
 
-		const res = await fetch(`${PUBLIC_API_BASE_URL}/auth/reset-password`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ token, new_password: password })
-		});
+		let res: Response;
+		try {
+			res = await fetch(`${PUBLIC_API_BASE_URL}/auth/reset-password`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ token, new_password: password })
+			});
+		} catch {
+			return fail(503, { error: m.errors_could_not_reach_server() });
+		}
 		if (!res.ok) return fail(res.status, { error: await errorDetail(res) });
 
 		throw redirect(303, lh('/login?reset=1'));
