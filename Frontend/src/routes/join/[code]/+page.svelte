@@ -81,7 +81,8 @@
 		{#if !bannerDismissed}
 			<section class="card card--highlight">
 				<p class="card-note">
-					Browsing as a guest — sign in to save annotations and get full member access.
+					Browsing as a guest — sign in for full member access, including homework, signing up
+					for responsibilities, and the members list.
 				</p>
 				<div class="btn-row">
 					<a class="btn btn-primary" href="/login?redirectTo=/join/{data.code}">Sign in</a>
