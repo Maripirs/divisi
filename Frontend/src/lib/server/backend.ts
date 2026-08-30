@@ -73,3 +73,21 @@ export async function backendJson<T>(
 	const res = await backendFetch(token, path, init, fetchFn);
 	return (await res.json()) as T;
 }
+
+/** Turns a caught `backendFetch`/`backendJson` error into a same-shaped
+ * `Response` a proxy `+server.ts` route can return directly to the browser
+ * — preserves the real status (404/403/409/etc.) and a JSON `{ detail }`
+ * body, so a client-side caller (e.g. `$lib/api/annotations.ts`) can parse
+ * it exactly like a direct Backend response. Anything that isn't a
+ * `BackendApiError` (shouldn't happen — `backendFetch` normalizes network
+ * failures into one already) falls back to a bare 503, never an unhandled
+ * exception reaching the platform. */
+export function backendErrorResponse(err: unknown): Response {
+	if (err instanceof BackendApiError) {
+		return new Response(JSON.stringify({ detail: err.message }), {
+			status: err.status,
+			headers: { 'Content-Type': 'application/json' }
+		});
+	}
+	return new Response(null, { status: 503 });
+}

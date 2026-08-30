@@ -10,10 +10,19 @@
 	// can't interop with a static top-level `import { ... }` — dynamic
 	// `import()` inside `onMount` (browser-only) sidesteps that entirely.
 	import type {
+		Cursor as CursorAPI,
 		CursorOptions,
 		OpenSheetMusicDisplay as OSMDType,
 		PointF2D as PointF2DType
 	} from 'opensheetmusicdisplay';
+
+	/** F4: one annotation's marker on the score — `ScoreView` only needs its
+	 * id (to report back which one was clicked) and position, never its
+	 * content/ownership (that's the parent's/`AnnotationSheet`'s concern). */
+	export interface ScoreAnnotationMarker {
+		id: string;
+		positionWholeNotes: number;
+	}
 
 	/**
 	 * Renders engraved notation (OSMD) with a moving cursor tracking
@@ -26,6 +35,13 @@
 	 * whichever note the user clicked, so the parent can seek playback
 	 * there — this component only reports the position, it never seeks
 	 * itself, matching `positionWholeNotes` staying parent-owned.
+	 *
+	 * F4: `annotations` renders one extra OSMD cursor per marker (OSMD
+	 * natively supports several simultaneous cursors via `cursorsOptions`/
+	 * `osmd.cursors` — see `applyAnnotationMarkers` below), styled as a
+	 * short mark above the note rather than the full-height playback bar.
+	 * When `annotateMode` is on, clicking a note calls `onAnnotationPlace`
+	 * with its timestamp instead of `onNoteClick` seeking there.
 	 */
 	let {
 		xml,
@@ -34,6 +50,10 @@
 		staffVisualStates,
 		scoreTheme,
 		onNoteClick,
+		annotations = [],
+		annotateMode = false,
+		onAnnotationPlace,
+		onAnnotationMarkerClick,
 		zoom = $bindable(1)
 	}: {
 		xml: string;
@@ -42,6 +62,10 @@
 		staffVisualStates?: VisualState[];
 		scoreTheme?: ResolvedTheme;
 		onNoteClick?: (wholeNotes: number) => void;
+		annotations?: ScoreAnnotationMarker[];
+		annotateMode?: boolean;
+		onAnnotationPlace?: (wholeNotes: number) => void;
+		onAnnotationMarkerClick?: (id: string) => void;
 		// Bindable rather than a plain prop — both the +/− buttons/pinch
 		// gesture in here and the parent's persisted-settings restore on
 		// load need to drive the same value.
@@ -62,6 +86,14 @@
 	const MAX_ZOOM = 2;
 	const ZOOM_STEP = 0.1;
 	const CURSOR_TYPE_THIN_LEFT = 1;
+	// F4: "short thin line on top of stave and left of the note" — reads as
+	// a small mark sitting above a note rather than a full-height bar
+	// through it, so an annotation marker doesn't look like a second
+	// playback cursor. Both are `CursorType` enum values (OSMD's real enum
+	// can't be imported as a runtime value here — only type-only imports of
+	// its module are safe during SSR, see the import comment above), same
+	// literal-constant approach as `CURSOR_TYPE_THIN_LEFT`.
+	const CURSOR_TYPE_MARKER = 2;
 	// A slight vertical scale-up reads as a nice "couple pixels over" overhang
 	// on a single staff, but the same multiplier blows up badly once OSMD's
 	// native cursor height already spans several staves (flat/highlighted
@@ -227,7 +259,13 @@
 		);
 		const note = osmd.GraphicSheet.GetNearestNote(clickPosition, new PointF2D(1, 1));
 		if (!note) return;
-		onNoteClick?.(note.sourceNote.getAbsoluteTimestamp().RealValue);
+		const timestamp = note.sourceNote.getAbsoluteTimestamp().RealValue;
+		// F4: a click on an existing marker (its `cursorElement`) is handled
+		// by that element's own listener below, which stops propagation
+		// before it ever reaches here — so a click that does reach here is
+		// always "place a new one"/"seek", never "open an existing marker".
+		if (annotateMode) onAnnotationPlace?.(timestamp);
+		else onNoteClick?.(timestamp);
 	}
 
 	$effect(() => {
@@ -296,9 +334,23 @@
 		applyScoreTreatments();
 	});
 
+	// F4: `cursorsOptions` (built by `osmdOptions`) has to actually contain
+	// one entry per marker before `osmd.cursors[i + 1]` exists to position —
+	// a plain re-render without first widening/narrowing that array via
+	// `setOptions` wouldn't add or drop cursor objects to match a changed
+	// annotation count.
+	$effect(() => {
+		annotations;
+		if (!osmd || !cursorReady) return;
+		osmd.setOptions(osmdOptions(displayMode, scoreTheme));
+		osmd.render();
+		applyScoreTreatments();
+	});
+
 	function applyScoreTreatments(): void {
 		showCursor();
 		applyHighlightedStaffTreatment();
+		applyAnnotationMarkers();
 	}
 
 	function showCursor(): void {
@@ -527,6 +579,26 @@
 		};
 	}
 
+	// F4: a fixed color rather than a theme token — deliberately distinct
+	// from the playback cursor's accent color (which already means "current
+	// position") and from the highlighted/muted staff palette, so a marker
+	// reads as its own kind of mark at a glance. Placeholder values (an
+	// amber Anthropic hasn't design-reviewed) — a real design pass, if the
+	// human wants one, belongs in `$lib/theme.ts` alongside the other
+	// tokens, not hardcoded here.
+	function markerColor(activeTheme: ResolvedTheme | undefined): string {
+		return (activeTheme ?? 'light') === 'dark' ? '#fbbf24' : '#b45309';
+	}
+
+	function markerCursorOptions(activeTheme: ResolvedTheme | undefined): CursorOptions {
+		return {
+			type: CURSOR_TYPE_MARKER,
+			color: markerColor(activeTheme),
+			alpha: 1,
+			follow: false
+		};
+	}
+
 	function osmdOptions(mode: DisplayMode | undefined, activeTheme: ResolvedTheme | undefined) {
 		const theme = themeFor(mode, activeTheme);
 		return {
@@ -541,7 +613,10 @@
 			defaultColorRest: theme.rest,
 			defaultColorLabel: theme.label,
 			pageBackgroundColor: theme.page,
-			cursorsOptions: [cursorOptions(mode, activeTheme)]
+			// Index 0 is always the playback cursor (`osmd.cursor`); one more
+			// entry per annotation marker follows, positioned/styled by
+			// `applyAnnotationMarkers` via `osmd.cursors[i + 1]`.
+			cursorsOptions: [cursorOptions(mode, activeTheme), ...annotations.map(() => markerCursorOptions(activeTheme))]
 		};
 	}
 
@@ -667,10 +742,37 @@
 		zoom = 1;
 	}
 
-	/** Moves the cursor to sit on whichever voice entry is current at
-	 * `target` (whole notes from the start). OSMD's cursor only supports
-	 * stepping via next()/reset(), so this replays from the start whenever
-	 * seeking backward rather than jumping directly. */
+	/** Steps `cursor` forward one note at a time until it reaches (or just
+	 * passes, then backs off one) `target` — shared by the playback
+	 * cursor's `setCursorTimestamp` and the annotation markers'
+	 * `applyAnnotationMarkers` below. Assumes `cursor` is already
+	 * positioned at-or-before `target` (both callers `reset()`/check that
+	 * before calling this); OSMD's cursor only supports stepping via
+	 * next()/previous(), no direct jump. */
+	function stepCursorTo(cursor: CursorAPI, target: number): void {
+		const iterator = cursor.iterator;
+		const current = () => iterator.currentTimeStamp.RealValue;
+		// Step forward one note at a time, but undo any step that lands
+		// past `target` via `previous()`. OSMD's cursor jumps between
+		// discrete note onsets, so a single next() can overshoot into the
+		// future — backing off the overshoot keeps the cursor on the last
+		// note at-or-before target instead.
+		let attempts = 0;
+		while (current() < target && !iterator.EndReached && attempts < 10_000) {
+			cursor.next();
+			if (current() > target) {
+				cursor.previous();
+				break;
+			}
+			attempts++;
+		}
+	}
+
+	/** Moves the playback cursor to sit on whichever voice entry is current
+	 * at `target` (whole notes from the start). Only resets to the start
+	 * when seeking backward — called every animation frame during playback
+	 * (see `+page.svelte`'s `tick()`), so re-walking from 0 on every call
+	 * would be needlessly expensive for the common case of just advancing. */
 	function setCursorTimestamp(target: number): void {
 		if (!osmd?.cursor) return;
 		const iterator = osmd.cursor.iterator;
@@ -681,34 +783,56 @@
 			osmd.cursor.reset();
 			showCursor();
 		}
-		// Step forward one note at a time, but undo any step that lands
-		// past `target` via `previous()`. OSMD's cursor jumps between
-		// discrete note onsets, so a single next() can overshoot into the
-		// future; left uncorrected, next frame sees target still behind
-		// that overshot position, takes the `target < current()` branch
-		// above, and resets all the way back to the start — repeating
-		// every frame as a beginning<->current flicker. Backing off the
-		// overshoot keeps the cursor on the last note at-or-before target.
-		let attempts = 0;
-		while (current() < target && !iterator.EndReached && attempts < 10_000) {
-			osmd.cursor.next();
-			if (current() > target) {
-				osmd.cursor.previous();
-				break;
-			}
-			attempts++;
-		}
+		stepCursorTo(osmd.cursor, target);
 		requestAnimationFrame(applyCursorTreatment);
+	}
+
+	// F4: DOM elements OSMD created for the *previous* render's annotation
+	// markers — `render()` tears down and rebuilds the whole graphical
+	// sheet (see the playback cursor's own version of this note above), so
+	// every call has to re-bind click handling on whatever fresh elements
+	// exist now rather than assuming last time's still do.
+	function applyAnnotationMarkers(): void {
+		if (!osmd?.cursors) return;
+		for (let i = 0; i < annotations.length; i++) {
+			const marker = annotations[i];
+			// Index 0 is always the playback cursor (see `osmdOptions`).
+			const cursor = osmd.cursors[i + 1];
+			if (!cursor) continue;
+			cursor.reset();
+			stepCursorTo(cursor, marker.positionWholeNotes);
+			cursor.show();
+			const element = cursor.cursorElement;
+			if (!element) continue;
+			element.style.pointerEvents = 'auto';
+			element.style.cursor = 'pointer';
+			element.title = m.piece_annotation_marker_title();
+			element.onclick = (event: MouseEvent) => {
+				// Stops this from also reaching `handleContainerClick` on
+				// `container` (this element is inside it) — a click on an
+				// existing marker opens it, never seeks/places a new one.
+				event.stopPropagation();
+				onAnnotationMarkerClick?.(marker.id);
+			};
+		}
 	}
 </script>
 
-<div class="score-view" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'}>
+<div class="score-view" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'} data-annotate={annotateMode}>
 	<div class="zoom-controls">
+		{#if annotateMode}
+			<!-- F4: the only cue (besides the parent's own "Cancel"/toggle
+			     control) that a tap on the score places a marker instead of
+			     seeking — a plain text hint here rather than a color change on
+			     the whole score, which would fight the display-mode/muted-staff
+			     coloring already using color to mean something else. -->
+			<span class="annotate-hint">{m.piece_tap_to_place_annotation()}</span>
+		{/if}
 		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
-	<div class="score-container" bind:this={container}></div>
+	<div class="score-container" class:annotate-mode={annotateMode} bind:this={container}></div>
 	{#if loadError}
 		<p class="error">{loadError}</p>
 	{/if}
@@ -768,6 +892,16 @@
 		text-align: center;
 		font-variant-numeric: tabular-nums;
 	}
+	.annotate-hint {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		color: var(--accent);
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.score-container {
 		width: 100%;
 		overflow-x: auto;
@@ -780,6 +914,14 @@
 		   own gesture handler instead of the browser's native whole-page
 		   zoom, which would scale the app's fixed top/bottom bars too. */
 		touch-action: pan-x pan-y;
+	}
+	/* F4: the only whole-score cue that taps place a marker right now — see
+	   `.annotate-hint`'s comment above for why nothing on the score's own
+	   coloring changes. */
+	.score-container.annotate-mode {
+		cursor: crosshair;
+		outline: 2px dashed var(--accent);
+		outline-offset: -2px;
 	}
 
 	.score-container :global(svg) {

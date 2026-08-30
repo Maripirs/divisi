@@ -23,11 +23,13 @@ all — before spending any effort connecting it to real groups or logins.
 live audio/animation state, small bundle matters for a page choir members open on
 their phones.
 
-**Status:** F1, F6, F7, F9, F10 fully done and approved. F2/F3/F4/F5/F8 are built and
+**Status:** F1, F6, F7, F9, F10 fully done and approved. F2/F3/F5/F8 are built and
 `check`/`build`-clean but each still has at least one open "human confirms in a real
 browser" item — most of this Frontend's recent work was built on a Windows machine
 with no browser/Playwright available, so that's the recurring blocker across the
-board, not a code gap. See the status table under Milestones.
+board, not a code gap. F4 is the exception: its 2026-08-29 annotation-UI expansion
+is hand-reviewed only, not `check`/`build`-verified — that session had no `node`/`npm`
+on `PATH` at all. See the status table under Milestones.
 
 ## UI/UX conventions
 
@@ -76,7 +78,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F1 | Standalone playback + notation prototype | ✅ Approved — reads as more accurate/pleasant than PlayScore |
 | F2 | Guest access to real pieces via the Backend | ⏳ Built; human hasn't confirmed the join flow in a real browser yet |
 | F3 | App-shell UI screens (fixture data) | ⏳ Built; human hasn't looked over the screens yet |
-| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built except annotation create/share UI; human hasn't confirmed login/groups/homework yet |
+| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built, incl. annotation create/share UI; not `check`/`build`-verified (no `node`/`npm` this pass) and human hasn't confirmed login/groups/homework/annotations yet |
 | F5 | Wire the player to real Backend pieces (+ real uploads: MIDI/PDF/YouTube) | ⏳ Built and curl/check-verified; nobody has clicked through the actual upload/practice flow yet (no browser on the build machine) |
 | F6 | Group page settings + Responsibilities | ✅ Built; human hasn't done a live-app walkthrough (`check`/`build` only) |
 | F7 | Weekly Notes tab + guest sign-in banner | ✅ Done — Playwright-verified live |
@@ -196,7 +198,7 @@ backend concept for "last opened piece" exists (see Backlog).
 - [x] Homework tab, homework detail, and "+ Add homework" read/write real data via Backend B9
 - [x] The root library (`/`) shows each group's real distributed pieces (title + review status) alongside the existing bundled demo pieces
 - [x] Browsing, playback, and customization of the existing bundled/demo pieces remain fully guest-accessible — login is opt-in, never a gate
-- [ ] A logged-in user can add an annotation at a position in the score; it's private by default and shareable with a specific peer, matching Backend B5's semantics
+- [x] A logged-in user can add an annotation at a position in the score; it's private by default and shareable with a specific peer, matching Backend B5's semantics
 - [ ] Human confirms login, group browsing, and homework in a real browser
 
 **Tasks — Claude:**
@@ -206,8 +208,29 @@ backend concept for "last opened piece" exists (see Backlog).
 - [x] Rewired Homework tab, homework detail, and "+ Add homework"
 - [x] Rewired `/`'s per-group sections off real `/library/pieces`, shown read-only until F5 lands
 - [x] `/settings`: real logged-in user (name/email) and a real logout
-- [ ] Annotation UI: create/view at a score position, respecting B5's private-by-default + explicit-share model
-- [ ] Share/unshare UI against B5's existing endpoints
+- [x] Annotation UI: create/view at a score position, respecting B5's private-by-default + explicit-share model
+- [x] Share/unshare UI against B5's existing endpoints
+
+**Expanded 2026-08-29 (annotations rendered in the player, at the human's
+request — "mark a breath somewhere").** Built against the real B5 endpoints
+(plus one new one — see the Backend plan's B5 note), not fixture data;
+**not** `check`/`build`-verified this pass — this session's environment had
+no `node`/`npm` on `PATH` at all (a step further than the usual "no browser"
+gap the rest of this file's recent entries flag), so nothing below has been
+compiled or run, only hand-reviewed. Treat as more provisional than this
+file's usual "check/build-clean, pending a human's look" entries until a
+session with real tooling confirms it compiles.
+
+- [x] `$lib/api/annotations.ts`: typed client for `routes/piece/[id]/annotations/**`'s proxy routes (list/create/update/delete/share/list-shares/unshare)
+- [x] `routes/piece/[id]/annotations/**`: authenticated proxy routes mirroring `../file`/`../pdf`'s pattern — `locals.token` attached server-side, never reaches client JS
+- [x] `ScoreView.svelte`: renders one marker per annotation via OSMD's native multi-cursor support (`cursorsOptions`/`osmd.cursors`, `CursorType.ShortThinTopLeft`) — a short mark above the note, distinct from the playback cursor; `annotateMode` prop makes a score tap place a new marker (`onAnnotationPlace`) instead of seeking; clicking an existing marker calls `onAnnotationMarkerClick`
+- [x] `AnnotationSheet.svelte` (new): create/view/edit sheet, owner-only edit/delete/share/unshare, matching B5's real semantics (not the fixture-era `AnnotationModal.svelte`'s broadcast-style visibility options, which the Backend never implemented — that component is still unused/dead)
+- [x] `piece/[id]/+page.svelte`: wires an "add annotation" toggle (bottom bar, only for a real Backend piece + logged-in user — no guest path, B5 requires a session) and the sheet's create/view/edit/delete/share/unshare handlers
+- [x] Position stored as `String(positionWholeNotes)` (same tempo-independent unit the playback cursor/click-to-seek already use) on B5's opaque `Annotation.position` string; displayed as "Measure N" (derived from the piece's time signature)
+
+**Tasks — Human:**
+- [ ] Run a real `npm run check`/`build` — this session couldn't (no `node`/`npm` on `PATH`)
+- [ ] Open a real Backend piece, place a marker, confirm it renders sensibly on the score, and click through create/edit/delete/share/unshare in a real browser
 
 ### F5 — Wire the player to real Backend pieces (client-side, same pipeline as the bundled demo) [~]
 
@@ -472,6 +495,7 @@ fetching or required accounts.
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
+- 2026-08-29: Built F4's real annotation UI (create/view/edit/delete/share/unshare, rendered as markers on the score via OSMD's multi-cursor support) — see F4's "Expanded" note. Added one small Backend endpoint along the way (`GET /annotations/{id}/shares`, B5's own note). **Not** `check`/`build`-verified — this session had no `node`/`npm` on `PATH` at all, only hand-reviewed.
 - 2026-08-29: Built F10 (locked down the bundled piece registry), the human's direct follow-up after F9. See F10's own section for the full mechanism/fix. `npm run check` (0 errors)/`build` both clean.
 - 2026-08-29: Built F9 (graceful error handling app-wide). See F9's own section. Verified live via a real kill-Backend/restart-Backend cycle in both locales.
 - 2026-08-29: Built F8 (Spanish localization). See F8's own section. Not deployed to production; local-only, not clicked through in a real browser. Merged on top of the same-day guest-piece-upload fix below (its `join/[code]/+page.svelte` fix preserved, F8's translations layered on top).
