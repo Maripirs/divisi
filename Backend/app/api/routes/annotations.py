@@ -147,6 +147,32 @@ def delete_annotation(
     db.commit()
 
 
+@router.get("/{annotation_id}/shares", response_model=list[AnnotationShareOut])
+def list_annotation_shares(
+    annotation_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[AnnotationShareOut]:
+    """Who an annotation is currently shared with — owner-only, same as any
+    other management action on it (share/unshare/edit/delete)."""
+    annotation = _get_annotation_or_404(annotation_id, db)
+    _require_owner(annotation, current_user)
+    shares = db.query(AnnotationShare).filter(AnnotationShare.annotation_id == annotation.id).all()
+    if not shares:
+        return []
+    user_ids = [s.shared_with_user_id for s in shares]
+    users_by_id = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+    return [
+        AnnotationShareOut(
+            annotation_id=annotation.id,
+            shared_with_user_id=s.shared_with_user_id,
+            email=users_by_id[s.shared_with_user_id].email,
+        )
+        for s in shares
+        if s.shared_with_user_id in users_by_id
+    ]
+
+
 @router.post("/{annotation_id}/share", response_model=AnnotationShareOut, status_code=status.HTTP_201_CREATED)
 def share_annotation(
     annotation_id: str,

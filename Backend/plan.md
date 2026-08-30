@@ -142,6 +142,16 @@ full queue yet), docker-compose for local dev.
 - [x] `Annotation`, `AnnotationShare` models + migration
 - [x] CRUD endpoints scoped to the owning user; share/unshare endpoint; visibility check on read
 
+**Expanded 2026-08-29 (while wiring Frontend F4's real annotation UI):**
+`share`/`unshare` existed but nothing let an owner see who an annotation was
+*currently* shared with — the Frontend's share/unshare UI needs that to
+render a "shared with: X, Y" list at all. Added `GET
+/annotations/{id}/shares` (owner-only, same as every other management
+action). `pytest` 4/4 in `test_annotations.py` (full suite: 138 passed, 2
+pre-existing failures in `test_guest.py`/`test_rendering_api.py` — both
+`fluidsynth` not being on this Windows machine's `PATH`, unrelated to this
+change, tracked under B7).
+
 ### B6 — Guest access (join links) [x]
 
 Needed by the new `Frontend/` web player — the product pivoted to guests joining a group's
@@ -393,6 +403,7 @@ in their absence:
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
+- 2026-08-29: Added `GET /annotations/{id}/shares` (B5's own note) while wiring the Frontend's real annotation UI (F4) — owner-only, lists who an annotation is currently shared with, which share/unshare alone never exposed. `pytest` 4/4 in `test_annotations.py`, 138/140 full suite (2 pre-existing FluidSynth-on-PATH gaps, unrelated).
 - 2026-08-29: Fixed a guest-path gap: `GuestPieceOut` was missing `composer`/`youtube_url`/`has_music`/`has_pdf`, leaving new Backend-uploaded pieces unreachable by guests. Added the 4 fields to `guest.py`'s `resolve_join_code`. Pushed straight to `backend/deploy` (it was stale) and to production; verified live end-to-end. `pytest` 139/139.
 - 2026-08-29: Added `Group.rehearsal_weekday`/`rehearsal_time` + `PUT /groups/{id}/rehearsal-schedule` (see B13's "Expanded" note above). `pytest` 137/139 (2 known FluidSynth gaps).
 - 2026-08-29: Built real piece uploads (MIDI/MusicXML + PDF + reference audio, see B4's "Expanded" note) from a fresh Windows worktree with a portable Postgres+venv setup. Re-pulled Neon Object Storage `AWS_*` credentials (still unused — storage swap not implemented). Migration `a3f7c1e9b5d2` verified up/down/up; `pytest` 133/135; curl-verified all 4 upload combos end to end. Not deployed/pushed this session — done in the entry above.

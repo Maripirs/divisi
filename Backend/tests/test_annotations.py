@@ -102,6 +102,30 @@ def test_share_grants_visibility_and_unshare_revokes_it(client):
     assert client.get(f"/annotations/{annotation_id}", headers=peer_headers).status_code == 403
 
 
+def test_list_shares_is_owner_only(client):
+    owner_headers = _register_and_login(client, "owner4@example.com")
+    peer_headers = _register_and_login(client, "peer4@example.com")
+    piece_id = _upload_piece(client, owner_headers)
+
+    annotation_id = client.post(
+        "/annotations",
+        json={"piece_id": piece_id, "position": "m1", "content": "note"},
+        headers=owner_headers,
+    ).json()["id"]
+
+    # No shares yet.
+    assert client.get(f"/annotations/{annotation_id}/shares", headers=owner_headers).json() == []
+
+    client.post(f"/annotations/{annotation_id}/share", json={"email": "peer4@example.com"}, headers=owner_headers)
+
+    owner_shares = client.get(f"/annotations/{annotation_id}/shares", headers=owner_headers)
+    assert owner_shares.status_code == 200
+    assert [s["email"] for s in owner_shares.json()] == ["peer4@example.com"]
+
+    # Only the owner can list shares — not even the person shared with.
+    assert client.get(f"/annotations/{annotation_id}/shares", headers=peer_headers).status_code == 403
+
+
 def test_owner_can_update_and_delete(client):
     owner_headers = _register_and_login(client, "owner3@example.com")
     piece_id = _upload_piece(client, owner_headers)
