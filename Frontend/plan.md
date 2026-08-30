@@ -23,13 +23,11 @@ all — before spending any effort connecting it to real groups or logins.
 live audio/animation state, small bundle matters for a page choir members open on
 their phones.
 
-**Status:** F1, F6, F7, F9, F10 fully done and approved. F2/F3/F5/F8 are built and
+**Status:** F1, F6, F7, F9, F10 fully done and approved. F2/F3/F4/F5/F8 are built and
 `check`/`build`-clean but each still has at least one open "human confirms in a real
 browser" item — most of this Frontend's recent work was built on a Windows machine
 with no browser/Playwright available, so that's the recurring blocker across the
-board, not a code gap. F4 is the exception: its 2026-08-29 annotation-UI expansion
-is hand-reviewed only, not `check`/`build`-verified — that session had no `node`/`npm`
-on `PATH` at all. See the status table under Milestones.
+board, not a code gap. See the status table under Milestones.
 
 ## UI/UX conventions
 
@@ -78,13 +76,14 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F1 | Standalone playback + notation prototype | ✅ Approved — reads as more accurate/pleasant than PlayScore |
 | F2 | Guest access to real pieces via the Backend | ⏳ Built; human hasn't confirmed the join flow in a real browser yet |
 | F3 | App-shell UI screens (fixture data) | ⏳ Built; human hasn't looked over the screens yet |
-| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built, incl. annotation create/share UI; not `check`/`build`-verified (no `node`/`npm` this pass) and human hasn't confirmed login/groups/homework/annotations yet |
+| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built, incl. score-position annotation create/share UI; `check`/`build`-clean; human hasn't confirmed login/groups/homework/annotations yet |
 | F5 | Wire the player to real Backend pieces (+ real uploads: MIDI/PDF/YouTube) | ⏳ Built and curl/check-verified; nobody has clicked through the actual upload/practice flow yet (no browser on the build machine) |
 | F6 | Group page settings + Responsibilities | ✅ Built; human hasn't done a live-app walkthrough (`check`/`build` only) |
 | F7 | Weekly Notes tab + guest sign-in banner | ✅ Done — Playwright-verified live |
 | F8 | Spanish localization (`/es`) | ⏳ Built and curl/check-verified; human hasn't clicked through the Spanish UI in a real browser |
 | F9 | Graceful error handling app-wide | ✅ Done — live-verified including a real Backend-down/recovered cycle |
 | F10 | Lock down bundled pieces (security fix) | ✅ Done — closed a real hole where 5+ real choir pieces were publicly fetchable with no auth |
+| F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -449,8 +448,50 @@ reached.
 **Tasks — Human:**
 - [ ] Set the 5 migrated pieces' default tempo via the group's Tracks tab (values above) — nothing plays at the wrong tempo until this is done, it just falls back to the player's own default
 
+### F11 — PDF markup: freehand pen + stamps [~]
+
+At the human's direct request, after trying F4's score-position text annotations and
+being unimpressed ("The current annotation system is not useless [but] we can
+improve on it") — modeled on piaScore's real annotation tool (pens + stamps drawn
+directly on the page), not F4's pin-and-sheet approach. **Additive, not a
+replacement** — F4's annotations stay as they are.
+
+**Why the PDF pane, not the notation player:** freehand ink only makes sense on a
+fixed page image. The OSMD player pane reflows constantly (zoom, display mode,
+mute/solo all trigger a full re-render), so a stroke drawn there would drift off
+the note it was meant to mark the moment anything changed. The PDF pane's pages
+are geometrically stable, so this only works for pieces with an uploaded PDF.
+
+**Mechanism:** points stored as fractions of the page's own rendered *width* for
+*both* x and y (not width/height respectively) — keeps a stroke's thickness and a
+stamp's size undistorted regardless of the page's aspect ratio, and correctly
+positioned across zoom levels with no conversion. An SVG overlay per page
+(`viewBox="0 0 1 {aspectRatio}"`) sits on top of each PDF canvas; pointer events on
+it draw/erase depending on the active tool.
+
+**Acceptance criteria:**
+- [x] A logged-in user viewing a real Backend piece's PDF can draw a freehand pen stroke (color/width choice) directly on the page
+- [x] The same user can place one of 6 stamps (breath mark, accent, fermata, staccato, circle, star) at a tap
+- [x] An eraser tool removes a stroke/stamp it's dragged over; a separate Undo removes the most recently created mark
+- [x] Marks persist per-piece per-page and reappear on reload, personal to their creator only (no sharing — see Backlog for the planned group layer)
+- [x] `npm run check`/`build` both clean
+- [ ] Human confirms drawing/erasing/undo actually feels right on a touchscreen (built without one) and that a stroke stays visually anchored to its note across zoom
+
+**Tasks — Claude:**
+- [x] Backend: `PieceMarkupMark` model + migration, `POST`/`GET /piece-markup`, `DELETE /piece-markup/{id}` (owner-only, personal — no share/unshare, unlike B5's `Annotation`)
+- [x] `$lib/api/pieceMarkup.ts`: typed client for the new proxy routes
+- [x] `routes/piece/[id]/markup/**`: authenticated proxies, same `locals.token`-server-side pattern as every other piece-scoped route
+- [x] `PdfView.svelte`: per-page SVG drawing overlay, pointer-driven stroke capture, tap-to-place stamps, eraser (segment-distance hit-testing), session-local undo stack, a floating toolbar (tool/color/width/stamp pickers)
+- [x] `piece/[id]/+page.svelte`: passes `pieceId`/`canMarkup` (same gate as F4's annotations — logged in + a real Backend piece) into `PdfView`
+
+**Tasks — Human:**
+- [ ] Deploy the Backend (new migration needs to run against the real production DB) — the Frontend preview can't actually save/load marks until this lands
+- [ ] Click through pen/stamp/eraser/undo on a real device and confirm it reads right
+
 ## Backlog
 
+- **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
+- **F11 fast-follow — import/export markup:** the human's other ask alongside the group layer, also deliberately deferred — no shape decided yet (a portable file format? peer-to-peer copy of one person's marks to another?).
 - **Modularize `groups/[id]/+page.svelte`** — well over 1,000 lines, one component covering Homework/Tracks/Members/Responsibilities/Info tabs plus the admin Settings tab. Identified during 2026-08-28's repo cleanup as the Frontend equivalent of the Backend's `schemas.py` split, deliberately not attempted unsupervised — splitting live `$state`/reactive bindings with no way to visually verify a refactor is a real regression risk. A natural split: one child component per tab, each taking its slice of `data` as props, parent keeping just tab selection + `mode`. Do this with the human able to click through it right after.
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only)
 - Admin default tempo only rides along on the group Tracks tab's and personal Library's practice links so far — the guest join page's practice link doesn't carry `?defaultTempo=` yet since `GuestPieceOut` doesn't expose `default_tempo_bpm`
@@ -495,7 +536,8 @@ fetching or required accounts.
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
-- 2026-08-29: Built F4's real annotation UI (create/view/edit/delete/share/unshare, rendered as markers on the score via OSMD's multi-cursor support) — see F4's "Expanded" note. Added one small Backend endpoint along the way (`GET /annotations/{id}/shares`, B5's own note). **Not** `check`/`build`-verified — this session had no `node`/`npm` on `PATH` at all, only hand-reviewed.
+- 2026-08-29: Built F11 (PDF markup: freehand pen + stamps), additive alongside F4's annotations per the human's explicit follow-up request after trying them. Found and used a working portable Node install already on this Windows machine (just not on `PATH` for this session) to get real `npm run check`/`build` verification for the first time this session — 0 errors both times, and it caught two real reactivity bugs (`activeStrokePage`/`recentMarkIds` needed `$state`, not plain `let`) before they shipped. Also deployed to the isolated Cloudflare preview Worker (`divisi-frontend-preview...workers.dev`) built against the real production Backend — though the Backend itself isn't deployed with F11's new endpoints yet, so drawing won't actually save/load there until that happens.
+- 2026-08-29: Built F4's real annotation UI (create/view/edit/delete/share/unshare, rendered as markers on the score via OSMD's multi-cursor support) — see F4's "Expanded" note. Added one small Backend endpoint along the way (`GET /annotations/{id}/shares`, B5's own note). Confirmed `check`/`build`-clean in the F11 entry above, once real Node tooling was found on this machine — this entry originally shipped hand-reviewed only.
 - 2026-08-29: Built F10 (locked down the bundled piece registry), the human's direct follow-up after F9. See F10's own section for the full mechanism/fix. `npm run check` (0 errors)/`build` both clean.
 - 2026-08-29: Built F9 (graceful error handling app-wide). See F9's own section. Verified live via a real kill-Backend/restart-Backend cycle in both locales.
 - 2026-08-29: Built F8 (Spanish localization). See F8's own section. Not deployed to production; local-only, not clicked through in a real browser. Merged on top of the same-day guest-piece-upload fix below (its `join/[code]/+page.svelte` fix preserved, F8's translations layered on top).

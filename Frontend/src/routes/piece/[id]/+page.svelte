@@ -1012,7 +1012,13 @@
 			{#if piece?.pdfUrl}
 				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
 					<div class="pdf-card">
-						<PdfView pdfUrl={piece.pdfUrl} bind:zoom={pdfZoomLevel} active={viewMode === 'pdf'} />
+						<PdfView
+						pdfUrl={piece.pdfUrl}
+						bind:zoom={pdfZoomLevel}
+						active={viewMode === 'pdf'}
+						pieceId={data.remote?.pieceId}
+						canMarkup={canAnnotate}
+					/>
 					</div>
 				</div>
 			{/if}
