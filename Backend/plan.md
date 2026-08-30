@@ -2,7 +2,7 @@
 
 Separate from the native iOS app's own plan (paused 2026-08-27, condensed into `Frontend/plan.md`'s "iOS app" section during 2026-08-28's repo cleanup). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Status:** All 14 milestones shipped (B1–B14); a couple got informal follow-up expansions afterward (real piece uploads under B4, a rehearsal-schedule addition under B13). No B15 is scoped yet. Open threads, none Claude-blocking: B7 and B8 each have one human-only task left (see their sections); B11's ephemeral-disk gap and B14's email-provider/OAuth-publish steps are tracked in Backlog.
+**Status:** B1–B15 shipped (a couple of the earlier ones got informal follow-up expansions afterward — real piece uploads under B4, a rehearsal-schedule addition under B13). Open threads, none Claude-blocking: B7 and B8 each have one human-only task left (see their sections); B11's ephemeral-disk gap and B14's email-provider/OAuth-publish steps are tracked in Backlog. **B15 is built but not deployed** — its migration hasn't run against the real production DB yet, a human-only step (see B15's own section).
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -385,8 +385,30 @@ in their absence:
 - [x] Google Sign-In: created the OAuth app in Google Cloud Console (project `divisi-506916`), set credentials locally and on Render. Verified end-to-end 2026-08-28 with a real browser round trip (a prior "verified" claim had only ever curled the API) — confirmed redirect URIs registered and `FRONTEND_BASE_URL` correct, then the human logged in via Google on the real site and confirmed password+Google account linking on the same email.
 - [x] **Hidden again, deliberately, 2026-08-28**, right after verifying — the OAuth consent screen is still in Testing status (only listed test users can sign in), so the credentials were pulled from Render (deleting an env var via the API doesn't auto-redeploy, so the service was also restarted) rather than just commented out locally (the earlier half-fix). Confirmed `oauth/providers` reports `google: false` again. **To re-enable:** publish the consent screen out of Testing in Cloud Console, re-add the two keys on Render, restart the service.
 
+### B15 — Piece markup: freehand pen strokes + stamps [x]
+
+Feeds `Frontend/plan.md`'s F11 — a piaScore-style drawing layer on a piece's PDF
+pages, additive alongside B5's `Annotation` (a single text note at a score
+position), not a replacement for it. Personal-only: every mark is scoped to its
+creator, no share/unshare like B5 has — a group-published layer is a planned
+fast-follow (see Backlog), deliberately not built this pass.
+
+**Acceptance criteria:**
+- [x] A user can save a pen stroke (color, width, an ordered point path) or a stamp (a fixed symbol type + one position) against a piece's specific PDF page
+- [x] Only the piece's owner/group members can create marks on it; only a mark's own creator can see or delete it — no sharing
+- [x] Deleting a mark works for both "erase" (remove one specific mark) and "undo" (remove the most recently created one) — no separate undo endpoint needed
+
+**Tasks — Claude:**
+- [x] `PieceMarkupMark` model (JSON `points` column for strokes; `x`/`y`/`stamp_type` for stamps) + migration (`e4a8c2f6b1d9`)
+- [x] `POST`/`GET /piece-markup`, `DELETE /piece-markup/{id}` — same access-gate helper shape as `annotations.py`, kept as its own local copy per this codebase's small-self-contained-route-module convention
+- [x] Tests: create both kinds, Pydantic validation (a stroke needs points+width, a stamp needs type+position), personal-only listing, cross-user access denial, owner-only delete. `pytest` 5/5 in `test_piece_markup.py`, 143/145 full suite (2 pre-existing FluidSynth-on-PATH gaps, unrelated)
+
+**Tasks — Human:**
+- [ ] Deploy this to production — push to `backend/deploy`, and run the new migration against the real Neon Postgres DB. Nothing in the Frontend's F11 can actually save/load until this happens.
+
 ## Backlog
 
+- **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
 - Wire `app/storage/files.py` to Neon's Object Storage (S3-compatible, already provisioned — credentials in `Backend/.env`) instead of local disk, to fix the free-tier ephemeral-disk gap. Still just the actual code + `boto3` dependency work, not started.
@@ -402,6 +424,8 @@ in their absence:
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-29: Built B15 (piece markup: pen strokes + stamps) to feed Frontend F11, after the human tried F4's annotations and asked for something closer to piaScore's real drawing tool instead — additive, not a replacement. `pytest` 5/5 new, 143/145 full suite (2 pre-existing FluidSynth gaps). Not deployed — migration hasn't run against production yet, tracked as a human task on B15 itself.
 
 - 2026-08-29: Added `GET /annotations/{id}/shares` (B5's own note) while wiring the Frontend's real annotation UI (F4) — owner-only, lists who an annotation is currently shared with, which share/unshare alone never exposed. `pytest` 4/4 in `test_annotations.py`, 138/140 full suite (2 pre-existing FluidSynth-on-PATH gaps, unrelated).
 - 2026-08-29: Fixed a guest-path gap: `GuestPieceOut` was missing `composer`/`youtube_url`/`has_music`/`has_pdf`, leaving new Backend-uploaded pieces unreachable by guests. Added the 4 fields to `guest.py`'s `resolve_join_code`. Pushed straight to `backend/deploy` (it was stale) and to production; verified live end-to-end. `pytest` 139/139.

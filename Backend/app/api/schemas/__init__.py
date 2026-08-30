@@ -51,6 +51,7 @@ from app.api.schemas.library import (
     TimeSignatureOut,
 )
 from app.api.schemas.omr import OmrImportOut, OmrImportRequest, OmrJobOut
+from app.api.schemas.piece_markup import MarkupMarkCreate, MarkupMarkOut
 from app.api.schemas.responsibilities import (
     ResponsibilityDateCreate,
     ResponsibilityDateOut,
@@ -96,6 +97,8 @@ __all__ = [
     "HomeworkCreate",
     "HomeworkOut",
     "LibraryEntryOut",
+    "MarkupMarkCreate",
+    "MarkupMarkOut",
     "OAuthProviderStatusOut",
     "OmrImportOut",
     "OmrImportRequest",

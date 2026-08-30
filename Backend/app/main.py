@@ -9,6 +9,7 @@ from app.api.routes import (
     homework,
     library,
     omr,
+    piece_markup,
     responsibilities,
     weekly_notes,
 )
@@ -29,6 +30,7 @@ app.include_router(groups.router)
 app.include_router(omr.router)
 app.include_router(library.router)
 app.include_router(annotations.router)
+app.include_router(piece_markup.router)
 app.include_router(guest.router)
 app.include_router(homework.router)
 app.include_router(responsibilities.router)
