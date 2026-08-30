@@ -41,7 +41,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
-	let { data }: { data: { id: string; remote: RemotePieceMeta | null } } = $props();
+	let { data }: { data: { id: string; remote: RemotePieceMeta | null; unreachable: boolean } } = $props();
 	// The keyed markup remounts this component whenever the route id changes,
 	// so capturing the matching piece once per mount is intentional. Bundled
 	// fixtures win a same-id collision (can't happen in practice — fixture
@@ -123,6 +123,12 @@
 	type LoadState =
 		| { kind: 'loading' }
 		| { kind: 'notFound' }
+		// Distinct from `notFound`: the Backend never actually answered
+		// (most often Render's free-tier instance waking from an idle
+		// spin-down — see `+page.server.ts`'s `RemoteResolution`), so saying
+		// "not found" would be actively misleading — the piece is very
+		// likely fine, the server just hasn't responded yet.
+		| { kind: 'unreachable' }
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
 		| { kind: 'noVisibleTracks' }
@@ -133,7 +139,15 @@
 		// mid-load, with no special-casing needed at each check site.
 		| { kind: 'pdfOnly' };
 
-	let loadState = $state<LoadState>(!piece ? { kind: 'notFound' } : hasPlayer ? { kind: 'loading' } : { kind: 'pdfOnly' });
+	let loadState = $state<LoadState>(
+		!piece
+			? data.unreachable
+				? { kind: 'unreachable' }
+				: { kind: 'notFound' }
+			: hasPlayer
+				? { kind: 'loading' }
+				: { kind: 'pdfOnly' }
+	);
 	let parsed: ParsedMIDI | undefined;
 	let player: MidiPlayer | undefined;
 
@@ -161,9 +175,18 @@
 	let menuOpen = $state(false);
 	// F5: forced to whichever single pane exists when a piece doesn't have
 	// both — a stale/default 'pdf'/'player' pick from before this piece was
-	// opened must never select a pane this piece doesn't have.
+	// opened must never select a pane this piece doesn't have. `!piece` is
+	// its own case, not just "no player": `hasPlayer`/`hasPdfPane` are both
+	// false with nothing resolved yet, and `!hasPlayer ? 'pdf' : ...` used
+	// to read that the same as a real PDF-only piece — defaulting to the
+	// 'pdf' pane, which never renders anything when there's no `piece.pdfUrl`
+	// to show. The status card (loading/notFound/unreachable/error) lives in
+	// the *player* pane (see below), so a real bug: this was the actual
+	// cause of the page going blank on a slow/unreachable Backend, not just
+	// a missing message — the right state was already there, just hidden
+	// behind `class:hidden={viewMode !== 'player'}`.
 	let viewMode = $state<ViewMode>(
-		!hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode
+		!piece ? 'player' : !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode
 	);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
@@ -979,6 +1002,11 @@
 					<div class="status-card status-card--error">
 						<p>{m.piece_not_found()}</p>
 						<button class="text-link" onclick={backToLibrary}>{m.piece_back_to_library()}</button>
+					</div>
+				{:else if loadState.kind === 'unreachable'}
+					<div class="status-card status-card--error">
+						<p>{m.errors_could_not_reach_server()}</p>
+						<button class="text-link" onclick={() => location.reload()}>{m.piece_retry()}</button>
 					</div>
 				{:else if loadState.kind === 'error'}
 					<div class="status-card status-card--error">

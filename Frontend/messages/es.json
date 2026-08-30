@@ -406,6 +406,7 @@
 	"piece_reference_recording": "Grabación de referencia",
 	"piece_loading_score": "Cargando partitura...",
 	"piece_not_found": "No se encontró ninguna pieza con ese id.",
+	"piece_retry": "Intentar de nuevo",
 	"piece_load_error": "No se pudo cargar la pieza.",
 	"piece_no_notes_for_part": "No hay notas para {part} en este archivo.",
 	"piece_no_visible_tracks": "No hay pistas visibles seleccionadas.",
