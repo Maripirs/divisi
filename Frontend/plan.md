@@ -91,7 +91,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
-| F14 | In-app notation editor for a track's music | 🚧 In progress — spike done, engine decided (path 1: correction-only on OSMD, MusicXML-DOM model); editor build not started |
+| F14 | In-app notation editor for a track's music | 🚧 Code-complete (all Claude tasks done 2026-08-31: route, editable model, editing surface, export, save-as-draft, unsaved guard, entry points, i18n; `check`/`build`/tests green) — awaiting the human live-test on a real OMR track |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -772,9 +772,10 @@ already enforces server-side.
 - [ ] Leaving the editor with unsaved edits warns before discarding them
 - [ ] The edited version is what the player loads afterward (once it's the
       latest / approved version, per the existing version-resolution rules)
-- [ ] `npm run check` / `npm run build` both clean
-- [ ] New `messages/en.json` + `es.json` keys for every editor-facing
-      string
+- [x] `npm run check` / `npm run build` both clean (2026-08-31, plus the
+      55-test vitest suite green)
+- [x] New `messages/en.json` + `es.json` keys for every editor-facing
+      string (2026-08-31; the placeholder `piece_editor_coming_soon` removed)
 
 **Tasks — Claude:**
 - [x] **Spike:** prototype the minimal "click a note, change its pitch,
@@ -792,19 +793,29 @@ already enforces server-side.
       `_require_review_authority` enforces on save. `denied`/`notFound`/
       `unreachable` all render as cards; the placeholder editor body only
       mounts for `granted`.
-- [ ] Load + parse the track's music file into an editable model (reuse
-      `$lib/midi/musicXmlConverter.ts` / `$lib/musicxml/parser.ts`; a
-      MIDI source goes through the existing conversion first)
-- [ ] Editing surface for the path-1 operation set (pitch, duration,
+- [x] Load + parse the track's music file into an editable model (task 2,
+      2026-08-31 — `$lib/musicxml/loadEditableScore.ts` sniffs MIDI/MusicXML,
+      MIDI through `convertAllParts` first, `.mxl` rejected)
+- [x] Editing surface for the path-1 operation set (pitch, duration,
       delete, key/clef/accidental), with keyboard + click interaction
-- [ ] MusicXML export from the edited model
-- [ ] Save action → `POST /library/pieces/[id]/versions` with the exported
-      file; success returns to the piece page on the new draft
-- [ ] Unsaved-changes guard on navigation away
-- [ ] "Edit music" entry points in `groups/[id]` Tracks edit panel and the
-      piece page, admin/owner-gated
-- [ ] `messages/en.json` + `es.json` keys
-- [ ] `npm run check` / `npm run build` clean
+      (tasks 3 / 3b / 3c, 2026-08-31)
+- [x] MusicXML export from the edited model (2026-08-31 —
+      `EditableScore.exportMusicXml()`: `serialize()` plus the XML
+      declaration and a partwise DOCTYPE; 2 unit tests)
+- [x] Save action → `POST /library/pieces/[id]/versions` with the exported
+      file; success returns to the piece page on the new draft (2026-08-31 —
+      new `piece/[id]/edit/save/+server.ts`; draft only, no auto
+      submit/approve/distribute, per the plan's review-flow note)
+- [x] Unsaved-changes guard on navigation away (2026-08-31 —
+      `beforeNavigate` `confirm()` for in-app nav + a `beforeunload`
+      listener for tab close / hard reload, both keyed off `dirty`)
+- [x] "Edit music" entry points in `groups/[id]` Tracks edit panel and the
+      piece page, admin/owner-gated (2026-08-31 — Tracks panel link shown
+      when `track.has_music`; piece page link in the practice-setup drawer,
+      gated by a new `canEditMusic` flag `resolve/+server.ts` computes with
+      the same owner/admin rule as the editor route's `load`)
+- [x] `messages/en.json` + `es.json` keys (2026-08-31)
+- [x] `npm run check` / `npm run build` clean (2026-08-31)
 
 **Tasks — Human:**
 - [ ] Confirm the spike's engine choice before the build proceeds
@@ -869,9 +880,10 @@ fetching or required accounts.
   - [x] Task 3 — editing surface, core: click-to-select (part-aware hit-test in `EditorScoreView`), pitch +/-semitone + octave via `transpose`, delete-to-rest, ArrowLeft/Right selection nav, `dirty` flag. Toolbar + keyboard. Selection marker = parked OSMD playback cursor (coloring a `GraphicalNote` doesn't survive OSMD's per-edit sheet rebuild).
   - [x] Task 3b — duration change. `EditableScore.setDuration(index, {type, dots}) -> boolean` (false = refused, no mutation): rewrites `<type>`/`<dot>`/`<duration>` against the measure's active `<divisions>`, re-fits by absorbing the delta into the following same-voice rest run (grows/inserts a rest when shorter, eats rests when longer, refuses if the bar can't hold it or the value is off-grid). Applies to every chord member; grace notes refused. Toolbar value row + dot toggle, digit keys 1-5 + `.`. Transient refusal notice.
   - [x] Task 3c — key / clef / per-note accidental. `EditableScore` gains `setAccidental(index, alter)` (single notehead, not the chord: rewrites `<pitch><alter>` + `<note><accidental>` in DTD order, `natural` written explicitly, changes sounding pitch), `setKey(index, fifths)` (−7..7, applied to **every part** at the selected note's measure — a key change is global), `setClef(index, {sign, line})` (selected note's part + staff only; `number` attr only when the part declares `<staves>` > 1), plus `keyAt`/`clefAt` readers for the toolbar. UX decision made (human, 2026-08-31): both key and clef act on the **selected note's measure** — bar 1 edits the piece-initial value, a later bar inserts a change from that bar onward. New `findOrCreateAttributes` places a fresh `<attributes>` at measure start (after a leading `<print>`/`<barline location="left">`) with children in DTD order. All ops refuse no-ops / out-of-range without touching the DOM. UI: third toolbar row (accidental buttons ♭♭ ♭ ♮ ♯ ♯♯, key stepper, clef presets Treble/Bass/Alto/Tenor), each via `applyEdit`, active state from the in-effect value. No new keyboard shortcuts (digit keys taken by durations, `handleKeydown` frozen). New `src/lib/musicxml/editableScore.test.ts` (jsdom, 15 tests). New en/es i18n keys.
-  - [ ] Tasks 4-9 (NEXT) — MusicXML export, save action, unsaved-changes guard (reads `dirty`), entry points, i18n sweep (incl. removing now-unused `piece_editor_coming_soon`), final `check`/`build`.
+  - [x] Tasks 4-9 (2026-08-31) — `EditableScore.exportMusicXml()` (declaration + partwise DOCTYPE on top of `serialize()`, 2 tests); save via new `piece/[id]/edit/save/+server.ts` → `POST /library/pieces/{id}/versions` (draft only, no auto submit/approve/distribute — the plan's review-flow note), then `goto` back to the piece page; unsaved-changes guard (`beforeNavigate` `confirm()` + `beforeunload`, both off `dirty`); "Edit music" entry points in the `groups/[id]` Tracks admin panel (when `track.has_music`) and the piece page practice-setup drawer (new `canEditMusic` from `resolve/+server.ts`, same owner/admin rule as the editor route's `load`); en/es keys added, `piece_editor_coming_soon` removed; `check` + `build` + 55-test vitest suite all green.
+  - Remaining: **Human live-test task** only (open the editor on a real OMR track, make each edit kind, save, confirm the draft plays back corrected and moves through review). No Claude tasks left in F14.
   - Known follow-ups from task 2: MIDI-sourced tracks open as a lossy `convertAllParts` approximation (16th-grid quantized rhythm, table-based enharmonics) — a later task may add a "came from MIDI" hint using the returned `sourceFormat`. `parseError` card shows raw detail (`HTTP 500`, parser message) like `ScoreView` does.
-  - Working method: each substantial task in a fresh subagent; this session coordinates, reviews the diff, commits, updates this breadcrumb.
+  - Working method (from 2026-08-31): tasks built inline in the main session, no subagents; commit + breadcrumb update per task.
 - 2026-08-30: Found and fixed a real bug live-testing F13: `getPieceByTitle()` (F10) was preferred *unconditionally* over a real Backend piece's own content in all three places it's used (`/`'s personal library, the group Tracks tab, the guest join page) — so a real, admin-uploaded track that happened to share a title with a bundled fixture (e.g. "Lacrymosa") always played/showed the bundled asset instead, silently ignoring the admin's own music file/PDF/YouTube link. F13 surfaced this concretely: Lacrymosa's real reference-recording link never worked because the app was never actually reaching the real `Piece` it was set on. Fixed by only falling back to the bundled match when the real piece has neither `has_music` nor `has_pdf` of its own — `getPieceByTitle()`'s original intent (a working Practice button for a track with nothing wired up yet), not a permanent override once real content exists.
 - 2026-08-30: `piece/[id]`'s back button now does a real `history.back()` when there's history to go back to, landing wherever the human actually came from (a specific group's Tracks tab, its scroll position, admin vs. member view) instead of always the generic library/guest-join page regardless of origin. The old destination-guessing logic (guest join code -> that group; logged-in -> `/`; guest -> `/?guest=1`) stays as the fallback for when there's genuinely nothing to go back to (opened directly, a fresh tab, a deep link).
 - 2026-08-30: `/settings/more` brought in line with every other screen — now carries the same `AppHeader`/`BottomNav` chrome (title in the header, brand link home, gear button, bottom nav) instead of its own bare `<main>` with a hand-rolled breadcrumb/`<h1>`; also handles a guest reached via a join code the same way `/settings` itself does (home/footer point back to their group, not a login-gated dashboard). Dropped the redundant "Settings / More" breadcrumb text now that the header already names the page. Removed the "How Divisi works" link/section at the human's request (`more_how_it_works` message key deleted, now unused).

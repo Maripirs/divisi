@@ -647,6 +647,25 @@ export class EditableScore {
 		return new XMLSerializer().serializeToString(this.doc);
 	}
 
+	/** A complete, standalone MusicXML document for saving or download.
+	 * `serialize()` is the fast path the OSMD re-render uses and its output
+	 * is fine to feed straight back to `osmd.load()`, but `XMLSerializer`
+	 * drops the `<?xml?>` declaration and (in some engines) the DOCTYPE — a
+	 * file written to disk and handed to another program wants both. Re-adds
+	 * the declaration always, and a partwise DOCTYPE when the serialized
+	 * tree doesn't already carry one. */
+	exportMusicXml(): string {
+		const body = this.serialize().replace(/^﻿/, '').trimStart();
+		const declaration = '<?xml version="1.0" encoding="UTF-8"?>';
+		const doctype =
+			'<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" ' +
+			'"http://www.musicxml.org/dtds/partwise.dtd">';
+		const parts = [declaration];
+		if (!/^<!DOCTYPE/i.test(body)) parts.push(doctype);
+		parts.push(body);
+		return parts.join('\n') + '\n';
+	}
+
 	/** Every `<note>` of the chord the given note belongs to, anchor first.
 	 * A chord is a run of sibling `<note>`s where the second onward carry
 	 * `<chord/>`; a lone note returns just itself. */

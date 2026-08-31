@@ -1,7 +1,8 @@
 import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
-import type { LibraryEntryOut } from '$lib/server/backendTypes';
+import { subjectFromToken } from '$lib/server/jwt';
+import type { GroupOut, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
 import type { RequestHandler } from './$types';
 
@@ -22,6 +23,36 @@ interface GuestPieceResponse {
 interface RemoteResolution {
 	remote: RemotePieceMeta | null;
 	unreachable: boolean;
+	/** F14: whether this caller may open the in-app notation editor on the
+	 * piece — it has a music file *and* the caller is the owner of a
+	 * personal piece or an `admin` of the owning group, the same rule
+	 * `routes/piece/[id]/edit/+page.server.ts` enforces before the editor
+	 * mounts and the Backend re-checks on save. Absent/`false` for guests
+	 * and for anyone without edit rights, so `+page.svelte` hides the entry
+	 * point. */
+	canEditMusic?: boolean;
+}
+
+/** Mirrors `edit/+page.server.ts`'s `resolveEditAccess`: personal piece →
+ * its owner; group piece → an `admin` of the owning group. Any Backend
+ * hiccup resolving the group role degrades to "no", never throws — this is
+ * only deciding whether to show a link. */
+async function resolveCanEditMusic(
+	entry: LibraryEntryOut,
+	token: string,
+	fetchFn: typeof fetch
+): Promise<boolean> {
+	if (!entry.has_music) return false;
+	if (entry.owner_type === 'user') {
+		const userId = subjectFromToken(token);
+		return userId !== null && entry.owner_id === userId;
+	}
+	try {
+		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
+		return groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
+	} catch {
+		return false;
+	}
 }
 
 /** Bounds how long a single Backend fetch can hang before this counts as
@@ -97,7 +128,8 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 			youtubeUrl: entry.youtube_url,
 			defaultTempoBpm: entry.default_tempo_bpm
 		};
-		return json({ remote, unreachable: false } satisfies RemoteResolution);
+		const canEditMusic = await resolveCanEditMusic(entry, locals.token, fetch);
+		return json({ remote, unreachable: false, canEditMusic } satisfies RemoteResolution);
 	} catch (err) {
 		if (err instanceof BackendApiError) {
 			// `backendFetch` normalizes a genuine network failure into a

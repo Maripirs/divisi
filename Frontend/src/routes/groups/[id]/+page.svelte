@@ -592,6 +592,19 @@
 								</div>
 							{/if}
 
+							<!-- F14: open the in-app notation editor on this track's
+							     current music file. Only shown when there's a music
+							     file to correct; the editor route re-checks admin
+							     access server-side and the Backend re-checks on save. -->
+							{#if track.has_music}
+								<div class="edit-music-row">
+									<a class="text-link" href={lh(`/piece/${track.piece_id}/edit`)}>
+										{m.piece_editor_title()}
+									</a>
+									<p class="card-note">{m.piece_editor_entry_hint()}</p>
+								</div>
+							{/if}
+
 							<!-- Delete-the-whole-track: a minimal trash icon pinned to the
 							     card's top-right corner rather than a button sitting next to
 							     Save — those two are one click apart and this is a much more
@@ -1634,6 +1647,12 @@
 	/* "Generate music from PDF" block — a hairline rule sets it apart from
 	   the edit form's own Save/Cancel row just above it. */
 	.generate-from-pdf {
+		margin-top: 0.9rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--border);
+	}
+
+	.edit-music-row {
 		margin-top: 0.9rem;
 		padding-top: 0.9rem;
 		border-top: 1px solid var(--border);

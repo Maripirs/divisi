@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import EditorScoreView from '$lib/components/EditorScoreView.svelte';
 	import '$lib/styles/shell.css';
@@ -55,6 +56,11 @@
 	let selectedIndex = $state<number | null>(null);
 	let selectedNote = $state<EditableNote | undefined>(undefined);
 	let dirty = $state(false);
+	// Task 5: save-in-flight + last save failure (a friendly message from the
+	// `edit/save` endpoint's `error()`, or a generic fallback). Task 6: the
+	// unsaved-changes guard below reads `dirty`.
+	let saving = $state(false);
+	let saveError = $state<string | null>(null);
 	// Task 3b: pending dot count for the duration control (0 -> 1 -> 2 -> 0).
 	// Kept in sync with the selected note's real dot count by the effect
 	// below, so the toggle always shows what is actually on the page.
@@ -406,6 +412,62 @@
 		}
 	}
 
+	// Task 4 + 5: export the edited model to a complete MusicXML document and
+	// POST it to `edit/save/+server.ts`, which creates a new `draft` version
+	// on this piece (PDF slot carried forward, `source: modification`) and
+	// leaves it for the normal submit/approve/distribute review flow. On
+	// success, drop the dirty flag (so the guard below doesn't fire on our
+	// own redirect) and return to the piece page.
+	async function save(): Promise<void> {
+		if (!score || saving || !dirty) return;
+		saving = true;
+		saveError = null;
+		try {
+			const xml = score.exportMusicXml();
+			const base = (data.pieceTitle ?? 'score').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'score';
+			const fd = new FormData();
+			fd.set(
+				'file',
+				new File([xml], `${base}.musicxml`, { type: 'application/vnd.recordare.musicxml+xml' })
+			);
+			let res: Response;
+			try {
+				res = await fetch(`/piece/${data.id}/edit/save`, { method: 'POST', body: fd });
+			} catch {
+				saveError = m.errors_could_not_reach_server();
+				return;
+			}
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { message?: string };
+				saveError = body.message ?? m.piece_editor_save_failed();
+				return;
+			}
+			dirty = false;
+			await goto(backToPieceHref);
+		} finally {
+			saving = false;
+		}
+	}
+
+	// Task 6: warn before leaving with unsaved edits. `beforeNavigate` covers
+	// in-app navigation (the "Back to this track" link, the header brand
+	// link, the browser back button); the `beforeunload` listener covers a
+	// tab close or a hard reload. Neither fires once `save()` has cleared
+	// `dirty`.
+	beforeNavigate((nav) => {
+		if (!dirty || saving) return;
+		if (!confirm(m.piece_editor_unsaved_warning())) nav.cancel();
+	});
+	$effect(() => {
+		if (!dirty) return;
+		const onBeforeUnload = (event: BeforeUnloadEvent) => {
+			event.preventDefault();
+			event.returnValue = '';
+		};
+		window.addEventListener('beforeunload', onBeforeUnload);
+		return () => window.removeEventListener('beforeunload', onBeforeUnload);
+	});
+
 	onMount(() => {
 		if (data.access === 'granted') void loadScore();
 	});
@@ -572,7 +634,17 @@
 					<p class="editor-hint">{m.piece_editor_keyboard_hint()}</p>
 				</div>
 
+				{#if saveError}
+					<p class="editor-notice" role="alert">{saveError}</p>
+				{/if}
 				<div class="btn-row">
+					<button
+						class="btn btn-primary"
+						onclick={save}
+						disabled={!dirty || saving || reRendering}
+					>
+						{saving ? m.piece_editor_saving() : m.piece_editor_save()}
+					</button>
 					<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
 				</div>
 			</section>

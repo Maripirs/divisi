@@ -318,3 +318,30 @@ describe('EditableScore.keyAt / clefAt', () => {
 		expect(score.clefAt(2)).toEqual({ sign: 'G', line: 2 }); // staff 1 unaffected
 	});
 });
+
+describe('EditableScore.exportMusicXml', () => {
+	it('prepends the XML declaration and a partwise DOCTYPE, and stays parseable', () => {
+		const score = new EditableScore(ONE_PART);
+		score.transpose(0, 2);
+		const out = score.exportMusicXml();
+
+		expect(out.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n')).toBe(true);
+		expect(out).toContain('<!DOCTYPE score-partwise PUBLIC');
+		expect(out.endsWith('\n')).toBe(true);
+
+		const doc = reparse(out);
+		expect(doc.querySelector('parsererror')).toBeNull();
+		expect(doc.querySelectorAll('note').length).toBe(8);
+		// the edit is carried through
+		expect(doc.querySelectorAll('note')[0].querySelector('pitch > step')!.textContent).toBe('D');
+	});
+
+	it('does not add a second DOCTYPE when the serialized tree already carries one', () => {
+		const withDoctype = ONE_PART.replace(
+			'<score-partwise version="4.0">',
+			'<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">\n<score-partwise version="4.0">'
+		);
+		const out = new EditableScore(withDoctype).exportMusicXml();
+		expect(out.match(/<!DOCTYPE/g)?.length ?? 0).toBe(1);
+	});
+});
