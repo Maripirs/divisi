@@ -272,9 +272,46 @@
 		rafHandle = requestAnimationFrame(tick);
 	}
 
+	// Note preview: sound the selected/re-pitched note through the same synth
+	// (a dedicated preview channel, independent of transport + mix) so a
+	// correction can be heard, not just seen. Called on click-select and
+	// after a pitch edit (immediate), and on arrow-key nav (debounced, so a
+	// held key doesn't machine-gun — the note you land on plays when you
+	// pause). Not on duration/key/clef edits.
+	const STEP_SEMITONES: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+	let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function pitchToMidi(p: { step: string; alter: number; octave: number }): number {
+		return (p.octave + 1) * 12 + (STEP_SEMITONES[p.step] ?? 0) + p.alter;
+	}
+
+	function previewSelected(immediate = true): void {
+		const n = selectedNote;
+		if (!n || n.isRest || !n.pitch) return;
+		const midi = pitchToMidi(n.pitch);
+		if (previewTimer) {
+			clearTimeout(previewTimer);
+			previewTimer = undefined;
+		}
+		if (immediate) {
+			void playPreview(midi);
+		} else {
+			previewTimer = setTimeout(() => {
+				previewTimer = undefined;
+				void playPreview(midi);
+			}, 140);
+		}
+	}
+
+	async function playPreview(midi: number): Promise<void> {
+		const p = player ?? (await ensurePlayer());
+		p?.previewNote(midi);
+	}
+
 	onDestroy(() => {
 		destroyed = true;
 		if (rafHandle) cancelAnimationFrame(rafHandle);
+		if (previewTimer) clearTimeout(previewTimer);
 		player?.destroy();
 		player = undefined;
 	});
@@ -352,6 +389,7 @@
 		if (!canPitchEdit) return;
 		const applied = applyEdit((s, i) => s.setAccidental(i, alter));
 		editNotice = applied ? null : m.piece_editor_accidental_refused();
+		if (applied) previewSelected();
 	}
 
 	// Key stepper over `fifths` -7..7, clamped at the ends. Applies to every
@@ -417,7 +455,10 @@
 			staff: hit.staff,
 			octave: hit.octave
 		});
-		if (note) selectByIndex(note.index);
+		if (note) {
+			selectByIndex(note.index);
+			previewSelected();
+		}
 	}
 
 	// Apply one in-place mutation, re-serialize for the re-engrave, and keep
@@ -433,7 +474,9 @@
 		return true;
 	}
 
-	const transposeSelected = (semitones: number) => applyEdit((s, i) => s.transpose(i, semitones));
+	function transposeSelected(semitones: number): void {
+		if (applyEdit((s, i) => s.transpose(i, semitones))) previewSelected();
+	}
 	const deleteSelected = () => applyEdit((s, i) => s.deleteToRest(i));
 
 	// Set the selected note's (or chord's) duration through the same
@@ -520,10 +563,12 @@
 			case 'ArrowRight':
 				event.preventDefault();
 				stepSelection(1);
+				previewSelected(false);
 				break;
 			case 'ArrowLeft':
 				event.preventDefault();
 				stepSelection(-1);
+				previewSelected(false);
 				break;
 			case 'Delete':
 			case 'Backspace':
