@@ -95,6 +95,74 @@
 						? m.piece_editor_dur_eighth()
 						: m.piece_editor_dur_16th();
 
+	// Task 3c: accidental / key / clef controls. All three route through
+	// `applyEdit` like every other edit, so `dirty` / re-serialize / re-render
+	// / re-select stay identical. No new keyboard shortcuts — the digit keys
+	// are taken by durations and `handleKeydown` is deliberately frozen.
+	const accidentalPresets = [
+		{ alter: -2, glyph: '♭♭', label: () => m.piece_editor_acc_double_flat() },
+		{ alter: -1, glyph: '♭', label: () => m.piece_editor_acc_flat() },
+		{ alter: 0, glyph: '♮', label: () => m.piece_editor_acc_natural() },
+		{ alter: 1, glyph: '♯', label: () => m.piece_editor_acc_sharp() },
+		{ alter: 2, glyph: '♯♯', label: () => m.piece_editor_acc_double_sharp() }
+	] as const;
+	type ClefId = 'treble' | 'bass' | 'alto' | 'tenor';
+	const clefPresets: ReadonlyArray<{ id: ClefId; sign: string; line: number }> = [
+		{ id: 'treble', sign: 'G', line: 2 },
+		{ id: 'bass', sign: 'F', line: 4 },
+		{ id: 'alto', sign: 'C', line: 3 },
+		{ id: 'tenor', sign: 'C', line: 4 }
+	];
+	const clefLabel = (id: ClefId): string =>
+		id === 'treble'
+			? m.piece_editor_clef_treble()
+			: id === 'bass'
+				? m.piece_editor_clef_bass()
+				: id === 'alto'
+					? m.piece_editor_clef_alto()
+					: m.piece_editor_clef_tenor();
+
+	// The alter / key / clef in effect at the selection, re-read from the
+	// model after every selection or edit (keyed off `selectedNote`, a fresh
+	// object each `reindex()`). Drive the toolbar's active state.
+	const selectedAlter = $derived(canPitchEdit ? (selectedNote?.pitch?.alter ?? 0) : null);
+	const selectedKey = $derived.by(() =>
+		score && selectedNote ? score.keyAt(selectedNote.index) : null
+	);
+	const selectedClef = $derived.by(() =>
+		score && selectedNote ? score.clefAt(selectedNote.index) : null
+	);
+	const keyReadout = (fifths: number | null): string => {
+		const v = fifths ?? 0;
+		if (v === 0) return m.piece_editor_key_none();
+		return v > 0
+			? m.piece_editor_key_sharps({ count: v })
+			: m.piece_editor_key_flats({ count: -v });
+	};
+
+	function applyAccidental(alter: number): void {
+		if (!canPitchEdit) return;
+		const applied = applyEdit((s, i) => s.setAccidental(i, alter));
+		editNotice = applied ? null : m.piece_editor_accidental_refused();
+	}
+
+	// Key stepper over `fifths` -7..7, clamped at the ends. Applies to every
+	// part at the selected measure via `setKey`.
+	function stepKey(delta: 1 | -1): void {
+		if (!score || selectedIndex === null || reRendering) return;
+		const current = selectedKey ?? 0;
+		const next = Math.max(-7, Math.min(7, current + delta));
+		if (next === current) return;
+		const applied = applyEdit((s, i) => s.setKey(i, next));
+		editNotice = applied ? null : m.piece_editor_key_refused();
+	}
+
+	function applyClef(preset: { sign: string; line: number }): void {
+		if (selectedIndex === null) return;
+		const applied = applyEdit((s, i) => s.setClef(i, { sign: preset.sign, line: preset.line }));
+		editNotice = applied ? null : m.piece_editor_clef_refused();
+	}
+
 	// Keep the dot toggle showing the selected note's real dot count.
 	$effect(() => {
 		const d = selectedDuration;
@@ -434,6 +502,53 @@
 						</button>
 					</div>
 
+					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_accidental_label()}>
+						{#each accidentalPresets as a (a.alter)}
+							<button
+								class="btn"
+								class:dur-active={selectedAlter === a.alter}
+								aria-pressed={selectedAlter === a.alter}
+								aria-label={a.label()}
+								onclick={() => applyAccidental(a.alter)}
+								disabled={!canPitchEdit || reRendering}
+							>
+								{a.glyph}
+							</button>
+						{/each}
+
+						<span class="editor-stepper" role="group" aria-label={m.piece_editor_key_label()}>
+							<button
+								class="btn"
+								aria-label={m.piece_editor_key_down()}
+								onclick={() => stepKey(-1)}
+								disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) <= -7}
+							>
+								−
+							</button>
+							<span class="editor-readout" aria-live="polite">{keyReadout(selectedKey)}</span>
+							<button
+								class="btn"
+								aria-label={m.piece_editor_key_up()}
+								onclick={() => stepKey(1)}
+								disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) >= 7}
+							>
+								+
+							</button>
+						</span>
+
+						{#each clefPresets as c (c.id)}
+							<button
+								class="btn"
+								class:dur-active={selectedClef?.sign === c.sign && selectedClef?.line === c.line}
+								aria-pressed={selectedClef?.sign === c.sign && selectedClef?.line === c.line}
+								onclick={() => applyClef(c)}
+								disabled={selectedIndex === null || reRendering}
+							>
+								{clefLabel(c.id)}
+							</button>
+						{/each}
+					</div>
+
 					<p class="editor-status" role="status" aria-live="polite">
 						{#if selectedNote}
 							{m.piece_editor_selected({ label: selectionLabel() })}
@@ -547,11 +662,26 @@
 		font-size: 0.8125rem;
 	}
 	/* The duration value that matches the selected note, so the toolbar
-	   reflects the score rather than just being a set of actions. */
+	   reflects the score rather than just being a set of actions. Reused for
+	   the accidental and clef active states on the third row. */
 	.editor-toolbar .btn.dur-active {
 		border-color: var(--accent);
 		background: var(--accent);
 		color: var(--accent-contrast);
+	}
+
+	/* The key-signature stepper: −  [readout]  +  as one visual group. */
+	.editor-stepper {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+	.editor-readout {
+		min-width: 2.25rem;
+		text-align: center;
+		font-size: 0.8125rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text);
 	}
 
 	.editor-status {

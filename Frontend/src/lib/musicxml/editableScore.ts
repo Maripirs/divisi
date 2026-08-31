@@ -15,8 +15,9 @@
  * preserved).
  *
  * Extends here: later editor tasks add duration edits (rewrite
- * `<type>`/`<dot>`/`<duration>`, re-fit the measure) and key/clef changes
- * (rewrite `<attributes><key>`/`<clef>`). Both are further in-place DOM
+ * `<type>`/`<dot>`/`<duration>`, re-fit the measure), key/clef changes
+ * (rewrite `<attributes><key>`/`<clef>`), and per-note accidentals (rewrite
+ * `<pitch><alter>` + `<note><accidental>`). All are further in-place DOM
  * mutations on the same `doc` with a `reindex()` afterward — no new model.
  * `.mxl` (zipped MusicXML) is deliberately not handled here; the loader
  * (`loadEditableScore.ts`) rejects it before it can reach this class.
@@ -56,6 +57,25 @@ export interface NotePitch {
 	step: string;
 	alter: number;
 	octave: number;
+}
+
+/** The five written-accidental values the editor offers, keyed by `alter`.
+ * These are the `<note><accidental>` tokens that pair with each
+ * `<pitch><alter>` amount; `natural` is written explicitly (rather than
+ * dropping the element) so a corrected note cancels a prior key/measure
+ * accidental on the page. */
+const ACCIDENTAL_TOKEN: Record<string, string> = {
+	'-2': 'double-flat',
+	'-1': 'flat',
+	'0': 'natural',
+	'1': 'sharp',
+	'2': 'double-sharp'
+};
+
+/** A clef the toolbar can set, as its `<sign>` + `<line>` pair. */
+export interface ClefSpec {
+	sign: string;
+	line: number;
 }
 
 /** The five note values the duration editor offers. Tuplets and rarer
@@ -426,6 +446,203 @@ export class EditableScore {
 		return { type, dots };
 	}
 
+	/** Set the selected note's written accidental and its sounding pitch to
+	 * `alter` (one of -2..2). This operates on the *single* selected notehead,
+	 * not the whole chord — in MusicXML every `<note>` of a chord carries its
+	 * own `<pitch>` and `<accidental>`, so a chord's noteheads are altered one
+	 * at a time.
+	 *
+	 * Two edits land together, both in DTD child order:
+	 *  - `<pitch>`: rewrite `<alter>` (after `<step>`, before `<octave>`), or
+	 *    remove it when `alter` is 0, keeping `<step>`/`<octave>` untouched so
+	 *    only the chromatic inflection moves.
+	 *  - `<note>`: set `<accidental>` (after the `<type>`/`<dot>` run, before
+	 *    `<time-modification>`/`<stem>`/...) to the token matching `alter`,
+	 *    `natural` included.
+	 *
+	 * Returns `false` without mutating on a rest, on a note with no `<pitch>`
+	 * (unpitched percussion), on an `alter` outside -2..2, or on a no-op
+	 * (already exactly this alter) — the caller turns that into a notice.
+	 */
+	setAccidental(index: number, alter: number): boolean {
+		if (!Number.isInteger(alter) || alter < -2 || alter > 2) return false;
+		const el = this.elFor.get(index);
+		if (!el) return false;
+		if (el.querySelector(':scope > rest')) return false;
+		const pitchEl = el.querySelector(':scope > pitch');
+		const current = pitchOf(el);
+		if (!pitchEl || !current) return false;
+		if (current.alter === alter) return false;
+
+		if (alter === 0) {
+			pitchEl.querySelector(':scope > alter')?.remove();
+		} else {
+			this.setChild(pitchEl, 'alter', String(alter), 'octave');
+		}
+
+		this.setAccidentalElement(el, ACCIDENTAL_TOKEN[String(alter)]);
+		this.reindex();
+		return true;
+	}
+
+	/** Set the key signature at the selected note's measure across *every*
+	 * part — a key change is a global musical event, not a per-staff one.
+	 * `fifths` is the signed count of sharps (+) or flats (-), -7..7.
+	 *
+	 * For each `score-partwise > part`, the `<measure>` at the selected note's
+	 * `measureIndex` gets a find-or-created `<attributes>` and, inside it, a
+	 * find-or-created `<key>` with **no `number` attribute** (so it applies to
+	 * all staves), whose `<fifths>` is set. Parts with fewer measures than the
+	 * selected index are skipped. Editing measure 0 rewrites the piece-initial
+	 * key; a later measure inserts a key change from that bar onward and leaves
+	 * any downstream explicit key changes alone.
+	 *
+	 * Returns `false` without mutating on a `fifths` outside -7..7 or a no-op
+	 * (that `fifths` is already the value in effect at that measure).
+	 */
+	setKey(index: number, fifths: number): boolean {
+		if (!Number.isInteger(fifths) || fifths < -7 || fifths > 7) return false;
+		const note = this.notes[index];
+		if (!note) return false;
+		if (this.keyAt(index) === fifths) return false;
+
+		for (const part of Array.from(this.doc.querySelectorAll('score-partwise > part'))) {
+			const measures = Array.from(part.querySelectorAll(':scope > measure'));
+			const measure = measures[note.measureIndex];
+			if (!measure) continue; // this part is shorter than the selected bar
+			const attributes = this.findOrCreateAttributes(measure);
+			let key = Array.from(attributes.querySelectorAll(':scope > key')).find(
+				(k) => !k.hasAttribute('number')
+			);
+			if (!key) {
+				key = this.doc.createElement('key');
+				// <attributes> order: divisions?, key*, time*, staves?, ... — a
+				// new <key> goes before the first sibling that follows keys.
+				this.insertInAttributes(attributes, key, [
+					'time',
+					'staves',
+					'part-symbol',
+					'instruments',
+					'clef',
+					'staff-details',
+					'transpose'
+				]);
+			}
+			// <key> (traditional) order: cancel?, fifths, mode? — keep <fifths>
+			// ahead of any <mode>.
+			this.setChild(key, 'fifths', String(fifths), 'mode');
+		}
+
+		this.reindex();
+		return true;
+	}
+
+	/** Set the clef for the selected note's part **and staff only** (unlike a
+	 * key, a clef is a per-staff choice). `spec` is a `<sign>` + `<line>` pair;
+	 * the toolbar's presets are Treble G/2, Bass F/4, Alto C/3, Tenor C/4.
+	 *
+	 * In the selected note's own measure, a find-or-created `<attributes>` gets
+	 * a find-or-created `<clef>` for this staff: the `number` attribute is used
+	 * (and matched on) only when the part has more than one staff, so a
+	 * single-staff part keeps its unnumbered `<clef>`. `<sign>` and `<line>`
+	 * are set in DTD order (`sign, line, clef-octave-change`) and any
+	 * `<clef-octave-change>` is removed (the presets are all plain clefs).
+	 * Measure 0 edits the initial clef; a later measure inserts a clef change
+	 * from that bar onward.
+	 *
+	 * Returns `false` without mutating on a no-op (that staff's clef in effect
+	 * is already this sign + line).
+	 */
+	setClef(index: number, spec: ClefSpec): boolean {
+		const note = this.notes[index];
+		const noteEl = this.elFor.get(index);
+		if (!note || !noteEl) return false;
+		const measure = noteEl.closest('measure');
+		const part = noteEl.closest('part');
+		if (!measure || !part) return false;
+
+		const current = this.clefAt(index);
+		if (current && current.sign === spec.sign && current.line === spec.line) return false;
+
+		const multiStaff = this.stavesCount(part) > 1;
+		const attributes = this.findOrCreateAttributes(measure);
+
+		let clef = Array.from(attributes.querySelectorAll(':scope > clef')).find((c) => {
+			const num = c.getAttribute('number');
+			if (multiStaff) return num != null && num !== '' && Number(num) === note.staff;
+			return num == null || num === '';
+		});
+		if (!clef) {
+			clef = this.doc.createElement('clef');
+			if (multiStaff) clef.setAttribute('number', String(note.staff));
+			// <attributes> order: ... instruments?, clef*, staff-details*, ...
+			this.insertInAttributes(attributes, clef, ['staff-details', 'transpose']);
+		}
+		// <clef> order: sign, line?, clef-octave-change? — keep <line> ahead of
+		// any octave-shift child, then drop the octave shift entirely.
+		this.setChild(clef, 'sign', spec.sign, 'line');
+		this.setChild(clef, 'line', String(spec.line), 'clef-octave-change');
+		clef.querySelector(':scope > clef-octave-change')?.remove();
+
+		this.reindex();
+		return true;
+	}
+
+	/** The `<fifths>` in effect for the selected note: scan its part's measures
+	 * top-to-bottom for the last `<key>` at or before its measure. `0` when a
+	 * `<key>` exists but has no `<fifths>` text; `null` only when no `<key>` is
+	 * found at all (or the note/part can't be resolved). Feeds the toolbar's
+	 * key readout and the `setKey` no-op guard. */
+	keyAt(index: number): number | null {
+		const note = this.notes[index];
+		if (!note) return null;
+		const part = this.partById(note.partId);
+		if (!part) return null;
+		const measures = Array.from(part.querySelectorAll(':scope > measure'));
+		let fifths: number | null = null;
+		for (let i = 0; i <= note.measureIndex && i < measures.length; i++) {
+			for (const attr of Array.from(measures[i].querySelectorAll(':scope > attributes'))) {
+				for (const key of Array.from(attr.querySelectorAll(':scope > key'))) {
+					const raw = text(key.querySelector(':scope > fifths'));
+					fifths = raw === '' ? 0 : Number(raw);
+				}
+			}
+		}
+		return fifths;
+	}
+
+	/** The clef in effect for the selected note's staff: the same top-down
+	 * scan as `keyAt`, matching the `<clef>` `number` to the note's staff when
+	 * the part has more than one staff (an unnumbered clef then belongs to
+	 * staff 1). `null` when no clef is found. Feeds the toolbar's clef
+	 * active-state and the `setClef` no-op guard. */
+	clefAt(index: number): ClefSpec | null {
+		const note = this.notes[index];
+		if (!note) return null;
+		const part = this.partById(note.partId);
+		if (!part) return null;
+		const multiStaff = this.stavesCount(part) > 1;
+		const measures = Array.from(part.querySelectorAll(':scope > measure'));
+		let result: ClefSpec | null = null;
+		for (let i = 0; i <= note.measureIndex && i < measures.length; i++) {
+			for (const attr of Array.from(measures[i].querySelectorAll(':scope > attributes'))) {
+				for (const clef of Array.from(attr.querySelectorAll(':scope > clef'))) {
+					const num = clef.getAttribute('number');
+					if (num != null && num !== '') {
+						if (Number(num) !== note.staff) continue;
+					} else if (multiStaff && note.staff !== 1) {
+						continue;
+					}
+					const sign = text(clef.querySelector(':scope > sign'));
+					if (!sign) continue;
+					const lineText = text(clef.querySelector(':scope > line'));
+					result = { sign, line: lineText === '' ? 0 : Number(lineText) };
+				}
+			}
+		}
+		return result;
+	}
+
 	serialize(): string {
 		return new XMLSerializer().serializeToString(this.doc);
 	}
@@ -557,6 +774,97 @@ export class EditableScore {
 		if (quarters >= 0.5) return 'eighth';
 		if (quarters > 0) return '16th';
 		return null;
+	}
+
+	/** Replace `noteEl`'s `<accidental>` with one carrying `token`, placed in
+	 * DTD child order: after the `<dot>` run / `<type>` / `<voice>` if any of
+	 * those exist, otherwise before the first of the elements that follow
+	 * `<accidental>` in a `<note>` (`<time-modification>`, `<stem>`, ...). */
+	private setAccidentalElement(noteEl: Element, token: string): void {
+		noteEl.querySelector(':scope > accidental')?.remove();
+		const acc = this.doc.createElement('accidental');
+		acc.textContent = token;
+		const after =
+			noteEl.querySelector(':scope > dot:last-of-type') ??
+			noteEl.querySelector(':scope > type') ??
+			noteEl.querySelector(':scope > voice');
+		if (after) {
+			after.after(acc);
+			return;
+		}
+		const before =
+			noteEl.querySelector(':scope > time-modification') ??
+			noteEl.querySelector(':scope > stem') ??
+			noteEl.querySelector(':scope > notehead') ??
+			noteEl.querySelector(':scope > staff') ??
+			noteEl.querySelector(':scope > beam') ??
+			noteEl.querySelector(':scope > notations') ??
+			noteEl.querySelector(':scope > lyric');
+		if (before) noteEl.insertBefore(acc, before);
+		else noteEl.appendChild(acc);
+	}
+
+	/** Find a `<measure>`'s `<attributes>`, or create one at the start of the
+	 * measure (after a leading `<print>` and/or `<barline location="left">` if
+	 * present, otherwise before the first child) and return it. Shared by
+	 * `setKey` and `setClef`; a measure that already has `<attributes>` (the
+	 * usual case for measure 0, with its divisions/key/time/clef) is mutated in
+	 * place — no second `<attributes>` is ever added. */
+	private findOrCreateAttributes(measure: Element): Element {
+		const existing = measure.querySelector(':scope > attributes');
+		if (existing) return existing;
+		const attributes = this.doc.createElement('attributes');
+		let anchor: Element | null = null;
+		for (const child of Array.from(measure.children)) {
+			if (child.tagName === 'print') {
+				anchor = child;
+				continue;
+			}
+			if (child.tagName === 'barline' && child.getAttribute('location') === 'left') {
+				anchor = child;
+				continue;
+			}
+			break;
+		}
+		if (anchor) anchor.after(attributes);
+		else measure.insertBefore(attributes, measure.firstChild);
+		return attributes;
+	}
+
+	/** Insert `child` into `<attributes>` before the first existing sibling
+	 * whose tag appears in `laterTags` (the elements that follow `child` in the
+	 * `<attributes>` DTD content model), or append it when none are present. */
+	private insertInAttributes(attributes: Element, child: Element, laterTags: string[]): void {
+		for (const tag of laterTags) {
+			const ref = attributes.querySelector(':scope > ' + tag);
+			if (ref) {
+				attributes.insertBefore(child, ref);
+				return;
+			}
+		}
+		attributes.appendChild(child);
+	}
+
+	/** The `<part>` with the given `id`, or `null`. Matched by iterating rather
+	 * than a selector so an unusual id can't break an attribute selector. */
+	private partById(partId: string): Element | null {
+		for (const part of Array.from(this.doc.querySelectorAll('score-partwise > part'))) {
+			if ((part.getAttribute('id') ?? '') === partId) return part;
+		}
+		return null;
+	}
+
+	/** How many staves `part` declares: the first `<attributes><staves>` value
+	 * found scanning its measures top-down, or 1 when none is declared. Decides
+	 * whether `setClef`/`clefAt` use and match the `<clef>` `number` attribute. */
+	private stavesCount(part: Element): number {
+		for (const measure of Array.from(part.querySelectorAll(':scope > measure'))) {
+			for (const attr of Array.from(measure.querySelectorAll(':scope > attributes'))) {
+				const raw = text(attr.querySelector(':scope > staves'));
+				if (raw) return Number(raw);
+			}
+		}
+		return 1;
 	}
 
 	private setChild(parent: Element, tag: string, value: string, insertBeforeTag?: string): void {
