@@ -1,11 +1,14 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import EditorScoreView from '$lib/components/EditorScoreView.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import { resolvedTheme } from '$lib/theme';
+	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
+	import { parseMusicXmlFile } from '$lib/musicxml/parser';
+	import type { MixPart, ParsedMIDI } from '$lib/midi/types';
 	import type { EditableScore, EditableNote, DurationType } from '$lib/musicxml/editableScore';
 	import { loadEditableScore, UnsupportedMusicFileError } from '$lib/musicxml/loadEditableScore';
 	import type { PageData } from './$types';
@@ -74,6 +77,206 @@
 	// way with its `busy` flag).
 	let reRendering = $state(false);
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
+
+	// F14 reopened: in-editor playback. The audio path is the same one the
+	// player route uses, fed from the working model rather than a file:
+	// `score.serialize()` -> `parseMusicXmlFile()` (`ParsedMIDI`) ->
+	// `MidiPlayer` (FluidSynth via an AudioWorklet). Everything here is
+	// desktop-first for this pass.
+	//
+	// The `MidiPlayer` is created lazily on the first Play (see
+	// `ensurePlayer`) and torn down in `onDestroy`. `parsedAudio` is memoized
+	// on the exact `workingXml` it was parsed from — an edit invalidates it,
+	// but re-parsing only happens on the next play/seek, never eagerly per
+	// keystroke (a full parse is not free).
+	let player: MidiPlayer | undefined;
+	let playerCreating = false;
+	let destroyed = false;
+	let rafHandle = 0;
+	// The last `workingXml` successfully parsed, plus its result. A parse
+	// failure (an edit that briefly left the model invalid) leaves the old
+	// cache in place and surfaces `audioParseError` instead.
+	let parsedAudio: ParsedMIDI | undefined;
+	let parsedAudioXml: string | undefined;
+	// The `workingXml` currently loaded into the synth. `undefined` until the
+	// first successful load; differs from `workingXml` after an edit, which is
+	// exactly `audioStale`.
+	let audioLoadedXml = $state<string | undefined>(undefined);
+	let audioParseError = $state<string | null>(null);
+	// `MidiPlayer.create()` failed (WASM/AudioWorklet unavailable, e.g. a
+	// non-secure context) — the transport renders disabled with this reason.
+	let audioUnavailable = $state(false);
+	let isPlaying = $state(false);
+	let positionMs = $state(0);
+	let durationMs = $state(0);
+	let tempoBpm = $state(120);
+	let baseTempoBpm = $state(120);
+	// Per-bucket playback volume (SATB + accompaniment), 0..1, keyed by the
+	// `ParsedMIDI.parts` id. Seeded to 0.5 (this app's "even") as parts are
+	// discovered; survives a reload so a mid-session mix isn't lost.
+	let mixVolumes = $state<Record<string, number>>({});
+	let mixParts = $state<ParsedMIDI['parts']>([]);
+	let mixPanelOpen = $state(false);
+
+	// True once an edit has landed since the audio was last loaded: the
+	// currently-playing (or paused) audio is now behind the score. Cleared by
+	// the next (re)load in `syncAudioToModel`.
+	const audioStale = $derived(audioLoadedXml !== undefined && audioLoadedXml !== workingXml);
+	const seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
+	// Musical position in whole notes, for the playback cursor. `parseMusicXmlFile`
+	// reports position in ms of musical time at the original tempo; a whole
+	// note is `4 * 60000 / baseTempoBpm` ms of that.
+	const msPerWholeNote = $derived(baseTempoBpm > 0 ? (4 * 60_000) / baseTempoBpm : 0);
+	const playbackWholeNotes = $derived(
+		isPlaying && msPerWholeNote > 0 ? positionMs / msPerWholeNote : undefined
+	);
+
+	function describeTempo(bpm: number): string {
+		return `${bpm} BPM (${Math.round((bpm / baseTempoBpm) * 100)}%)`;
+	}
+
+	function formatTime(ms: number): string {
+		const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+	}
+
+	// Parse `workingXml` to `ParsedMIDI`, memoized on the exact string. A
+	// failure keeps the previous good parse and records the reason; callers
+	// check `audioParseError` before proceeding.
+	function currentParsedAudio(): ParsedMIDI | null {
+		if (parsedAudio && parsedAudioXml === workingXml) return parsedAudio;
+		try {
+			const result = parseMusicXmlFile(workingXml);
+			parsedAudio = result;
+			parsedAudioXml = workingXml;
+			audioParseError = null;
+			return result;
+		} catch (err) {
+			audioParseError = err instanceof Error ? err.message : String(err);
+			return null;
+		}
+	}
+
+	// Lazily bring up the synth — on the first Play, or the first note preview
+	// (a later task), whichever comes first. Returns null if it's still
+	// coming up (caller just no-ops; the click that triggered it is the retry)
+	// or if the engine isn't available at all.
+	async function ensurePlayer(): Promise<MidiPlayer | null> {
+		if (player) return player;
+		if (playerCreating || audioUnavailable) return null;
+		playerCreating = true;
+		try {
+			const created = await MidiPlayer.create();
+			if (destroyed) {
+				created.destroy();
+				return null;
+			}
+			player = created;
+			return created;
+		} catch {
+			audioUnavailable = true;
+			return null;
+		} finally {
+			playerCreating = false;
+		}
+	}
+
+	// (Re)load the working model into the synth, preserving the play/pause
+	// state and landing back at `targetMs` (clamped to the possibly-changed
+	// duration). Called on the first Play and whenever `audioStale` and the
+	// user asks to play or seek.
+	async function syncAudioToModel(p: MidiPlayer, targetMs: number): Promise<boolean> {
+		const parsed = currentParsedAudio();
+		if (!parsed) return false;
+		const wasPlaying = p.isPlaying;
+		await p.load(parsed);
+		if (destroyed) return false;
+		audioLoadedXml = parsedAudioXml;
+		durationMs = p.duration;
+		baseTempoBpm = p.baseBPM;
+		// Keep the human's tempo choice across a reload; otherwise adopt the
+		// file's own.
+		if (tempoBpm < MIN_TEMPO_BPM || tempoBpm > MAX_TEMPO_BPM) tempoBpm = p.tempoBPM;
+		p.setTempo(tempoBpm);
+		// Discover parts and push the current mix.
+		mixParts = parsed.parts;
+		const next = { ...mixVolumes };
+		for (const part of parsed.parts) {
+			if (next[part.id] === undefined) next[part.id] = 0.5;
+			p.setPartVolume(part.id, next[part.id]);
+		}
+		mixVolumes = next;
+		const clamped = Math.min(durationMs, Math.max(0, targetMs));
+		p.seek(clamped);
+		positionMs = clamped;
+		if (wasPlaying) await p.play();
+		return true;
+	}
+
+	async function togglePlay(): Promise<void> {
+		const p = await ensurePlayer();
+		if (!p) return;
+		if (p.isPlaying) {
+			p.pause();
+			return;
+		}
+		if (audioLoadedXml !== workingXml) {
+			if (!(await syncAudioToModel(p, positionMs))) return;
+		}
+		await p.play();
+	}
+
+	async function seekAudio(ms: number): Promise<void> {
+		const p = player;
+		if (!p) {
+			positionMs = Math.max(0, ms);
+			return;
+		}
+		if (audioLoadedXml !== workingXml) {
+			if (!(await syncAudioToModel(p, ms))) return;
+			return;
+		}
+		p.seek(ms);
+		positionMs = p.positionMs;
+	}
+
+	function stepTempo(delta: number): void {
+		const next = Math.min(MAX_TEMPO_BPM, Math.max(MIN_TEMPO_BPM, tempoBpm + delta));
+		if (next === tempoBpm) return;
+		tempoBpm = next;
+		player?.setTempo(next);
+	}
+
+	function setMixVolume(partId: string, value: number): void {
+		mixVolumes = { ...mixVolumes, [partId]: value };
+		player?.setPartVolume(partId as MixPart, value);
+	}
+
+	function resetMix(): void {
+		const next: Record<string, number> = { ...mixVolumes };
+		for (const part of mixParts) next[part.id] = 0.5;
+		mixVolumes = next;
+		for (const part of mixParts) player?.setPartVolume(part.id as MixPart, 0.5);
+	}
+
+	const mixIsEven = $derived(mixParts.every((p) => (mixVolumes[p.id] ?? 0.5) === 0.5));
+
+	function tick(): void {
+		if (player) {
+			positionMs = player.positionMs;
+			isPlaying = player.isPlaying;
+		}
+		rafHandle = requestAnimationFrame(tick);
+	}
+
+	onDestroy(() => {
+		destroyed = true;
+		if (rafHandle) cancelAnimationFrame(rafHandle);
+		player?.destroy();
+		player = undefined;
+	});
 
 	const selectedOnset = $derived(selectedNote?.onsetWholeNotes);
 	const canPitchEdit = $derived(
@@ -468,6 +671,7 @@
 
 	onMount(() => {
 		if (data.access === 'granted') void loadScore();
+		rafHandle = requestAnimationFrame(tick);
 	});
 </script>
 
@@ -491,13 +695,29 @@
 		</div>
 
 		{#if data.access === 'granted' && phase === 'ready'}
-			<button
-				class="btn btn-primary save-btn"
-				onclick={save}
-				disabled={!dirty || saving || reRendering}
-			>
-				{saving ? m.piece_editor_saving() : m.piece_editor_save()}
-			</button>
+			<div class="top-bar-actions">
+				<button
+					class="icon-btn"
+					class:icon-btn--active={mixPanelOpen}
+					onclick={() => (mixPanelOpen = !mixPanelOpen)}
+					aria-label={m.piece_editor_mix_panel()}
+					aria-pressed={mixPanelOpen}
+				>
+					<svg viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+						<circle cx="15" cy="6" r="2" />
+						<circle cx="9" cy="12" r="2" />
+						<circle cx="17" cy="18" r="2" />
+					</svg>
+				</button>
+				<button
+					class="btn btn-primary save-btn"
+					onclick={save}
+					disabled={!dirty || saving || reRendering}
+				>
+					{saving ? m.piece_editor_saving() : m.piece_editor_save()}
+				</button>
+			</div>
 		{:else}
 			<span class="top-bar-slot" aria-hidden="true"></span>
 		{/if}
@@ -669,6 +889,127 @@
 					<span class="editor-hint">{m.piece_editor_keyboard_hint()}</span>
 				</footer>
 			</div>
+
+			<!-- F14 reopened: the transport, in the same visual language as the
+			     practice player's bottom bar. Fed from the working model (see
+			     `syncAudioToModel`), not a file. -->
+			<footer class="transport-bar">
+				{#if audioUnavailable}
+					<p class="transport-msg" role="status">{m.piece_editor_transport_unavailable()}</p>
+				{:else if audioParseError}
+					<p class="transport-msg transport-msg--error" role="alert">
+						{m.piece_editor_transport_parse_error()}
+					</p>
+				{:else}
+					{#if audioStale}
+						<p class="transport-hint" role="status" aria-live="polite">
+							{m.piece_editor_audio_stale()}
+						</p>
+					{/if}
+					<div class="transport-row">
+						<button
+							class="play-btn"
+							onclick={togglePlay}
+							aria-label={isPlaying ? m.piece_pause() : m.piece_play()}
+						>
+							{#if isPlaying}
+								<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+								</svg>
+							{:else}
+								<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M8 5v14l11-7z" />
+								</svg>
+							{/if}
+						</button>
+
+						<div class="scrubber">
+							<input
+								type="range"
+								class="seek-slider"
+								style:--fill="{seekPct}%"
+								min="0"
+								max={durationMs || 1}
+								value={positionMs}
+								disabled={durationMs === 0}
+								aria-label={m.piece_seek()}
+								oninput={(e) => seekAudio(Number((e.target as HTMLInputElement).value))}
+							/>
+							<div class="time-row">
+								<span>{formatTime(positionMs)}</span>
+								<span>{formatTime(durationMs)}</span>
+							</div>
+						</div>
+
+						<div class="tempo-mini" role="group" aria-label={m.piece_tempo()}>
+							<button
+								class="tempo-step"
+								onclick={() => stepTempo(-1)}
+								disabled={tempoBpm <= MIN_TEMPO_BPM}
+								aria-label={m.piece_decrease_tempo()}
+							>
+								−
+							</button>
+							<span class="tempo-readout">{describeTempo(tempoBpm)}</span>
+							<button
+								class="tempo-step"
+								onclick={() => stepTempo(1)}
+								disabled={tempoBpm >= MAX_TEMPO_BPM}
+								aria-label={m.piece_increase_tempo()}
+							>
+								+
+							</button>
+						</div>
+					</div>
+				{/if}
+			</footer>
+
+			{#if mixPanelOpen}
+				<button
+					class="mix-backdrop"
+					onclick={() => (mixPanelOpen = false)}
+					aria-label={m.piece_editor_close_mix()}
+				></button>
+				<aside class="mix-panel" aria-label={m.piece_editor_mix_panel()}>
+					<header class="mix-header">
+						<h2>{m.piece_editor_mix_panel()}</h2>
+						<button
+							class="icon-btn"
+							onclick={() => (mixPanelOpen = false)}
+							aria-label={m.piece_editor_close_mix()}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M18 6 6 18M6 6l12 12" />
+							</svg>
+						</button>
+					</header>
+					{#if mixParts.length === 0}
+						<p class="mix-empty">{m.piece_editor_mix_after_play()}</p>
+					{:else}
+						<div class="mix-rows">
+							{#each mixParts as part (part.id)}
+								<div class="mix-row">
+									<span class="mix-label">{part.label}</span>
+									<input
+										type="range"
+										min="0"
+										max="1"
+										step="0.01"
+										value={mixVolumes[part.id] ?? 0.5}
+										aria-label={m.piece_editor_part_volume({ part: part.label })}
+										oninput={(e) =>
+											setMixVolume(part.id, Number((e.target as HTMLInputElement).value))}
+									/>
+									<span class="mix-value">{Math.round((mixVolumes[part.id] ?? 0.5) * 100)}</span>
+								</div>
+							{/each}
+						</div>
+						{#if !mixIsEven}
+							<button class="text-link" onclick={resetMix}>{m.piece_editor_reset_mix()}</button>
+						{/if}
+					{/if}
+				</aside>
+			{/if}
 		{:else if errorKind === 'noFile'}
 			<div class="editor-fill editor-fill--center">
 				<div class="status-card">
@@ -990,5 +1331,198 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	/* Right side of the top bar: Mix toggle + Save, in the slot the player
+	   gives Practice Setup. */
+	.top-bar-actions {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+	.icon-btn--active {
+		background: var(--accent);
+		color: var(--accent-contrast);
+	}
+	.icon-btn--active:hover {
+		background: var(--accent-hover);
+	}
+
+	/* The transport — lifted from the practice player's `.bottom-bar`. */
+	.transport-bar {
+		flex: 0 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		padding: 0.6rem 1rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+		background: var(--surface);
+		border-top: 1px solid var(--border);
+	}
+	.transport-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.transport-msg {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+	.transport-msg--error {
+		color: var(--danger);
+	}
+	.transport-hint {
+		margin: 0;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.play-btn {
+		flex-shrink: 0;
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		border: none;
+		background: var(--accent);
+		color: var(--accent-contrast);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		transition: background-color 0.15s ease;
+	}
+	.play-btn:hover {
+		background: var(--accent-hover);
+	}
+	.play-btn svg {
+		width: 20px;
+		height: 20px;
+	}
+
+	.scrubber {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+	.seek-slider {
+		background: linear-gradient(
+			to right,
+			var(--accent) 0%,
+			var(--accent) var(--fill),
+			var(--surface-2) var(--fill),
+			var(--surface-2) 100%
+		);
+	}
+	.seek-slider:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.time-row {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+
+	.tempo-mini {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+	.tempo-step {
+		min-width: 1.75rem;
+		height: 1.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 0.9rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.tempo-step:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.tempo-readout {
+		min-width: 6.5rem;
+		text-align: center;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text);
+	}
+
+	/* Mix panel: a right-hand drawer, the editor's analogue of Practice
+	   Setup. Same backdrop/slide-in shape as the player's menu drawer. */
+	.mix-backdrop {
+		position: fixed;
+		inset: 0;
+		border: none;
+		background: rgba(10, 10, 20, 0.35);
+		z-index: 2;
+		cursor: default;
+	}
+	.mix-panel {
+		position: fixed;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: min(340px, 100vw);
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		overflow-y: auto;
+		padding: calc(1rem + env(safe-area-inset-top, 0px)) 1.25rem
+			calc(1.5rem + env(safe-area-inset-bottom, 0px));
+		border-left: 1px solid var(--border);
+		background: var(--surface);
+		box-shadow: var(--shadow);
+		z-index: 3;
+	}
+	.mix-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.mix-header h2 {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 800;
+		color: var(--text);
+	}
+	.mix-empty {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+	.mix-rows {
+		display: flex;
+		flex-direction: column;
+		gap: 0.85rem;
+	}
+	.mix-row {
+		display: grid;
+		grid-template-columns: 5.5rem 1fr 2rem;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.mix-label {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.mix-value {
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+		text-align: right;
 	}
 </style>
