@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.db.models import OwnerType, VersionSource, VersionStatus
+from app.db.models import OmrJobStatus, OwnerType, VersionSource, VersionStatus
 
 
 class PieceOut(BaseModel):
@@ -71,6 +71,17 @@ class DistributionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LibraryEntryOmrJobOut(BaseModel):
+    """Just enough of the most recent "Generate music from PDF" job for
+    the Tracks tab's edit panel to show generating / failed / done."""
+
+    id: str
+    status: OmrJobStatus
+    error_message: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class LibraryEntryOut(BaseModel):
     piece_id: str
     title: str
@@ -94,6 +105,13 @@ class LibraryEntryOut(BaseModel):
     # storage-relative and never sent to the client.
     music_file_name: str | None = None
     pdf_file_name: str | None = None
+    # "Generate music from PDF" (Tracks tab): the most recent OMR job for
+    # this piece, and the id of the draft version a finished job produced
+    # (newest `draft` + `modification` version), if one is waiting for an
+    # admin to accept or discard it. Both null when the feature was never
+    # used on this track.
+    latest_omr_job: LibraryEntryOmrJobOut | None = None
+    pending_generated_version_id: str | None = None
 
 
 class GuestPieceOut(BaseModel):

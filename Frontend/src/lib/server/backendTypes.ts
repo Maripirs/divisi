@@ -7,6 +7,7 @@ export type GroupRole = 'admin' | 'member';
 export type VersionStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
 export type VersionSource = 'original' | 'modification';
 export type OwnerType = 'user' | 'group';
+export type OmrJobStatus = 'pending' | 'running' | 'done' | 'failed';
 
 export interface GroupOut {
 	id: string;
@@ -139,4 +140,10 @@ export interface LibraryEntryOut {
 	 * the storage-relative paths those booleans are computed from. */
 	music_file_name: string | null;
 	pdf_file_name: string | null;
+	/** "Generate music from PDF" (Tracks tab): the most recent OMR job for
+	 * this track, and the id of a draft version a finished job produced and
+	 * that's waiting for an admin to accept or discard it. Both null when
+	 * the feature was never used on this track. */
+	latest_omr_job: { id: string; status: OmrJobStatus; error_message: string | null } | null;
+	pending_generated_version_id: string | null;
 }

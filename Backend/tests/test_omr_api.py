@@ -208,3 +208,138 @@ def test_import_404s_for_someone_elses_job(client, monkeypatch):
         headers=outsider_headers,
     )
     assert response.status_code == 404
+
+
+# --- "Generate music from PDF" on an existing track: job carries a
+# `piece_id`, and the runner auto-imports the finished result as a *draft*
+# version on that piece (no explicit /import call). ---
+
+
+def _fake_run_omr_ok(monkeypatch) -> None:
+    from app.jobs import omr_jobs
+
+    def fake_run_omr(source_path, output_dir):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        musicxml_path = output_dir / "score.musicxml"
+        musicxml_path.write_bytes(b"<score-partwise/>")
+        midi_path = output_dir / "score.mid"
+        midi_path.write_bytes(b"fake midi bytes")
+        return musicxml_path, midi_path
+
+    monkeypatch.setattr(omr_jobs, "run_omr", fake_run_omr)
+
+
+def _upload_pdf_track(client, headers, title):
+    upload = client.post(
+        "/library/pieces",
+        data={"title": title, "owner_type": "user"},
+        files={"pdf_file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=headers,
+    )
+    assert upload.status_code == 201
+    return upload.json()["piece"]["id"], upload.json()["version"]["id"]
+
+
+def _entry_for(client, headers, piece_id):
+    library = client.get("/library/pieces", headers=headers).json()
+    return next(e for e in library if e["piece_id"] == piece_id)
+
+
+def test_create_job_with_piece_id_auto_imports_a_draft_version(client, monkeypatch):
+    headers = _register_and_login(client, "gen@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    piece_id, original_version_id = _upload_pdf_track(client, headers, "Scanned Track")
+
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    assert created.json()["piece_id"] == piece_id
+
+    polled = client.get(f"/omr/jobs/{created.json()['id']}", headers=headers)
+    assert polled.json()["status"] == "done"
+
+    entry = _entry_for(client, headers, piece_id)
+    assert entry["latest_omr_job"]["status"] == "done"
+    assert entry["pending_generated_version_id"] is not None
+    assert entry["pending_generated_version_id"] != original_version_id
+    # The draft carries the track's existing PDF forward, plus the derived MIDI.
+    assert entry["has_pdf"] is True
+    assert entry["has_music"] is True
+
+
+def test_create_job_rejects_piece_id_the_caller_cannot_edit(client, monkeypatch):
+    owner = _register_and_login(client, "owner-gen@example.com")
+    outsider = _register_and_login(client, "outsider-gen@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    piece_id, _ = _upload_pdf_track(client, owner, "Private Track")
+
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=outsider,
+    )
+    assert created.status_code == 403
+
+
+def test_failed_job_with_piece_id_leaves_no_draft(client, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)  # no engine on PATH -> job fails
+    headers = _register_and_login(client, "genfail@example.com")
+    piece_id, original_version_id = _upload_pdf_track(client, headers, "Doomed Track")
+
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=headers,
+    )
+    assert created.status_code == 201
+
+    entry = _entry_for(client, headers, piece_id)
+    assert entry["latest_omr_job"]["status"] == "failed"
+    assert entry["pending_generated_version_id"] is None
+    assert entry["version_id"] == original_version_id
+
+
+def test_generated_draft_can_be_discarded_via_reject(client, monkeypatch):
+    headers = _register_and_login(client, "gendiscard@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    piece_id, original_version_id = _upload_pdf_track(client, headers, "Discardable Track")
+
+    client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=headers,
+    )
+    draft_id = _entry_for(client, headers, piece_id)["pending_generated_version_id"]
+    assert draft_id is not None
+
+    # "Discard": reject accepts a never-submitted draft (only the OMR runner
+    # makes those), so the panel's pending state clears with one call.
+    rejected = client.post(f"/library/versions/{draft_id}/reject", headers=headers)
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    entry = _entry_for(client, headers, piece_id)
+    assert entry["pending_generated_version_id"] is None
+
+
+def test_deleting_a_track_that_has_an_omr_job_succeeds(client, monkeypatch):
+    headers = _register_and_login(client, "gendelete@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    piece_id, _ = _upload_pdf_track(client, headers, "Deletable Track")
+    client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=headers,
+    )
+
+    deleted = client.delete(f"/library/pieces/{piece_id}", headers=headers)
+    assert deleted.status_code == 204
+    assert all(e["piece_id"] != piece_id for e in client.get("/library/pieces", headers=headers).json())

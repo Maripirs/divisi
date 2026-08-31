@@ -402,6 +402,90 @@ export const actions: Actions = {
 		});
 	},
 
+	// Admin-only: "Generate music from PDF (prone to error)" in the track
+	// edit panel. Pulls the track's current PDF bytes and hands them to the
+	// Backend's OMR pipeline as a job tagged with this `pieceId`. Fire and
+	// forget — OMR can take a long time (sometimes hours), so this returns
+	// as soon as the job is queued. When it finishes the Backend auto-imports
+	// the result as a *draft* version on the track (see `run_omr_job`); the
+	// panel then offers "Use it" / "Discard" (the two actions below).
+	generateTrackFromPdf: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const pieceId = String(form.get('pieceId') ?? '');
+		const versionId = String(form.get('versionId') ?? '');
+		if (!pieceId || !versionId) return fail(400, { error: m.groups_missing_track(), form: 'generateFromPdf' });
+
+		return runAction('generateFromPdf', async () => {
+			let pdfRes: Response;
+			try {
+				pdfRes = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${versionId}/pdf`, {
+					headers: { Authorization: `Bearer ${locals.token}` }
+				});
+			} catch {
+				throw new BackendApiError(503, m.errors_could_not_reach_server());
+			}
+			if (!pdfRes.ok) throw new BackendApiError(pdfRes.status, m.groups_generate_no_pdf());
+			const pdfBlob = await pdfRes.blob();
+
+			const body = new FormData();
+			body.set('file', pdfBlob, 'score.pdf');
+			body.set('piece_id', pieceId);
+			// Raw `fetch` (not `backendFetch`) for the multipart body — same
+			// reasoning as `uploadTrack` above; failures become `BackendApiError`
+			// so `runAction` renders them inline.
+			let jobRes: Response;
+			try {
+				jobRes = await fetch(`${PUBLIC_API_BASE_URL}/omr/jobs`, {
+					method: 'POST',
+					headers: { Authorization: `Bearer ${locals.token}` },
+					body
+				});
+			} catch {
+				throw new BackendApiError(503, m.errors_could_not_reach_server());
+			}
+			if (!jobRes.ok) {
+				const b = (await jobRes.json().catch(() => ({}))) as { detail?: string };
+				throw new BackendApiError(jobRes.status, b.detail ?? m.upload_failed({ status: jobRes.status }));
+			}
+		});
+	},
+
+	// Admin-only: "Use it" on a finished generate-from-PDF draft. Same
+	// submit → approve → distribute chain the other track flows use, so the
+	// generated music replaces the track's current version and lands on the
+	// Tracks tab. `submit` is creator-only on the Backend, so in practice the
+	// admin who started the job is the one who accepts it.
+	promoteGeneratedVersion: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const pieceId = String(form.get('pieceId') ?? '');
+		const versionId = String(form.get('versionId') ?? '');
+		if (!pieceId || !versionId) return fail(400, { error: m.groups_missing_track(), form: 'generateFromPdf' });
+
+		return runAction('generateFromPdf', async () => {
+			await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
+			await backendFetch(locals.token, `/library/versions/${versionId}/approve`, { method: 'POST' }, fetch);
+			await backendFetch(
+				locals.token,
+				`/library/pieces/${pieceId}/versions/${versionId}/distribute`,
+				{ method: 'POST' },
+				fetch
+			);
+		});
+	},
+
+	// Admin-only: "Discard" a finished generate-from-PDF draft. The Backend's
+	// `reject` accepts a never-submitted draft (only the OMR runner makes
+	// those), so one call clears the panel's pending state.
+	discardGeneratedVersion: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const versionId = String(form.get('versionId') ?? '');
+		if (!versionId) return fail(400, { error: m.groups_missing_track(), form: 'generateFromPdf' });
+
+		return runAction('generateFromPdf', () =>
+			backendFetch(locals.token, `/library/versions/${versionId}/reject`, { method: 'POST' }, fetch)
+		);
+	},
+
 	// Admin-only, full replace — same shape as `updateWeeklyNote` above, and
 	// the Backend's own `update_homework` (`PUT /homework/{id}`). Homework
 	// doesn't get a separate edit page (the create flow at

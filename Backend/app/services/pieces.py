@@ -19,6 +19,7 @@ from app.db.models import (
     Group,
     GroupRole,
     Homework,
+    OmrJob,
     OwnerType,
     Piece,
     PieceMarkupMark,
@@ -168,6 +169,11 @@ def delete_piece(piece: Piece, db: Session) -> None:
             synchronize_session=False
         )
     db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).delete(synchronize_session=False)
+    # "Generate music from PDF" jobs tagged with this piece — their derived
+    # result may already have been imported as a version (deleted just
+    # above) or not yet; either way the job row FK's `pieces.id`, so it
+    # goes before the piece does.
+    db.query(OmrJob).filter(OmrJob.piece_id == piece.id).delete(synchronize_session=False)
     db.query(Homework).filter(Homework.piece_id == piece.id).update(
         {Homework.piece_id: None}, synchronize_session=False
     )

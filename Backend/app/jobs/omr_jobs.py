@@ -16,8 +16,10 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db import session as db_session
-from app.db.models import OmrJob, OmrJobStatus
+from app.db.models import OmrJob, OmrJobStatus, PieceVersion, VersionSource
 from app.omr.pipeline import run_omr
+from app.services.pieces import add_version, get_piece_or_404
+from app.storage.files import load_file, save_file
 
 
 def _job_output_dir(job_id: str) -> Path:
@@ -50,5 +52,48 @@ def run_omr_job(job_id: str) -> None:
         job.result_musicxml_path = str(musicxml_path.relative_to(Path(settings.storage_dir)))
         job.result_midi_path = str(midi_path.relative_to(Path(settings.storage_dir)))
         db.commit()
+
+        # Job started against an existing track ("Generate music from PDF"
+        # on the Tracks tab): land the derived MIDI as a *draft* version on
+        # that piece automatically. No submit/approve/distribute — OMR
+        # output is rough, so an admin reviews it before it goes live.
+        if job.piece_id is not None:
+            try:
+                _import_draft_version(job, db)
+            except Exception as exc:  # noqa: BLE001 — a post-processing failure must land the job as `failed`, not leave a stuck `done`
+                db.rollback()
+                job.status = OmrJobStatus.failed
+                job.error_message = str(exc) or exc.__class__.__name__
+                db.commit()
     finally:
         db.close()
+
+
+def _import_draft_version(job: OmrJob, db) -> None:
+    """Turn a finished job's derived MIDI into a draft `PieceVersion` on
+    `job.piece_id`. Deliberately does NOT reuse `POST /omr/jobs/{id}/import`
+    (`app/api/routes/omr.py`): that path never carries the piece's current
+    PDF forward, so an OMR'd draft would lose its readable score. Here the
+    latest version's PDF is passed through so the draft has both."""
+    piece = get_piece_or_404(job.piece_id, db)
+
+    # Own copy of the result MIDI, not a pointer at `result_midi_path` — a
+    # version's file must outlive the job (same reasoning as `import_job_result`).
+    suffix = Path(job.result_midi_path).suffix
+    midi_path = save_file(load_file(job.result_midi_path), suffix=suffix)
+
+    latest = (
+        db.query(PieceVersion)
+        .filter(PieceVersion.piece_id == piece.id)
+        .order_by(PieceVersion.created_at.desc())
+        .first()
+    )
+    add_version(
+        piece=piece,
+        created_by=job.user_id,
+        file_path=midi_path,
+        source=VersionSource.modification,
+        db=db,
+        pdf_file_path=latest.pdf_file_path if latest is not None else None,
+        pdf_file_name=latest.pdf_file_name if latest is not None else None,
+    )

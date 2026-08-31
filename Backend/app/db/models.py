@@ -456,16 +456,21 @@ class OmrJobStatus(str, enum.Enum):
 class OmrJob(Base):
     """B8: tracks one OMR (optical music recognition) attempt on an
     uploaded scanned-score file, run via `app/jobs/omr_jobs.py`'s
-    background task. Still not tied to a `Piece`/`PieceVersion` by a
-    foreign key here — a job's result (MusicXML + derived MIDI) stays a
-    downloadable pair on its own — but `POST /omr/jobs/{id}/import`
-    (`app/api/routes/omr.py`) can turn a `done` job's result into a real
-    library entry on demand."""
+    background task. `POST /omr/jobs/{id}/import` (`app/api/routes/omr.py`)
+    can turn a `done` job's result into a real library entry on demand.
+
+    `piece_id` is optional: when a job is started against an existing
+    track (the Tracks tab's "Generate music from PDF" button), the runner
+    auto-imports the finished result as a *draft* `PieceVersion` on that
+    piece — no explicit import call, and no submit/approve/distribute."""
 
     __tablename__ = "omr_jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # No FK-level cascade (this codebase keeps DB constraints minimal); a
+    # deleted piece just leaves its jobs pointing at a gone id, harmless.
+    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), nullable=True)
     status: Mapped[OmrJobStatus] = mapped_column(
         SAEnum(OmrJobStatus, native_enum=False), nullable=False, default=OmrJobStatus.pending
     )

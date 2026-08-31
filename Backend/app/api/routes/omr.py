@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ def _job_out(job: OmrJob) -> OmrJobOut:
     base = f"/omr/jobs/{job.id}/result"
     return OmrJobOut(
         id=job.id,
+        piece_id=job.piece_id,
         status=job.status,
         error_message=job.error_message,
         musicxml_url=f"{base}/musicxml" if job.result_musicxml_path else None,
@@ -60,16 +61,31 @@ def _get_own_job_or_404(job_id: str, current_user: User, db: Session) -> OmrJob:
 async def create_job(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    piece_id: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OmrJobOut:
     data = await file.read()
     if not data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+
+    # Optional: attach the job to an existing piece. `run_omr_job` then
+    # auto-imports the finished result as a *draft* version on that piece
+    # (see app/jobs/omr_jobs.py) — the Tracks tab's "Generate music from
+    # PDF" button. Gate it behind the same access check as any other
+    # add-a-version path so a caller can't target a piece they can't edit.
+    if piece_id is not None:
+        require_piece_access(get_piece_or_404(piece_id, db), current_user.id, db)
+
     suffix = "".join(("." + file.filename.rsplit(".", 1)[-1]) if file.filename and "." in file.filename else "")
     file_path = save_file(data, suffix=suffix)
 
-    job = OmrJob(user_id=current_user.id, status=OmrJobStatus.pending, source_file_path=file_path)
+    job = OmrJob(
+        user_id=current_user.id,
+        piece_id=piece_id,
+        status=OmrJobStatus.pending,
+        source_file_path=file_path,
+    )
     db.add(job)
     db.commit()
     db.refresh(job)

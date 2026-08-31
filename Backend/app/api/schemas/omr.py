@@ -13,6 +13,7 @@ class OmrJobOut(BaseModel):
     only populated once `status == done`."""
 
     id: str
+    piece_id: str | None
     status: OmrJobStatus
     error_message: str | None
     musicxml_url: str | None

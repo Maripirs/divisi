@@ -133,6 +133,13 @@
 	// only take effect on Save), deleting a track is its own explicit
 	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
+	// Tracks tab (admin only): "Generate music from PDF" — in-flight flags for
+	// starting a job, and for accepting / discarding the draft a finished job
+	// leaves on the track. Not keyed by piece id: the whole block only renders
+	// inside the one open edit panel (`editingDetailsPieceId`).
+	let generatingFromPdf = $state(false);
+	let promotingGenerated = $state(false);
+	let discardingGenerated = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
@@ -501,6 +508,89 @@
 									</button>
 								</div>
 							</form>
+
+							<!-- "Generate music from PDF (prone to error)" — runs the
+							     Backend's OMR pipeline on the track's current PDF and lands
+							     the result as a draft version to review. Its own <form>s
+							     (can't nest in the edit form above), only shown when there's
+							     a PDF to read. Fire-and-forget: OMR can take hours, so the
+							     panel just switches to a "check back later" note. -->
+							{#if track.has_pdf}
+								{@const omrJob = track.latest_omr_job}
+								<div class="generate-from-pdf">
+									{#if omrJob?.status === 'pending' || omrJob?.status === 'running'}
+										<p class="card-note">{m.groups_generate_in_progress()}</p>
+									{:else if track.pending_generated_version_id}
+										<p class="card-eyebrow">{m.groups_generate_draft_ready()}</p>
+										<div class="btn-row">
+											<form
+												method="POST"
+												action="?/promoteGeneratedVersion"
+												use:enhance={withSubmitting(
+													(v) => (promotingGenerated = v),
+													() => (editingDetailsPieceId = null)
+												)}
+											>
+												<input type="hidden" name="pieceId" value={track.piece_id} />
+												<input type="hidden" name="versionId" value={track.pending_generated_version_id} />
+												<button
+													type="submit"
+													class="btn btn-outline"
+													disabled={promotingGenerated || discardingGenerated}
+												>
+													{promotingGenerated ? m.groups_generating() : m.groups_generate_use_it()}
+												</button>
+											</form>
+											<ConfirmButton>
+												{#snippet trigger(start)}
+													<button
+														type="button"
+														class="text-link text-link--danger"
+														onclick={start}
+														disabled={promotingGenerated || discardingGenerated}
+													>
+														{m.groups_generate_discard()}
+													</button>
+												{/snippet}
+												{#snippet confirm(cancel)}
+													<form
+														method="POST"
+														action="?/discardGeneratedVersion"
+														use:enhance={withSubmitting((v) => (discardingGenerated = v))}
+													>
+														<input type="hidden" name="versionId" value={track.pending_generated_version_id} />
+														<button type="submit" class="text-link text-link--danger" disabled={discardingGenerated}>
+															{m.groups_generate_discard_confirm()}
+														</button>
+														<button type="button" class="text-link" onclick={cancel} disabled={discardingGenerated}>
+															{m.action_cancel()}
+														</button>
+													</form>
+												{/snippet}
+											</ConfirmButton>
+										</div>
+									{:else}
+										{#if omrJob?.status === 'failed'}
+											<p class="error">{m.groups_generate_failed({ error: omrJob.error_message ?? '' })}</p>
+										{/if}
+										<form
+											method="POST"
+											action="?/generateTrackFromPdf"
+											use:enhance={withSubmitting((v) => (generatingFromPdf = v))}
+										>
+											<input type="hidden" name="pieceId" value={track.piece_id} />
+											<input type="hidden" name="versionId" value={track.version_id} />
+											<button type="submit" class="text-link" disabled={generatingFromPdf}>
+												{generatingFromPdf ? m.groups_generating() : m.groups_generate_from_pdf()}
+											</button>
+										</form>
+										<p class="card-note">{m.groups_generate_hint()}</p>
+									{/if}
+									{#if form?.form === 'generateFromPdf' && form?.error}
+										<p class="error">{form.error}</p>
+									{/if}
+								</div>
+							{/if}
 
 							<!-- Delete-the-whole-track: a minimal trash icon pinned to the
 							     card's top-right corner rather than a button sitting next to
@@ -1539,6 +1629,14 @@
 	.track-delete-corner-form {
 		display: flex;
 		gap: 0.35rem;
+	}
+
+	/* "Generate music from PDF" block — a hairline rule sets it apart from
+	   the edit form's own Save/Cancel row just above it. */
+	.generate-from-pdf {
+		margin-top: 0.9rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--border);
 	}
 
 	/* Homework summary/collapsed-row styles moved to HomeworkCard.svelte;
