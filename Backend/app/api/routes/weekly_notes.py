@@ -12,29 +12,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import WeeklyNoteCreate, WeeklyNoteOut, WeeklyNoteUpdate
-from app.db.models import Group, GroupPage, GroupRole, User, WeeklyNote
+from app.db.models import GroupPage, User, WeeklyNote
 from app.db.session import get_db
+from app.services.groups import get_group_or_404, require_admin, require_member
 from app.services.pages import require_member_page_access
-from app.services.pieces import group_role
 
 router = APIRouter(tags=["weekly-notes"])
-
-
-def _get_group_or_404(group_id: str, db: Session) -> Group:
-    group = db.get(Group, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    return group
-
-
-def _require_member(group_id: str, user: User, db: Session) -> None:
-    if group_role(group_id, user.id, db) is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
-
-
-def _require_admin(group_id: str, user: User, db: Session) -> None:
-    if group_role(group_id, user.id, db) != GroupRole.admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
 
 
 def _get_note_or_404(note_id: str, db: Session) -> WeeklyNote:
@@ -53,8 +36,8 @@ def create_weekly_note(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> WeeklyNote:
-    _get_group_or_404(group_id, db)
-    _require_admin(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_admin(group_id, current_user, db)
     note = WeeklyNote(
         group_id=group_id,
         title=payload.title,
@@ -74,8 +57,8 @@ def list_group_weekly_notes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[WeeklyNote]:
-    _get_group_or_404(group_id, db)
-    _require_member(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_member(group_id, current_user, db)
     require_member_page_access(group_id, GroupPage.weekly_notes, current_user.id, db)
     return (
         db.query(WeeklyNote)
@@ -95,7 +78,7 @@ def update_weekly_note(
     """Admin-only, full replace — same shape as `groups.py`'s
     `update_description`."""
     note = _get_note_or_404(note_id, db)
-    _require_admin(note.group_id, current_user, db)
+    require_admin(note.group_id, current_user, db)
     note.title = payload.title
     note.body = payload.body
     note.note_date = payload.note_date
@@ -111,6 +94,6 @@ def delete_weekly_note(
     current_user: User = Depends(get_current_user),
 ) -> None:
     note = _get_note_or_404(note_id, db)
-    _require_admin(note.group_id, current_user, db)
+    require_admin(note.group_id, current_user, db)
     db.delete(note)
     db.commit()

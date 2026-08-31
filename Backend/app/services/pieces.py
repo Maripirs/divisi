@@ -17,7 +17,6 @@ from app.db.models import (
     AnnotationShare,
     Distribution,
     Group,
-    GroupMembership,
     GroupRole,
     Homework,
     OwnerType,
@@ -28,14 +27,7 @@ from app.db.models import (
     VersionStatus,
 )
 
-
-def group_role(group_id: str, user_id: str, db: Session) -> GroupRole | None:
-    membership = (
-        db.query(GroupMembership)
-        .filter(GroupMembership.group_id == group_id, GroupMembership.user_id == user_id)
-        .first()
-    )
-    return membership.role if membership else None
+from app.services.groups import group_role  # noqa: F401  (re-exported for existing `from app.services.pieces import group_role` call sites; home is now app/services/groups.py)
 
 
 def get_piece_or_404(piece_id: str, db: Session) -> Piece:

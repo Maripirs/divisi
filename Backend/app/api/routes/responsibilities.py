@@ -33,7 +33,6 @@ from app.api.schemas import (
     ResponsibilitySignupOut,
 )
 from app.db.models import (
-    Group,
     GroupPage,
     GroupRole,
     ResponsibilityDate,
@@ -43,32 +42,18 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
+from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access
-from app.services.pieces import group_role
 from app.services.responsibilities import role_coverage
 
 router = APIRouter(tags=["responsibilities"])
 
 
-def _get_group_or_404(group_id: str, db: Session) -> Group:
-    group = db.get(Group, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    return group
-
-
-def _require_member(group_id: str, user: User, db: Session) -> None:
-    if group_role(group_id, user.id, db) is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
-
-
 def _is_admin(group_id: str, user: User, db: Session) -> bool:
+    """Non-raising variant of `require_admin` — a couple of read routes here
+    tailor their response to whether the caller is an admin rather than
+    gating on it."""
     return group_role(group_id, user.id, db) == GroupRole.admin
-
-
-def _require_admin(group_id: str, user: User, db: Session) -> None:
-    if not _is_admin(group_id, user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
 
 
 def _get_schedule_or_404(schedule_id: str, db: Session) -> ResponsibilitySchedule:
@@ -168,8 +153,8 @@ def create_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ResponsibilityScheduleOut:
-    _get_group_or_404(group_id, db)
-    _require_admin(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_admin(group_id, current_user, db)
     schedule = ResponsibilitySchedule(group_id=group_id, name=payload.name, created_by=current_user.id)
     db.add(schedule)
     db.flush()
@@ -190,8 +175,8 @@ def list_schedules(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ResponsibilityScheduleOut]:
-    _get_group_or_404(group_id, db)
-    _require_member(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_member(group_id, current_user, db)
     require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
     schedules = (
         db.query(ResponsibilitySchedule)
@@ -210,7 +195,7 @@ def update_schedule(
     current_user: User = Depends(get_current_user),
 ) -> ResponsibilityScheduleOut:
     schedule = _get_schedule_or_404(schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     if "name" in payload.model_fields_set and payload.name is not None:
         schedule.name = payload.name
     db.commit()
@@ -231,7 +216,7 @@ def delete_schedule(
     dates' signups, then the dates, then the roles, before the schedule
     itself, in that order."""
     schedule = _get_schedule_or_404(schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     dates = db.query(ResponsibilityDate).filter(ResponsibilityDate.schedule_id == schedule_id).all()
     date_ids = [d.id for d in dates]
     if date_ids:
@@ -258,7 +243,7 @@ def add_role(
     current_user: User = Depends(get_current_user),
 ) -> ResponsibilityRole:
     schedule = _get_schedule_or_404(schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     role = ResponsibilityRole(schedule_id=schedule_id, name=payload.name, needed_count=payload.needed_count)
     db.add(role)
     db.commit()
@@ -275,7 +260,7 @@ def update_role(
 ) -> ResponsibilityRole:
     role = _get_role_or_404(role_id, db)
     schedule = _get_schedule_or_404(role.schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     fields_sent = payload.model_fields_set
     if "name" in fields_sent and payload.name is not None:
         role.name = payload.name
@@ -294,7 +279,7 @@ def delete_role(
 ) -> None:
     role = _get_role_or_404(role_id, db)
     schedule = _get_schedule_or_404(role.schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     db.query(ResponsibilitySignup).filter(ResponsibilitySignup.role_id == role_id).delete(synchronize_session=False)
     db.delete(role)
     db.commit()
@@ -312,7 +297,7 @@ def create_date(
     current_user: User = Depends(get_current_user),
 ) -> ResponsibilityDateOut:
     schedule = _get_schedule_or_404(schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     date = ResponsibilityDate(schedule_id=schedule_id, date=payload.date, notes=payload.notes)
     db.add(date)
     db.commit()
@@ -331,7 +316,7 @@ def update_date(
     canceled date is just a field flip, not a different resource."""
     date = _get_date_or_404(date_id, db)
     schedule = _get_schedule_or_404(date.schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     fields_sent = payload.model_fields_set
     if "date" in fields_sent and payload.date is not None:
         date.date = payload.date
@@ -358,7 +343,7 @@ def delete_date(
     deletion above)."""
     date = _get_date_or_404(date_id, db)
     schedule = _get_schedule_or_404(date.schedule_id, db)
-    _require_admin(schedule.group_id, current_user, db)
+    require_admin(schedule.group_id, current_user, db)
     db.query(ResponsibilitySignup).filter(ResponsibilitySignup.date_id == date_id).delete(synchronize_session=False)
     db.delete(date)
     db.commit()
@@ -370,8 +355,8 @@ def list_group_dates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ResponsibilityDateOut]:
-    _get_group_or_404(group_id, db)
-    _require_member(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_member(group_id, current_user, db)
     require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
     rows = (
         db.query(ResponsibilityDate, ResponsibilitySchedule)
@@ -402,7 +387,7 @@ def create_signup(
     date = _get_date_or_404(date_id, db)
     schedule = _get_schedule_or_404(date.schedule_id, db)
     group_id = schedule.group_id
-    _require_member(group_id, current_user, db)
+    require_member(group_id, current_user, db)
     require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
     role = _get_role_or_404(payload.role_id, db)
     if role.schedule_id != schedule.id:

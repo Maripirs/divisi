@@ -14,15 +14,9 @@ from app.api.deps import get_current_user
 from app.api.schemas import MarkupMarkCreate, MarkupMarkOut, MarkupMarkUpdate
 from app.db.models import GroupMembership, OwnerType, Piece, PieceMarkupMark, User
 from app.db.session import get_db
+from app.services.pieces import get_piece_or_404
 
 router = APIRouter(prefix="/piece-markup", tags=["piece-markup"])
-
-
-def _get_piece_or_404(piece_id: str, db: Session) -> Piece:
-    piece = db.get(Piece, piece_id)
-    if piece is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
-    return piece
 
 
 def _can_access_piece(piece: Piece, user: User, db: Session) -> bool:
@@ -46,7 +40,7 @@ def create_mark(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MarkupMarkOut:
-    piece = _get_piece_or_404(payload.piece_id, db)
+    piece = get_piece_or_404(payload.piece_id, db)
     if not _can_access_piece(piece, current_user, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this piece")
     mark = PieceMarkupMark(
@@ -78,7 +72,7 @@ def list_marks(
     """Marks on a piece, every page — the Frontend filters to the page
     currently in view itself. `mine` returns only the caller's marks; `group`
     returns all marks on a group-owned piece the caller can access."""
-    piece = _get_piece_or_404(piece_id, db)
+    piece = get_piece_or_404(piece_id, db)
     if not _can_access_piece(piece, current_user, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this piece")
 

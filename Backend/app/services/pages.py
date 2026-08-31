@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models import GroupPage, GroupPageSettings, GroupRole, PageAudience
-from app.services.pieces import group_role
+from app.services.groups import group_role
 
 # Matches today's pre-B12 behavior exactly, so seeding a brand-new group and
 # backfilling an existing one (see the B12 migration) agree on defaults:

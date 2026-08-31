@@ -28,18 +28,12 @@ from app.core.join_codes import generate_join_code
 from app.core.security import hash_password
 from app.db.models import Group, GroupMembership, GroupPage, GroupPageSettings, GroupRole, User
 from app.db.session import get_db
+from app.services.groups import get_group_or_404
 from app.services.pages import require_member_page_access, seed_default_page_settings
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
 _JOIN_CODE_CREATE_ATTEMPTS = 5
-
-
-def _get_group_or_404(group_id: str, db: Session) -> Group:
-    group = db.get(Group, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    return group
 
 
 def _get_membership(group_id: str, user_id: str, db: Session) -> GroupMembership | None:
@@ -144,7 +138,7 @@ def update_guest_settings(
 ) -> GroupOut:
     """Partial patch of the guest-facing settings covered by B10 — a field
     the client didn't send is left untouched; see `GroupGuestSettingsUpdate`."""
-    group = _get_group_or_404(group_id, db)
+    group = get_group_or_404(group_id, db)
     membership = _require_admin(group_id, current_user, db)
     fields_sent = payload.model_fields_set
     if "guest_password" in fields_sent:
@@ -164,7 +158,7 @@ def update_description(
     """Admin-only, full replace — the free-text blurb shown on the group's
     Info/About page to every member (and to guests, since it carries no
     more sensitivity than the group name itself)."""
-    group = _get_group_or_404(group_id, db)
+    group = get_group_or_404(group_id, db)
     membership = _require_admin(group_id, current_user, db)
     group.description = payload.description
     db.commit()
@@ -188,7 +182,7 @@ def update_rehearsal_schedule(
     together: `weekday`+`time` both present sets it, both `None` clears
     it, anything else (one set, one not) is a 400 — a weekday with no time
     (or vice versa) isn't a schedule anyone could compute "next" from."""
-    group = _get_group_or_404(group_id, db)
+    group = get_group_or_404(group_id, db)
     membership = _require_admin(group_id, current_user, db)
 
     if (payload.rehearsal_weekday is None) != (payload.rehearsal_time is None):
@@ -215,7 +209,7 @@ def get_page_settings(
     current_user: User = Depends(get_current_user),
 ) -> list[GroupPageSettings]:
     """B12: admin-only view of all 5 pages' `enabled`/`audience` settings."""
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     return (
         db.query(GroupPageSettings)
@@ -235,7 +229,7 @@ def update_page_settings(
     """B12: admin-only update of one or more pages' `enabled`/`audience` —
     every group already has all 5 rows (seeded at creation / backfilled),
     so this always updates existing rows rather than creating them."""
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     rows_by_page = {
         row.page: row
@@ -266,7 +260,7 @@ def list_members(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[GroupMemberOut]:
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     if _get_membership(group_id, current_user.id, db) is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
     require_member_page_access(group_id, GroupPage.members, current_user.id, db)
@@ -289,7 +283,7 @@ def add_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> GroupMemberOut:
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     user = db.query(User).filter(User.email == payload.email).first()
     if user is None:
@@ -308,7 +302,7 @@ def remove_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> None:
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     membership = _get_membership(group_id, user_id, db)
     if membership is None:
@@ -330,7 +324,7 @@ def update_member_role(
     """Admin-only. Demoting the last admin is blocked the same way removing
     them is (`_remaining_admins_excluding`) — promoting has no such risk,
     so that direction is always allowed."""
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     membership = _get_membership(group_id, user_id, db)
     if membership is None:
@@ -358,7 +352,7 @@ def update_member_title(
 ) -> GroupMemberOut:
     """Admin-only, full replace — free-text context shown next to this
     member on the Members page (e.g. "Soprano 2 — Section leader")."""
-    _get_group_or_404(group_id, db)
+    get_group_or_404(group_id, db)
     _require_admin(group_id, current_user, db)
     membership = _get_membership(group_id, user_id, db)
     if membership is None:

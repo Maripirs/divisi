@@ -10,29 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import HomeworkCreate, HomeworkOut, HomeworkUpdate
-from app.db.models import Group, GroupPage, GroupRole, Homework, User
+from app.db.models import GroupPage, Homework, User
 from app.db.session import get_db
+from app.services.groups import get_group_or_404, require_admin, require_member
 from app.services.pages import require_member_page_access
-from app.services.pieces import group_role
 
 router = APIRouter(tags=["homework"])
-
-
-def _get_group_or_404(group_id: str, db: Session) -> Group:
-    group = db.get(Group, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    return group
-
-
-def _require_member(group_id: str, user: User, db: Session) -> None:
-    if group_role(group_id, user.id, db) is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this group")
-
-
-def _require_admin(group_id: str, user: User, db: Session) -> None:
-    if group_role(group_id, user.id, db) != GroupRole.admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
 
 
 def _get_homework_or_404(homework_id: str, db: Session) -> Homework:
@@ -51,8 +34,8 @@ def create_homework(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Homework:
-    _get_group_or_404(group_id, db)
-    _require_admin(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_admin(group_id, current_user, db)
     homework = Homework(
         group_id=group_id,
         piece_id=payload.piece_id,
@@ -74,8 +57,8 @@ def list_group_homework(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Homework]:
-    _get_group_or_404(group_id, db)
-    _require_member(group_id, current_user, db)
+    get_group_or_404(group_id, db)
+    require_member(group_id, current_user, db)
     require_member_page_access(group_id, GroupPage.homework, current_user.id, db)
     return (
         db.query(Homework)
@@ -92,7 +75,7 @@ def get_homework(
     current_user: User = Depends(get_current_user),
 ) -> Homework:
     homework = _get_homework_or_404(homework_id, db)
-    _require_member(homework.group_id, current_user, db)
+    require_member(homework.group_id, current_user, db)
     require_member_page_access(homework.group_id, GroupPage.homework, current_user.id, db)
     return homework
 
@@ -107,7 +90,7 @@ def update_homework(
     """Admin-only, full replace — same shape as `weekly_notes.py`'s
     `update_weekly_note`."""
     homework = _get_homework_or_404(homework_id, db)
-    _require_admin(homework.group_id, current_user, db)
+    require_admin(homework.group_id, current_user, db)
     homework.piece_id = payload.piece_id
     homework.title = payload.title
     homework.range = payload.range
@@ -125,6 +108,6 @@ def delete_homework(
     current_user: User = Depends(get_current_user),
 ) -> None:
     homework = _get_homework_or_404(homework_id, db)
-    _require_admin(homework.group_id, current_user, db)
+    require_admin(homework.group_id, current_user, db)
     db.delete(homework)
     db.commit()
