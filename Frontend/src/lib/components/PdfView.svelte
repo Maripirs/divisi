@@ -53,10 +53,11 @@
 		/** The real Backend piece id marks are stored against — `undefined`
 		 * for a bundled fixture PDF (no real `Piece` row to key marks to). */
 		pieceId?: string;
-		/** Whether to show the drawing toolbar/layer at all — the parent
-		 * gates this on "logged in + a real Backend piece", same condition
+		/** Whether markup is available *at all* — the parent gates this on
+		 * "logged in + a real Backend piece", same condition
 		 * `piece/[id]/+page.svelte` already used for the score annotation
-		 * feature. */
+		 * feature. Doesn't by itself show the toolbar/marks; see this
+		 * component's own `annotationMode` (F12) for the on/off within that. */
 		canMarkup?: boolean;
 	} = $props();
 
@@ -93,6 +94,12 @@
 	let marks = $state<MarkupMark[]>([]);
 	let marksLoadedForPiece: string | undefined;
 
+	// F12: a master on/off separate from which tool is armed — `canMarkup`
+	// alone used to always show the toolbar and every existing mark, with no
+	// way back to a plain, guaranteed-scrollable PDF. Off by default each
+	// visit (session-local, matching F4's `annotateMode`), same as `tool`
+	// below never persists across a reload either.
+	let annotationMode = $state(false);
 	type MarkupTool = 'pen' | 'stamp' | 'eraser' | null;
 	let tool = $state<MarkupTool>(null);
 	const PEN_COLORS = ['#e11d48', '#2563eb', '#16a34a', '#111827'];
@@ -164,6 +171,19 @@
 		activeStroke = null;
 	}
 
+	/** Flips the master toggle. Turning it off also disarms whatever tool was
+	 * selected and drops any in-progress stroke — otherwise the mode could
+	 * come back on already armed, or a pointerup after the layer's already
+	 * unmounted could try to commit a stroke nobody can see anymore. */
+	function toggleAnnotationMode(): void {
+		annotationMode = !annotationMode;
+		if (!annotationMode) {
+			tool = null;
+			activeStroke = null;
+			activeStrokePage = -1;
+		}
+	}
+
 	function markupErrorMessage(err: unknown): string {
 		return err instanceof MarkupApiError ? err.message : m.errors_could_not_reach_server();
 	}
@@ -180,7 +200,7 @@
 	}
 
 	function handleMarkupPointerDown(event: PointerEvent, pageIndex: number): void {
-		if (!canMarkup || !tool) return;
+		if (!canMarkup || !annotationMode || !tool) return;
 		const point = pointFromEvent(event, pageIndex);
 		if (!point) return;
 		(event.currentTarget as Element).setPointerCapture(event.pointerId);
@@ -514,7 +534,7 @@
 				<div class="pdf-page">
 					<div class="page-inner">
 						<canvas bind:this={canvasRefs[i]}></canvas>
-						{#if canMarkup}
+						{#if canMarkup && annotationMode}
 							<svg
 								class="markup-layer"
 								class:markup-layer--active={tool !== null}
@@ -567,6 +587,22 @@
 	</div>
 
 	{#if canMarkup}
+		<!-- F12: master on/off — always shown (even while off) so there's a way
+		     back in, but the toolbar/marks below only render while it's on.
+		     Its own corner (top-left), clear of both the zoom controls and the
+		     tool toolbar, which only appears once this is on. -->
+		<button
+			class="annotation-mode-toggle"
+			class:active={annotationMode}
+			onclick={toggleAnnotationMode}
+			aria-label={annotationMode ? m.markup_mode_off() : m.markup_mode_on()}
+			aria-pressed={annotationMode}
+		>
+			✎
+		</button>
+	{/if}
+
+	{#if canMarkup && annotationMode}
 		<div class="markup-toolbar">
 			<div class="tool-row">
 				<button
@@ -786,6 +822,34 @@
 	.zoom-level {
 		font-variant-numeric: tabular-nums;
 		font-weight: 600;
+	}
+
+	/* Top-left — clear of `.zoom-controls` (bottom-right) and
+	   `.markup-toolbar` (bottom-left, only present once this is on). */
+	.annotation-mode-toggle {
+		position: absolute;
+		left: 0.75rem;
+		top: 0.75rem;
+		min-width: 2.125rem;
+		min-height: 2.125rem;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-full);
+		box-shadow: var(--shadow);
+		font-size: 1rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.annotation-mode-toggle:hover {
+		background: var(--surface-2);
+	}
+
+	.annotation-mode-toggle.active {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		color: var(--accent);
 	}
 
 	/* Opposite corner from `.zoom-controls` so the two floating panels never

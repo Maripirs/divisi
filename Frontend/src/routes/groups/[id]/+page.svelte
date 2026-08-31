@@ -3,6 +3,7 @@
 	import { enhance } from '$app/forms';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import FileSlot from '$lib/components/FileSlot.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
 	import '$lib/styles/shell.css';
@@ -82,11 +83,15 @@
 	// expanded into a confirm/cancel pair — at most one at a time.
 	let confirmingRemoveMemberId = $state<string | null>(null);
 	// Tracks tab (admin only): which track's row (by piece id) has its
-	// default-tempo swapped for the inline edit form — same pattern as the
-	// Members tab's title editor below.
-	let editingTempoPieceId = $state<string | null>(null);
-	let tempoDraft = $state('');
-	let savingTempo = $state(false);
+	// title/composer/YouTube link/default-tempo/files swapped for the
+	// inline edit form — one panel for the whole track, same
+	// click-to-reveal pattern as the Members tab's title editor below.
+	let editingDetailsPieceId = $state<string | null>(null);
+	let titleEditDraft = $state('');
+	let composerEditDraft = $state('');
+	let youtubeEditDraft = $state('');
+	let tempoEditDraft = $state('');
+	let savingDetails = $state(false);
 	// F5: Tracks tab (admin only) upload form — click-to-reveal, same pattern
 	// as the other create forms on this page.
 	let showUploadForm = $state(false);
@@ -98,6 +103,15 @@
 	let uploadMusicFiles = $state<FileList | null>(null);
 	let uploadPdfFiles = $state<FileList | null>(null);
 	let canSubmitUpload = $derived(!!uploadMusicFiles?.length || !!uploadPdfFiles?.length);
+	// Tracks tab (admin only): which track's row has its "Delete track"
+	// button expanded into a confirm/cancel pair — same click-to-confirm
+	// pattern as the Members tab's "Remove" below, at most one at a time.
+	// A whole track (every version, distribution, annotation, markup mark
+	// on it) is a lot more to lose than one file slot, so unlike the file
+	// Remove buttons inside the edit panel (which only take effect on
+	// Save), this is its own explicit step.
+	let confirmingDeleteTrackPieceId = $state<string | null>(null);
+	let deletingTrack = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
@@ -361,7 +375,16 @@
 			<p class="empty">{m.library_no_tracks()}</p>
 		{:else}
 			{#each visibleTracks as track (track.piece_id)}
-				{@const bundled = getPieceByTitle(track.title)}
+				<!-- The bundled-registry title match is only a fallback for a
+				     track with nothing of its own wired up yet — once an admin
+				     uploads a real music file/PDF/reference link for it (even
+				     one that happens to share a bundled piece's title, e.g.
+				     "Lacrymosa"), that real content has to win, or every admin
+				     edit to it would silently keep playing/showing the bundled
+				     fixture instead. Real bug this fixed: the reference-audio
+				     picker (F13) always showed disabled for such a track, no
+				     matter what the admin set its YouTube link to. -->
+				{@const bundled = track.has_music || track.has_pdf ? undefined : getPieceByTitle(track.title)}
 				{@const tempoQuery = track.default_tempo_bpm ? `?defaultTempo=${track.default_tempo_bpm}` : ''}
 				{@const practiceHref = bundled
 					? lh(`/piece/${bundled.id}${tempoQuery}`)
@@ -370,55 +393,188 @@
 						: null}
 				<section class="card track-card">
 					<div class="track-info">
-						<p class="card-title">{track.title}</p>
-						{#if mode === 'admin'}
-							<p class="card-meta">{m.groups_status({ status: track.version_status })}</p>
-							{#if editingTempoPieceId === track.piece_id}
-								<form
-									method="POST"
-									action="?/updateDefaultTempo"
-									use:enhance={() => {
-										savingTempo = true;
-										return async ({ update }) => {
-											savingTempo = false;
-											editingTempoPieceId = null;
-											await update();
-										};
-									}}
-									class="inline-edit-row"
-								>
-									<input type="hidden" name="pieceId" value={track.piece_id} />
+						{#if mode === 'admin' && editingDetailsPieceId === track.piece_id}
+							<form
+								method="POST"
+								action="?/updatePieceDetails"
+								enctype="multipart/form-data"
+								use:enhance={() => {
+									savingDetails = true;
+									return async ({ update }) => {
+										savingDetails = false;
+										editingDetailsPieceId = null;
+										await update();
+									};
+								}}
+							>
+								<input type="hidden" name="pieceId" value={track.piece_id} />
+								<label class="field">
+									<span>{m.groups_upload_name()}</span>
+									<input name="title" required bind:value={titleEditDraft} />
+								</label>
+								<label class="field">
+									<span>{m.groups_upload_author()}</span>
+									<input name="composer" bind:value={composerEditDraft} placeholder={m.groups_optional()} />
+								</label>
+								<label class="field">
+									<span>{m.groups_upload_youtube()}</span>
 									<input
-										name="defaultTempoBpm"
-										type="number"
-										min="1"
-										bind:value={tempoDraft}
-										placeholder="e.g. 96"
+										name="youtube_url"
+										type="url"
+										bind:value={youtubeEditDraft}
+										placeholder={m.groups_optional()}
 									/>
-									<button type="submit" class="btn btn-outline" disabled={savingTempo}>{m.action_save()}</button>
+								</label>
+								<label class="field">
+									<span>{m.groups_upload_default_tempo()}</span>
+									<input name="defaultTempoBpm" type="number" min="1" bind:value={tempoEditDraft} placeholder="e.g. 96" />
+								</label>
+
+								<p class="card-eyebrow">{m.groups_edit_attachments()}</p>
+
+								<FileSlot
+									label={m.groups_edit_music_file_label()}
+									hasCurrent={track.has_music}
+									currentName={track.music_file_name ?? m.groups_edit_unnamed_file()}
+									currentCaption={m.groups_edit_current_music_file()}
+									emptyTitle={m.groups_edit_no_music_added()}
+									emptyHint={m.groups_edit_music_hint()}
+									addLabel={m.groups_edit_add_music_file_button()}
+									inputName="file"
+									accept=".mid,.midi,.musicxml,.xml"
+									removeInputName="remove_file"
+								/>
+
+								<FileSlot
+									label={m.groups_edit_pdf_file_label()}
+									hasCurrent={track.has_pdf}
+									currentName={track.pdf_file_name ?? m.groups_edit_unnamed_file()}
+									currentCaption={m.groups_edit_current_pdf()}
+									emptyTitle={m.groups_edit_no_pdf_added()}
+									emptyHint={m.groups_edit_pdf_hint()}
+									addLabel={m.groups_edit_add_pdf_button()}
+									inputName="pdf_file"
+									accept="application/pdf"
+									removeInputName="remove_pdf_file"
+								/>
+
+								{#if form?.form === 'pieceDetails' && form?.error}
+									<p class="error">{form.error}</p>
+								{/if}
+								<div class="btn-row">
+									<button type="submit" class="btn btn-outline" disabled={savingDetails}>
+										{savingDetails ? m.groups_uploading() : m.action_save()}
+									</button>
 									<button
 										type="button"
 										class="text-link"
-										onclick={() => (editingTempoPieceId = null)}
-										disabled={savingTempo}
+										onclick={() => (editingDetailsPieceId = null)}
+										disabled={savingDetails}
 									>
 										{m.action_cancel()}
 									</button>
-								</form>
-							{:else}
-								<p class="card-meta">
-									{track.default_tempo_bpm ? m.groups_default_tempo({ bpm: track.default_tempo_bpm }) : m.groups_default_tempo_midi()}
+								</div>
+							</form>
+
+							<!-- Delete-the-whole-track: a minimal trash icon pinned to the
+							     card's top-right corner rather than a button sitting next to
+							     Save — those two are one click apart and this is a much more
+							     destructive action, so it shouldn't share their weight or
+							     row. Its own `<form>` (can't nest inside the one above), and
+							     still gated behind a click-to-confirm — the icon alone isn't
+							     enough friction for something this hard to undo. Only shown
+							     in edit mode, same as the rest of this panel. -->
+							<div class="track-delete-corner">
+								{#if confirmingDeleteTrackPieceId === track.piece_id}
+									<form
+										method="POST"
+										action="?/deleteTrack"
+										use:enhance={() => {
+											deletingTrack = true;
+											return async ({ update }) => {
+												deletingTrack = false;
+												confirmingDeleteTrackPieceId = null;
+												editingDetailsPieceId = null;
+												await update();
+											};
+										}}
+										class="track-delete-corner-form"
+									>
+										<input type="hidden" name="pieceId" value={track.piece_id} />
+										<button
+											type="submit"
+											class="piece-action piece-action--sm piece-action--danger"
+											disabled={deletingTrack}
+											aria-label={m.groups_delete()}
+											title={m.groups_delete_track_confirm()}
+										>
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+												<polyline points="20 6 9 17 4 12" />
+											</svg>
+										</button>
+										<button
+											type="button"
+											class="piece-action piece-action--sm"
+											onclick={() => (confirmingDeleteTrackPieceId = null)}
+											disabled={deletingTrack}
+											aria-label={m.action_cancel()}
+											title={m.action_cancel()}
+										>
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+												<line x1="18" y1="6" x2="6" y2="18" />
+												<line x1="6" y1="6" x2="18" y2="18" />
+											</svg>
+										</button>
+									</form>
+								{:else}
 									<button
 										type="button"
-										class="text-link"
-										onclick={() => {
-											tempoDraft = track.default_tempo_bpm ? String(track.default_tempo_bpm) : '';
-											editingTempoPieceId = track.piece_id;
-										}}
+										class="piece-action piece-action--sm piece-action--danger"
+										onclick={() => (confirmingDeleteTrackPieceId = track.piece_id)}
+										aria-label={m.groups_delete_track()}
+										title={m.groups_delete_track()}
 									>
-										{track.default_tempo_bpm ? m.drawer_edit() : m.groups_set_default()}
+										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+											<path d="M3 6h18" />
+											<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+											<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+											<line x1="10" y1="11" x2="10" y2="17" />
+											<line x1="14" y1="11" x2="14" y2="17" />
+										</svg>
 									</button>
+								{/if}
+							</div>
+						{:else}
+							<p class="card-title">{track.title}</p>
+							{#if track.composer}
+								<p class="card-meta">{track.composer}</p>
+							{/if}
+							{#if mode === 'admin'}
+								<p class="card-meta">{m.groups_status({ status: track.version_status })}</p>
+								<p class="card-meta track-contents">
+									<span class:present={track.has_music}>{track.has_music ? '✓' : '–'} {m.groups_track_has_music()}</span>
+									<span class:present={track.has_pdf}>{track.has_pdf ? '✓' : '–'} {m.groups_track_has_pdf()}</span>
+									<span class:present={!!track.youtube_url}>
+										{track.youtube_url ? '✓' : '–'} {m.groups_track_has_reference()}
+									</span>
 								</p>
+								<p class="card-meta">
+									{track.default_tempo_bpm ? m.groups_default_tempo({ bpm: track.default_tempo_bpm }) : m.groups_default_tempo_midi()}
+								</p>
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => {
+										titleEditDraft = track.title;
+										composerEditDraft = track.composer ?? '';
+										youtubeEditDraft = track.youtube_url ?? '';
+										tempoEditDraft = track.default_tempo_bpm ? String(track.default_tempo_bpm) : '';
+										confirmingDeleteTrackPieceId = null;
+										editingDetailsPieceId = track.piece_id;
+									}}
+								>
+									{m.groups_edit_details()}
+								</button>
 							{/if}
 						{/if}
 						{#if !practiceHref}
@@ -462,14 +618,30 @@
 							<span>{m.groups_upload_author()}</span>
 							<input name="composer" placeholder={m.groups_optional()} />
 						</label>
-						<label class="field">
-							<span>{m.groups_upload_music_file()}</span>
-							<input name="file" type="file" accept=".mid,.midi,.musicxml,.xml" bind:files={uploadMusicFiles} />
-						</label>
-						<label class="field">
-							<span>{m.groups_upload_pdf()}</span>
-							<input name="pdf_file" type="file" accept="application/pdf" bind:files={uploadPdfFiles} />
-						</label>
+						<FileSlot
+							label={m.groups_edit_music_file_label()}
+							hasCurrent={false}
+							currentName={null}
+							currentCaption={m.groups_edit_current_music_file()}
+							emptyTitle={m.groups_edit_no_music_added()}
+							emptyHint={m.groups_edit_music_hint()}
+							addLabel={m.groups_edit_add_music_file_button()}
+							inputName="file"
+							accept=".mid,.midi,.musicxml,.xml"
+							bind:files={uploadMusicFiles}
+						/>
+						<FileSlot
+							label={m.groups_edit_pdf_file_label()}
+							hasCurrent={false}
+							currentName={null}
+							currentCaption={m.groups_edit_current_pdf()}
+							emptyTitle={m.groups_edit_no_pdf_added()}
+							emptyHint={m.groups_edit_pdf_hint()}
+							addLabel={m.groups_edit_add_pdf_button()}
+							inputName="pdf_file"
+							accept="application/pdf"
+							bind:files={uploadPdfFiles}
+						/>
 						{#if !canSubmitUpload}
 							<p class="card-note">{m.upload_provide_file_or_pdf()}</p>
 						{/if}
@@ -661,7 +833,7 @@
 								class="inline-edit-row"
 							>
 								<input type="hidden" name="userId" value={member.user_id} />
-								<input name="title" bind:value={titleDraft} placeholder="e.g. Soprano 2 — Section leader" />
+								<input name="title" bind:value={titleDraft} placeholder="e.g. Soprano 2, Section leader" />
 								<button type="submit" class="btn btn-outline" disabled={savingTitle}>{m.action_save()}</button>
 								<button type="button" class="text-link" onclick={() => (editingTitleUserId = null)}>{m.action_cancel()}</button>
 							</form>
@@ -1476,11 +1648,39 @@
 		padding: 0.5rem 0.6rem;
 	}
 
+	.track-contents {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+	}
+
+	.track-contents span {
+		color: var(--text-muted);
+	}
+
+	.track-contents span.present {
+		color: var(--text);
+	}
+
 	.track-card {
+		position: relative;
 		flex-direction: row;
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+
+	.track-delete-corner {
+		position: absolute;
+		top: 0.6rem;
+		right: 0.6rem;
+		display: flex;
+		gap: 0.35rem;
+	}
+
+	.track-delete-corner-form {
+		display: flex;
+		gap: 0.35rem;
 	}
 
 	.track-info {
@@ -1515,6 +1715,27 @@
 
 	.piece-action--primary:hover {
 		background: var(--accent-hover);
+	}
+
+	.piece-action--sm {
+		width: 1.75rem;
+		height: 1.75rem;
+	}
+
+	.piece-action--sm svg {
+		width: 15px;
+		height: 15px;
+		margin-left: 0;
+	}
+
+	.piece-action--danger {
+		border-color: var(--danger);
+		color: var(--danger);
+	}
+
+	.piece-action--danger:hover {
+		background: color-mix(in srgb, var(--danger) 12%, var(--surface) 88%);
+		border-color: var(--danger);
 	}
 
 	.piece-action svg {

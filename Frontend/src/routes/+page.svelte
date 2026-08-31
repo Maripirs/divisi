@@ -39,8 +39,13 @@
 			     repertoire shows up here too, not just the two public demos. -->
 			{@const playable = pieces
 				.map((p) =>
-					getPieceByTitle(p.title) ??
-					(p.has_music || p.has_pdf
+					// The bundled-registry title match is only a fallback for a
+					// piece with nothing of its own wired up yet — once a group
+					// has uploaded a real music file/PDF for it (even one that
+					// happens to share a bundled piece's title), that real
+					// content has to win, or an admin's own upload would
+					// silently keep playing/showing the bundled fixture instead.
+					p.has_music || p.has_pdf
 						? buildRemotePiece({
 								pieceId: p.piece_id,
 								title: p.title,
@@ -50,7 +55,7 @@
 								youtubeUrl: p.youtube_url,
 								defaultTempoBpm: p.default_tempo_bpm
 							})
-						: undefined)
+						: getPieceByTitle(p.title)
 				)
 				.filter((p) => p !== undefined)}
 			<section class="library-section">

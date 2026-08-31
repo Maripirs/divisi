@@ -182,7 +182,12 @@
 				<p class="empty">{m.library_no_tracks()}</p>
 			{:else}
 				{#each visiblePieces as piece (piece.pieceId)}
-					{@const bundled = getPieceByTitle(piece.title)}
+					<!-- Bundled-title match is only a fallback for a piece with
+					     nothing of its own wired up yet — real uploaded content
+					     (even under a title that happens to match a bundled
+					     piece) always wins. See the group Tracks tab's
+					     identical fix for the real bug this closed. -->
+					{@const bundled = piece.hasMusic || piece.hasPdf ? undefined : getPieceByTitle(piece.title)}
 					{@const practiceId = bundled ? bundled.id : piece.pieceId}
 					<section class="card track-card">
 						<div class="track-info">

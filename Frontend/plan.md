@@ -84,6 +84,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F9 | Graceful error handling app-wide | ✅ Done — live-verified including a real Backend-down/recovered cycle |
 | F10 | Lock down bundled pieces (security fix) | ✅ Done — closed a real hole where 5+ real choir pieces were publicly fetchable with no auth |
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
+| F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
+| F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -488,6 +490,174 @@ it draw/erase depending on the active tool.
 - [ ] Deploy the Backend (new migration needs to run against the real production DB) — the Frontend preview can't actually save/load marks until this lands
 - [ ] Click through pen/stamp/eraser/undo on a real device and confirm it reads right
 
+### F12 — PDF markup: top-level Annotation mode on/off toggle [~]
+
+At the human's direct request, following a first look at F11. Today, `canMarkup`
+unconditionally renders both the marks overlay and the floating pen/stamp/eraser
+toolbar for a logged-in user on a real Backend piece's PDF — there's no way to get
+back to a plain, uncluttered PDF. The per-tool behavior already added in F11 (arming
+pen/stamp/eraser hands `touch-action` fully to drawing so a one-finger drag draws
+instead of scrolling; deselecting the tool restores `pan-x pan-y`) is correct and
+**stays as-is** — this milestone doesn't touch it.
+
+**Scope:** one master toggle, off by default (matching F4's annotate toggle also
+defaulting off), that gates the whole markup layer rather than one tool at a time:
+
+- **Off:** no toolbar, no marks rendered, full normal pan/pinch-zoom — same as
+  viewing a PDF with no markup feature at all
+- **On:** F11's existing toolbar + marks + per-tool draw/pan-disable behavior,
+  unchanged
+
+**Acceptance criteria:**
+- [x] A logged-in user viewing a real Backend piece's PDF sees an explicit
+      Annotation-mode on/off control, off by default each visit (session-local
+      state, not persisted — matching F4's `annotateMode`)
+- [x] With the mode off: no toolbar, no existing marks drawn on the page, and
+      one-finger drag always pans/scrolls the PDF — never arms a tool by accident
+- [x] Turning the mode on restores exactly F11's current behavior with no
+      regressions: marks visible, toolbar visible, picking pen/stamp/eraser still
+      hands pan over to drawing, deselecting still restores it
+- [x] Turning the mode back off, mid-tool-selection, clears the armed tool and
+      returns to plain full-pan viewing (no stuck `touch-action: none`)
+- [x] `npm run check`/`build` both clean
+- [ ] Human confirms on a real touchscreen: mode off never accidentally draws,
+      mode on behaves exactly like today's F11
+
+**Tasks — Claude:**
+- [x] `PdfView.svelte`: new `annotationMode` state (default `false`); gates the
+      `marks` overlay render and the floating `.markup-toolbar` on it
+- [x] `toggleAnnotationMode()`: flipping off also resets `tool`/`activeStroke`/
+      `activeStrokePage`, so no stale armed tool or in-flight stroke survives
+      into the next time it's turned back on
+- [x] New `.annotation-mode-toggle` floating button, top-left corner (clear of
+      `.zoom-controls` bottom-right and `.markup-toolbar` bottom-left, the
+      latter only present once the mode is on) — always visible whenever
+      `canMarkup`, even while off, so there's a way back in
+- [x] `handleMarkupPointerDown` also gates on `annotationMode`, matching the
+      template's overlay gate (belt-and-suspenders — the overlay isn't even
+      mounted while off, but `tool` is also forced `null` at that point)
+- [x] New `messages/en.json`/`es.json` keys (`markup_mode_on`/`markup_mode_off`)
+      for the toggle's `aria-label`
+- [x] No prop threading needed — `annotationMode` is fully internal to
+      `PdfView.svelte`, `piece/[id]/+page.svelte` is unchanged
+- [x] `npm run check` (0 errors, pre-existing unrelated warnings only) and
+      `npm run build` both clean
+
+**Tasks — Human:**
+- [ ] Confirm on a real device that mode-off never lets a stray tap/drag start a
+      mark, and mode-on is unchanged from today's F11 behavior
+
+### F13 — Audio-only reference recording, driving the bottom bar in PDF view [~]
+
+At the human's direct request, following up on F12: F5's reference-recording
+YouTube link showed as a video, embedded in an always-visible top disclosure,
+regardless of which pane (score/PDF) was open — the human wanted it audio-only
+and controlled from the same bottom bar the synthesized player already uses.
+Clarified scope: the choice belongs specifically to PDF view, between the
+synthesized mix and the real reference recording's audio — not a second,
+independent player running alongside the existing one.
+
+**Mechanism:** new `$lib/audio/youtubeAudioPlayer.ts` wraps Google's YouTube
+IFrame Player API in the same `create()`/`play()`/`pause()`/`seek()`/
+`positionMs`/`duration`/`isPlaying` shape `MidiPlayer` already exposes, so
+`piece/[id]/+page.svelte`'s bottom bar can treat either as an interchangeable
+"whatever `audioSource` currently is." The iframe itself is created but never
+shown — parked off-screen (not `display: none`, which risks some browsers
+pausing background video decode) so only its audio is ever heard.
+
+**Acceptance criteria:**
+- [x] While viewing a real Backend piece's PDF, if it has both a music file
+      and a reference recording, an "Audio source" control in Practice Setup
+      lets the human pick "My mix" (today's synthesized player) or "Reference
+      recording" (the real YouTube audio) — either one drives the same
+      play/pause button and scrubber
+- [x] That control sits directly under the View section, appearing the moment
+      PDF is picked there (both live in the drawer's `viewMode === 'pdf'`
+      branch) — not tucked away somewhere unrelated
+- [x] Switching source always pauses whichever one is being left, so the two
+      are never audible at once
+- [x] Leaving the PDF pane always reverts to "My mix" — the reference choice
+      only makes sense there, since the notation cursor stays synced to the
+      synthesized clock, not a recording
+- [x] Picking the reference recording hides the Mix section entirely — a
+      per-part balance mixer has nothing to balance against a single audio
+      track. Tempo and "Your part" are likewise hidden whenever there's no
+      music file at all (a PDF-only piece) — both are meaningless with no
+      synthesized clock to apply to
+- [x] The Practice Setup gear button is enabled for a PDF-only piece too, not
+      just a piece with a music file — this drawer no longer requires a real
+      player just to open
+- [x] The Audio-source section itself always appears in PDF view as long as
+      *some* audio exists for the piece — a piece with no reference recording
+      still sees the section, just with "Reference recording" disabled rather
+      than the section vanishing outright; a PDF-only piece sees "My mix"
+      disabled instead
+- [x] A PDF-only piece (no music file) with a reference recording gets a
+      working bottom bar too — forced to the reference recording, since
+      there's no "mix" to speak of
+- [x] A piece with a reference recording but **no PDF at all** keeps the old
+      video disclosure unchanged — the new picker has no PDF pane to live in
+      for that shape
+- [x] `npm run check`/`build` both clean
+- [ ] Human confirms in a real browser: switching source mid-playback, a
+      PDF-only+reference piece's bottom bar and drawer, and that the reference
+      audio is genuinely inaudible-as-video (no visible player, just sound)
+
+**Tasks — Claude:**
+- [x] Real bug found live-testing this milestone: `getPieceByTitle()` (F10)
+      was preferred unconditionally over a real Backend piece's own content
+      everywhere it's used — a track sharing a bundled fixture's title (e.g.
+      "Lacrymosa") always played/showed the bundled asset even after an admin
+      uploaded their own music file/PDF/YouTube link to it, so this
+      milestone's picker looked broken (always disabled) for such a piece.
+      Fixed in `/`, the group Tracks tab, and the guest join page: the
+      bundled match is now only used when the real piece has neither
+      `has_music` nor `has_pdf` of its own
+- [x] `$lib/audio/youtubeAudioPlayer.ts` (new): `YoutubeAudioPlayer` class
+      wrapping the YouTube IFrame API (loaded as a vendor `<script>`, same
+      pattern `audio/player.ts` uses for js-synthesizer) — off-screen host
+      element, `extractYoutubeVideoId()` helper for the three URL shapes the
+      upload form accepts
+- [x] `piece/[id]/+page.svelte`: `audioSource` state (`'mix' | 'reference'`),
+      `ensureReferencePlayer()` (lazy — only loads the YouTube API/video once
+      `'reference'` is actually reachable), `setAudioSource()`, `tick()`/
+      `togglePlay()`/`seek()` all branch on it
+- [x] Two `$effect`s: force `audioSource = 'reference'` for a PDF-only piece
+      with a reference recording (and preload it, so the scrubber has a real
+      duration before the first play tap); lazily create the reference player
+      whenever `audioSource` is `'reference'` and it doesn't exist yet —
+      guarded on `referencePlayerError` so a failed load doesn't retry in a
+      loop (an explicit Play tap still retries deliberately)
+- [x] `setViewMode()`: leaving `'pdf'` while `audioSource === 'reference'`
+      pauses it and reverts to `'mix'`
+- [x] New "Audio source" Practice Setup section, directly under View, shown
+      whenever `viewMode === 'pdf' && (hasPlayer || piece?.youtubeUrl)` — a
+      segmented picker with each button individually `disabled` for whichever
+      source this piece doesn't actually have (`!hasPlayer`/no
+      `youtubeUrl`), rather than hiding the whole section
+- [x] Practice Setup's gear button enabled for `loadState.kind === 'pdfOnly'`
+      too, not just the music-file-driven kinds
+- [x] Tempo and "Your part" sections gated on `hasPlayer` (meaningless with no
+      synthesized clock); Mix section additionally gated on
+      `audioSource !== 'reference'` (meaningless balancing a single audio
+      track) — all three used to render unconditionally, harmless before this
+      milestone since the drawer was unreachable for any piece they wouldn't
+      apply to
+- [x] Footer (`bottom-bar`) now also renders for a `pdfOnly` piece that has a
+      reference recording, not just the music-file-driven `loadState` kinds
+- [x] Old top video disclosure narrowed to `piece?.youtubeUrl && !hasPdfPane`
+      (a music file + reference recording, no PDF — the one shape the new
+      picker can't cover, since it has no PDF pane to live in)
+- [x] New `messages/en.json`/`es.json` keys: `piece_audio_source(_mix|_reference)`,
+      `piece_reference_loading`, `piece_reference_unavailable`
+- [x] `npm run check` (0 errors, same pre-existing unrelated warnings) and
+      `npm run build` both clean
+
+**Tasks — Human:**
+- [ ] Confirm in a real browser: source switching, the PDF-only+reference
+      bottom bar, and that the reference recording is genuinely audio-only
+      (nothing visible, just sound) on a real device
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -536,6 +706,10 @@ fetching or required accounts.
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
+- 2026-08-30: Found and fixed a real bug live-testing F13: `getPieceByTitle()` (F10) was preferred *unconditionally* over a real Backend piece's own content in all three places it's used (`/`'s personal library, the group Tracks tab, the guest join page) — so a real, admin-uploaded track that happened to share a title with a bundled fixture (e.g. "Lacrymosa") always played/showed the bundled asset instead, silently ignoring the admin's own music file/PDF/YouTube link. F13 surfaced this concretely: Lacrymosa's real reference-recording link never worked because the app was never actually reaching the real `Piece` it was set on. Fixed by only falling back to the bundled match when the real piece has neither `has_music` nor `has_pdf` of its own — `getPieceByTitle()`'s original intent (a working Practice button for a track with nothing wired up yet), not a permanent override once real content exists.
+- 2026-08-30: `piece/[id]`'s back button now does a real `history.back()` when there's history to go back to, landing wherever the human actually came from (a specific group's Tracks tab, its scroll position, admin vs. member view) instead of always the generic library/guest-join page regardless of origin. The old destination-guessing logic (guest join code -> that group; logged-in -> `/`; guest -> `/?guest=1`) stays as the fallback for when there's genuinely nothing to go back to (opened directly, a fresh tab, a deep link).
+- 2026-08-30: `/settings/more` brought in line with every other screen — now carries the same `AppHeader`/`BottomNav` chrome (title in the header, brand link home, gear button, bottom nav) instead of its own bare `<main>` with a hand-rolled breadcrumb/`<h1>`; also handles a guest reached via a join code the same way `/settings` itself does (home/footer point back to their group, not a login-gated dashboard). Dropped the redundant "Settings / More" breadcrumb text now that the header already names the page. Removed the "How Divisi works" link/section at the human's request (`more_how_it_works` message key deleted, now unused).
+- 2026-08-30: F13 polish, both at the human's direct follow-up after trying it live: the "Audio source" section moved to sit directly under View (was previously its own separately-gated section) and now always renders in PDF view as long as the piece has *any* audio at all — whichever source a given piece doesn't have (no reference recording, or no music file) shows as a `disabled` picker button instead of the whole section disappearing, so it's discoverable rather than silently absent.
 - 2026-08-29: Built F11 (PDF markup: freehand pen + stamps), additive alongside F4's annotations per the human's explicit follow-up request after trying them. Found and used a working portable Node install already on this Windows machine (just not on `PATH` for this session) to get real `npm run check`/`build` verification for the first time this session — 0 errors both times, and it caught two real reactivity bugs (`activeStrokePage`/`recentMarkIds` needed `$state`, not plain `let`) before they shipped. Also deployed to the isolated Cloudflare preview Worker (`divisi-frontend-preview...workers.dev`) built against the real production Backend — though the Backend itself isn't deployed with F11's new endpoints yet, so drawing won't actually save/load there until that happens.
 - 2026-08-29: Built F4's real annotation UI (create/view/edit/delete/share/unshare, rendered as markers on the score via OSMD's multi-cursor support) — see F4's "Expanded" note. Added one small Backend endpoint along the way (`GET /annotations/{id}/shares`, B5's own note). Confirmed `check`/`build`-clean in the F11 entry above, once real Node tooling was found on this machine — this entry originally shipped hand-reviewed only.
 - 2026-08-29: Built F10 (locked down the bundled piece registry), the human's direct follow-up after F9. See F10's own section for the full mechanism/fix. `npm run check` (0 errors)/`build` both clean.

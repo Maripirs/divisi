@@ -1,15 +1,23 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
 	const portfolioUrl = 'https://maripi.net';
-	const howItWorksUrl = 'https://claude.ai/code/artifact/87d1dced-84bd-4e6e-a96c-413a202fe38a';
+
+	// Same guest-join-code handling `/settings` itself uses — this page is
+	// linked from there with no `?code=` carried along automatically, but a
+	// guest can still land here, and both the header's brand link and the
+	// footer below should send them back to their group, not a login-gated
+	// dashboard they have no access to.
+	let guestJoinCode = $derived(page.url.searchParams.get('code'));
 </script>
 
 <main class="shell">
-	<p class="crumbs"><a href={lh('/settings')}>{m.settings_title()}</a> / {m.settings_more()}</p>
-	<h1 class="title">{m.settings_more()}</h1>
+	<AppHeader title={m.settings_more()} homeHref={guestJoinCode ? lh(`/join/${guestJoinCode}`) : lh('/home')} />
 
 	<section class="card">
 		<p class="card-eyebrow">{m.more_about_title()}</p>
@@ -22,9 +30,6 @@
 		<p class="card-meta body">
 			{m.more_built_by()}
 			<a class="text-link" href={portfolioUrl} target="_blank" rel="noreferrer">Maripi</a>
-		</p>
-		<p class="card-meta body">
-			<a class="text-link" href={howItWorksUrl} target="_blank" rel="noreferrer">{m.more_how_it_works()}</a>
 		</p>
 	</section>
 
@@ -42,14 +47,18 @@
 	</section>
 </main>
 
-<style>
-	.title {
-		margin: 0;
-		font-size: 1.25rem;
-		font-weight: 800;
-		color: var(--text);
-	}
+{#if guestJoinCode}
+	<!-- Same as `/settings`'s own footer: a code-guest has no dashboard
+	     `BottomNav`'s Home tab would resolve to (it's login-gated) — send
+	     them back where they came from instead. -->
+	<nav class="bottom-nav">
+		<a href={lh(`/join/${guestJoinCode}`)}>{m.settings_back_to_choir()}</a>
+	</nav>
+{:else}
+	<BottomNav />
+{/if}
 
+<style>
 	.body {
 		color: var(--text);
 	}

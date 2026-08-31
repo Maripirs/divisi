@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
+	import { extractYoutubeVideoId, YoutubeAudioPlayer } from '$lib/audio/youtubeAudioPlayer';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
 	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type ViewMode } from '$lib/playerDefaults';
 	import {
@@ -22,6 +23,7 @@
 	} from '$lib/midi/types';
 	import { getPiece } from '$lib/pieces/registry';
 	import { buildRemotePiece, type RemotePieceMeta } from '$lib/pieces/remotePiece';
+	import type { Piece } from '$lib/pieces/types';
 	import { highlightedMutedInk, resolvedTheme } from '$lib/theme';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
@@ -41,23 +43,29 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
-	let { data }: { data: { id: string; remote: RemotePieceMeta | null; unreachable: boolean } } = $props();
+	let { data }: { data: { id: string } } = $props();
 	// The keyed markup remounts this component whenever the route id changes,
 	// so capturing the matching piece once per mount is intentional. Bundled
 	// fixtures win a same-id collision (can't happen in practice — fixture
 	// ids are short slugs, real Backend piece ids are UUIDs — but bundled
-	// first matches this file's existing behavior before F5).
+	// first matches this file's existing behavior before F5) — and resolve
+	// synchronously, no network involved. A real Backend piece starts
+	// unresolved: `onMount` below fetches `resolve/+server.ts` (deliberately
+	// *not* awaited in `+page.server.ts`'s `load` — see that file's doc
+	// comment) and fills `piece`/`remoteMeta` in once the Backend actually
+	// answers, however long that takes. Either way this component has
+	// already mounted and painted a "loading" status card by then — see the
+	// "never blank, even with the Backend down" fix this shape exists for.
 	// svelte-ignore state_referenced_locally
-	const piece =
-		getPiece(data.id) ??
-		(data.remote ? buildRemotePiece(data.remote, page.url.searchParams.get('code')) : undefined);
+	let piece = $state<Piece | undefined>(getPiece(data.id));
+	let remoteMeta = $state<RemotePieceMeta | null>(null);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like
 	// before F5 existed).
-	const hasPlayer = !!piece?.load;
-	const hasPdfPane = !!piece?.pdfUrl;
-	const availableViewModes = VIEW_MODES.filter((mode) => (mode === 'player' ? hasPlayer : hasPdfPane));
+	let hasPlayer = $derived(!!piece?.load);
+	let hasPdfPane = $derived(!!piece?.pdfUrl);
+	let availableViewModes = $derived(VIEW_MODES.filter((mode) => (mode === 'player' ? hasPlayer : hasPdfPane)));
 
 	// Reached via a join-code link (`routes/join/[code]`) rather than a
 	// logged-in dashboard — same player, same "Make this my default" (per
@@ -139,17 +147,25 @@
 		// mid-load, with no special-casing needed at each check site.
 		| { kind: 'pdfOnly' };
 
-	let loadState = $state<LoadState>(
-		!piece
-			? data.unreachable
-				? { kind: 'unreachable' }
-				: { kind: 'notFound' }
-			: hasPlayer
-				? { kind: 'loading' }
-				: { kind: 'pdfOnly' }
-	);
+	// A bundled fixture is already resolved by now (see `piece` above), so
+	// this is the same `hasPlayer ? 'loading' : 'pdfOnly'` this always
+	// computed. A real Backend piece hasn't resolved yet at mount time —
+	// `'loading'` covers that too, same card either way, until `onMount`'s
+	// `resolveRemote()` (below) finds out whether it's actually 'notFound'
+	// or 'unreachable'.
+	// svelte-ignore state_referenced_locally
+	let loadState = $state<LoadState>(piece && !hasPlayer ? { kind: 'pdfOnly' } : { kind: 'loading' });
 	let parsed: ParsedMIDI | undefined;
 	let player: MidiPlayer | undefined;
+	// F13: while viewing the PDF, the bottom bar can be driven by either the
+	// synthesized mix (`player`, same as always) or the reference recording's
+	// real audio, via a hidden `YoutubeAudioPlayer` — see `setAudioSource`.
+	// Forced to `'reference'` (no picker shown) for a PDF-only piece with no
+	// music file at all, since `'mix'` has no player to mean anything there.
+	let audioSource = $state<'mix' | 'reference'>('mix');
+	let referencePlayer: YoutubeAudioPlayer | undefined;
+	let referencePlayerLoading = $state(false);
+	let referencePlayerError = $state<string | null>(null);
 
 	// Seeded from the account-wide "Practice defaults" (Settings page, and
 	// each section's own "Make this my default" below), not hardcoded — a
@@ -185,6 +201,7 @@
 	// cause of the page going blank on a slow/unreachable Backend, not just
 	// a missing message — the right state was already there, just hidden
 	// behind `class:hidden={viewMode !== 'player'}`.
+	// svelte-ignore state_referenced_locally
 	let viewMode = $state<ViewMode>(
 		!piece ? 'player' : !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode
 	);
@@ -200,7 +217,7 @@
 	// `Annotation.piece_id` has to be a real `Piece`), and only for a
 	// logged-in user (the Backend's endpoints all require `get_current_user`
 	// — there's no guest annotation path at all, unlike homework/tracks).
-	const canAnnotate = $derived(!!data.remote && !!page.data.user);
+	const canAnnotate = $derived(!!remoteMeta && !!page.data.user);
 	let annotations = $state<Annotation[]>([]);
 	let annotateMode = $state(false);
 	// `null` closed; otherwise either a brand-new marker's position (create)
@@ -240,14 +257,71 @@
 
 	onMount(() => {
 		if (piece) void bootstrap();
+		else void resolveRemote();
 		rafHandle = requestAnimationFrame(tick);
 	});
+
+	// F13: a PDF-only piece (no music file) has no `'mix'` to fall back to —
+	// force `'reference'` and preload the player as soon as that's known, so
+	// the bottom bar's scrubber already has a real duration before the human
+	// even taps play, same as a music-file piece does via `bootstrap()`.
+	$effect(() => {
+		if (!hasPlayer && piece?.youtubeUrl && audioSource !== 'reference') audioSource = 'reference';
+	});
+	$effect(() => {
+		// `referencePlayerError` also gates this — otherwise a failed load
+		// (e.g. a malformed/deleted video) would retry in a loop forever,
+		// since this effect re-runs the moment `referencePlayerLoading` flips
+		// back to `false` in `ensureReferencePlayer`'s `finally`.
+		// `togglePlay` still retries deliberately on an explicit tap.
+		if (audioSource === 'reference' && !referencePlayer && !referencePlayerLoading && !referencePlayerError) {
+			void ensureReferencePlayer();
+		}
+	});
+
+	/** Fetches `resolve/+server.ts` for a real Backend piece — deliberately
+	 * from here, not `+page.server.ts`'s `load` (which returns instantly
+	 * now): by the time this runs, the component has already mounted and
+	 * painted the 'loading' status card above, so however long the Backend
+	 * takes to answer (or fails to), the user is looking at that card, never
+	 * a blank pane. See `resolve/+server.ts`'s doc comment for the full
+	 * story. */
+	async function resolveRemote() {
+		try {
+			const code = page.url.searchParams.get('code');
+			const res = await fetch(`/piece/${encodeURIComponent(data.id)}/resolve${code ? `?code=${encodeURIComponent(code)}` : ''}`);
+			if (!res.ok) {
+				loadState = { kind: 'unreachable' };
+				return;
+			}
+			const body = (await res.json()) as { remote: RemotePieceMeta | null; unreachable: boolean };
+			if (!body.remote) {
+				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
+				return;
+			}
+			remoteMeta = body.remote;
+			piece = buildRemotePiece(body.remote, guestJoinCode);
+			// `viewMode` was seeded assuming no piece at all (forced to
+			// 'player' below) — now that `hasPlayer`/`hasPdfPane` are actually
+			// known, apply the same shape-default `+page.server.ts` used to
+			// compute before this piece existed at mount time. `bootstrap()`
+			// (next) still gets the final say via this piece's own persisted
+			// settings, exactly as before.
+			viewMode = !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode;
+			loadState = hasPlayer ? { kind: 'loading' } : { kind: 'pdfOnly' };
+			void bootstrap();
+		} catch {
+			loadState = { kind: 'unreachable' };
+		}
+	}
 
 	onDestroy(() => {
 		destroyed = true;
 		cancelAnimationFrame(rafHandle);
 		player?.destroy();
 		player = undefined;
+		referencePlayer?.destroy();
+		referencePlayer = undefined;
 		clearMediaSession();
 	});
 
@@ -375,21 +449,73 @@
 	}
 
 	function tick() {
-		if (player) {
+		if (audioSource === 'reference' && referencePlayer) {
+			positionMs = referencePlayer.positionMs;
+			isPlaying = referencePlayer.isPlaying;
+			// The IFrame API reports `0` until the video's metadata has
+			// actually loaded — never overwrite an already-known duration
+			// with that "not ready yet" value.
+			if (referencePlayer.duration > 0) durationMs = referencePlayer.duration;
+		} else if (player) {
 			positionMs = player.positionMs;
 			isPlaying = player.isPlaying;
 		}
 		rafHandle = requestAnimationFrame(tick);
 	}
 
+	/** Lazily creates the hidden YouTube player behind `audioSource ===
+	 * 'reference'` — not eagerly at piece-load time, since most pieces with a
+	 * reference recording are still practiced against the synthesized mix and
+	 * would otherwise pay for a YouTube API load/network round trip nobody
+	 * asked for. */
+	async function ensureReferencePlayer(): Promise<void> {
+		if (referencePlayer || referencePlayerLoading || !piece?.youtubeUrl) return;
+		const videoId = extractYoutubeVideoId(piece.youtubeUrl);
+		if (!videoId) {
+			referencePlayerError = m.piece_reference_unavailable();
+			return;
+		}
+		referencePlayerLoading = true;
+		referencePlayerError = null;
+		try {
+			referencePlayer = await YoutubeAudioPlayer.create(videoId);
+		} catch {
+			referencePlayerError = m.piece_reference_unavailable();
+		} finally {
+			referencePlayerLoading = false;
+		}
+	}
+
+	/** Switches which audio the bottom bar controls — never lets the source
+	 * being left keep playing underneath the one being switched to. The
+	 * disabled state on each picker button already prevents a normal click
+	 * from getting here for a source this piece doesn't have; this is just
+	 * the same guard belt-and-suspenders style. */
+	function setAudioSource(source: 'mix' | 'reference') {
+		if (source === audioSource) return;
+		if (source === 'mix' && !hasPlayer) return;
+		if (source === 'reference' && !piece?.youtubeUrl) return;
+		if (audioSource === 'reference') referencePlayer?.pause();
+		else player?.pause();
+		audioSource = source;
+	}
+
 	async function togglePlay() {
+		if (audioSource === 'reference') {
+			if (!referencePlayer) await ensureReferencePlayer();
+			if (!referencePlayer) return;
+			if (referencePlayer.isPlaying) referencePlayer.pause();
+			else referencePlayer.play();
+			return;
+		}
 		if (!player) return;
 		if (player.isPlaying) player.pause();
 		else await player.play();
 	}
 
 	function seek(ms: number) {
-		player?.seek(ms);
+		if (audioSource === 'reference') referencePlayer?.seek(ms);
+		else player?.seek(ms);
 	}
 
 	function setBalance(part: MixPart, value: number) {
@@ -457,6 +583,14 @@
 	function setViewMode(mode: ViewMode) {
 		viewMode = mode;
 		persistSettings();
+		// F13: the reference-audio choice only makes sense while looking at
+		// the PDF — leaving it always lands back on the synthesized mix (the
+		// one the notation cursor is actually synced to), rather than letting
+		// a picked reference recording keep playing under the score view.
+		if (mode !== 'pdf' && audioSource === 'reference' && hasPlayer) {
+			referencePlayer?.pause();
+			audioSource = 'mix';
+		}
 		if (mode === 'player') {
 			// The score view was hidden via CSS (`display: none`), not
 			// unmounted — but OSMD's `autoResize` only recalculates layout on
@@ -762,12 +896,23 @@
 		return piece.notes.some((note) => note.partId === part);
 	}
 
-	// Root `+page.server.ts` redirects a logged-out, non-guest hit on `/` to
-	// `/welcome` — a bare `goto('/')` would bounce a guest who opened the
-	// player straight there instead of back to where they came from. A guest
-	// who arrived via a specific group's join code (`guestJoinCode` set) goes
-	// back to that group's page, not the unrelated demo library.
+	/** Real browser/app history back whenever there's actually somewhere to go
+	 * back to — lands wherever the human genuinely came from (a specific
+	 * group's Tracks tab, its scroll position, the admin view they had open,
+	 * etc.), not always the generic library/join page regardless of that.
+	 * Falls back to the old destination-guessing logic only when there's
+	 * nothing to go back to at all (opened directly/a fresh tab/a deep
+	 * link) — `history.back()` there would leave the app entirely instead of
+	 * landing anywhere useful. Root `+page.server.ts` redirects a logged-out,
+	 * non-guest hit on `/` to `/welcome` — a bare `goto('/')` would bounce a
+	 * guest who opened the player straight there. A guest who arrived via a
+	 * specific group's join code (`guestJoinCode` set) goes back to that
+	 * group's page, not the unrelated demo library. */
 	function backToLibrary() {
+		if (window.history.length > 1) {
+			history.back();
+			return;
+		}
 		if (guestJoinCode) goto(lh(`/join/${encodeURIComponent(guestJoinCode)}`));
 		else goto(lh(page.data.user ? '/' : '/?guest=1'));
 	}
@@ -778,9 +923,9 @@
 	// shape (B5) this all round-trips through.
 
 	async function loadAnnotations() {
-		if (!data.remote) return;
+		if (!remoteMeta) return;
 		try {
-			annotations = await listAnnotations(data.remote.pieceId);
+			annotations = await listAnnotations(remoteMeta.pieceId);
 		} catch {
 			// A failed load just means no markers show yet — not worth a
 			// blocking error state layered on top of the player's own; the
@@ -828,10 +973,10 @@
 	}
 
 	async function loadShares(annotationId: string) {
-		if (!data.remote) return;
+		if (!remoteMeta) return;
 		annotationSharesLoading = true;
 		try {
-			annotationShares = await listAnnotationShares(data.remote.pieceId, annotationId);
+			annotationShares = await listAnnotationShares(remoteMeta.pieceId, annotationId);
 		} catch (err) {
 			annotationError = annotationErrorMessage(err);
 		} finally {
@@ -847,15 +992,15 @@
 
 	async function saveAnnotation(content: string) {
 		const sheet = annotationSheet;
-		if (!data.remote || sheet === null) return;
+		if (!remoteMeta || sheet === null) return;
 		annotationSaving = true;
 		annotationError = null;
 		try {
 			if (sheet.mode === 'create') {
-				const created = await createAnnotation(data.remote.pieceId, sheet.positionWholeNotes, content);
+				const created = await createAnnotation(remoteMeta.pieceId, sheet.positionWholeNotes, content);
 				annotations = [...annotations, created];
 			} else {
-				const updated = await updateAnnotation(data.remote.pieceId, sheet.annotation.id, { content });
+				const updated = await updateAnnotation(remoteMeta.pieceId, sheet.annotation.id, { content });
 				annotations = annotations.map((a) => (a.id === updated.id ? updated : a));
 			}
 			closeAnnotationSheet();
@@ -872,12 +1017,12 @@
 		// (`$state`), so a plain `const` capture is what TypeScript can
 		// actually narrow reliably across the statements below.
 		const sheet = annotationSheet;
-		if (!data.remote || sheet === null || sheet.mode !== 'view') return;
+		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
 		const id = sheet.annotation.id;
 		annotationSaving = true;
 		annotationError = null;
 		try {
-			await deleteAnnotation(data.remote.pieceId, id);
+			await deleteAnnotation(remoteMeta.pieceId, id);
 			annotations = annotations.filter((a) => a.id !== id);
 			closeAnnotationSheet();
 		} catch (err) {
@@ -889,10 +1034,10 @@
 
 	async function shareCurrentAnnotation(email: string) {
 		const sheet = annotationSheet;
-		if (!data.remote || sheet === null || sheet.mode !== 'view') return;
+		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
 		annotationError = null;
 		try {
-			const share = await shareAnnotation(data.remote.pieceId, sheet.annotation.id, email);
+			const share = await shareAnnotation(remoteMeta.pieceId, sheet.annotation.id, email);
 			annotationShares = [...annotationShares, share];
 		} catch (err) {
 			annotationError = annotationErrorMessage(err);
@@ -901,10 +1046,10 @@
 
 	async function unshareCurrentAnnotation(userId: string) {
 		const sheet = annotationSheet;
-		if (!data.remote || sheet === null || sheet.mode !== 'view') return;
+		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
 		annotationError = null;
 		try {
-			await unshareAnnotation(data.remote.pieceId, sheet.annotation.id, userId);
+			await unshareAnnotation(remoteMeta.pieceId, sheet.annotation.id, userId);
 			annotationShares = annotationShares.filter((s) => s.sharedWithUserId !== userId);
 		} catch (err) {
 			annotationError = annotationErrorMessage(err);
@@ -954,7 +1099,8 @@
 				disabled={
 					loadState.kind !== 'ready' &&
 					loadState.kind !== 'noNotesForVoicePart' &&
-					loadState.kind !== 'noVisibleTracks'
+					loadState.kind !== 'noVisibleTracks' &&
+					loadState.kind !== 'pdfOnly'
 				}
 				onclick={() => (menuOpen = true)}
 				aria-label={m.piece_open_practice_setup()}
@@ -965,10 +1111,14 @@
 			</button>
 		</header>
 
-		{#if piece?.youtubeUrl}
-			<!-- F5: reference-audio link, shown regardless of which of
-			     music-file/PDF this piece has — not gated behind the
-			     player/PDF toggle above, per the human's explicit call. -->
+		{#if piece?.youtubeUrl && !hasPdfPane}
+			<!-- F5: reference-audio link. F13 replaced this video embed with
+			     an audio-only bottom-bar source (see the "Audio source"
+			     Practice Setup section + the PDF pane) for any piece that has
+			     a PDF to host that picker in — this fallback only remains for
+			     the narrower shape a real Backend piece can still have (a
+			     music file + a reference recording, no PDF at all), where
+			     there's no PDF view for that picker to live in. -->
 			<details class="youtube-disclosure">
 				<summary>{m.piece_reference_recording()}</summary>
 				<div class="youtube-embed">
@@ -1044,7 +1194,7 @@
 						pdfUrl={piece.pdfUrl}
 						bind:zoom={pdfZoomLevel}
 						active={viewMode === 'pdf'}
-						pieceId={data.remote?.pieceId}
+						pieceId={remoteMeta?.pieceId}
 						canMarkup={canAnnotate}
 					/>
 					</div>
@@ -1052,7 +1202,11 @@
 			{/if}
 		</main>
 
-		{#if loadState.kind === 'ready' || loadState.kind === 'noNotesForVoicePart' || loadState.kind === 'noVisibleTracks'}
+		{#if loadState.kind === 'ready' || loadState.kind === 'noNotesForVoicePart' || loadState.kind === 'noVisibleTracks' || (loadState.kind === 'pdfOnly' && piece?.youtubeUrl)}
+			<!-- F13: the `pdfOnly` branch is a PDF-only piece whose only
+			     playable audio is its reference recording — `audioSource` is
+			     forced to `'reference'` for that shape (see the `$effect`
+			     above), so every control below already routes correctly. -->
 			<footer class="bottom-bar">
 				<button class="play-btn" onclick={togglePlay} aria-label={isPlaying ? m.piece_pause() : m.piece_play()}>
 					{#if isPlaying}
@@ -1128,6 +1282,11 @@
 					</button>
 				</header>
 
+				{#if hasPlayer}
+				<!-- F13: tempo only means anything against the synthesized
+				     mix — a PDF-only piece (or one whose PDF view is showing
+				     the reference recording, see the Mix section's own gate
+				     below) has no player-driven clock to speed up/slow down. -->
 				<section class="menu-section">
 					<h3>{m.piece_tempo()}</h3>
 					<div class="tempo-row">
@@ -1186,6 +1345,7 @@
 						</div>
 					{/if}
 				</section>
+				{/if}
 
 				{#if availableViewModes.length > 1}
 					<!-- F5: only rendered when this piece actually has both a
@@ -1205,6 +1365,38 @@
 							<button type="button" class="text-link default-link" onclick={saveViewAsDefault}>
 								{defaultFlash.view ? m.piece_saved_as_default() : m.piece_make_my_default()}
 							</button>
+						{/if}
+					</section>
+				{/if}
+
+				{#if viewMode === 'pdf' && (hasPlayer || piece?.youtubeUrl)}
+					<!-- F13: pops up right under View the moment PDF is picked
+					     (View's own section right above) — always shown in
+					     PDF view as long as *some* audio exists for this
+					     piece, with whichever source this piece doesn't
+					     actually have disabled rather than the whole section
+					     disappearing (a PDF-only piece has no `'mix'`; a piece
+					     with no reference recording has nothing to switch to).
+					     Leaving the PDF pane always snaps back to `'mix'` —
+					     see `setViewMode`. -->
+					<section class="menu-section">
+						<h3>{m.piece_audio_source()}</h3>
+						<div class="segmented" role="group" aria-label={m.piece_audio_source()}>
+							<button class:active={audioSource === 'mix'} disabled={!hasPlayer} onclick={() => setAudioSource('mix')}>
+								{m.piece_audio_source_mix()}
+							</button>
+							<button
+								class:active={audioSource === 'reference'}
+								disabled={!piece?.youtubeUrl}
+								onclick={() => setAudioSource('reference')}
+							>
+								{m.piece_audio_source_reference()}
+							</button>
+						</div>
+						{#if audioSource === 'reference' && referencePlayerLoading}
+							<p class="status-note">{m.piece_reference_loading()}</p>
+						{:else if audioSource === 'reference' && referencePlayerError}
+							<p class="status-note status-note--error">{referencePlayerError}</p>
 						{/if}
 					</section>
 				{/if}
@@ -1231,6 +1423,12 @@
 				     here (see UX_WIREFRAME.md's Track Settings vs App
 				     Settings). -->
 
+				{#if hasPlayer && audioSource !== 'reference'}
+				<!-- F13: the mixer balances the synthesized mix's own parts —
+				     meaningless with no player at all (a PDF-only piece), and
+				     just as meaningless while the bottom bar is actually
+				     playing the reference recording's single audio track
+				     instead. -->
 				<section class="menu-section">
 					<h3>{m.piece_mix()}</h3>
 					<div class="segmented" role="group" aria-label={m.piece_mix_mode()}>
@@ -1287,6 +1485,7 @@
 						</button>
 					{/if}
 				</section>
+				{/if}
 			</aside>
 		{/if}
 
@@ -1483,6 +1682,16 @@
 		margin-top: 0.5rem;
 	}
 
+	.status-note {
+		margin: 0.5rem 0 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.status-note--error {
+		color: var(--danger);
+	}
+
 	.status-card {
 		max-width: 520px;
 		margin: 2.5rem auto 0;
@@ -1605,6 +1814,11 @@
 	.segmented button.active {
 		background: var(--accent);
 		color: var(--accent-contrast);
+	}
+
+	.segmented button:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
 
 	.empty-note {

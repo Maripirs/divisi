@@ -34,7 +34,7 @@ export const PIECES: Piece[] = [
 	{
 		id: 'lacrymosa',
 		title: 'Lacrymosa',
-		composer: 'Mozart — Requiem',
+		composer: 'Mozart, Requiem',
 		collection: 'demo',
 		pdfUrl: '/fixtures/demo/Mozart_Lacrymosa_from_Requiem_SATB_with_piano.pdf',
 		// Sourced from MusicXML, not the bundled MIDI (still present alongside

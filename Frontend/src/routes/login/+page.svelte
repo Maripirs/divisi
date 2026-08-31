@@ -135,8 +135,7 @@
 	{/if}
 
 	<p class="note">
-		{m.login_no_account_needed()}
-		<a href={lh('/welcome')}>{m.login_back_to_welcome()}</a>.
+		<a href={lh('/welcome')}>{m.login_back_to_welcome()}</a>
 	</p>
 </main>
 

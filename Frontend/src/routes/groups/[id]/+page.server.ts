@@ -263,32 +263,115 @@ export const actions: Actions = {
 		return { success: true, form: 'removeMember' };
 	},
 
-	// Admin-only, full replace (`PUT /library/pieces/{id}/default-tempo`) —
-	// the tempo a track's player starts at, until someone changes it locally
-	// (see `piece/[id]/+page.svelte`'s "Reset to default"). A blank field
-	// clears it back to "use the MIDI file's own tempo".
-	updateDefaultTempo: async ({ request, locals, fetch }) => {
+	// Admin-only. One panel, one action, for everything the Tracks tab used
+	// to split across a title/composer/YouTube editor and a separate
+	// default-tempo editor: title/composer/youtube_url/default_tempo_bpm go
+	// to `PATCH /library/pieces/{id}` as a full replace (blank
+	// composer/youtube_url/tempo clears them — same "Reset to default"
+	// tempo the player uses, see `piece/[id]/+page.svelte`). A newly chosen
+	// music file and/or PDF go through the same
+	// upload → submit → approve → distribute chain as `uploadTrack` below,
+	// so picking just one of the two file inputs replaces only that file —
+	// the Backend's `upload_version` carries the untouched slot forward.
+	updatePieceDetails: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const pieceId = String(form.get('pieceId') ?? '');
-		const raw = String(form.get('defaultTempoBpm') ?? '').trim();
-		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'defaultTempo' });
-		const defaultTempoBpm = raw ? Number(raw) : null;
-		if (raw && (!Number.isFinite(defaultTempoBpm) || defaultTempoBpm! <= 0)) {
-			return fail(400, { error: m.groups_enter_valid_tempo(), form: 'defaultTempo' });
+		const title = String(form.get('title') ?? '').trim();
+		const composer = String(form.get('composer') ?? '').trim();
+		const youtubeUrl = String(form.get('youtube_url') ?? '').trim();
+		const tempoRaw = String(form.get('defaultTempoBpm') ?? '').trim();
+		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'pieceDetails' });
+		if (!title) return fail(400, { error: m.groups_upload_name_required(), form: 'pieceDetails' });
+		const defaultTempoBpm = tempoRaw ? Number(tempoRaw) : null;
+		if (tempoRaw && (!Number.isFinite(defaultTempoBpm) || defaultTempoBpm! <= 0)) {
+			return fail(400, { error: m.groups_enter_valid_tempo(), form: 'pieceDetails' });
 		}
+
+		const musicFile = form.get('file');
+		const pdfFile = form.get('pdf_file');
+		const hasMusic = musicFile instanceof File && musicFile.size > 0;
+		const hasPdf = pdfFile instanceof File && pdfFile.size > 0;
+		// The edit panel's file cards' "Remove" — a hidden `'1'`/`''` field per
+		// slot, set only when that slot's Remove button was actually clicked
+		// (see `+page.svelte`'s file-slot markup). Ignored for a slot that
+		// also got a new file this same submit — picking a replacement always
+		// wins over an earlier Remove click.
+		const removeMusic = form.get('remove_file') === '1' && !hasMusic;
+		const removePdf = form.get('remove_pdf_file') === '1' && !hasPdf;
 
 		try {
 			await backendFetch(
 				locals.token,
-				`/library/pieces/${pieceId}/default-tempo`,
-				{ method: 'PUT', body: JSON.stringify({ default_tempo_bpm: defaultTempoBpm }) },
+				`/library/pieces/${pieceId}`,
+				{
+					method: 'PATCH',
+					body: JSON.stringify({
+						title,
+						composer: composer || null,
+						youtube_url: youtubeUrl || null,
+						default_tempo_bpm: defaultTempoBpm
+					})
+				},
 				fetch
 			);
+
+			if (hasMusic || hasPdf || removeMusic || removePdf) {
+				const versionBody = new FormData();
+				if (hasMusic) versionBody.set('file', musicFile);
+				if (hasPdf) versionBody.set('pdf_file', pdfFile);
+				if (removeMusic) versionBody.set('remove_file', 'true');
+				if (removePdf) versionBody.set('remove_pdf_file', 'true');
+				let versionRes: Response;
+				try {
+					versionRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces/${pieceId}/versions`, {
+						method: 'POST',
+						headers: { Authorization: `Bearer ${locals.token}` },
+						body: versionBody
+					});
+				} catch {
+					return fail(503, { error: m.errors_could_not_reach_server(), form: 'pieceDetails' });
+				}
+				if (!versionRes.ok) {
+					const body = (await versionRes.json().catch(() => ({}))) as { detail?: string };
+					return fail(versionRes.status, {
+						error: body.detail ?? m.upload_failed({ status: versionRes.status }),
+						form: 'pieceDetails'
+					});
+				}
+				const versionId = (await versionRes.json()).id as string;
+				await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
+				await backendFetch(locals.token, `/library/versions/${versionId}/approve`, { method: 'POST' }, fetch);
+				await backendFetch(
+					locals.token,
+					`/library/pieces/${pieceId}/versions/${versionId}/distribute`,
+					{ method: 'POST' },
+					fetch
+				);
+			}
 		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'defaultTempo' });
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'pieceDetails' });
 			throw err;
 		}
-		return { success: true, form: 'defaultTempo' };
+		return { success: true, form: 'pieceDetails' };
+	},
+
+	// Admin-only, `DELETE /library/pieces/{id}` — the whole track, not just
+	// one of its files (that's the `remove_file`/`remove_pdf_file` flags on
+	// `updatePieceDetails` above). Every version, distribution, annotation,
+	// and markup mark on it goes with it — see the Backend's `delete_piece`
+	// for exactly what that cleans up.
+	deleteTrack: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const pieceId = String(form.get('pieceId') ?? '');
+		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'deleteTrack' });
+
+		try {
+			await backendFetch(locals.token, `/library/pieces/${pieceId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'deleteTrack' });
+			throw err;
+		}
+		return { success: true, form: 'deleteTrack' };
 	},
 
 	// F5, admin-only: uploads a real track (music file, PDF, or both) and

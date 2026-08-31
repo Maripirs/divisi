@@ -135,4 +135,8 @@ export interface LibraryEntryOut {
 	 * `Backend/app/api/schemas/library.py`'s `LibraryEntryOut`. */
 	has_music: boolean;
 	has_pdf: boolean;
+	/** Original uploaded filenames, display-only — safe to expose, unlike
+	 * the storage-relative paths those booleans are computed from. */
+	music_file_name: string | null;
+	pdf_file_name: string | null;
 }
