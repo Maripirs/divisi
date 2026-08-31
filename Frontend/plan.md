@@ -871,15 +871,23 @@ FluidSynth engine the player route uses).
       "your part" (`VoicePart`) focus the editor has no concept of; plain
       per-part sliders + an even reset is the right scope for a
       correction tool. `mixVolumes` persists across a reload.
-- [ ] **Playback cursor in `EditorScoreView`.** New optional
-      `playbackWholeNotes` prop: while playing, drive the OSMD cursor from
-      the audio position instead of the selection `selectedOnset`; restore
-      the selection marker on stop. Port the player's follow-scroll +
-      expose a `scrollCursorIntoView()` for a "scroll to cursor" button.
-- [ ] **Edit-during-playback.** Keep the currently-loaded audio playing on
-      an edit; mark the parsed MIDI stale; show a subtle "restart to hear
-      your edits" hint; reload (and resume near the current bar, or restart
-      if past the new end) on the next play or seek.
+- [x] **Playback cursor in `EditorScoreView`.** (2026-08-31) New optional
+      `playbackWholeNotes` prop. One shared OSMD cursor: `placeCursor()`
+      drives it from the audio position while playing (cheap `walkCursorTo`,
+      only `reset()`s on a backward seek — same shape as `ScoreView`), and
+      falls back to `parkSelectionCursor()` on stop, so the selection marker
+      is suppressed during playback and restored after. Follow-scroll ported
+      and simplified (here `.score-container` is itself the scroller, no
+      ancestor walk): recenters on every new system via
+      `cursorElement.style.top`, nudges horizontally otherwise; a
+      wheel/touchmove disengages it; `scrollCursorIntoView()` (exported)
+      re-engages. "Scroll to cursor" button in the transport row.
+- [x] **Edit-during-playback.** (2026-08-31) Covered by the audio-pipeline
+      commit: an edit only re-serializes `workingXml` (the synth keeps
+      playing untouched), `audioStale` derives true, the transport shows the
+      hint, and `syncAudioToModel()` on the next play/seek reloads preserving
+      the play state and clamping the resume point to the (possibly shorter)
+      new duration.
 - [ ] **Note preview.** Add `midiNoteOn` / `midiNoteOff` (or a
       `previewNote(midi, ms)`) to `MidiPlayer` on a dedicated preview
       channel. Editor calls it on click-select, arrow-key nav to a pitched
@@ -960,7 +968,7 @@ fetching or required accounts.
   - [x] Task 3c — key / clef / per-note accidental. `EditableScore` gains `setAccidental(index, alter)` (single notehead, not the chord: rewrites `<pitch><alter>` + `<note><accidental>` in DTD order, `natural` written explicitly, changes sounding pitch), `setKey(index, fifths)` (−7..7, applied to **every part** at the selected note's measure — a key change is global), `setClef(index, {sign, line})` (selected note's part + staff only; `number` attr only when the part declares `<staves>` > 1), plus `keyAt`/`clefAt` readers for the toolbar. UX decision made (human, 2026-08-31): both key and clef act on the **selected note's measure** — bar 1 edits the piece-initial value, a later bar inserts a change from that bar onward. New `findOrCreateAttributes` places a fresh `<attributes>` at measure start (after a leading `<print>`/`<barline location="left">`) with children in DTD order. All ops refuse no-ops / out-of-range without touching the DOM. UI: third toolbar row (accidental buttons ♭♭ ♭ ♮ ♯ ♯♯, key stepper, clef presets Treble/Bass/Alto/Tenor), each via `applyEdit`, active state from the in-effect value. No new keyboard shortcuts (digit keys taken by durations, `handleKeydown` frozen). New `src/lib/musicxml/editableScore.test.ts` (jsdom, 15 tests). New en/es i18n keys.
   - [x] Tasks 4-9 (2026-08-31) — `EditableScore.exportMusicXml()` (declaration + partwise DOCTYPE on top of `serialize()`, 2 tests); save via new `piece/[id]/edit/save/+server.ts` → `POST /library/pieces/{id}/versions` (draft only, no auto submit/approve/distribute — the plan's review-flow note), then `goto` back to the piece page; unsaved-changes guard (`beforeNavigate` `confirm()` + `beforeunload`, both off `dirty`); "Edit music" entry points in the `groups/[id]` Tracks admin panel (when `track.has_music`) and the piece page practice-setup drawer (new `canEditMusic` from `resolve/+server.ts`, same owner/admin rule as the editor route's `load`); en/es keys added, `piece_editor_coming_soon` removed; `check` + `build` + 55-test vitest suite all green.
   - Edit/save/export loop (tasks 1-9) done. **F14 reopened 2026-08-31** — its "play back inside the editor" acceptance criterion was never implemented; now expanded to a full transport + note-preview + full-screen shell. New Claude task list under "**Tasks — Claude (reopened 2026-08-31 …)**" above; resume from the first unchecked one.
-  - Reopened checklist: shell (`fe2cc95`), working-score→audio + `MidiPlayer` lifecycle + transport bar + tempo + per-part mix panel all done 2026-08-31 (one commit). **Next unchecked: playback cursor in `EditorScoreView`**, then edit-during-playback, note preview, i18n/final green.
+  - Reopened checklist: shell (`fe2cc95`); working-score→audio + `MidiPlayer` lifecycle + transport bar + tempo + per-part mix + edit-during-playback in one commit 2026-08-31; playback cursor + follow-scroll + scroll-to-cursor in the next commit. **Next unchecked: note preview**, then i18n/final green.
   - Known follow-ups from task 2: MIDI-sourced tracks open as a lossy `convertAllParts` approximation (16th-grid quantized rhythm, table-based enharmonics) — a later task may add a "came from MIDI" hint using the returned `sourceFormat`. `parseError` card shows raw detail (`HTTP 500`, parser message) like `ScoreView` does.
   - Working method (from 2026-08-31): tasks built inline in the main session, no subagents; commit + breadcrumb update per task.
 - 2026-08-31: **F14 reopened.** Live-testing the editor surfaced that its own "play back inside the editor" acceptance criterion was never implemented — there was no Claude task for it, and the milestone had been treated as code-complete pending only the human live-test. Human asked for the full version: play the working score in the editor with a real transport (play/stop, seek, tempo, per-part SATB+accompaniment mix), preview a note's sound when it's selected or re-pitched, and a focused full-screen shell matching the practice player. Audio path settled without a new engine: `EditableScore.serialize()` → `parseMusicXmlFile()` (already emits `ParsedMIDI`) → the player route's `MidiPlayer`. New Claude task list added under F14; the full-screen shell task is done this session but left uncommitted at the reopen. This pass is desktop-first; a phone layout for the toolbars/mix panel is a follow-up.

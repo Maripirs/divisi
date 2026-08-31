@@ -77,6 +77,7 @@
 	// way with its `busy` flag).
 	let reRendering = $state(false);
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
+	let scoreView: EditorScoreView | undefined = $state();
 
 	// F14 reopened: in-editor playback. The audio path is the same one the
 	// player route uses, fed from the working model rather than a file:
@@ -875,9 +876,11 @@
 
 				<div class="editor-scroll">
 					<EditorScoreView
+						bind:this={scoreView}
 						xml={workingXml}
 						scoreTheme={$resolvedTheme}
 						{selectedOnset}
+						{playbackWholeNotes}
 						onPickNote={handlePickNote}
 						bind:rendering={reRendering}
 						fill
@@ -940,6 +943,17 @@
 								<span>{formatTime(durationMs)}</span>
 							</div>
 						</div>
+
+						<button
+							class="icon-btn"
+							onclick={() => scoreView?.scrollCursorIntoView()}
+							aria-label={m.piece_scroll_to_cursor()}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<circle cx="12" cy="12" r="3" />
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+							</svg>
+						</button>
 
 						<div class="tempo-mini" role="group" aria-label={m.piece_tempo()}>
 							<button

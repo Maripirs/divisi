@@ -36,6 +36,7 @@
 		scoreTheme = 'light',
 		rendering = $bindable(false),
 		selectedOnset = undefined,
+		playbackWholeNotes = undefined,
 		onPickNote = undefined,
 		fill = false
 	}: {
@@ -55,6 +56,13 @@
 		// `parkSelectionCursor`). A plain number, not the note object, keeps
 		// this component ignorant of the editable model.
 		selectedOnset?: number | undefined;
+		// F14 reopened: while the editor is playing back, the page drives this
+		// with the audio position (whole notes from the start). The single
+		// OSMD cursor is shared — when this is set it tracks playback and the
+		// selection marker is suppressed; back to `undefined` on stop restores
+		// the selection marker. Follow-scroll keeps it in view; the page's
+		// "scroll to cursor" button calls `scrollCursorIntoView()`.
+		playbackWholeNotes?: number | undefined;
 		// Called when the user clicks a notehead. The page resolves the hit
 		// to a `<note>` via `EditableScore.findByOnset` and updates selection.
 		onPickNote?: (hit: {
@@ -105,10 +113,17 @@
 		pointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(scoreTheme));
 		container.addEventListener('click', handlePick);
+		// A manual scroll/zoom means "let me read where I want" — stop
+		// yanking the view back to the cursor until "scroll to cursor" is
+		// pressed again.
+		container.addEventListener('wheel', disengageFollow, { passive: true });
+		container.addEventListener('touchmove', disengageFollow, { passive: true });
 	});
 
 	onDestroy(() => {
 		container?.removeEventListener('click', handlePick);
+		container?.removeEventListener('wheel', disengageFollow);
+		container?.removeEventListener('touchmove', disengageFollow);
 		osmd = undefined;
 	});
 
@@ -164,12 +179,21 @@
 		}
 		cursor.show();
 		cursor.reset();
-		const target = selectedOnset;
+		walkCursorTo(selectedOnset);
+	}
+
+	// Step the shared cursor forward to the last entry at or before `target`
+	// (whole notes). Assumes the caller has positioned it at or before
+	// `target` already (both callers `reset()` first when needed). OSMD's
+	// cursor only moves via next()/previous(), no direct jump.
+	function walkCursorTo(target: number): void {
+		const cursor = osmd?.cursor;
+		if (!cursor) return;
 		let guard = 0;
 		while (
 			cursor.iterator.currentTimeStamp.RealValue < target &&
 			!cursor.iterator.EndReached &&
-			guard++ < 10000
+			guard++ < 100000
 		) {
 			cursor.next();
 			if (cursor.iterator.currentTimeStamp.RealValue > target) {
@@ -177,6 +201,93 @@
 				break;
 			}
 		}
+	}
+
+	// Playback cursor: drive the shared cursor from the audio position. Only
+	// `reset()`s when seeking backward — this runs every animation frame while
+	// playing, so re-walking from 0 each call would be needlessly expensive
+	// for the common case of just advancing. Same shape as `ScoreView`'s
+	// `setCursorTimestamp`.
+	function drivePlaybackCursor(target: number): void {
+		const cursor = osmd?.cursor;
+		if (!cursor) return;
+		cursor.show();
+		const current = () => cursor.iterator.currentTimeStamp.RealValue;
+		if (Math.abs(current() - target) < 1e-6) return;
+		if (target < current()) cursor.reset();
+		walkCursorTo(target);
+	}
+
+	// Places the shared cursor for whichever mode is active — playback while
+	// `playbackWholeNotes` is set, otherwise the selection marker. Called
+	// after every re-engrave/zoom/theme change (OSMD rebuilds the cursor with
+	// the sheet) and whenever either input moves.
+	function placeCursor(): void {
+		if (!osmd || !renderedOnce) return;
+		if (playbackWholeNotes !== undefined) {
+			drivePlaybackCursor(playbackWholeNotes);
+			followCursorIfNeeded();
+		} else {
+			parkSelectionCursor();
+		}
+	}
+
+	// MARK: - Follow-scroll (ported from ScoreView, simplified — here the
+	// `.score-container` is itself the scroll region, no ancestor walk).
+
+	// On by default so playback keeps the cursor in view; a manual wheel/
+	// touch/scroll disengages it (the page's "scroll to cursor" button
+	// re-engages via `scrollCursorIntoView`).
+	let following = true;
+	// OSMD writes an absolute, scroll-independent px offset to
+	// `cursorElement.style.top` — constant along a system, changing only when
+	// the cursor moves to a new system/page. Tracking it recenters on every
+	// new row, not just once the cursor scrolls off screen. Reset on a fresh
+	// load and when playback toggles.
+	let lastCursorSystemTop: number | undefined;
+
+	function currentCursorSystemTop(): number | undefined {
+		const raw = osmd?.cursor.cursorElement?.style.top;
+		if (!raw) return undefined;
+		const parsed = parseFloat(raw);
+		return Number.isNaN(parsed) ? undefined : parsed;
+	}
+
+	function jumpToCursor(): void {
+		const element = osmd?.cursor.cursorElement;
+		if (!element || !container) return;
+		const el = element.getBoundingClientRect();
+		const box = container.getBoundingClientRect();
+		container.scrollTop += el.top + el.height / 2 - (box.top + box.height / 2);
+		container.scrollLeft += el.left + el.width / 2 - (box.left + box.width / 2);
+	}
+
+	function followCursorIfNeeded(): void {
+		if (!following) return;
+		const element = osmd?.cursor.cursorElement;
+		if (!element || !container) return;
+		const top = currentCursorSystemTop();
+		if (top !== undefined && top !== lastCursorSystemTop) {
+			lastCursorSystemTop = top;
+			jumpToCursor();
+			return;
+		}
+		const el = element.getBoundingClientRect();
+		const box = container.getBoundingClientRect();
+		if (el.left < box.left || el.right > box.right) jumpToCursor();
+	}
+
+	/** Re-engages follow and brings the cursor back into view — for the
+	 * page's "scroll to cursor" control, since reading ahead is expected to
+	 * lose the cursor off screen. */
+	export function scrollCursorIntoView(): void {
+		following = true;
+		lastCursorSystemTop = currentCursorSystemTop();
+		jumpToCursor();
+	}
+
+	function disengageFollow(): void {
+		following = false;
 	}
 
 	// Re-engrave whenever `xml` changes — the editor hands a freshly
@@ -197,9 +308,11 @@
 			.then(() => {
 				osmdRef.render();
 				renderedOnce = true;
-				// OSMD rebuilds the cursor with the sheet, so re-place the
-				// selection marker after every re-engrave.
-				parkSelectionCursor();
+				// A fresh sheet: the first system counts as "changed" again.
+				lastCursorSystemTop = undefined;
+				// OSMD rebuilds the cursor with the sheet, so re-place it
+				// (playback or selection) after every re-engrave.
+				placeCursor();
 			})
 			.catch((e: unknown) => {
 				loadError = String(e);
@@ -220,17 +333,21 @@
 		osmd.setOptions(osmdOptions(theme));
 		osmd.Zoom = level;
 		osmd.render();
-		parkSelectionCursor();
+		lastCursorSystemTop = undefined;
+		placeCursor();
 	});
 
-	// Re-park when the selection moves without an edit — keyboard
-	// ArrowLeft/ArrowRight between notes changes `selectedOnset` but not
-	// `xml`, so the re-engrave effect above doesn't run.
+	// Re-place the cursor when the selection or the playback position moves
+	// without an edit — keyboard nav changes `selectedOnset`, and the RAF
+	// loop changes `playbackWholeNotes`, neither of which touches `xml`, so
+	// the re-engrave effect above doesn't run.
 	$effect(() => {
 		const onset = selectedOnset;
+		const pb = playbackWholeNotes;
 		void onset;
+		void pb;
 		if (!osmd || !renderedOnce) return;
-		parkSelectionCursor();
+		placeCursor();
 	});
 
 	function zoomBy(delta: number): void {
