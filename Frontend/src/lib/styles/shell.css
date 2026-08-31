@@ -61,6 +61,17 @@
 	gap: 0.5rem;
 }
 
+/* Brand stays pinned left; everything else (the OMR "job finished" alert,
+   then the settings gear) rides on the right. `min-width: 0` lets the
+   alert's own text ellipsis kick in instead of shoving the gear off-edge
+   on a narrow screen. */
+.brand-row-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-width: 0;
+}
+
 .brand,
 .settings-link {
 	display: flex;

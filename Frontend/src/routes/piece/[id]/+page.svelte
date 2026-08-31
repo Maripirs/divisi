@@ -200,6 +200,11 @@
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
+	// Bound out of `ScoreView`: true while OSMD re-engraves the score after a
+	// Practice Setup change. Used to dim/disable the drawer controls and show
+	// an "updating" hint right there, since the re-render blocks the main
+	// thread for a second or two and the tap otherwise looks ignored.
+	let scoreRendering = $state(false);
 	// F5: forced to whichever single pane exists when a piece doesn't have
 	// both — a stale/default 'pdf'/'player' pick from before this piece was
 	// opened must never select a pane this piece doesn't have. `!piece` is
@@ -1072,6 +1077,8 @@
 						<ScoreView
 							bind:this={scoreView}
 							bind:zoom={zoomLevel}
+							bind:rendering={scoreRendering}
+							showBadge={!menuOpen}
 							{xml}
 							{displayMode}
 							staffVisualStates={visibleStaffStates}
@@ -1184,6 +1191,18 @@
 					</button>
 				</header>
 
+				{#if scoreRendering}
+					<!-- Sticks to the top of the drawer as you scroll, so the
+					     "your tap landed, the score is redrawing" hint stays next
+					     to whichever control was just used. The controls below go
+					     `inert` + dimmed for the same second or two. -->
+					<div class="menu-updating" role="status" aria-live="polite">
+						<span class="menu-updating__dot" aria-hidden="true"></span>
+						{m.piece_updating_score()}
+					</div>
+				{/if}
+
+				<div class="menu-body" class:menu-body--updating={scoreRendering} inert={scoreRendering}>
 				{#if hasPlayer}
 				<!-- F13: tempo only means anything against the synthesized
 				     mix — a PDF-only piece (or one whose PDF view is showing
@@ -1407,6 +1426,7 @@
 					{/if}
 				</section>
 				{/if}
+				</div>
 			</aside>
 		{/if}
 
@@ -1791,6 +1811,66 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+
+	/* Holds every drawer section so they can all be dimmed/`inert` as one
+	   while the score re-engraves — keeps the drawer's own column gap. */
+	.menu-body {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+		transition: opacity 0.15s ease;
+	}
+	.menu-body--updating {
+		opacity: 0.45;
+		/* `inert` already blocks interaction; this is the belt-and-suspenders
+		   visual + a guard for anything that ignores `inert`. */
+		pointer-events: none;
+	}
+
+	.menu-updating {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: -0.375rem 0;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--surface-2);
+		color: var(--text);
+		font-size: 0.8125rem;
+		font-weight: 650;
+	}
+	.menu-updating__dot {
+		width: 0.55rem;
+		height: 0.55rem;
+		flex-shrink: 0;
+		border-radius: 50%;
+		background: var(--accent);
+		animation: menu-updating-pulse 0.9s ease-in-out infinite;
+	}
+	@keyframes menu-updating-pulse {
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: scale(0.75);
+		}
+		50% {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.menu-updating__dot {
+			animation: none;
+			opacity: 0.8;
+		}
+		.menu-body {
+			transition: none;
+		}
 	}
 
 	.menu-header h2 {

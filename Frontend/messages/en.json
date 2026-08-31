@@ -470,6 +470,7 @@
 	"piece_reference_loading": "Loading the reference recording…",
 	"piece_reference_unavailable": "Couldn't load the reference recording.",
 	"piece_loading_score": "Loading score...",
+	"piece_updating_score": "Updating score…",
 	"piece_not_found": "No piece found with that id.",
 	"piece_retry": "Try again",
 	"piece_load_error": "Couldn't load the piece.",
