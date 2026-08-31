@@ -1522,12 +1522,10 @@
 		color: var(--text);
 	}
 
+	/* Base `.track-card` layout + `.track-info` + `.piece-action*` now live
+	   in shell.css; only the corner-delete positioning stays local. */
 	.track-card {
 		position: relative;
-		flex-direction: row;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
 	}
 
 	.track-delete-corner {
@@ -1541,68 +1539,6 @@
 	.track-delete-corner-form {
 		display: flex;
 		gap: 0.35rem;
-	}
-
-	.track-info {
-		min-width: 0;
-	}
-
-	.piece-action {
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid var(--border);
-		border-radius: 50%;
-		background: var(--surface);
-		color: var(--text);
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.piece-action:hover {
-		border-color: var(--accent);
-		background: var(--surface-2);
-	}
-
-	.piece-action--primary {
-		border-color: var(--accent);
-		background: var(--accent);
-		color: var(--accent-contrast);
-	}
-
-	.piece-action--primary:hover {
-		background: var(--accent-hover);
-	}
-
-	.piece-action--sm {
-		width: 1.75rem;
-		height: 1.75rem;
-	}
-
-	.piece-action--sm svg {
-		width: 15px;
-		height: 15px;
-		margin-left: 0;
-	}
-
-	.piece-action--danger {
-		border-color: var(--danger);
-		color: var(--danger);
-	}
-
-	.piece-action--danger:hover {
-		background: color-mix(in srgb, var(--danger) 12%, var(--surface) 88%);
-		border-color: var(--danger);
-	}
-
-	.piece-action svg {
-		width: 20px;
-		height: 20px;
-		flex: 0 0 auto;
-		margin-left: -0.1rem;
 	}
 
 	/* Homework summary/collapsed-row styles moved to HomeworkCard.svelte;

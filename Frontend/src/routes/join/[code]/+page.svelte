@@ -173,51 +173,5 @@
 		padding: 0.5rem 0 1rem;
 	}
 
-	.track-card {
-		flex-direction: row;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-	}
-
-	.track-info {
-		min-width: 0;
-	}
-
-	.piece-action {
-		flex: 0 0 auto;
-		width: 2.25rem;
-		height: 2.25rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid var(--border);
-		border-radius: 50%;
-		background: var(--surface);
-		color: var(--text);
-		text-decoration: none;
-		cursor: pointer;
-	}
-
-	.piece-action:hover {
-		border-color: var(--accent);
-		background: var(--surface-2);
-	}
-
-	.piece-action--primary {
-		border-color: var(--accent);
-		background: var(--accent);
-		color: var(--accent-contrast);
-	}
-
-	.piece-action--primary:hover {
-		background: var(--accent-hover);
-	}
-
-	.piece-action svg {
-		width: 20px;
-		height: 20px;
-		flex: 0 0 auto;
-		margin-left: -0.1rem;
-	}
+	/* `.track-card`, `.track-info`, `.piece-action` now live in shell.css. */
 </style>
