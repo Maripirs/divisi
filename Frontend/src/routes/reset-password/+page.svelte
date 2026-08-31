@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { withSubmitting } from '$lib/utils/enhance';
-	import '$lib/styles/shell.css';
+	import AuthShell from '$lib/components/AuthShell.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import type { ActionData, PageData } from './$types';
@@ -14,11 +14,7 @@
 	let mismatch = $derived(passwordConfirm.length > 0 && password !== passwordConfirm);
 </script>
 
-<main class="shell">
-	<header class="shell-header">
-		<h1>{m.reset_password_title()}</h1>
-	</header>
-
+<AuthShell title={m.reset_password_title()}>
 	{#if !data.token}
 		<section class="card">
 			<p class="card-eyebrow">{m.reset_password_link_missing()}</p>
@@ -65,25 +61,4 @@
 			</button>
 		</form>
 	{/if}
-
-	<p class="note"><a href={lh('/login')}>{m.forgot_password_back_to_login()}</a></p>
-</main>
-
-<style>
-	.error {
-		margin: 0.25rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--danger);
-	}
-
-	.note {
-		margin: 0;
-		text-align: center;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
-
-	.note a {
-		color: var(--accent);
-	}
-</style>
+</AuthShell>
