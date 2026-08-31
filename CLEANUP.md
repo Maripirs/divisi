@@ -340,6 +340,28 @@ Effort XS. Risk XS.
   it). check + build clean, not browser-verified.
 - [ ] Step 4+ — TrackCard component itself still not extracted (CSS-only fold above,
   markup duplication remains).
+- [~] A5 (BottomSheet shell) — **not worth doing as specced.** C1 already
+  deleted the duplicate (`AnnotationModal`). Only `AnnotationSheet` uses the
+  bottom-sheet pattern now, and it deliberately can't import `shell.css`.
+  `SettingsDrawer` is a right-side slide-in drawer (different pattern),
+  `LanguageSwitcher` is an absolutely-positioned nav (not an overlay at all).
+  Extracting for one consumer = speculative abstraction. Deferred/dropped.
+- [~] Tier D — palette single-source: **investigated, needs a bigger change
+  than cleanup allows.** `theme.ts`'s `THEME_PALETTES` is load-bearing —
+  `ScoreView.svelte` reads the raw hex for SVG score-paint math
+  (`highlightedMutedInk` / `mixHex`), and `applyTheme()` pushes them as inline
+  props; `app.css`'s `:root[data-theme]` blocks are the pre-hydration paint
+  source. True single-sourcing wants a JS→CSS codegen step (no such build
+  machinery in the repo), or `getComputedStyle` reads (fragile — JS needs
+  *both* palettes at once, CSS exposes only the active one), or a guard test
+  (no test runner installed — `package.json` has no `test` script / vitest).
+  All are bootstrap-level changes unverifiable without a browser. Same risk
+  class as the deferred `shell.css` core/layout split. Left as-is.
+- [~] Tier D — `.hero` dedup: **not worth doing.** `join/[code]`'s `.hero` is
+  a false match (`flex-direction: row` centering wrapper, coincidental name).
+  `join/` vs `welcome/` share a centered-column header but diverge in 3 of 6
+  props (`gap`, `padding-top`, h1 `font-size`). Consolidating saves ~4 lines
+  for added indirection. Left as-is.
 
 ## Step 3 execution plan (scoped 2026-08-30)
 
