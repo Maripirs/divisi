@@ -9,10 +9,17 @@ instead, the same call shape as `audiveris.py` and
 
 oemer only processes single images, not multi-page PDFs, so this engine
 is a single-page (first page only) fallback for when Audiveris isn't
-available — see `pipeline.py` for the chaining logic. Not installed in
-this dev sandbox (see Backend/plan.md's B8 human task): the rasterization
-step is real and tested, but "oemer correctly transcribes a real scanned
-page" is unverified until it's actually installed.
+available — see `pipeline.py` for the chaining logic. Doesn't ship with
+the app — see Backend/README.md's OMR section for the local install
+recipe and known macOS-only gotchas (a `pip install oemer` dependency
+issue, a CoreML/onnxruntime crash, an OpenCV shape-mismatch bug in
+oemer's own code). Verified end-to-end on macOS (B8), but its output is
+structurally weaker than Audiveris's: it flattens every staff into one
+part (SATB notes come out stacked as chords in a single `Piano` part,
+not four separate parts) and has no OCR step at all, so lyrics are never
+captured. Confirms the engine priority in `pipeline.py` — this is a
+last-resort fallback, not a substitute for Audiveris on real choral
+scores.
 """
 
 from __future__ import annotations

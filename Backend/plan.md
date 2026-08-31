@@ -2,7 +2,9 @@
 
 Separate from the native iOS app's own plan (paused 2026-08-27, condensed into `Frontend/plan.md`'s "iOS app" section during 2026-08-28's repo cleanup). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Status:** B1–B15 shipped (a couple of the earlier ones got informal follow-up expansions afterward — real piece uploads under B4, a rehearsal-schedule addition under B13). Open threads, none Claude-blocking: B7 and B8 each have one human-only task left (see their sections); B11's ephemeral-disk gap and B14's email-provider/OAuth-publish steps are tracked in Backlog. **B15 is built but not deployed** — its migration hasn't run against the real production DB yet, a human-only step (see B15's own section).
+**Status:** B1–B15 shipped (a couple of the earlier ones got informal follow-up expansions afterward — real piece uploads under B4, a rehearsal-schedule addition under B13). B11's long-standing ephemeral-disk gap is now closed in code: `app/storage/files.py` writes uploads to Neon Object Storage (committed 9d7ef53), with a remaining human step to set the `AWS_*` env vars on Render (see Backlog). **B8 is now fully verified end-to-end** (both human tasks done — see its section). Other open threads, none Claude-blocking: B7 has one human-only task left (see its section); B14's email-provider and OAuth-consent-publish steps are in Backlog. **B15 is built but not deployed** — its migration hasn't run against the real production DB yet, a human-only step (see B15's own section).
+
+The web frontend is the active product; OMR (B8) is scaffolded but backlogged. See `Frontend/plan.md` and the repo-root `README.md`.
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -49,9 +51,9 @@ ResponsibilitySignup   id, responsibility_date_id, responsibility_role_id, user_
                  admin audit; coverage = needed_count - active signups, per role
 ```
 
-Stack: Python/FastAPI, Postgres (SQLAlchemy + Alembic migrations), local-disk file storage
-for MVP (swappable to S3 later), JWT auth, background-task-based OMR job tracking (not a
-full queue yet), docker-compose for local dev.
+Stack: Python/FastAPI, Postgres (SQLAlchemy + Alembic migrations), file storage via Neon
+Object Storage (S3-compatible) with a local-disk fallback, JWT auth, background-task-based
+OMR job tracking (not a full queue yet), docker-compose for local dev.
 
 ## Milestones
 
@@ -64,13 +66,14 @@ full queue yet), docker-compose for local dev.
 | B5 | Annotations + sharing | ✅ Done |
 | B6 | Guest access (join links) | ✅ Done |
 | B7 | MIDI → audio + notation rendering pipeline | ⏳ Claude tasks done; waiting on human to listen to a rendered stem |
-| B8 | OMR pipeline | ⏳ Claude tasks done; waiting on human to install Audiveris + supply a real scanned PDF |
+| B8 | OMR pipeline | ✅ Done (verified end-to-end on macOS) |
 | B9 | Homework / assignments | ✅ Done |
 | B10 | Guest privacy controls (password + homework visibility) | ✅ Done |
-| B11 | Deploy to hosting | ✅ Live at `divisi.onrender.com` (known gap: no persistent disk) |
+| B11 | Deploy to hosting | ✅ Live at `divisi.onrender.com`; ephemeral-disk gap closed by the Neon Object Storage swap (9d7ef53) |
 | B12 | Group page configuration | ✅ Done |
 | B13 | Responsibilities (+ regular rehearsal schedule) | ✅ Done |
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
+| B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
 
 ### B1 — Backend scaffold [x]
 
@@ -131,7 +134,7 @@ full queue yet), docker-compose for local dev.
 - [x] `LibraryEntryOut`/`PieceOut` gain `composer`/`youtube_url`/`has_music`/`has_pdf` (computed booleans, never a raw storage path)
 - [x] Tests: music-only/PDF-only/both/neither upload combinations, metadata round-trip, new file routes (200/404/access-gated) — `tests/test_library.py`, `tests/test_guest.py`
 - Verified: migrations clean up/down/up; `pytest` 133/135 (2 pre-existing failures are the known local FluidSynth-not-installed gap); a live curl round trip covering all four upload combinations plus the full group upload → submit → approve → distribute → authenticated-and-guest-file/pdf-route chain
-- Durable storage (Neon Object Storage swap) intentionally **not** done this pass — see Backlog; `app/storage/files.py` stays on local disk
+- Durable storage (Neon Object Storage swap) was deferred here and landed later — done 2026-08-31, committed 9d7ef53; see B11 and Backlog
 
 ### B5 — Annotations + sharing [x]
 
@@ -195,20 +198,23 @@ code was Swift/AudioToolbox.
 **Tasks — Human:**
 - [ ] Listen to a rendered stem set and confirm the GM soundfont's sound quality holds up for practice use
 
-### B8 — OMR pipeline [ ]
+### B8 — OMR pipeline [x]
 
 **Acceptance criteria:**
-- [ ] Uploading a scanned sheet-music PDF produces a job id; polling it eventually returns MusicXML/MIDI output for a real test PDF
+- [x] Uploading a scanned sheet-music PDF produces a job id; polling it eventually returns MusicXML/MIDI output for a real test PDF
 
 **Tasks — Claude:**
 - [x] `app/omr/audiveris.py` (subprocess wrapper), `app/omr/oemer.py` (subprocess wrapper — wraps the CLI, not a direct import; oemer has no other stable entry point), `pipeline.py` (chooses/chains engine, normalizes to MusicXML)
 - [x] Background-task job tracking (DB row: pending/running/done/failed + result path)
 - [x] `/omr/jobs` POST (upload) + `/omr/jobs/{id}` GET (status/result) endpoints
 - [x] Follow-up: `POST /omr/jobs/{id}/import` turns a `done` job's result into a real `Piece`/`PieceVersion`
+- [x] `audiveris.py` now passes `-constant org.audiveris.omr.Main.sheetStepTimeOut=<audiveris_step_timeout_seconds>` (default 1800s) — Audiveris's own 120s-per-step default is too tight for real scores, not a sandbox artifact (see log below)
 
 **Tasks — Human:**
-- [ ] Supply a real scanned sheet-music PDF to test the pipeline end-to-end
-- [ ] Install Audiveris locally (or confirm container approach) — licensing/install path not yet decided
+- [x] Supply a real scanned sheet-music PDF to test the pipeline end-to-end — used `fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf` (real 4-part choral score, not a toy image)
+- [x] Install Audiveris locally — GitHub release `.dmg` (bundles its own JRE, no separate JDK needed); recipe in `Backend/README.md`'s "OMR engines" section
+
+**Verified 2026-08-31 (macOS, arm64):** Both engines installed and run end-to-end against the real fixture above (see log entry below for the full debugging trail — sandbox CPU/IO throttling, the 120s timeout, missing Tesseract language data, and two real bugs in oemer 0.1.8 itself). Audiveris correctly recovers the piece's 4-part (SATB) structure and OCR's its lyrics/title/composer; oemer's output flattens every staff into one part with notes stacked as chords and captures no lyrics at all (it has no OCR step) — confirms `pipeline.py`'s existing engine priority (Audiveris primary, oemer a last-resort single-page fallback) is the right call, not just a paper design.
 
 ### B9 — Homework / assignments [x]
 
@@ -250,11 +256,13 @@ Gets a real, reachable URL for the Frontend to talk to. Free-tier stack: Render 
 service, deploys the existing `Dockerfile` via a root-level `render.yaml`) + Neon (free
 Postgres — chosen over Render's own since Render's expires after 30 days, Neon's doesn't).
 
-**Known limitation, accepted for now:** Render's free plan has no persistent disk, so
-`STORAGE_DIR` (uploaded piece files + the B7 render cache) is wiped on every
-restart/redeploy. Neon Object Storage (S3-compatible) is provisioned as the eventual fix
-(`AWS_*` credentials already in `Backend/.env`, not committed) but `app/storage/files.py`
-still only writes to local disk — actual storage-swap code is tracked in Backlog.
+**Storage (was a known limitation, now resolved in code):** Render's free plan has no
+persistent disk, so `STORAGE_DIR` is wiped on every restart/redeploy. As of 2026-08-31
+(committed 9d7ef53) `app/storage/files.py` writes uploaded piece files to Neon Object
+Storage (S3-compatible, `uploads` bucket) when the `AWS_*` env vars are set, falling back
+to local disk otherwise; the render cache / OMR scratch stay local and are fine to lose.
+Remaining human step: set `AWS_*` (+ `S3_BUCKET`) on Render and re-upload the files lost
+to earlier disk wipes — see Backlog.
 
 **Partial fix landed for bundled/demo pieces specifically** (not new uploads): a committed,
 read-only `Backend/fixtures/` directory (copy of the repo-root `Fixtures/`) that
@@ -269,6 +277,7 @@ both a local Postgres and the real live service: seed → distribute → guest m
 **Acceptance criteria:**
 - [x] The backend is reachable at a public HTTPS URL, `/health` returns 200 — live at `https://divisi.onrender.com/health`
 - [x] Migrations run automatically on deploy (Dockerfile's CMD runs `alembic upgrade head` before `uvicorn`)
+- [x] Uploaded files survive a redeploy — via the Neon Object Storage swap (9d7ef53); needs `AWS_*` set on Render
 - [x] A real end-to-end smoke test against the deployed instance (register → login → create group → guest join-code fetch) passes, confirmed against the real live service including CORS from the real Frontend origin (`https://divisi.maripi.net`)
 
 **Tasks — Claude:**
@@ -411,7 +420,7 @@ fast-follow (see Backlog), deliberately not built this pass.
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
-- ~~Wire `app/storage/files.py` to Neon's Object Storage~~ **DONE 2026-08-31** (committed 9d7ef53): `save_file` writes to the `uploads` bucket (`obj/…` keys) when the `AWS_*` env vars are set, `resolve_source_path` materializes them through a local cache, serving routes 404 (not 500) on a missing file. Falls back to local disk when unconfigured. Storage credential minted (`divisi-backend`, `storage:read`+`storage:write` on `production`); `Backend/.env` has the `AWS_*` values and a live save→list→load→delete round-trip against the real bucket passed. **Remaining human step:** set `AWS_ENDPOINT_URL_S3` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`, `S3_BUCKET`) on Render, redeploy, then re-upload the 6 lost PDFs.
+- ~~Wire `app/storage/files.py` to Neon's Object Storage~~ **DONE 2026-08-31** (committed 9d7ef53; credential verified 8bc2e31). `save_file` → `uploads` bucket (`obj/…` keys) when `AWS_*` set, else local disk; `resolve_source_path` materializes via a local cache; serving routes 404 (not 500) on missing bytes. **Remaining human step:** set `AWS_ENDPOINT_URL_S3` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_BUCKET` on Render, redeploy, then re-upload the 6 lost modification-version PDFs.
 - Object-storage orphans: `delete_piece` leaves `obj/…` files in the bucket. Add a sweep-by-prefix cleanup (or delete-on-piece-delete).
 - Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
 - Responsibilities: recurrence rules + lazy date generation (needs a real scheduled-job runner, which doesn't exist yet)
@@ -426,7 +435,9 @@ fast-follow (see Backlog), deliberately not built this pass.
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
-- 2026-08-31: Wired `app/storage/files.py` to Neon Object Storage (the long-standing B11 ephemeral-disk gap), prompted by a production 500 on a piece PDF whose bytes were lost to a disk wipe. `save_file` → `uploads` bucket when `AWS_*` set, else local disk unchanged; `obj/…` served via a local materialize-cache; all raw-file routes now 404 cleanly when bytes are missing instead of letting `FileResponse` 500. Added `boto3`. Not committed; storage credential + Render env vars are a pending human step (see Backlog). Tests: touched-area suite 57/57 (the lone OMR "no engine" failure is pre-existing/machine-specific). Also nulled the 6 dead `pdf_file_path`s (and 2 dead `file_path`s, fell back to the fixture original) directly in the production DB so the app is coherent — those 6 modification versions now need their PDFs re-uploaded once storage is live.
+- 2026-08-31: Closed out B8 (OMR) — installed both engines locally on macOS and ran a real 4-part choral PDF (`fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf`) through each end-to-end. Debugging trail: (1) initial runs looked stuck/timing-out — turned out the harness's Bash sandbox throttles CPU/IO 10-50x, confirmed by rerunning outside it; (2) even unsandboxed, Audiveris still hit its own 120s-per-step default on real content (`HEADERS` took ~19min, `HEADS` ~30min) — not an environment artifact, just too tight for dense scores, so `audiveris.py` now always passes `-constant …sheetStepTimeOut=<audiveris_step_timeout_seconds>` (1800s default); (3) Audiveris produced zero lyrics silently until Tesseract's `eng.traineddata` was installed (empty by default, no error); (4) oemer hit two real bugs in its own unmaintained 0.1.8 code — a CoreML/onnxruntime crash and an OpenCV `HoughLinesP` shape-mismatch `IndexError` — both reproduced, root-caused, and worked around (patches don't survive a fresh `pip install`, so they're documented as a re-apply-after-install step, not shipped as a repo fix). End state: Audiveris correctly recovers 4 separate SATB parts + OCR'd lyrics/title/composer; oemer completes but flattens everything into one chord-stacked part with no lyrics — confirms the existing engine-priority design rather than changing it. Recipe for both installs + the oemer patches now in `Backend/README.md`'s "OMR engines" section. No test suite changes (this was an install/config verification pass, not new application code beyond the timeout constant).
+
+- 2026-08-31: Wired `app/storage/files.py` to Neon Object Storage (closing the long-standing B11 ephemeral-disk gap), prompted by a production 500 on a piece PDF whose bytes were lost to a disk wipe. `save_file` → `uploads` bucket when `AWS_*` set, else local disk unchanged; `obj/…` served via a local materialize-cache; all raw-file routes now 404 cleanly when bytes are missing instead of letting `FileResponse` 500. Added `boto3`. Committed 9d7ef53; storage credential minted and verified (8bc2e31). Remaining human step: set `AWS_*` on Render and re-upload the 6 modification-version PDFs that were nulled in the prod DB to keep the app coherent (2 dead `file_path`s fell back to the fixture original). Tests: touched-area suite 57/57.
 
 - 2026-08-29: Built B15 (piece markup: pen strokes + stamps) to feed Frontend F11, after the human tried F4's annotations and asked for something closer to piaScore's real drawing tool instead — additive, not a replacement. `pytest` 5/5 new, 143/145 full suite (2 pre-existing FluidSynth gaps). Not deployed — migration hasn't run against production yet, tracked as a human task on B15 itself.
 
@@ -447,15 +458,6 @@ fast-follow (see Backlog), deliberately not built this pass.
 - 2026-08-28: B12 built — backfill migration preserved homework's old `guest_homework_visible` value into its `audience`; `tracks` defaults enabled/everyone (it had no gate before this); `members`/`about`/`responsibilities` default members-only. Backfill correctness verified by hand-inserting pre-migration rows and checking the migrated output, not just "the migration runs." `pytest` 80/80 (5 new). Frontend intentionally left on the old field this pass (backend-only scope).
 - 2026-08-28: Seeded the human's real group ("San Francisco City Chorus") with all 7 fixture pieces via direct model insert (no upload UI yet at the time — see F5 for the eventual real path).
 - 2026-08-28: Scoped B12+B13 with the human off the now-deleted proposal doc, deliberately narrowed (no recurrence, no notifications, no swap/approval — see Backlog).
-- 2026-08-27: Closed out B11 while the human was away. Found and fixed two real production issues, not just merged code: `backend/deploy` was stale (missing all CORS/Homework/B10 work) — merged into `main`; and the first redeploy attempt broke the build because Render's dashboard-set `rootDir: Backend` prefixes onto `render.yaml`'s `dockerContext` (see B11's own note above). Verified live against the real deployed service end to end. `pytest` 75/75.
-- 2026-08-27: B10 built (guest privacy controls). `pytest` 75/75 (9 new).
-- 2026-08-27: B9 built (Homework/assignments), to unblock Frontend F4. `pytest` 66/66 (7 new).
-- 2026-08-27: Added CORS middleware — no cross-origin allowance existed at all before this, needed by Frontend F2's guest-route work.
-- 2026-08-27: B8 follow-up — `POST /omr/jobs/{id}/import` turns a `done` OMR job into a real `Piece`/`PieceVersion` (imports the derived MIDI, not MusicXML, since B7's manifest pipeline is MIDI-based). Factored `Piece`/`PieceVersion` creation + access control out of `library.py` into `app/services/pieces.py`. `pytest` 59/59 (7 new).
-- 2026-08-27: B8 built (OMR) — `pipeline.py` tries the configured engine first, falls back to the other only on "binary missing," never on a real parse failure (so a genuine bad scan is never silently masked). Neither engine is installed in this sandbox, so wrapper logic is tested but real transcription quality is unverified pending the human's two open tasks. `pytest` 53/53 (16 new).
-- 2026-08-27: B6 built — short 8-char join codes (unambiguous alphabet) over an opaque token, per the human's preference; unknown-code and not-distributed-to-this-group both return the same generic 404 (no oracle); a simple in-process rate limiter (20 req/min/IP) as an explicit MVP tradeoff. `pytest` 38/38 (7 new).
-- 2026-08-27: B7 built — `app/rendering/` ports `MIDIParser.swift`/`MusicXMLConverter.swift` to Python, verified byte-for-byte-equivalent against the same fixture; stems verified sample-count-aligned. Human task (listen to a rendered stem) still open. `pytest` 31/31.
-- 2026-08-27: Added B7 (rendering pipeline) ahead of B6, renumbering the old OMR milestone to B8 — rendering became critical path for the new web-player priority, OMR stayed lower-priority.
-- 2026-08-27: Product pivot (iOS app paused in favor of the web player) added B6 (guest access), renumbering old OMR B6→B7.
-- 2026-08-26: **B1–B5 built and approved** (scaffold, auth, groups, pieces/versions/distribution/review, annotations+sharing). Real gotcha worth keeping: hit a `passlib`/`bcrypt`≥4.1 incompatibility in B2, dropped `passlib` for direct `bcrypt` calls; renamed the domain's "Choir" concept to "Group" throughout before B3. Every milestone verified via a real Postgres migrate-up/down/up plus a manual end-to-end smoke test, not just `pytest`.
-- 2026-08-26: Backend plan created, split from the root `plan.md`. Domain model agreed with the human. Starting B1.
+- 2026-08-27: Closed out B11 (deploy) while the human was away — fixed two real production issues along the way: a stale `backend/deploy` branch (missing CORS/Homework/B10) merged into `main`, and a broken redeploy from Render's `rootDir: Backend` prefixing onto `render.yaml`'s `dockerContext` (see B11's note). Verified live end to end. `pytest` 75/75.
+- 2026-08-27: Built B6–B10 in sequence — B6 guest join codes (short 8-char, generic 404 with no oracle, in-process rate limiter); B7 rendering pipeline (`app/rendering/` ports the Swift `MIDIParser`/`MusicXMLConverter`, byte-equivalent against fixtures); B8 OMR (engine wrappers + job tracking + `/omr/jobs/{id}/import`, no engine installed here so transcription quality unverified); B9 Homework; B10 guest privacy controls. Added CORS middleware (none existed before). Milestone renumbering from the product pivot: old OMR B6→B7→B8 as B6 (guest) then B7 (rendering) were inserted ahead of it.
+- 2026-08-26: Backend plan split from the root `plan.md`; domain model agreed. **B1–B5 built and approved** (scaffold, auth, groups, pieces/versions/distribution/review, annotations+sharing). Gotchas worth keeping: a `passlib`/`bcrypt`≥4.1 incompatibility in B2 (dropped `passlib` for direct `bcrypt`); renamed the domain's "Choir" concept to "Group" before B3. Each milestone verified via a real Postgres migrate up/down/up plus a manual smoke test, not just `pytest`.

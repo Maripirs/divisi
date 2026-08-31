@@ -1,11 +1,13 @@
-"""End-to-end tests of the /omr job endpoints. Since neither Audiveris
-nor oemer is installed in this dev sandbox (Backend/plan.md's B8 human
-task — install path not yet decided), the "happy path" here is a real,
-unmocked run of a job through to `failed` with an `OmrEngineUnavailable`
-message: that's genuinely what this environment does today, and it's the
-real code path (job tracking, background task wiring, status polling),
-not a stand-in for one. `test_omr_pipeline.py` covers the engine-chaining
-and MusicXML/MIDI-producing logic in isolation with mocked engine calls.
+"""End-to-end tests of the /omr job endpoints. The "happy path" here is a
+real, unmocked run of a job through to `failed` with an
+`OmrEngineUnavailable` message — `shutil.which` is forced to report both
+binaries missing (see `test_job_runs_to_failed_when_no_engine_is_installed`)
+rather than relying on neither actually being installed, since either or
+both may be present on a given dev machine now (Backend/README.md's OMR
+engines section). This still exercises the real code path (job tracking,
+background task wiring, status polling), not a stand-in for one.
+`test_omr_pipeline.py` covers the engine-chaining and MusicXML/MIDI-
+producing logic in isolation with mocked engine calls.
 """
 
 import io
@@ -23,7 +25,8 @@ def test_create_job_requires_auth(client):
     assert response.status_code == 401
 
 
-def test_job_runs_to_failed_when_no_engine_is_installed(client):
+def test_job_runs_to_failed_when_no_engine_is_installed(client, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)
     headers = _register_and_login(client, "omr@example.com")
 
     created = client.post(

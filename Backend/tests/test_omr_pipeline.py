@@ -2,8 +2,9 @@
 Audiveris/oemer install: MusicXML normalization, MusicXML->MIDI
 conversion (real music21, not mocked), PDF page rasterization (real
 PyMuPDF, not mocked), and the engine-selection/fallback logic (with the
-actual engine calls monkeypatched, since neither engine binary is
-installed in this dev sandbox — see Backend/plan.md's B8 human task).
+actual engine calls monkeypatched — deliberately, not because the real
+binaries are unavailable; either or both may be installed on a given dev
+machine now, see Backend/README.md's OMR engines section).
 """
 
 import zipfile
@@ -126,9 +127,12 @@ def test_run_omr_does_not_fall_through_on_a_real_engine_error(tmp_path, monkeypa
     assert calls == ["audiveris"]
 
 
-def test_run_omr_raises_when_no_engine_is_installed(tmp_path):
-    # Real (unmocked) run: neither audiveris nor oemer is on PATH in this
-    # sandbox, so this exercises the actual "nothing available" path.
+def test_run_omr_raises_when_no_engine_is_installed(tmp_path, monkeypatch):
+    # Force the "nothing on PATH" branch deterministically rather than
+    # relying on neither binary actually being installed — that's no
+    # longer a safe assumption on every dev machine (see Backend/README.md's
+    # OMR engines section), so a real local install shouldn't break this.
+    monkeypatch.setattr("shutil.which", lambda name: None)
     with pytest.raises(OmrEngineUnavailable):
         pipeline.run_omr(tmp_path / "in.pdf", tmp_path)
 

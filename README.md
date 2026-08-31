@@ -1,25 +1,33 @@
 # Divisi
 
-An iOS app for choir practice: play a SATB MIDI file, follow your voice part
-as a scrolling piano-roll, and pop it out into Picture-in-Picture so you can
-practice while your phone does something else.
+Practice tooling for choirs: play a SATB score as synchronized audio + engraved
+notation, follow your own voice part, mark up the sheet music, and share
+practice tracks with a group via a join link (no login needed to listen).
 
-Architecture and reused patterns are inspired by
-[LyricsPiP](../karaoke) — the `PiPController` / `PiPSettingsStore` /
-sync-engine shape carries over, with MIDI playback and parsed
-note/lyric events standing in for Spotify + LRCLIB.
-
-See `plan.md` for the milestone-by-milestone build plan.
+**This is primarily a web project.** A native iOS app was the original form of
+Divisi; it is paused/backlogged as of 2026-08-27. The pure-algorithm parts of
+its Swift code (`DivisiKit/`) live on as the reference the web ports were
+derived from — see `Frontend/plan.md`'s "iOS app" section for that history.
 
 ## Structure
 
-- `App/` — SwiftUI app entry point, views, assets
-- `DivisiKit/` — MIDI parsing, playback, sync engine, PiP plumbing
+- `Frontend/` — **SvelteKit web app** (the product). Client-side MIDI parsing +
+  in-browser synthesis, OpenSheetMusicDisplay notation with a playback-synced
+  cursor, PDF markup, groups/homework/responsibilities, guest join links.
+  Deployed to Cloudflare Workers at **https://divisi.maripi.net**. See
+  `Frontend/README.md` and `Frontend/plan.md`.
+- `Backend/` — **FastAPI service**: accounts, groups, piece versioning +
+  distribution, annotations, homework, responsibilities, guest access, and a
+  MIDI→audio/MusicXML rendering pipeline. Deployed on Render at
+  **https://divisi.onrender.com**. An OMR (scanned-PDF → MusicXML) pipeline is
+  scaffolded but backlogged. See `Backend/README.md` and `Backend/plan.md`.
+- `Fixtures/` — synthetic SATB MIDI test fixtures shared by both apps
+  (`generate.py`, mido). `Backend/fixtures/` is a committed copy baked into the
+  backend image.
+- `DivisiKit/`, `App/`, `Divisi.xcodeproj`, `project.yml` — the paused iOS app.
 
-## Building
+## Working in this repo
 
-```
-xcodegen generate
-xcodebuild -project Divisi.xcodeproj -scheme Divisi -sdk iphonesimulator \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
-```
+Each app has its own README with setup/run instructions and its own `plan.md`
+tracking milestones and backlog. `CLEANUP.md` is a scratch doc for an in-flight
+de-duplication pass across the frontend and backend.

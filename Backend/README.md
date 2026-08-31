@@ -1,18 +1,84 @@
 # Divisi Backend
 
-FastAPI service for two things (see `plan.md` for the full milestone breakdown):
+FastAPI service backing the Divisi web app. See `plan.md` for the full
+milestone breakdown. What it does:
 
-1. **OMR** — convert scanned sheet-music PDFs to MIDI/MusicXML via Audiveris/oemer.
-2. **Accounts + sync** — individual and group (e.g. choir) accounts, groups distributing
-   piece versions to members, private per-user annotations with optional sharing.
-3. **Rendering** — a `PieceVersion`'s MIDI file into per-voice-part audio stems (via
+1. **Accounts + groups** — individual and group (e.g. choir) accounts, groups
+   distributing reviewed piece versions to members, homework, responsibilities,
+   weekly notes, per-page visibility settings, account security (password reset,
+   Google OAuth scaffold).
+2. **Annotations + markup** — private per-user score annotations with optional
+   peer sharing; personal freehand PDF pen/stamp marks.
+3. **Guest access** — a group's `join_code` resolves (no login) to its
+   distributed pieces and enabled pages, via `/guest/*` (see `plan.md` B6).
+4. **Rendering** — a `PieceVersion`'s MIDI into per-voice-part audio stems (via
    FluidSynth) plus multi-part MusicXML, cached per version (see `plan.md` B7).
-4. **Guest access** — a group's `join_code` resolves (no login) to its distributed
-   pieces and their rendered stems/MusicXML, via `/guest/*` (see `plan.md` B6).
+   The current frontend actually synthesizes client-side and does not wire this
+   up (see `Frontend/plan.md` F5), but the pipeline and manifest endpoint exist.
+5. **OMR** — scanned-PDF → MusicXML/MIDI via Audiveris (primary) or oemer
+   (single-page fallback). Verified end-to-end on macOS against a real 4-part
+   choral scan — see "OMR engines" below for the local install recipe, and
+   `plan.md` B8 for the full write-up (Audiveris correctly recovers per-part
+   structure and lyrics; oemer flattens parts and has no lyrics, confirming
+   it's a last-resort fallback only).
+
+Uploaded files go to **Neon Object Storage** (S3-compatible, `uploads` bucket)
+when the `AWS_*` env vars are set, and fall back to local disk otherwise; the
+render cache and OMR scratch are always local (and ephemeral on Render). See
+`app/storage/files.py`.
 
 Rendering shells out to the `fluidsynth` binary (not just the `mido` Python package) —
 install it locally with `brew install fluid-synth` (macOS) or `apt install fluidsynth`
 (Debian/Ubuntu); the Docker image installs it automatically.
+
+## OMR engines
+
+Neither engine is a Python dependency (`pyproject.toml`) — both are external
+CLIs the wrappers `shutil.which()` and shell out to, same pattern as
+`fluidsynth`. Install path verified on macOS (arm64):
+
+**Audiveris** (preferred — multi-page PDFs, correct per-part structure, OCR'd
+lyrics):
+1. Download the latest `Audiveris-<version>-macosx-<arch>.dmg` from
+   [GitHub releases](https://github.com/Audiveris/audiveris/releases/latest)
+   (ships its own bundled JRE — no separate JDK install needed) and drag
+   `Audiveris.app` into `/Applications`.
+2. Clear the quarantine flag (it's unsigned) and put its CLI on `PATH`:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Audiveris.app
+   ln -s /Applications/Audiveris.app/Contents/MacOS/Audiveris /opt/homebrew/bin/audiveris
+   ```
+3. Install Tesseract's English language data — without this, the `TEXTS`
+   step runs but silently produces zero lyrics (no error, no warning beyond
+   a one-line "collection of supported languages is empty" log):
+   ```bash
+   mkdir -p ~/Library/Application\ Support/AudiverisLtd/audiveris/tessdata
+   curl -sL -o ~/Library/Application\ Support/AudiverisLtd/audiveris/tessdata/eng.traineddata \
+     https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+   ```
+4. The 120s-per-step default (`sheetStepTimeOut`) is too tight for real
+   scores — the app already passes `audiveris_step_timeout_seconds` (1800s
+   default, see `app/core/config.py`) on every run, no manual flag needed.
+
+**oemer** (fallback — single page only, flattens parts, no lyrics):
+```bash
+# onnxruntime-gpu (oemer's declared dep) has no macOS wheel — install the
+# CPU package first, then oemer itself with --no-deps to skip that pull:
+pip install onnxruntime opencv-python-headless matplotlib pillow scipy \
+  "scikit-learn>=1.2" typing-extensions
+pip install --no-deps oemer
+```
+Two known bugs in oemer 0.1.8 itself (unmaintained since ~2022), both
+reproduced and worked around locally during B8 testing — no upstream fix
+available, so these need re-patching in `site-packages/oemer/` after any
+fresh install until oemer cuts a new release:
+- `inference.py` hardcodes `CoreMLExecutionProvider` on macOS, which fails
+  mid-inference on Apple Silicon with recent onnxruntime (`error code: -1`);
+  drop it and use `["CPUExecutionProvider"]` on `sys.platform == "darwin"`.
+- `bbox.py`'s `find_lines()` assumes `cv2.HoughLinesP` always returns shape
+  `(N, 1, 4)`; modern `opencv-python-headless` (5.x) can return `(N, 4)`
+  directly, causing `IndexError: invalid index to scalar variable`. Reshape
+  defensively: `line = np.asarray(line).reshape(-1)` before indexing.
 
 ## Local dev
 
@@ -37,6 +103,23 @@ uvicorn app.main:app --reload
 alembic revision --autogenerate -m "message"
 alembic upgrade head
 ```
+
+## Tests
+
+Black-box, API-level, in `tests/`. Run with `.venv/bin/python -m pytest -q`.
+The full suite is slow (~15+ min) — background it, or run a subset. OMR tests
+force `shutil.which` to report both engines missing where that matters, so
+they pass regardless of whether Audiveris/oemer happen to be installed
+locally.
+
+## Deployment
+
+Live at **https://divisi.onrender.com** (Render free web service, deploys
+`Dockerfile` via the repo-root `render.yaml`; Postgres is Neon, set
+`DATABASE_URL` manually). The Docker `CMD` runs `alembic upgrade head` before
+`uvicorn`, so migrations apply on deploy. Render's free plan has no persistent
+disk — durable uploads must go to Neon Object Storage via the `AWS_*` env vars
+(see `render.yaml` and `app/storage/files.py`).
 
 ## Local test accounts
 

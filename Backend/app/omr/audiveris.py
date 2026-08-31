@@ -2,11 +2,13 @@
 
 Audiveris is a Java application, not a Python package, so there's no
 "import" path here — this shells out to its CLI, the same pattern as
-`app/rendering/synth.py` uses for FluidSynth. Not installed in this dev
-sandbox (see Backend/plan.md's B8 human task, install path not yet
-decided): the subprocess plumbing below is real, but "Audiveris correctly
-transcribes a real scanned score" is unverified until that install
-happens and a real test PDF is run through it.
+`app/rendering/synth.py` uses for FluidSynth. Doesn't ship with the app —
+see Backend/README.md's OMR section for the local install recipe.
+Verified end-to-end on macOS against a real 4-part choral scan (B8):
+correctly recovers per-part (SATB) structure and OCR'd lyrics, provided
+the per-step timeout is raised (see `audiveris_step_timeout_seconds`) and
+Tesseract's `eng.traineddata` is installed — without it, the TEXTS step
+runs but silently produces no lyrics at all.
 """
 
 from __future__ import annotations
@@ -40,8 +42,18 @@ def run_audiveris(source_path: Path, output_dir: Path) -> Path:
         raise OmrEngineUnavailable(f"'{bin_name}' executable not found on PATH")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    timeout = get_settings().audiveris_step_timeout_seconds
     result = subprocess.run(
-        [bin_name, "-batch", "-export", "-output", str(output_dir), str(source_path)],
+        [
+            bin_name,
+            "-batch",
+            "-export",
+            "-constant",
+            f"org.audiveris.omr.Main.sheetStepTimeOut={timeout}",
+            "-output",
+            str(output_dir),
+            str(source_path),
+        ],
         capture_output=True,
         text=True,
     )

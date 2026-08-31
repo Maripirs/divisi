@@ -62,12 +62,22 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     # B8: OMR engine selection. "audiveris" is preferred (handles
-    # multi-page PDFs natively); "oemer" is a single-page-only fallback.
-    # Neither binary is installed by default — see Backend/plan.md's B8
-    # human task (install path not yet decided).
+    # multi-page PDFs natively, correctly recovers multi-part structure
+    # and lyrics via OCR); "oemer" is a single-page-only fallback whose
+    # output flattens all staves into one part with no lyrics. Neither
+    # binary ships with the app — see Backend/README.md's OMR section for
+    # the local install recipe (verified working on macOS).
     omr_engine: str = "audiveris"
     audiveris_bin: str = "audiveris"
     oemer_bin: str = "oemer"
+    # Audiveris's own per-step timeout (its `sheetStepTimeOut` constant)
+    # defaults to 120s, which real (non-trivial) scores routinely exceed —
+    # e.g. HEADERS (OCR-based clef/key/time recognition) and HEADS took
+    # several minutes each on a real 4-part choral PDF during B8 testing.
+    # 120s isn't a sandbox/CPU artifact, it's just too tight for dense
+    # content in general, so this is passed through on every run rather
+    # than left at Audiveris's default.
+    audiveris_step_timeout_seconds: int = 1800
 
     # Where a password-reset link points — the deployed Frontend origin in
     # production (set via Render env var), the local dev server otherwise.
