@@ -321,8 +321,18 @@ Effort XS. Risk XS.
   Minor intended changes: disabled `.btn` now dims app-wide (several pages did
   this locally, login/reset never did); auth-page `.error` top margin
   0.25rem → shell.css's 0.4rem. `check` + `build` clean, not browser-verified.
+- [x] B-fe-3 (client API plumbing → `$lib/api/client.ts`) — committed (f0a3e90).
+  New `lib/api/client.ts`: `ApiError` base (the 4 `XApiError` classes now
+  extend it, `(status, message)` shape unchanged so all `err instanceof`
+  call sites untouched), `errorDetail`, `jsonInit`, `fetchOr503`,
+  `makeCall`. Deduped from `annotations.ts`, `pieceMarkup.ts`, `guest.ts`,
+  `server/backend.ts` (~70 lines of copy removed). `guest.ts`'s `guestFetch`
+  stays a thin `fetchOr503` wrapper (maps 404/401 to distinct error types
+  itself). No behavior change. check + build clean.
 - [ ] Step 4+ — TrackCard component itself still not extracted (CSS-only fold above,
   markup duplication remains).
+- [ ] B-fe-4 — `groups/[id]/+page.server.ts` `formAction` wrapper (~28
+  identical `try/catch BackendApiError → fail()` blocks). Next up.
 
 ## Step 3 execution plan (scoped 2026-08-30)
 
