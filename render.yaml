@@ -8,13 +8,17 @@
 # string when creating the service from this blueprint.
 #
 # Storage note (see B9, and B11's fixtures_dir addition): the free plan has
-# no persistent disk, so STORAGE_DIR's contents (user-uploaded piece files,
-# render cache) are wiped on every restart/redeploy — still a known MVP
-# limitation for genuinely new uploads. Bundled/demo pieces are unaffected:
-# their source files are committed at Backend/fixtures/ (a copy of the
-# repo-root Fixtures/) and baked into the image by the Dockerfile, rather
-# than living in STORAGE_DIR, so they survive restarts with no
-# object-storage work needed.
+# no persistent disk, so STORAGE_DIR's contents (render cache, OMR job
+# scratch, the object-storage read cache) are wiped on every
+# restart/redeploy. That's fine — they all regenerate. Durable
+# user-uploaded piece files instead go to Neon Object Storage (S3-compatible,
+# `uploads` bucket on the `production` branch), enabled by the AWS_* env
+# vars below; see app/storage/files.py. Bundled/demo pieces are baked into
+# the image at Backend/fixtures/ by the Dockerfile and need neither.
+#
+# The four AWS_* vars come from a Neon storage credential (Console -> Branch
+# -> Credentials, scopes storage:read + storage:write). Unset them to fall
+# back to local-disk storage.
 #
 # dockerContext stays ./Backend, not the repo root: the actual deployed
 # service has its own `rootDir: Backend` set (a dashboard-level setting
@@ -38,3 +42,13 @@ services:
         generateValue: true
       - key: STORAGE_DIR
         value: /srv/data/storage
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false # from the Neon storage credential
+      - key: AWS_ACCESS_KEY_ID
+        sync: false # from the Neon storage credential (token_id)
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false # from the Neon storage credential (s3_secret_access_key)
+      - key: AWS_REGION
+        value: us-east-2
+      - key: S3_BUCKET
+        value: uploads

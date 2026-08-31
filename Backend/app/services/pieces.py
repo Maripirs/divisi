@@ -150,10 +150,11 @@ def delete_piece(piece: Piece, db: Session) -> None:
     exception: nullable by design ("an assignment can exist before a piece
     is picked" — see `Homework`'s doc comment), so a homework entry
     survives its piece being deleted, just pointing at nothing again.
-    Storage files (`file_path`/`pdf_file_path`) are deliberately left on
-    disk, not deleted — same as this codebase's existing "Render's
-    free-tier restart wipes storage_dir anyway" stance elsewhere; nothing
-    else here depends on cleaning them up immediately.
+    Storage files (`file_path`/`pdf_file_path`) are deliberately left where
+    they are, not deleted — local-disk ones get wiped on the next free-tier
+    restart anyway, and the object-storage ones become harmless orphans
+    (small, private bucket; a sweep-by-prefix cleanup pass is a Backlog
+    item). Nothing else here depends on reclaiming them immediately.
     """
     version_ids = [v.id for v in db.query(PieceVersion.id).filter(PieceVersion.piece_id == piece.id)]
     annotation_ids = [a.id for a in db.query(Annotation.id).filter(Annotation.piece_id == piece.id)]

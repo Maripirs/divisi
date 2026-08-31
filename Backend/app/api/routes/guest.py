@@ -42,9 +42,21 @@ from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 from app.services.pages import require_guest_page_access
 from app.services.responsibilities import role_coverage
-from app.storage.files import resolve_source_path
+from app.storage.files import resolve_existing_source_path
 
 router = APIRouter(prefix="/guest", tags=["guest"], dependencies=[Depends(rate_limit_guest)])
+
+
+def _source_path_or_404(file_path: str, what: str):
+    """Local path for a stored file, 404ing (not 500ing) when the bytes are
+    missing from storage. Mirrors `routes/library.py`'s helper."""
+    try:
+        return resolve_existing_source_path(file_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{what} is missing from storage — it may need to be re-uploaded",
+        ) from exc
 
 
 def _get_group_by_join_code_or_404(join_code: str, db: Session) -> Group:
@@ -229,7 +241,7 @@ def get_guest_piece_manifest(
     if not is_midi_file(version.file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This version's file isn't a MIDI file")
 
-    source_path = resolve_source_path(version.file_path)
+    source_path = _source_path_or_404(version.file_path, "This piece's music file")
     try:
         manifest = render_manifest(version.id, source_path)
     except RenderError as exc:
@@ -263,7 +275,7 @@ def get_guest_piece_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
     if version.file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no music file")
-    return FileResponse(resolve_source_path(version.file_path))
+    return FileResponse(_source_path_or_404(version.file_path, "This piece's music file"))
 
 
 @router.get("/{join_code}/pieces/{piece_id}/pdf")
@@ -281,7 +293,7 @@ def get_guest_piece_pdf(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
     if version.pdf_file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no PDF")
-    return FileResponse(resolve_source_path(version.pdf_file_path))
+    return FileResponse(_source_path_or_404(version.pdf_file_path, "This piece's PDF"))
 
 
 @router.get("/{join_code}/pieces/{piece_id}/renders/{filename}")

@@ -164,4 +164,7 @@ def get_job_result(
     result_path = {"musicxml": job.result_musicxml_path, "midi": job.result_midi_path}.get(kind)
     if result_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not available")
-    return FileResponse(Path(get_settings().storage_dir) / result_path)
+    path = Path(get_settings().storage_dir) / result_path
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result file is missing from storage")
+    return FileResponse(path)

@@ -38,7 +38,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
-from app.storage.files import resolve_source_path
+from app.storage.files import resolve_existing_source_path
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
@@ -51,6 +51,19 @@ from app.services.pieces import (
 from app.storage.files import save_file
 
 router = APIRouter(prefix="/library", tags=["library"])
+
+
+def _source_path_or_404(file_path: str, what: str):
+    """Resolve a stored file to a local path, 404ing (not 500ing) when the
+    bytes are missing — an object-storage miss, or a legacy local upload
+    lost to a free-tier disk wipe. See `storage/files.py`."""
+    try:
+        return resolve_existing_source_path(file_path)
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{what} is missing from storage — it may need to be re-uploaded",
+        ) from exc
 
 
 @router.get("/ping")
@@ -444,7 +457,7 @@ def get_version_file(
     _require_piece_access(piece, current_user, db)
     if version.file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no music file")
-    return FileResponse(resolve_source_path(version.file_path))
+    return FileResponse(_source_path_or_404(version.file_path, "This version's music file"))
 
 
 @router.get("/versions/{version_id}/pdf")
@@ -460,7 +473,7 @@ def get_version_pdf(
     _require_piece_access(piece, current_user, db)
     if version.pdf_file_path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This version has no PDF")
-    return FileResponse(resolve_source_path(version.pdf_file_path))
+    return FileResponse(_source_path_or_404(version.pdf_file_path, "This version's PDF"))
 
 
 @router.get("/versions/{version_id}/manifest", response_model=RenderManifestOut)
@@ -481,7 +494,7 @@ def get_version_manifest(
     if not is_midi_file(version.file_path):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This version's file isn't a MIDI file")
 
-    source_path = resolve_source_path(version.file_path)
+    source_path = _source_path_or_404(version.file_path, "This version's music file")
     try:
         manifest = render_manifest(version_id, source_path)
     except RenderError as exc:

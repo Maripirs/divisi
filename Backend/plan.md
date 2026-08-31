@@ -411,7 +411,8 @@ fast-follow (see Backlog), deliberately not built this pass.
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
-- Wire `app/storage/files.py` to Neon's Object Storage (S3-compatible, already provisioned — credentials in `Backend/.env`) instead of local disk, to fix the free-tier ephemeral-disk gap. Still just the actual code + `boto3` dependency work, not started.
+- ~~Wire `app/storage/files.py` to Neon's Object Storage~~ **DONE 2026-08-31** (uncommitted): `save_file` writes to the `uploads` bucket (`obj/…` keys) when the `AWS_*` env vars are set, `resolve_source_path` materializes them through a local cache, serving routes 404 (not 500) on a missing file. Falls back to local disk when unconfigured. **Remaining human steps:** mint a Neon storage credential (Console → branch `production` → Credentials, scopes `storage:read`+`storage:write`), put the 4 `AWS_*` values in `Backend/.env` locally and on Render, redeploy. Existing pre-swap uploads stay broken — need re-upload.
+- Object-storage orphans: `delete_piece` leaves `obj/…` files in the bucket. Add a sweep-by-prefix cleanup (or delete-on-piece-delete).
 - Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
 - Responsibilities: recurrence rules + lazy date generation (needs a real scheduled-job runner, which doesn't exist yet)
 - Responsibilities: notifications/reminders (no notification infra of any kind exists yet)
@@ -424,6 +425,8 @@ fast-follow (see Backlog), deliberately not built this pass.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-31: Wired `app/storage/files.py` to Neon Object Storage (the long-standing B11 ephemeral-disk gap), prompted by a production 500 on a piece PDF whose bytes were lost to a disk wipe. `save_file` → `uploads` bucket when `AWS_*` set, else local disk unchanged; `obj/…` served via a local materialize-cache; all raw-file routes now 404 cleanly when bytes are missing instead of letting `FileResponse` 500. Added `boto3`. Not committed; storage credential + Render env vars are a pending human step (see Backlog). Tests: touched-area suite 57/57 (the lone OMR "no engine" failure is pre-existing/machine-specific). Also nulled the 6 dead `pdf_file_path`s (and 2 dead `file_path`s, fell back to the fixture original) directly in the production DB so the app is coherent — those 6 modification versions now need their PDFs re-uploaded once storage is live.
 
 - 2026-08-29: Built B15 (piece markup: pen strokes + stamps) to feed Frontend F11, after the human tried F4's annotations and asked for something closer to piaScore's real drawing tool instead — additive, not a replacement. `pytest` 5/5 new, 143/145 full suite (2 pre-existing FluidSynth gaps). Not deployed — migration hasn't run against production yet, tracked as a human task on B15 itself.
 

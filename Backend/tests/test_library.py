@@ -497,6 +497,27 @@ def test_version_pdf_route_200_when_present_404_when_absent(client):
     assert music.status_code == 404
 
 
+def test_version_pdf_route_404_not_500_when_bytes_missing_from_storage(client, monkeypatch):
+    # A version row can outlive its file: the free-tier disk gets wiped, or
+    # an object-storage key goes missing. The route must surface that as a
+    # clean 404, not let FileResponse raise a 500. See storage/files.py's
+    # resolve_existing_source_path.
+    headers = _register_and_login(client, "gonepdf@example.com")
+    upload = _upload_file(client, headers, include_music=False, include_pdf=True)
+    version_id = upload.json()["version"]["id"]
+    assert client.get(f"/library/versions/{version_id}/pdf", headers=headers).status_code == 200
+
+    from app.api.routes import library as library_routes
+
+    def _raise_missing(_path):
+        raise FileNotFoundError(_path)
+
+    monkeypatch.setattr(library_routes, "resolve_existing_source_path", _raise_missing)
+    gone = client.get(f"/library/versions/{version_id}/pdf", headers=headers)
+    assert gone.status_code == 404
+    assert "missing from storage" in gone.json()["detail"]
+
+
 def test_version_file_routes_access_gated_like_manifest(client):
     owner_headers = _register_and_login(client, "fileowner@example.com")
     stranger_headers = _register_and_login(client, "filestranger@example.com")

@@ -23,6 +23,32 @@ class Settings(BaseSettings):
     # `app/storage/files.py`'s `resolve_source_path`.
     fixtures_dir: str = "./fixtures"
 
+    # Neon Object Storage (S3-compatible) — the durable home for
+    # user-uploaded piece files, so they survive the free-tier ephemeral
+    # disk wipe that `storage_dir` doesn't. Populated from the AWS-standard
+    # env vars a Neon storage credential hands you (`neon env pull`, or the
+    # Console's "Download .env"); `S3_BUCKET` names the bucket
+    # (`uploads` on the project's `production` branch). All four AWS_* values
+    # unset → `object_storage_enabled` is False and everything falls back to
+    # local disk exactly as before (tests, local dev without credentials).
+    # Field names are the lowercased env vars — pydantic-settings matches
+    # them case-insensitively, so `AWS_ENDPOINT_URL_S3` fills
+    # `aws_endpoint_url_s3` with no alias needed.
+    aws_endpoint_url_s3: str = ""
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-2"
+    s3_bucket: str = "uploads"
+
+    @property
+    def object_storage_enabled(self) -> bool:
+        return bool(
+            self.aws_endpoint_url_s3
+            and self.aws_access_key_id
+            and self.aws_secret_access_key
+            and self.s3_bucket
+        )
+
     # Frontend origins allowed to call this API cross-origin (browser CORS).
     # Comma-separated in the env var. Defaults cover the SvelteKit dev
     # server (both plain-HTTP and the self-signed-HTTPS mode vite.config.ts
