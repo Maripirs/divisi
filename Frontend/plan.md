@@ -91,6 +91,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
+| F14 | In-app notation editor for a track's music | 🚧 In progress — spike done, engine decided (path 1: correction-only on OSMD, MusicXML-DOM model); editor build not started |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -663,6 +664,147 @@ pausing background video decode) so only its audio is ever heard.
       bottom bar, and that the reference recording is genuinely audio-only
       (nothing visible, just sound) on a real device
 
+### F14 — In-app notation editor for a track's music [ ]
+
+Requested 2026-08-31. Backend B8 (OMR) can now generate a track's music
+straight from its scanned PDF, but the output is rough (wrong accidentals,
+stray/missing notes, off rhythms) and today the only way to fix it is to
+download the file, edit it in desktop MuseScore/Finale, and re-upload. This
+milestone puts an editor *in the app* so an admin opens it on a track's
+music file, corrects the notation, and saves the result as a new draft
+version — no round trip through another program. The human chose a full
+in-app editor over the lighter options (external download/re-upload
+round-trip; embedding a third-party web editor like Flat.io/Soundslice)
+when asked.
+
+**Engine decision (2026-08-31, from the spike): path 1 — correction-only
+editor on OSMD, with a MusicXML-DOM editable model.** The spike
+(`/spike/f14-editor`, `src/lib/spike/musicXmlEdit.ts` — throwaway, delete
+once the real editor lands) proved the whole loop against the bundled
+`SFCC/The_Challenge_of_Thor_Elgar.musicxml` fixture in a real browser:
+click a notehead → OSMD `GraphicSheet.GetNearestNote` → resolve to a
+`<note>` in a parsed XML `Document` (by part id + staff + absolute
+whole-note onset, walked from `<divisions>`/`<backup>`/`<forward>`) →
+mutate that element (transpose ±1 semitone rewriting
+`<step>`/`<alter>`/`<octave>` + syncing `<accidental>`; delete = convert
+to `<rest>` of the same `<duration>` so nothing downstream shifts) →
+`osmd.load(serializedXml)` + `osmd.render()`. Verovio was not prototyped:
+the OSMD loop cleared every bar path 1 needs, and Verovio would add a
+~2 MB WASM payload to a page choir members open on phones, plus a
+MusicXML↔MEI round-trip that risks dropping the PDF-carry-forward and
+any data OMR emitted that we don't model. Findings that shape the build:
+
+- **OSMD stays a pure view.** The editable model is the XML `Document`
+  itself (mutate in place, re-serialize), *not* `$lib/musicxml/parser.ts`
+  (read-only, no serializer) and *not* OSMD's internal `Sheet` graph
+  (no edit API). Mutating the DOM leaves every element we don't touch
+  (layout hints, unmodelled OMR output, the structure) exactly as-is —
+  which is the whole point for "clean up an OMR result".
+- **Click → note identity needs part-awareness.** OSMD numbers staves
+  globally across the score; MusicXML `<staff>` is per-part. Map via
+  `sourceNote.ParentStaffEntry.ParentStaff.ParentInstrument.IdString`
+  (the MusicXML part id) + the in-instrument staff index + onset. A
+  naive staff-number match picks a note in the wrong part.
+- **Full re-render per edit is the main perf cost** — ~1.2 s on a
+  3,751-note orchestral reduction; an OMR page (tens–low-hundreds of
+  notes) will be far quicker, but debounce rapid edits and keep the
+  "updating…" affordance `ScoreView` already uses. OSMD has no partial
+  re-render.
+- **Rough edges to finish in the real editor:** re-highlighting the
+  edited note after re-render (the spike falls back to parking OSMD's
+  playback cursor on it); chord handling on delete (spike only promotes
+  the next chord member when the anchor note goes); accidental spelling
+  on transpose is a fixed sharp/flat table, no key-aware respelling;
+  duration edits (in path 1's set) not yet prototyped — straightforward
+  DOM-wise but they shift following onsets, so they need the same
+  measure-timing care `deleteToRest` took.
+
+For the record, the paths that were on the table, cheapest first:
+1. **Correction-only editor on our own render** — click a note, nudge its
+   pitch/duration, delete it, fix a clef/key/accidental; no engraving, no
+   adding measures from scratch. Built on OSMD (or Verovio for finer
+   coordinate control) + our parsers as the model. Covers ~all of the
+   "clean up an OMR result" use case with the least new surface.
+2. **Adopt an editing library** (e.g. a Verovio-based editor toolkit, or
+   an OSS fork of one) and wrap it. More capability, more integration and
+   licensing risk, larger bundle on a page choir members open on phones.
+3. **General-purpose editor from scratch** — full note entry, layout,
+   parts. Its own multi-month effort; almost certainly out of scope here.
+
+The spike (done 2026-08-31) picked path 1; everything below assumes it.
+
+**Save path:** the editor exports MusicXML and POSTs it to the existing
+`POST /library/pieces/{piece_id}/versions` (music-file slot), which already
+creates a `draft` version with `source: modification` and carries the
+PDF slot forward — the same endpoint F5's edit panel and B8's OMR
+auto-import use. No new Backend endpoint needed for a first cut. The
+current web player synthesizes client-side and sniffs MIDI-vs-MusicXML by
+magic bytes, so a MusicXML version plays without the B7 render pipeline
+(which only renders MIDI sources — a known gap tracked in Backlog).
+
+**Entry points:** an "Edit music" action in the group Tracks tab's admin
+edit panel (`groups/[id]`, next to Replace/Delete), and on the piece page
+for a user viewing their own/admin track. Opens a new `ssr: false` route,
+e.g. `/piece/[id]/edit`, mirroring the player route's client-only setup.
+Gated to the piece's review authority (group admin, or the owner for a
+personal piece) — the same `require_piece_access` check the upload path
+already enforces server-side.
+
+**Acceptance criteria:**
+- [x] The spike's engine decision is written into this section, with the
+      reason, before any editor code lands (done 2026-08-31)
+- [ ] An admin can open the editor on a track that has a music file, from
+      both the group Tracks edit panel and the piece page; a member with no
+      edit rights on that track never sees the entry point, and the route
+      itself 403s/redirects them if reached directly
+- [ ] The editor loads the track's current music file and renders it as
+      editable notation (for a MIDI-source track, via the existing
+      MIDI→MusicXML conversion; for a MusicXML-source track, directly)
+- [ ] Within the agreed scope (path 1: at minimum change a note's pitch,
+      change its duration, delete a note, and fix key/clef/accidental) the
+      admin can make an edit and see it reflected in the rendered notation
+- [ ] Playing back inside the editor reflects the edits (reuses the
+      client-side synth path, not a separate engine)
+- [ ] Saving POSTs the edited MusicXML as a new `draft` version on that
+      piece; the existing PDF slot is preserved; the new draft then flows
+      through the normal submit/approve/distribute review workflow
+      unchanged
+- [ ] Leaving the editor with unsaved edits warns before discarding them
+- [ ] The edited version is what the player loads afterward (once it's the
+      latest / approved version, per the existing version-resolution rules)
+- [ ] `npm run check` / `npm run build` both clean
+- [ ] New `messages/en.json` + `es.json` keys for every editor-facing
+      string
+
+**Tasks — Claude:**
+- [x] **Spike:** prototype the minimal "click a note, change its pitch,
+      re-render" loop (done 2026-08-31, `/spike/f14-editor` +
+      `src/lib/spike/musicXmlEdit.ts`). OSMD cleared path 1; Verovio not
+      prototyped (bundle + MEI round-trip not worth it once OSMD worked).
+      Decision + findings recorded above.
+- [ ] Editor route (`/piece/[id]/edit`, `ssr: false`) + server `load`
+      that resolves the piece and enforces edit access, mirroring
+      `piece/[id]/+page.server.ts`
+- [ ] Load + parse the track's music file into an editable model (reuse
+      `$lib/midi/musicXmlConverter.ts` / `$lib/musicxml/parser.ts`; a
+      MIDI source goes through the existing conversion first)
+- [ ] Editing surface for the path-1 operation set (pitch, duration,
+      delete, key/clef/accidental), with keyboard + click interaction
+- [ ] MusicXML export from the edited model
+- [ ] Save action → `POST /library/pieces/[id]/versions` with the exported
+      file; success returns to the piece page on the new draft
+- [ ] Unsaved-changes guard on navigation away
+- [ ] "Edit music" entry points in `groups/[id]` Tracks edit panel and the
+      piece page, admin/owner-gated
+- [ ] `messages/en.json` + `es.json` keys
+- [ ] `npm run check` / `npm run build` clean
+
+**Tasks — Human:**
+- [ ] Confirm the spike's engine choice before the build proceeds
+- [ ] In a real browser: open the editor on a real OMR-generated track,
+      make each kind of edit, save, and confirm the new draft plays back
+      with the corrections and moves through review normally
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -711,6 +853,9 @@ fetching or required accounts.
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
 
+- 2026-08-31: Added F14 (in-app notation editor for a track's music) as the next milestone at the human's request — the editing counterpart to B8's OMR, so a rough generated score gets corrected in the app instead of via desktop MuseScore. Engine choice (correction-only on our own OSMD/Verovio render vs. adopting an editing library) is deliberately left to a spike, recorded in the milestone.
+- 2026-08-31: F14 spike done — engine decided: **path 1, correction-only editor on OSMD with a MusicXML-DOM editable model** (not Verovio, not an editing library). Throwaway spike at `/spike/f14-editor` + `src/lib/spike/musicXmlEdit.ts` proved click → transpose/delete → `osmd.load()`+`render()` in a real browser (Playwright) against the bundled Elgar fixture. Verovio not prototyped: OSMD cleared every path-1 bar, and Verovio's ~2 MB WASM + MusicXML↔MEI round-trip isn't worth it for a page choir members open on phones. Decision, the four findings (OSMD stays a pure view; click→note needs part-awareness because OSMD numbers staves globally; full re-render ~1.2 s on a 3.7k-note score so debounce; rough edges = re-highlight/chord-delete/accidental-respelling/duration edits), and the paths considered are all written into the F14 milestone. `check`/`build` clean. Spike route/module to be deleted when the real editor lands.
+- 2026-08-31: Shipped a header alert (`AppHeader` → new `OmrJobAlerts.svelte`, `$lib/stores/omrJobs.svelte.ts`, `/omr/jobs` proxy route) that tells an admin a "Generate music from PDF" job they started has finished or failed, from any screen with the app header — previously only visible by reloading that track's row in the group Tracks tab. Seeds on navigation, polls ~20s only while a job is still running (skips a hidden tab), remembers dismissals in `localStorage`. Backed by a new Backend `GET /omr/jobs` (see `Backend/plan.md`). `check`/`build` clean, frontend + backend suites green.
 - 2026-08-30: Found and fixed a real bug live-testing F13: `getPieceByTitle()` (F10) was preferred *unconditionally* over a real Backend piece's own content in all three places it's used (`/`'s personal library, the group Tracks tab, the guest join page) — so a real, admin-uploaded track that happened to share a title with a bundled fixture (e.g. "Lacrymosa") always played/showed the bundled asset instead, silently ignoring the admin's own music file/PDF/YouTube link. F13 surfaced this concretely: Lacrymosa's real reference-recording link never worked because the app was never actually reaching the real `Piece` it was set on. Fixed by only falling back to the bundled match when the real piece has neither `has_music` nor `has_pdf` of its own — `getPieceByTitle()`'s original intent (a working Practice button for a track with nothing wired up yet), not a permanent override once real content exists.
 - 2026-08-30: `piece/[id]`'s back button now does a real `history.back()` when there's history to go back to, landing wherever the human actually came from (a specific group's Tracks tab, its scroll position, admin vs. member view) instead of always the generic library/guest-join page regardless of origin. The old destination-guessing logic (guest join code -> that group; logged-in -> `/`; guest -> `/?guest=1`) stays as the fallback for when there's genuinely nothing to go back to (opened directly, a fresh tab, a deep link).
 - 2026-08-30: `/settings/more` brought in line with every other screen — now carries the same `AppHeader`/`BottomNav` chrome (title in the header, brand link home, gear button, bottom nav) instead of its own bare `<main>` with a hand-rolled breadcrumb/`<h1>`; also handles a guest reached via a join code the same way `/settings` itself does (home/footer point back to their group, not a login-gated dashboard). Dropped the redundant "Settings / More" breadcrumb text now that the header already names the page. Removed the "How Divisi works" link/section at the human's request (`more_how_it_works` message key deleted, now unused).
