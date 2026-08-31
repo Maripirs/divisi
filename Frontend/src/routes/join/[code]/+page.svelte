@@ -33,8 +33,13 @@
 		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 	}
 
+	// Homework `dueDate` has no time-of-day meaning (an admin picks a plain
+	// calendar date) — unlike `formatDate` above, this pins to UTC so it
+	// doesn't roll back a calendar day in any timezone behind UTC (caught
+	// live: a Sept 2 due date showed "Sep 1"). Same fix as the group page's
+	// `formatDate` and Home's `formatDueDate`.
 	function formatDueDate(iso: string | null) {
-		return iso ? formatDate(iso) : m.home_no_due_date();
+		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : m.home_no_due_date();
 	}
 
 	function coverageLabel(status: string) {

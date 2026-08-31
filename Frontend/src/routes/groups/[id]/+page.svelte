@@ -234,17 +234,16 @@
 		})
 	);
 
+	// Both homework `due_date` and Weekly Notes' `note_date` are plain
+	// calendar dates with no time-of-day meaning (an admin picks one via
+	// `<input type="date">`, see `new-homework`'s and the create/update
+	// weekly-note actions' UTC-midnight round trip) — `timeZone: 'UTC'`
+	// keeps the display matching the date the admin typed; local-time
+	// conversion rolls it back a calendar day in any timezone behind UTC
+	// (caught live: a Sept 1 note showed "Aug 31", a Sept 2 due date showed
+	// "Sep 1").
 	function formatDate(iso: string | null) {
 		if (!iso) return m.home_no_due_date();
-		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
-
-	// Weekly Notes' `note_date` has no time-of-day meaning (see the
-	// create/update actions' UTC-midnight round trip) — formatting it with
-	// `formatDate`'s local-time conversion rolls it back a calendar day in
-	// any timezone behind UTC (caught live: a Sept 1 note showed "Aug 31").
-	// Pinning the display to UTC keeps it matching the date the admin typed.
-	function formatNoteDate(iso: string): string {
 		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 	}
 
@@ -947,7 +946,7 @@
 							</div>
 						</form>
 					{:else}
-						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.note_date) })}</p>
+						<p class="card-eyebrow">{m.join_week_of({ date: formatDate(n.note_date) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
 							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>

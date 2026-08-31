@@ -53,8 +53,19 @@
 		if (browser) window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
 	}
 
+	// For a responsibility's real, time-of-day-anchored date (a rehearsal at
+	// a specific hour) — local-time conversion is exactly what's wanted here.
 	function formatDate(iso: string | null) {
 		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : m.home_no_due_date();
+	}
+
+	// Homework `due_date`, unlike the above, is a plain calendar date with no
+	// time-of-day meaning (an admin picks one via `<input type="date">`) —
+	// `formatDate`'s local-time conversion rolls it back a calendar day in
+	// any timezone behind UTC (caught live: a Sept 2 due date showed
+	// "Sep 1"). Same fix as the group page's own `formatDate`.
+	function formatDueDate(iso: string | null) {
+		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : m.home_no_due_date();
 	}
 </script>
 
@@ -90,7 +101,7 @@
 					>
 						<span>{hw.title}, {hw.range}</span>
 						<span class="hw-row-end">
-							<span class="dim">{formatDate(hw.due_date)}</span>
+							<span class="dim">{formatDueDate(hw.due_date)}</span>
 							<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
 						</span>
 					</button>
@@ -99,7 +110,7 @@
 					     plain info row, no chevron implying there's more to tap. -->
 					<div class="hw-row hw-row--static">
 						<span>{hw.title}, {hw.range}</span>
-						<span class="dim">{formatDate(hw.due_date)}</span>
+						<span class="dim">{formatDueDate(hw.due_date)}</span>
 					</div>
 				{/if}
 				{#if expandedHomeworkId === hw.id}
