@@ -2,6 +2,11 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { type DisplayMode, type VisualState } from '$lib/midi/types';
 	import { THEME_PALETTES, highlightedMutedInk, type ResolvedTheme } from '$lib/theme';
+	import {
+		paintableLeaves,
+		renderedStaffBands,
+		paintSymbolsInMutedBands
+	} from '$lib/components/score/scoreTreatments';
 	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time, so it can't trigger a
 	// runtime module resolution during SSR. OSMD manipulates the DOM
@@ -122,12 +127,6 @@
 		cursor: string;
 		cursorAlpha: number;
 		page: string;
-	}
-
-	interface StaffBand {
-		top: number;
-		bottom: number;
-		state: VisualState;
 	}
 
 	// Captured from the same dynamic import as OSMD itself (see the import
@@ -391,25 +390,9 @@
 	 * on. Reaches into VexFlow-specific accessors (`getNoteheadSVGs`/
 	 * `getStemSVG`) that aren't on the base `GraphicalNote` type — safe here
 	 * since OSMD only ships the VexFlow SVG backend, the one this component
-	 * already assumes elsewhere (`GetNearestNote` hit-testing, etc). */
-	/** `getNoteheadSVGs()`/`getStemSVG()` return VexFlow's SVG *groups*
-	 * (`<g class="vf-notehead">` etc), not the painted shape itself — the
-	 * group can nest the actual `<path>`/`<use>` one or more levels deep,
-	 * and that leaf already carries its own explicit `fill`/`stroke`
-	 * attribute from OSMD's coloring pass. A CSS class only styles the
-	 * element it's added to, not descendants that already have their own
-	 * conflicting attribute, so `.current-note` has to land on the leaf(s),
-	 * not the wrapping group (confirmed via devtools: `getNoteheadSVGs()`
-	 * was returning real `g.vf-notehead` elements, but adding the class to
-	 * the group left noteheads unpainted while stems — whose own getter
-	 * already drills into `children[0]` — worked fine). */
-	function paintableLeaves(element: HTMLElement): HTMLElement[] {
-		const leaves = [
-			...element.querySelectorAll<HTMLElement>('path, use, text, rect, polygon, polyline, circle, ellipse')
-		];
-		return leaves.length > 0 ? leaves : [element];
-	}
-
+	 * already assumes elsewhere (`GetNearestNote` hit-testing, etc).
+	 * `paintableLeaves` (see `score/scoreTreatments`) drills each returned
+	 * VexFlow group down to the actual painted leaves. */
 	function applyCurrentNoteTreatment(): void {
 		for (const element of currentNoteElements) element.classList.remove('current-note');
 		currentNoteElements = [];
@@ -462,108 +445,15 @@
 		const activeColor = themeFor(displayMode, resolved).music;
 		const inactiveColor = highlightedMutedInk(resolved);
 		const states = staffVisualStates ?? [];
-		const bands = renderedStaffBands(states);
-		paintSymbolsInMutedBands(bands, activeColor, inactiveColor);
-	}
-
-	function renderedStaffBands(states: VisualState[]): StaffBand[] {
-		const svg = container?.querySelector('svg');
-		if (!svg || states.length === 0) return [];
-		const lineCandidates = [...svg.querySelectorAll<SVGElement>('path, line')]
-			.map((element) => ({ element, box: svgBox(element) }))
-			.filter((entry): entry is { element: SVGElement; box: DOMRect } => entry.box !== null)
-			.filter(({ box }) => box.width >= 48 && box.height <= 1);
-		const lineYs = clusteredNumbers(lineCandidates.map(({ box }) => box.y + box.height / 2), 2);
-		const staffLineGroups: number[][] = [];
-		let currentGroup: number[] = [];
-
-		for (const y of lineYs) {
-			const previous = currentGroup[currentGroup.length - 1];
-			if (previous === undefined || y - previous <= 14) {
-				currentGroup.push(y);
-			} else {
-				if (currentGroup.length >= 5) staffLineGroups.push(currentGroup);
-				currentGroup = [y];
-			}
-		}
-		if (currentGroup.length >= 5) staffLineGroups.push(currentGroup);
-
-		const staffCenters = staffLineGroups.map((group) => (group[0] + group[group.length - 1]) / 2);
-		const bands = staffLineGroups.map((group, index) => {
-			const topLine = group[0];
-			const bottomLine = group[group.length - 1];
-			const previous = staffCenters[index - 1];
-			const current = staffCenters[index];
-			const next = staffCenters[index + 1];
-			return {
-				top: previous === undefined ? topLine - 30 : (previous + current) / 2,
-				bottom: next === undefined ? bottomLine + 30 : (current + next) / 2,
-				state: states[index % states.length] ?? 'active'
-			};
-		});
-
-		for (const { element, box } of lineCandidates) {
-			const centerY = box.y + box.height / 2;
-			const band = bands.find((candidate) => centerY >= candidate.top && centerY <= candidate.bottom);
-			if (band) paintSvgElement(element, band.state === 'muted' ? highlightedMutedInk(scoreTheme ?? 'light') : themeFor(displayMode, scoreTheme).music);
-		}
-		return bands;
-	}
-
-	function clusteredNumbers(values: number[], tolerance: number): number[] {
-		const sorted = [...values].sort((a, b) => a - b);
-		const clusters: number[][] = [];
-		for (const value of sorted) {
-			const cluster = clusters[clusters.length - 1];
-			const anchor = cluster?.[cluster.length - 1];
-			if (!cluster || anchor === undefined || Math.abs(value - anchor) > tolerance) clusters.push([value]);
-			else cluster.push(value);
-		}
-		return clusters.map((cluster) => cluster.reduce((sum, value) => sum + value, 0) / cluster.length);
-	}
-
-	function paintSymbolsInMutedBands(bands: StaffBand[], activeColor: string, inactiveColor: string): void {
-		if (bands.length === 0) return;
-		const svg = container?.querySelector('svg');
-		if (!svg) return;
-		const symbols = svg.querySelectorAll<SVGElement>('path, line, text, rect, polygon, polyline, circle, ellipse');
-		const cursorElement = osmd?.cursor.cursorElement as Node | undefined;
-		for (const symbol of symbols) {
-			if (symbol === cursorElement || cursorElement?.contains(symbol)) continue;
-			const box = svgBox(symbol);
-			if (!box || box.width + box.height === 0) continue;
-			const centerY = box.y + box.height / 2;
-			const band = bands.find((candidate) => centerY >= candidate.top && centerY <= candidate.bottom);
-			if (!band) continue;
-			paintSvgElement(symbol, band.state === 'muted' ? inactiveColor : activeColor);
-		}
-	}
-
-	function svgBox(element: SVGElement): DOMRect | null {
-		if (!('getBBox' in element)) return null;
-		try {
-			return (element as SVGGraphicsElement).getBBox();
-		} catch {
-			return null;
-		}
-	}
-
-	function paintSvgElement(element: SVGElement, color: string): void {
-		if (hasPaint(element, 'stroke')) {
-			element.setAttribute('stroke', color);
-			element.style.stroke = color;
-		}
-		if (hasPaint(element, 'fill')) {
-			element.setAttribute('fill', color);
-			element.style.fill = color;
-		}
-	}
-
-	function hasPaint(element: SVGElement, attribute: 'stroke' | 'fill'): boolean {
-		const value = element.getAttribute(attribute);
-		const styleValue = element.style[attribute];
-		const computed = getComputedStyle(element)[attribute];
-		return [value, styleValue, computed].some((paint) => !!paint && paint !== 'none' && paint !== 'transparent');
+		const svg = container?.querySelector('svg') ?? null;
+		const bands = renderedStaffBands(svg, states, activeColor, inactiveColor);
+		paintSymbolsInMutedBands(
+			svg,
+			osmd?.cursor.cursorElement as Node | undefined,
+			bands,
+			activeColor,
+			inactiveColor
+		);
 	}
 
 	function cursorOptions(mode: DisplayMode | undefined, activeTheme: ResolvedTheme | undefined): CursorOptions {
