@@ -105,6 +105,27 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 
 const RESPONSIBILITY_DATE_ID = (form: FormData) => String(form.get('dateId') ?? '');
 
+/** The tail every form action on this page shares: run the Backend work,
+ * and if the Backend rejects it (`BackendApiError`) surface that as a
+ * `fail(status, { error, form })` the page renders inline; let anything
+ * else through untouched — a real bug, or a `redirect(...)` thrown on
+ * success (`leaveGroup`). On success returns `{ success: true, form }`,
+ * the payload each action used to build by hand.
+ *
+ * Actions whose failure isn't a `backendFetch` throw — the raw multipart
+ * uploads in `updatePieceDetails` / `uploadTrack`, the self-removal guard
+ * in `removeMember` — `throw new BackendApiError(status, msg)` to route
+ * through the same handling. */
+async function runAction(form: string, work: () => Promise<unknown>) {
+	try {
+		await work();
+		return { success: true, form };
+	} catch (err) {
+		if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form });
+		throw err;
+	}
+}
+
 export const actions: Actions = {
 	updateGuestSettings: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
@@ -122,18 +143,9 @@ export const actions: Actions = {
 		if (newPassword) body.guest_password = newPassword;
 		else if (removePassword) body.guest_password = null;
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/guest-settings`,
-				{ method: 'PUT', body: JSON.stringify(body) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message });
-			throw err;
-		}
-		return { success: true, form: 'guestSettings' };
+		return runAction('guestSettings', () =>
+			backendFetch(locals.token, `/groups/${params.id}/guest-settings`, { method: 'PUT', body: JSON.stringify(body) }, fetch)
+		);
 	},
 
 	// B12: admin-only replace of all 5 pages' enabled/audience in one go —
@@ -150,18 +162,9 @@ export const actions: Actions = {
 			audience: (form.get(`audience_${page}`) === 'everyone' ? 'everyone' : 'members') as PageAudience
 		}));
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/page-settings`,
-				{ method: 'PUT', body: JSON.stringify({ pages: updates }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'pageSettings' });
-			throw err;
-		}
-		return { success: true, form: 'pageSettings' };
+		return runAction('pageSettings', () =>
+			backendFetch(locals.token, `/groups/${params.id}/page-settings`, { method: 'PUT', body: JSON.stringify({ pages: updates }) }, fetch)
+		);
 	},
 
 	// Admin-only, full replace — a regular weekly rehearsal slot (e.g.
@@ -179,18 +182,14 @@ export const actions: Actions = {
 			return fail(400, { error: m.rehearsal_choose_day_time(), form: 'rehearsalSchedule' });
 		}
 
-		try {
-			await backendFetch(
+		return runAction('rehearsalSchedule', () =>
+			backendFetch(
 				locals.token,
 				`/groups/${params.id}/rehearsal-schedule`,
 				{ method: 'PUT', body: JSON.stringify({ rehearsal_weekday: rehearsalWeekday, rehearsal_time: rehearsalTime }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'rehearsalSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'rehearsalSchedule' };
+			)
+		);
 	},
 
 	// Admin-only, full replace — the free-text blurb on the Info/About tab.
@@ -198,18 +197,9 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const description = String(form.get('description') ?? '').trim();
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/description`,
-				{ method: 'PUT', body: JSON.stringify({ description: description || null }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'description' });
-			throw err;
-		}
-		return { success: true, form: 'description' };
+		return runAction('description', () =>
+			backendFetch(locals.token, `/groups/${params.id}/description`, { method: 'PUT', body: JSON.stringify({ description: description || null }) }, fetch)
+		);
 	},
 
 	addMember: async ({ request, locals, fetch, params }) => {
@@ -217,18 +207,9 @@ export const actions: Actions = {
 		const email = String(form.get('email') ?? '').trim();
 		if (!email) return fail(400, { error: m.groups_enter_email(), form: 'addMember' });
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/members`,
-				{ method: 'POST', body: JSON.stringify({ email, role: 'member' }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'addMember' });
-			throw err;
-		}
-		return { success: true, form: 'addMember' };
+		return runAction('addMember', () =>
+			backendFetch(locals.token, `/groups/${params.id}/members`, { method: 'POST', body: JSON.stringify({ email, role: 'member' }) }, fetch)
+		);
 	},
 
 	// Admin-only, and only for *other* members — removing yourself is a
@@ -244,23 +225,13 @@ export const actions: Actions = {
 		const userId = String(form.get('userId') ?? '');
 		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'removeMember' });
 
-		try {
+		return runAction('removeMember', async () => {
 			const me = await backendJson<{ id: string }>(locals.token, '/auth/me', undefined, fetch);
-			if (userId === me.id) {
-				return fail(400, { error: m.groups_use_leave_group(), form: 'removeMember' });
-			}
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'removeMember' });
-			throw err;
-		}
-
-		try {
+			// Routed through runAction's `BackendApiError` handling to land as
+			// the same `fail(400, …)` the standalone check returned before.
+			if (userId === me.id) throw new BackendApiError(400, m.groups_use_leave_group());
 			await backendFetch(locals.token, `/groups/${params.id}/members/${userId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'removeMember' });
-			throw err;
-		}
-		return { success: true, form: 'removeMember' };
+		});
 	},
 
 	// Admin-only. One panel, one action, for everything the Tracks tab used
@@ -299,7 +270,7 @@ export const actions: Actions = {
 		const removeMusic = form.get('remove_file') === '1' && !hasMusic;
 		const removePdf = form.get('remove_pdf_file') === '1' && !hasPdf;
 
-		try {
+		return runAction('pieceDetails', async () => {
 			await backendFetch(
 				locals.token,
 				`/library/pieces/${pieceId}`,
@@ -321,6 +292,9 @@ export const actions: Actions = {
 				if (hasPdf) versionBody.set('pdf_file', pdfFile);
 				if (removeMusic) versionBody.set('remove_file', 'true');
 				if (removePdf) versionBody.set('remove_pdf_file', 'true');
+				// Raw `fetch` (not `backendFetch`) for the multipart body — its
+				// failures are re-thrown as `BackendApiError` so runAction's
+				// catch turns them into the same `fail(status, …)` as before.
 				let versionRes: Response;
 				try {
 					versionRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces/${pieceId}/versions`, {
@@ -329,14 +303,11 @@ export const actions: Actions = {
 						body: versionBody
 					});
 				} catch {
-					return fail(503, { error: m.errors_could_not_reach_server(), form: 'pieceDetails' });
+					throw new BackendApiError(503, m.errors_could_not_reach_server());
 				}
 				if (!versionRes.ok) {
 					const body = (await versionRes.json().catch(() => ({}))) as { detail?: string };
-					return fail(versionRes.status, {
-						error: body.detail ?? m.upload_failed({ status: versionRes.status }),
-						form: 'pieceDetails'
-					});
+					throw new BackendApiError(versionRes.status, body.detail ?? m.upload_failed({ status: versionRes.status }));
 				}
 				const versionId = (await versionRes.json()).id as string;
 				await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
@@ -348,11 +319,7 @@ export const actions: Actions = {
 					fetch
 				);
 			}
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'pieceDetails' });
-			throw err;
-		}
-		return { success: true, form: 'pieceDetails' };
+		});
 	},
 
 	// Admin-only, `DELETE /library/pieces/{id}` — the whole track, not just
@@ -365,13 +332,9 @@ export const actions: Actions = {
 		const pieceId = String(form.get('pieceId') ?? '');
 		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'deleteTrack' });
 
-		try {
-			await backendFetch(locals.token, `/library/pieces/${pieceId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'deleteTrack' });
-			throw err;
-		}
-		return { success: true, form: 'deleteTrack' };
+		return runAction('deleteTrack', () =>
+			backendFetch(locals.token, `/library/pieces/${pieceId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	// F5, admin-only: uploads a real track (music file, PDF, or both) and
@@ -407,7 +370,10 @@ export const actions: Actions = {
 		if (hasMusic) uploadBody.set('file', musicFile);
 		if (hasPdf) uploadBody.set('pdf_file', pdfFile);
 
-		try {
+		return runAction('uploadTrack', async () => {
+			// Raw `fetch` (not `backendFetch`) for the multipart body — its
+			// failures are re-thrown as `BackendApiError` so runAction's catch
+			// turns them into the same `fail(status, …)` as before.
 			let uploadRes: Response;
 			try {
 				uploadRes = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
@@ -416,11 +382,11 @@ export const actions: Actions = {
 					body: uploadBody
 				});
 			} catch {
-				return fail(503, { error: m.errors_could_not_reach_server(), form: 'uploadTrack' });
+				throw new BackendApiError(503, m.errors_could_not_reach_server());
 			}
 			if (!uploadRes.ok) {
 				const body = (await uploadRes.json().catch(() => ({}))) as { detail?: string };
-				return fail(uploadRes.status, { error: body.detail ?? m.upload_failed({ status: uploadRes.status }), form: 'uploadTrack' });
+				throw new BackendApiError(uploadRes.status, body.detail ?? m.upload_failed({ status: uploadRes.status }));
 			}
 			const uploaded = (await uploadRes.json()) as { piece: { id: string }; version: { id: string } };
 			const versionId = uploaded.version.id;
@@ -433,11 +399,7 @@ export const actions: Actions = {
 				{ method: 'POST' },
 				fetch
 			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'uploadTrack' });
-			throw err;
-		}
-		return { success: true, form: 'uploadTrack' };
+		});
 	},
 
 	// Admin-only, full replace — same shape as `updateWeeklyNote` above, and
@@ -458,21 +420,14 @@ export const actions: Actions = {
 		if (!homeworkId) return fail(400, { error: m.groups_missing_homework(), form: 'updateHomework' });
 		if (!title || !range) return fail(400, { error: m.groups_enter_title_range(), form: 'updateHomework' });
 
-		try {
-			await backendFetch(
+		return runAction('updateHomework', () =>
+			backendFetch(
 				locals.token,
 				`/homework/${homeworkId}`,
-				{
-					method: 'PUT',
-					body: JSON.stringify({ piece_id: pieceId, title, range, instructions, due_date: dueDate || null })
-				},
+				{ method: 'PUT', body: JSON.stringify({ piece_id: pieceId, title, range, instructions, due_date: dueDate || null }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'updateHomework' });
-			throw err;
-		}
-		return { success: true, form: 'updateHomework' };
+			)
+		);
 	},
 
 	// Admin-only, `DELETE /homework/{id}` — same click-to-confirm-behind-a-
@@ -484,13 +439,9 @@ export const actions: Actions = {
 		const homeworkId = String(form.get('homeworkId') ?? '');
 		if (!homeworkId) return fail(400, { error: m.groups_missing_homework(), form: 'deleteHomework' });
 
-		try {
-			await backendFetch(locals.token, `/homework/${homeworkId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'deleteHomework' });
-			throw err;
-		}
-		return { success: true, form: 'deleteHomework' };
+		return runAction('deleteHomework', () =>
+			backendFetch(locals.token, `/homework/${homeworkId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	// Admin-only; promoting is always allowed, demoting the last admin gets
@@ -501,18 +452,9 @@ export const actions: Actions = {
 		const role = form.get('role') === 'admin' ? 'admin' : 'member';
 		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'updateMemberRole' });
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/members/${userId}/role`,
-				{ method: 'PUT', body: JSON.stringify({ role }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'updateMemberRole' });
-			throw err;
-		}
-		return { success: true, form: 'updateMemberRole' };
+		return runAction('updateMemberRole', () =>
+			backendFetch(locals.token, `/groups/${params.id}/members/${userId}/role`, { method: 'PUT', body: JSON.stringify({ role }) }, fetch)
+		);
 	},
 
 	// Admin-only, full replace — free-text context next to a member on the
@@ -523,34 +465,23 @@ export const actions: Actions = {
 		const title = String(form.get('title') ?? '').trim();
 		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'updateMemberTitle' });
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/members/${userId}/title`,
-				{ method: 'PUT', body: JSON.stringify({ title: title || null }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'updateMemberTitle' });
-			throw err;
-		}
-		return { success: true, form: 'updateMemberTitle' };
+		return runAction('updateMemberTitle', () =>
+			backendFetch(locals.token, `/groups/${params.id}/members/${userId}/title`, { method: 'PUT', body: JSON.stringify({ title: title || null }) }, fetch)
+		);
 	},
 
 	// Any member (including an admin, as long as they're not the last one
 	// — the Backend's own 409 covers that) can leave a group they belong
 	// to. Redirects to `/home` on success since staying on this page no
 	// longer makes sense once the caller isn't a member.
-	leaveGroup: async ({ locals, fetch, params }) => {
-		try {
+	leaveGroup: ({ locals, fetch, params }) =>
+		runAction('leaveGroup', async () => {
 			const me = await backendJson<{ id: string }>(locals.token, '/auth/me', undefined, fetch);
 			await backendFetch(locals.token, `/groups/${params.id}/members/${me.id}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'leaveGroup' });
-			throw err;
-		}
-		throw redirect(303, lh('/home'));
-	},
+			// Not a `BackendApiError`, so runAction re-throws it — staying on
+			// this page makes no sense once the caller isn't a member.
+			throw redirect(303, lh('/home'));
+		}),
 
 	// B13, admin-only: create a schedule with its roles in one call — the
 	// form's role rows arrive as parallel `roleName`/`roleNeeded` arrays
@@ -567,18 +498,9 @@ export const actions: Actions = {
 			.map((roleName, i) => ({ name: roleName, needed_count: roleCounts[i] ?? 1 }))
 			.filter((r) => r.name);
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/groups/${params.id}/responsibilities/schedules`,
-				{ method: 'POST', body: JSON.stringify({ name, roles }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'createSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'createSchedule' };
+		return runAction('createSchedule', () =>
+			backendFetch(locals.token, `/groups/${params.id}/responsibilities/schedules`, { method: 'POST', body: JSON.stringify({ name, roles }) }, fetch)
+		);
 	},
 
 	updateResponsibilitySchedule: async ({ request, locals, fetch }) => {
@@ -587,18 +509,9 @@ export const actions: Actions = {
 		const name = String(form.get('name') ?? '').trim();
 		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_name(), form: 'editSchedule' });
 
-		try {
-			await backendFetch(
-				locals.token,
-				`/responsibilities/schedules/${scheduleId}`,
-				{ method: 'PATCH', body: JSON.stringify({ name }) },
-				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'editSchedule' };
+		return runAction('editSchedule', () =>
+			backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, fetch)
+		);
 	},
 
 	// Deletes the whole responsibility — its roles, dates, and signups go
@@ -609,13 +522,9 @@ export const actions: Actions = {
 		const scheduleId = String(form.get('scheduleId') ?? '');
 		if (!scheduleId) return fail(400, { error: m.groups_missing_responsibility(), form: 'editSchedule' });
 
-		try {
-			await backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'editSchedule' };
+		return runAction('editSchedule', () =>
+			backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	addResponsibilityRole: async ({ request, locals, fetch }) => {
@@ -625,18 +534,14 @@ export const actions: Actions = {
 		const neededCount = Number(form.get('neededCount')) || 1;
 		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
 
-		try {
-			await backendFetch(
+		return runAction('editSchedule', () =>
+			backendFetch(
 				locals.token,
 				`/responsibilities/schedules/${scheduleId}/roles`,
 				{ method: 'POST', body: JSON.stringify({ name, needed_count: neededCount }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'editSchedule' };
+			)
+		);
 	},
 
 	updateResponsibilityRole: async ({ request, locals, fetch }) => {
@@ -646,18 +551,14 @@ export const actions: Actions = {
 		const neededCount = Number(form.get('neededCount')) || 1;
 		if (!roleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
 
-		try {
-			await backendFetch(
+		return runAction('editSchedule', () =>
+			backendFetch(
 				locals.token,
 				`/responsibilities/roles/${roleId}`,
 				{ method: 'PATCH', body: JSON.stringify({ name, needed_count: neededCount }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'editSchedule' };
+			)
+		);
 	},
 
 	deleteResponsibilityRole: async ({ request, locals, fetch }) => {
@@ -665,13 +566,9 @@ export const actions: Actions = {
 		const roleId = String(form.get('roleId') ?? '');
 		if (!roleId) return fail(400, { error: m.groups_missing_role(), form: 'editSchedule' });
 
-		try {
-			await backendFetch(locals.token, `/responsibilities/roles/${roleId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editSchedule' });
-			throw err;
-		}
-		return { success: true, form: 'editSchedule' };
+		return runAction('editSchedule', () =>
+			backendFetch(locals.token, `/responsibilities/roles/${roleId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	// B13, admin-only: one concrete occurrence of a schedule.
@@ -682,18 +579,14 @@ export const actions: Actions = {
 		const notes = String(form.get('notes') ?? '').trim();
 		if (!scheduleId || !dateInput) return fail(400, { error: m.groups_choose_schedule_date(), form: 'addDate' });
 
-		try {
-			await backendFetch(
+		return runAction('addDate', () =>
+			backendFetch(
 				locals.token,
 				`/responsibilities/schedules/${scheduleId}/dates`,
 				{ method: 'POST', body: JSON.stringify({ date: new Date(dateInput).toISOString(), notes }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'addDate' });
-			throw err;
-		}
-		return { success: true, form: 'addDate' };
+			)
+		);
 	},
 
 	// B13, admin-only: covers edit (date/notes), lock/unlock, and cancel/
@@ -715,13 +608,9 @@ export const actions: Actions = {
 		if (form.has('locked')) body.locked = form.get('locked') === 'true';
 		if (form.has('canceled')) body.canceled = form.get('canceled') === 'true';
 
-		try {
-			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editDate' });
-			throw err;
-		}
-		return { success: true, form: 'editDate' };
+		return runAction('editDate', () =>
+			backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch)
+		);
 	},
 
 	// Admin-only, a real delete (its signups go with it) — distinct from
@@ -732,13 +621,9 @@ export const actions: Actions = {
 		const dateId = RESPONSIBILITY_DATE_ID(form);
 		if (!dateId) return fail(400, { error: m.groups_missing_date() });
 
-		try {
-			await backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editDate' });
-			throw err;
-		}
-		return { success: true, form: 'editDate' };
+		return runAction('editDate', () =>
+			backendFetch(locals.token, `/responsibilities/dates/${dateId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	// B13: no `userId`/`name` in the form means "sign myself up" (member
@@ -754,21 +639,14 @@ export const actions: Actions = {
 		const name = String(form.get('name') ?? '').trim();
 		if (!dateId || !roleId) return fail(400, { error: m.groups_missing_date_or_role() });
 
-		try {
-			await backendFetch(
+		return runAction('signUp', () =>
+			backendFetch(
 				locals.token,
 				`/responsibilities/dates/${dateId}/signups`,
-				{
-					method: 'POST',
-					body: JSON.stringify({ role_id: roleId, user_id: userId || undefined, name: name || undefined })
-				},
+				{ method: 'POST', body: JSON.stringify({ role_id: roleId, user_id: userId || undefined, name: name || undefined }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'signUp' });
-			throw err;
-		}
-		return { success: true, form: 'signUp' };
+			)
+		);
 	},
 
 	removeResponsibilitySignup: async ({ request, locals, fetch }) => {
@@ -776,13 +654,9 @@ export const actions: Actions = {
 		const signupId = String(form.get('signupId') ?? '');
 		if (!signupId) return fail(400, { error: m.groups_missing_signup() });
 
-		try {
-			await backendFetch(locals.token, `/responsibilities/signups/${signupId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'signUp' });
-			throw err;
-		}
-		return { success: true, form: 'signUp' };
+		return runAction('signUp', () =>
+			backendFetch(locals.token, `/responsibilities/signups/${signupId}`, { method: 'DELETE' }, fetch)
+		);
 	},
 
 	// Admin-only: a dated bulletin entry (title/body/note_date). `note_date`
@@ -796,18 +670,14 @@ export const actions: Actions = {
 		const noteDateInput = String(form.get('noteDate') ?? '');
 		if (!title || !noteDateInput) return fail(400, { error: m.groups_enter_title_date(), form: 'createWeeklyNote' });
 
-		try {
-			await backendFetch(
+		return runAction('createWeeklyNote', () =>
+			backendFetch(
 				locals.token,
 				`/groups/${params.id}/weekly-notes`,
 				{ method: 'POST', body: JSON.stringify({ title, body, note_date: new Date(noteDateInput).toISOString() }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'createWeeklyNote' });
-			throw err;
-		}
-		return { success: true, form: 'createWeeklyNote' };
+			)
+		);
 	},
 
 	updateWeeklyNote: async ({ request, locals, fetch }) => {
@@ -818,18 +688,14 @@ export const actions: Actions = {
 		const noteDateInput = String(form.get('noteDate') ?? '');
 		if (!noteId || !title || !noteDateInput) return fail(400, { error: m.groups_enter_title_date(), form: 'editWeeklyNote' });
 
-		try {
-			await backendFetch(
+		return runAction('editWeeklyNote', () =>
+			backendFetch(
 				locals.token,
 				`/weekly-notes/${noteId}`,
 				{ method: 'PUT', body: JSON.stringify({ title, body, note_date: new Date(noteDateInput).toISOString() }) },
 				fetch
-			);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editWeeklyNote' });
-			throw err;
-		}
-		return { success: true, form: 'editWeeklyNote' };
+			)
+		);
 	},
 
 	deleteWeeklyNote: async ({ request, locals, fetch }) => {
@@ -837,12 +703,8 @@ export const actions: Actions = {
 		const noteId = String(form.get('noteId') ?? '');
 		if (!noteId) return fail(400, { error: m.groups_missing_note(), form: 'editWeeklyNote' });
 
-		try {
-			await backendFetch(locals.token, `/weekly-notes/${noteId}`, { method: 'DELETE' }, fetch);
-		} catch (err) {
-			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'editWeeklyNote' });
-			throw err;
-		}
-		return { success: true, form: 'editWeeklyNote' };
+		return runAction('editWeeklyNote', () =>
+			backendFetch(locals.token, `/weekly-notes/${noteId}`, { method: 'DELETE' }, fetch)
+		);
 	}
 };
