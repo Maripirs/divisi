@@ -564,7 +564,20 @@
 			const pdfjsLib = await import('pdfjs-dist');
 			const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
 			pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-			const task = pdfjsLib.getDocument({ url });
+			// pdfjs v6 fetches these at runtime from URLs it's handed — there's
+			// no build-time import for them. The directories are copied out of
+			// the `pdfjs-dist` package into `static/pdfjs/` by an inline Vite
+			// plugin (see `vite.config.ts`). Without `wasmUrl`, a scanned PDF
+			// (one JBIG2/JPEG2000 image per page) fails to decode and every page
+			// renders blank white; `cMapUrl` covers CJK/non-Latin text and
+			// `standardFontDataUrl` non-embedded base-14 fonts.
+			const task = pdfjsLib.getDocument({
+				url,
+				wasmUrl: '/pdfjs/wasm/',
+				cMapUrl: '/pdfjs/cmaps/',
+				cMapPacked: true,
+				standardFontDataUrl: '/pdfjs/standard_fonts/'
+			});
 			loadingTask = task;
 			const loaded = await task.promise;
 			if (token !== renderToken) {

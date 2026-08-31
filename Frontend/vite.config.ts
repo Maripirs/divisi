@@ -1,8 +1,40 @@
+import { createRequire } from 'node:module';
+import { cpSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
+
+/**
+ * pdfjs v6 no longer bundles its JBIG2/JPEG2000 decoders (`wasm/`), CJK
+ * character maps (`cmaps/`), or non-embedded base-14 font data
+ * (`standard_fonts/`) — it fetches them at runtime from URLs handed to
+ * `getDocument()` (see `PdfView.svelte`). There's no build-time import for a
+ * whole directory of these, so copy them out of the installed package into
+ * `static/pdfjs/` where they'll be served at `/pdfjs/<dir>/`. Without
+ * `wasm/` in particular, a scanned PDF (one JBIG2 image per page) decodes to
+ * nothing and every page renders blank white.
+ */
+function copyPdfjsRuntimeAssets(): Plugin {
+	const copy = () => {
+		const pkgDir = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'));
+		for (const dir of ['wasm', 'cmaps', 'standard_fonts']) {
+			const dest = join('static', 'pdfjs', dir);
+			mkdirSync(dest, { recursive: true });
+			cpSync(join(pkgDir, dir), dest, { recursive: true });
+		}
+	};
+	return {
+		name: 'copy-pdfjs-runtime-assets',
+		// `buildStart` covers `vite build`; `configureServer` covers `vite dev`
+		// (where `buildStart` doesn't run). `vite preview` just serves whatever
+		// the preceding build already wrote into `static/`.
+		buildStart: copy,
+		configureServer: copy
+	};
+}
 
 export default defineConfig({
 	plugins: [
@@ -41,6 +73,7 @@ export default defineConfig({
 		// matters for dev; the phone's browser needs a one-time manual
 		// "trust this certificate" for the self-signed cert.
 		basicSsl(),
+		copyPdfjsRuntimeAssets(),
 		sveltekit({
 			compilerOptions: {
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
