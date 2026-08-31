@@ -6,7 +6,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import { resolvedTheme } from '$lib/theme';
-	import type { EditableScore, EditableNote } from '$lib/musicxml/editableScore';
+	import type { EditableScore, EditableNote, DurationType } from '$lib/musicxml/editableScore';
 	import { loadEditableScore, UnsupportedMusicFileError } from '$lib/musicxml/loadEditableScore';
 	import type { PageData } from './$types';
 
@@ -55,6 +55,15 @@
 	let selectedIndex = $state<number | null>(null);
 	let selectedNote = $state<EditableNote | undefined>(undefined);
 	let dirty = $state(false);
+	// Task 3b: pending dot count for the duration control (0 -> 1 -> 2 -> 0).
+	// Kept in sync with the selected note's real dot count by the effect
+	// below, so the toggle always shows what is actually on the page.
+	let durationDots = $state<0 | 1 | 2>(0);
+	// A transient message for an edit the model refused (a duration that
+	// doesn't land on the grid, or a lengthening that would overfill the
+	// bar). Cleared on the next selection or successful edit, and auto-clears
+	// after a few seconds.
+	let editNotice = $state<string | null>(null);
 	// Bound out of `EditorScoreView`: true while OSMD re-engraves. Edits are
 	// held off until it settles so two `osmd.load()` calls can't overlap (a
 	// real risk on a held arrow key — the spike serialized edits the same
@@ -66,6 +75,39 @@
 	const canPitchEdit = $derived(
 		selectedNote != null && !selectedNote.isRest && selectedNote.pitch != null
 	);
+	// The selected note's written duration, re-read from the model after
+	// every selection or edit (keyed off `selectedNote`, which is a fresh
+	// object each `reindex()`). Drives the active state on the duration
+	// buttons and the re-apply when the dot count is cycled.
+	const selectedDuration = $derived.by(() =>
+		score && selectedNote ? score.noteDuration(selectedNote.index) : null
+	);
+	const canDurationEdit = $derived(selectedNote != null);
+	const durationTypes: readonly DurationType[] = ['whole', 'half', 'quarter', 'eighth', '16th'];
+	const durationLabel = (t: DurationType): string =>
+		t === 'whole'
+			? m.piece_editor_dur_whole()
+			: t === 'half'
+				? m.piece_editor_dur_half()
+				: t === 'quarter'
+					? m.piece_editor_dur_quarter()
+					: t === 'eighth'
+						? m.piece_editor_dur_eighth()
+						: m.piece_editor_dur_16th();
+
+	// Keep the dot toggle showing the selected note's real dot count.
+	$effect(() => {
+		const d = selectedDuration;
+		if (d) durationDots = d.dots;
+	});
+
+	// Auto-clear the refusal notice so it doesn't linger once the user has
+	// moved on.
+	$effect(() => {
+		if (!editNotice) return;
+		const timer = setTimeout(() => (editNotice = null), 4000);
+		return () => clearTimeout(timer);
+	});
 
 	// A compact label for the status line: the note's pitch (e.g. "F#4"), or
 	// a localized "rest" once it has been deleted.
@@ -79,6 +121,7 @@
 	}
 
 	function selectByIndex(index: number | null): void {
+		editNotice = null;
 		selectedIndex = index;
 		selectedNote = index === null ? undefined : score?.get(index);
 	}
@@ -103,16 +146,47 @@
 
 	// Apply one in-place mutation, re-serialize for the re-engrave, and keep
 	// the same note selected (its index is stable; its onset may have moved).
-	function applyEdit(mutate: (s: EditableScore, index: number) => void): void {
-		if (!score || selectedIndex === null || reRendering) return;
-		mutate(score, selectedIndex);
+	// A mutation that returns `false` (the model refused it) is a no-op: it
+	// must not flag the score dirty or re-render. Returns whether it applied.
+	function applyEdit(mutate: (s: EditableScore, index: number) => boolean | void): boolean {
+		if (!score || selectedIndex === null || reRendering) return false;
+		if (mutate(score, selectedIndex) === false) return false;
 		workingXml = score.serialize();
 		dirty = true;
 		selectByIndex(selectedIndex);
+		return true;
 	}
 
 	const transposeSelected = (semitones: number) => applyEdit((s, i) => s.transpose(i, semitones));
 	const deleteSelected = () => applyEdit((s, i) => s.deleteToRest(i));
+
+	// Set the selected note's (or chord's) duration through the same
+	// `applyEdit` path. `setDuration` refuses a value that doesn't land on
+	// the measure's grid or a lengthening the bar can't absorb; surface that
+	// as a transient notice rather than a silent nothing.
+	function applyDuration(type: DurationType, dots: 0 | 1 | 2 = durationDots): boolean {
+		if (!score || selectedIndex === null || reRendering) return false;
+		// Already exactly this value: a silent no-op, not a refusal, so it
+		// must not warn or flag the score dirty.
+		if (selectedDuration && selectedDuration.type === type && selectedDuration.dots === dots) {
+			return false;
+		}
+		const applied = applyEdit((s, i) => s.setDuration(i, { type, dots }));
+		editNotice = applied ? null : m.piece_editor_duration_refused();
+		return applied;
+	}
+
+	// The dot toggle: 0 -> 1 -> 2 -> 0. If a note is selected, re-apply its
+	// current type with the new dot count so the toggle has immediate effect;
+	// if the model refuses that (off-grid), leave the toggle where it was.
+	function cycleDots(): void {
+		const next = ((durationDots + 1) % 3) as 0 | 1 | 2;
+		const type = selectedDuration?.type;
+		if (type && score && selectedIndex !== null && !reRendering) {
+			if (!applyDuration(type, next)) return;
+		}
+		durationDots = next;
+	}
 
 	// Move the selection to the previous/next pitched note in document
 	// order, so the score can be corrected from the keyboard alone. Rests
@@ -150,7 +224,9 @@
 	// region), so it is only live while that region holds focus, and it
 	// bails when a text field is focused. Keys: ArrowUp/Down = pitch +/-1
 	// semitone, Shift+ArrowUp/Down = +/-1 octave, ArrowLeft/Right = move the
-	// selection between pitched notes, Delete/Backspace = note -> rest.
+	// selection between pitched notes, Delete/Backspace = note -> rest,
+	// digits 1-5 = set the note value (whole / half / quarter / eighth /
+	// 16th), `.` = cycle the dot count 0 -> 1 -> 2 -> 0.
 	function handleKeydown(event: KeyboardEvent): void {
 		if (phase !== 'ready' || !score) return;
 		const el = event.target as HTMLElement | null;
@@ -177,6 +253,18 @@
 			case 'Backspace':
 				event.preventDefault();
 				deleteSelected();
+				break;
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+				event.preventDefault();
+				applyDuration(durationTypes[Number(event.key) - 1]);
+				break;
+			case '.':
+				event.preventDefault();
+				cycleDots();
 				break;
 		}
 	}
@@ -324,6 +412,28 @@
 						</button>
 					</div>
 
+					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_duration_label()}>
+						{#each durationTypes as t (t)}
+							<button
+								class="btn"
+								class:dur-active={selectedDuration?.type === t}
+								aria-pressed={selectedDuration?.type === t}
+								onclick={() => applyDuration(t)}
+								disabled={!canDurationEdit || reRendering}
+							>
+								{durationLabel(t)}
+							</button>
+						{/each}
+						<button
+							class="btn"
+							aria-label={m.piece_editor_dots_toggle()}
+							onclick={cycleDots}
+							disabled={reRendering}
+						>
+							{m.piece_editor_dots({ count: durationDots })}
+						</button>
+					</div>
+
 					<p class="editor-status" role="status" aria-live="polite">
 						{#if selectedNote}
 							{m.piece_editor_selected({ label: selectionLabel() })}
@@ -331,6 +441,10 @@
 							{m.piece_editor_selection_none()}
 						{/if}
 					</p>
+
+					{#if editNotice}
+						<p class="editor-notice" role="status" aria-live="polite">{editNotice}</p>
+					{/if}
 
 					<EditorScoreView
 						xml={workingXml}
@@ -432,12 +546,27 @@
 		padding: 0.35rem 0.65rem;
 		font-size: 0.8125rem;
 	}
+	/* The duration value that matches the selected note, so the toolbar
+	   reflects the score rather than just being a set of actions. */
+	.editor-toolbar .btn.dur-active {
+		border-color: var(--accent);
+		background: var(--accent);
+		color: var(--accent-contrast);
+	}
 
 	.editor-status {
 		margin: 0;
 		font-size: 0.8125rem;
 		font-variant-numeric: tabular-nums;
 		color: var(--text);
+	}
+
+	/* A refused edit (off-grid duration, or a lengthening the bar can't
+	   hold). Transient, cleared on the next selection or successful edit. */
+	.editor-notice {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--danger);
 	}
 
 	.editor-hint {

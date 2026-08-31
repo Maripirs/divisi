@@ -58,6 +58,24 @@ export interface NotePitch {
 	octave: number;
 }
 
+/** The five note values the duration editor offers. Tuplets and rarer
+ * values (breve, 32nd) are out of scope for this pass; `noteDuration`
+ * reports `type: null` when it meets one. `dots` pairs with these: 0, 1, or
+ * 2 augmentation dots. */
+export type DurationType = 'whole' | 'half' | 'quarter' | 'eighth' | '16th';
+const DURATION_TYPES: readonly DurationType[] = ['whole', 'half', 'quarter', 'eighth', '16th'];
+
+/** How many quarter notes one of each `DurationType` lasts, before dots.
+ * A whole note at the measure's `<divisions>` is `divisions * 4`; each step
+ * down halves it. */
+const TYPE_IN_QUARTERS: Record<DurationType, number> = {
+	whole: 4,
+	half: 2,
+	quarter: 1,
+	eighth: 0.5,
+	'16th': 0.25
+};
+
 export interface EditableNote {
 	/** Position in document order across every `<note>` in the score — a
 	 * stable id that survives edits, since edits mutate a note in place and
@@ -290,8 +308,255 @@ export class EditableScore {
 		this.reindex();
 	}
 
+	/** Change the selected note's written duration: rewrite `<type>`, replace
+	 * its `<dot>` run, recompute `<duration>` from the measure's active
+	 * `<divisions>`, then re-fit the measure so the bar still adds up.
+	 *
+	 * Returns `false` without mutating when the edit can't be represented
+	 * cleanly: a grace note (no `<duration>` to rewrite), a value that isn't
+	 * a whole number of `<divisions>` (e.g. a dotted eighth at
+	 * `divisions=1`), a no-op (already this type and dot count), or a
+	 * lengthening the following rest can't absorb without overwriting a note
+	 * or overfilling the bar. The caller turns that into a transient notice.
+	 *
+	 * Chords: MusicXML gives every note of a chord one shared duration, so
+	 * this applies `type`/`dots`/`<duration>` to every member of the chord
+	 * the selected note belongs to, not just the clicked notehead.
+	 */
+	setDuration(index: number, opts: { type: DurationType; dots: 0 | 1 | 2 }): boolean {
+		const el = this.elFor.get(index);
+		if (!el) return false;
+		// Grace notes carry no <duration>; there is nothing to re-fit.
+		if (el.querySelector(':scope > grace')) return false;
+
+		const group = this.chordGroup(el);
+		const anchor = group[0];
+		const durEl = anchor.querySelector(':scope > duration');
+		if (!durEl) return false;
+
+		// No-op: already exactly this notation. Refuse so the caller doesn't
+		// flag the score dirty for nothing.
+		const currentType = text(anchor.querySelector(':scope > type'));
+		const currentDots = anchor.querySelectorAll(':scope > dot').length;
+		if (currentType === opts.type && currentDots === opts.dots) return false;
+
+		// New <duration> in divisions: the base value for the <type>, times
+		// the dotted multiplier (1 dot = 1.5x, 2 dots = 1.75x).
+		const divisions = this.activeDivisionsFor(anchor);
+		const base = divisions * TYPE_IN_QUARTERS[opts.type];
+		const dotMultiplier = 2 - Math.pow(2, -opts.dots);
+		const nextDuration = base * dotMultiplier;
+		const rounded = Math.round(nextDuration);
+		if (rounded <= 0 || Math.abs(nextDuration - rounded) > 1e-9) return false;
+
+		const delta = rounded - Number(text(durEl));
+
+		// Walk the same-voice run that follows the chord in this measure and
+		// collect the rests before the next pitched note. A <backup>,
+		// <forward>, or pitched note ends the run. Those rests are the only
+		// slack we can spend (note got longer) or stretch (note got shorter).
+		const voice = text(anchor.querySelector(':scope > voice'));
+		const last = group[group.length - 1];
+		const followingRests: Element[] = [];
+		for (let sib = last.nextElementSibling; sib; sib = sib.nextElementSibling) {
+			const tag = sib.tagName;
+			if (tag === 'backup' || tag === 'forward') break;
+			if (tag !== 'note') continue; // <direction>, <barline>, <print>, ...
+			const sibVoice = text(sib.querySelector(':scope > voice'));
+			if (voice && sibVoice && sibVoice !== voice) break;
+			if (!sib.querySelector(':scope > rest')) break; // next pitched note
+			followingRests.push(sib);
+		}
+		const availableRest = followingRests.reduce(
+			(sum, r) => sum + Number(text(r.querySelector(':scope > duration'))),
+			0
+		);
+		// Lengthening past the slack would overwrite the next note or spill
+		// out of the bar. Refuse before touching the DOM.
+		if (delta > 0 && availableRest < delta) return false;
+
+		// Past this point the edit is committed; mutate in place.
+
+		// All chord members share one duration / type / dot count.
+		for (const member of group) {
+			this.setChild(member, 'duration', String(rounded));
+			this.setTypeAndDots(member, opts.type, opts.dots);
+		}
+
+		if (delta < 0) {
+			// Shorter note: hand the freed divisions to the first following
+			// rest, or drop in a new rest if there isn't one.
+			if (followingRests.length > 0) {
+				this.resizeRest(followingRests[0], -delta, divisions);
+			} else {
+				last.after(this.buildRest(-delta, voice, anchor, divisions));
+			}
+		} else if (delta > 0) {
+			// Longer note: eat into the following rests, removing any it
+			// fully consumes.
+			let need = delta;
+			for (const rest of followingRests) {
+				if (need <= 0) break;
+				const have = Number(text(rest.querySelector(':scope > duration')));
+				if (have <= need) {
+					rest.remove();
+					need -= have;
+				} else {
+					this.resizeRest(rest, -need, divisions);
+					need = 0;
+				}
+			}
+		}
+
+		this.reindex();
+		return true;
+	}
+
+	/** The written duration of a note, for the toolbar's active state and
+	 * for re-applying with a changed dot count. `type` is `null` when the
+	 * `<type>` is outside the editor's five values (breve, 32nd, ...). */
+	noteDuration(index: number): { type: DurationType | null; dots: 0 | 1 | 2 } | null {
+		const el = this.elFor.get(index);
+		if (!el) return null;
+		const raw = text(el.querySelector(':scope > type'));
+		const type = (DURATION_TYPES as readonly string[]).includes(raw)
+			? (raw as DurationType)
+			: null;
+		const dots = Math.min(2, el.querySelectorAll(':scope > dot').length) as 0 | 1 | 2;
+		return { type, dots };
+	}
+
 	serialize(): string {
 		return new XMLSerializer().serializeToString(this.doc);
+	}
+
+	/** Every `<note>` of the chord the given note belongs to, anchor first.
+	 * A chord is a run of sibling `<note>`s where the second onward carry
+	 * `<chord/>`; a lone note returns just itself. */
+	private chordGroup(el: Element): Element[] {
+		let anchor = el;
+		if (el.querySelector(':scope > chord')) {
+			for (let p = el.previousElementSibling; p; p = p.previousElementSibling) {
+				if (p.tagName !== 'note') break;
+				anchor = p;
+				if (!p.querySelector(':scope > chord')) break;
+			}
+		}
+		const group = [anchor];
+		for (let n = anchor.nextElementSibling; n; n = n.nextElementSibling) {
+			if (n.tagName !== 'note' || !n.querySelector(':scope > chord')) break;
+			group.push(n);
+		}
+		return group;
+	}
+
+	/** The `<divisions>` in effect for `noteEl`'s measure: the last one
+	 * declared in an `<attributes>` at or before it, scanning this part's
+	 * measures from the top (divisions carry forward until changed). Kept
+	 * separate from `reindex()`'s walk, which also has to track
+	 * `<backup>`/`<forward>` for onsets this doesn't need. */
+	private activeDivisionsFor(noteEl: Element): number {
+		const part = noteEl.closest('part');
+		const measure = noteEl.closest('measure');
+		if (!part || !measure) return 1;
+		const measures = Array.from(part.querySelectorAll(':scope > measure'));
+		const target = measures.indexOf(measure);
+		let divisions = 1;
+		for (let i = 0; i <= target; i++) {
+			const kids = Array.from(measures[i].children);
+			for (const attr of kids) {
+				if (attr.tagName !== 'attributes') continue;
+				// In the note's own measure, a later <attributes> doesn't apply.
+				if (i === target && kids.indexOf(attr) > kids.indexOf(noteEl)) break;
+				const d = text(attr.querySelector(':scope > divisions'));
+				if (d) divisions = Number(d);
+			}
+		}
+		return divisions;
+	}
+
+	/** Rewrite `<type>` and rebuild the `<dot>` run for one `<note>`, keeping
+	 * DTD child order: `... voice, type, dot*, accidental, ...`. */
+	private setTypeAndDots(noteEl: Element, type: DurationType, dots: number): void {
+		let typeEl = noteEl.querySelector(':scope > type');
+		if (!typeEl) {
+			typeEl = this.doc.createElement('type');
+			const before =
+				noteEl.querySelector(':scope > accidental') ??
+				noteEl.querySelector(':scope > time-modification') ??
+				noteEl.querySelector(':scope > stem') ??
+				noteEl.querySelector(':scope > notehead') ??
+				noteEl.querySelector(':scope > staff') ??
+				noteEl.querySelector(':scope > beam') ??
+				noteEl.querySelector(':scope > notations') ??
+				noteEl.querySelector(':scope > lyric');
+			if (before) noteEl.insertBefore(typeEl, before);
+			else noteEl.appendChild(typeEl);
+		}
+		typeEl.textContent = type;
+		for (const d of Array.from(noteEl.querySelectorAll(':scope > dot'))) d.remove();
+		let after: Element = typeEl;
+		for (let i = 0; i < dots; i++) {
+			const dot = this.doc.createElement('dot');
+			after.after(dot);
+			after = dot;
+		}
+	}
+
+	/** A fresh `<rest>` note of `duration` divisions in `voice`, mirroring
+	 * the anchor's `<staff>` and carrying a best-fit `<type>` so it doesn't
+	 * render as a whole-measure rest. Child order: rest, duration, voice,
+	 * type, staff. */
+	private buildRest(duration: number, voice: string, anchor: Element, divisions: number): Element {
+		const note = this.doc.createElement('note');
+		note.appendChild(this.doc.createElement('rest'));
+		const dur = this.doc.createElement('duration');
+		dur.textContent = String(duration);
+		note.appendChild(dur);
+		if (voice) {
+			const v = this.doc.createElement('voice');
+			v.textContent = voice;
+			note.appendChild(v);
+		}
+		const type = this.durationToType(duration, divisions);
+		if (type) {
+			const t = this.doc.createElement('type');
+			t.textContent = type;
+			note.appendChild(t);
+		}
+		const staff = anchor.querySelector(':scope > staff');
+		if (staff) {
+			const s = this.doc.createElement('staff');
+			s.textContent = staff.textContent;
+			note.appendChild(s);
+		}
+		return note;
+	}
+
+	/** Resize an existing `<rest>` note by `deltaDivisions` (may be negative)
+	 * and refresh its `<type>` so the glyph roughly matches the new length. */
+	private resizeRest(restEl: Element, deltaDivisions: number, divisions: number): void {
+		const durEl = restEl.querySelector(':scope > duration');
+		if (!durEl) return;
+		const next = Number(text(durEl)) + deltaDivisions;
+		durEl.textContent = String(next);
+		const type = this.durationToType(next, divisions);
+		if (type) this.setTypeAndDots(restEl, type, 0);
+		else restEl.querySelector(':scope > type')?.remove();
+	}
+
+	/** Largest plain `DurationType` that fits `duration` divisions, for
+	 * labelling a rest. A compound length (a grown rest that is now a dotted
+	 * value) just takes the next size down; the `<duration>` stays exact. */
+	private durationToType(duration: number, divisions: number): DurationType | null {
+		if (divisions <= 0) return null;
+		const quarters = duration / divisions;
+		if (quarters >= 4) return 'whole';
+		if (quarters >= 2) return 'half';
+		if (quarters >= 1) return 'quarter';
+		if (quarters >= 0.5) return 'eighth';
+		if (quarters > 0) return '16th';
+		return null;
 	}
 
 	private setChild(parent: Element, tag: string, value: string, insertBeforeTag?: string): void {
