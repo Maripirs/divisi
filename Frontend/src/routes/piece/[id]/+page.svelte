@@ -50,6 +50,7 @@
 		type Annotation,
 		type AnnotationShare
 	} from '$lib/api/annotations';
+	import type { MarkupScope } from '$lib/api/pieceMarkup';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
@@ -217,6 +218,15 @@
 	);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
+	// F12: which scope of saved PDF marks is shown (or `'none'` to hide
+	// them). Driven from the Practice Setup drawer below and bound into
+	// `PdfView`, which no longer floats its own control for this.
+	let pdfMarkupVisibility = $state<'none' | MarkupScope>('mine');
+	const PDF_MARKUP_VISIBILITY_OPTIONS: { value: 'none' | MarkupScope; label: () => string }[] = [
+		{ value: 'none', label: () => m.markup_visibility_none() },
+		{ value: 'mine', label: () => m.markup_visibility_mine() },
+		{ value: 'group', label: () => m.markup_visibility_group() }
+	];
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
@@ -394,7 +404,14 @@
 				return;
 			}
 			durationMs = player.duration;
-			baseTempoBpm = player.baseBPM;
+			// The "100%" anchor for the tempo readout is the piece's *opening*
+			// tempo — the admin's configured default if there is one, otherwise
+			// the file's own tempo. So a piece always opens showing 100%, and
+			// the steppers move you off it, rather than the readout starting at
+			// some odd percentage because the admin default (or a
+			// tempo the parser couldn't read from the file) differs from the
+			// file's declared tempo.
+			baseTempoBpm = adminDefaultTempo ?? player.baseBPM;
 			const storedTempo = stored.tempoBpm;
 			if (storedTempo !== undefined && storedTempo >= MIN_TEMPO_BPM && storedTempo <= MAX_TEMPO_BPM) {
 				setTempo(storedTempo, false);
@@ -1080,6 +1097,7 @@
 						pieceId={remoteMeta?.pieceId}
 						canMarkup={canAnnotate}
 						currentUserId={page.data.user?.id}
+						bind:markupVisibility={pdfMarkupVisibility}
 					/>
 					</div>
 				</div>
@@ -1282,6 +1300,25 @@
 						{:else if audioSource === 'reference' && referencePlayerError}
 							<p class="status-note status-note--error">{referencePlayerError}</p>
 						{/if}
+					</section>
+				{/if}
+
+				{#if viewMode === 'pdf' && canAnnotate}
+					<!-- F12: was a control floating on the PDF itself — moved here
+					     so it sits with the other per-piece view settings.
+					     `PdfView` binds `markupVisibility` to this. -->
+					<section class="menu-section">
+						<h3>{m.markup_visibility()}</h3>
+						<div class="segmented" role="group" aria-label={m.markup_visibility()}>
+							{#each PDF_MARKUP_VISIBILITY_OPTIONS as option (option.value)}
+								<button
+									class:active={pdfMarkupVisibility === option.value}
+									onclick={() => (pdfMarkupVisibility = option.value)}
+								>
+									{option.label()}
+								</button>
+							{/each}
+						</div>
 					</section>
 				{/if}
 
