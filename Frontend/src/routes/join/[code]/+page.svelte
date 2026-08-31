@@ -6,6 +6,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { formatCalendarDate, formatEventDate, formatDateTime } from '$lib/utils/dates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -17,30 +18,6 @@
 	// (plain `$state`, not `localStorage`), so it reappears every visit
 	// since guests aren't tracked across sessions at all.
 	let bannerDismissed = $state(false);
-
-	function formatDate(iso: string) {
-		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
-
-	// Weekly Notes' `note_date` has no time-of-day meaning — see the group
-	// page's matching `formatNoteDate` note on why this needs pinning to
-	// UTC instead of `formatDate`'s local-time conversion.
-	function formatNoteDate(iso: string): string {
-		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-	}
-
-	function formatDateTime(iso: string) {
-		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-	}
-
-	// Homework `dueDate` has no time-of-day meaning (an admin picks a plain
-	// calendar date) — unlike `formatDate` above, this pins to UTC so it
-	// doesn't roll back a calendar day in any timezone behind UTC (caught
-	// live: a Sept 2 due date showed "Sep 1"). Same fix as the group page's
-	// `formatDate` and Home's `formatDueDate`.
-	function formatDueDate(iso: string | null) {
-		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : m.home_no_due_date();
-	}
 
 	function coverageLabel(status: string) {
 		if (status === 'underfilled') return m.join_coverage_underfilled();
@@ -128,7 +105,7 @@
 			{:else}
 				{#each data.homework as hw (hw.id)}
 					<section class="card">
-						<p class="card-eyebrow">{formatDueDate(hw.dueDate)}</p>
+						<p class="card-eyebrow">{formatCalendarDate(hw.dueDate, m.home_no_due_date())}</p>
 						<p class="card-title">{hw.title}</p>
 						<p class="card-meta">{hw.range}</p>
 						{#if hw.instructions}
@@ -143,7 +120,7 @@
 			{:else}
 				{#each data.weeklyNotes as n (n.id)}
 					<section class="card">
-						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.noteDate) })}</p>
+						<p class="card-eyebrow">{m.join_week_of({ date: formatCalendarDate(n.noteDate) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
 							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
@@ -198,7 +175,7 @@
 					<section class="card track-card">
 						<div class="track-info">
 							<p class="card-title">{piece.title}</p>
-							<p class="card-meta">{m.join_shared({ date: formatDate(piece.distributedAt) })}</p>
+							<p class="card-meta">{m.join_shared({ date: formatEventDate(piece.distributedAt) })}</p>
 						</div>
 						<a
 							class="piece-action piece-action--primary"

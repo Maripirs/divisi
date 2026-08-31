@@ -7,8 +7,8 @@
 	 * or from clicking an existing marker (mode `view`). Matches B5's real
 	 * semantics — private by default, explicit share-by-email with a peer,
 	 * owner-only edit/delete/share/unshare — not the fixture-era
-	 * `AnnotationModal.svelte`'s broadcast-style visibility options, which
-	 * the real Backend never implemented. */
+	 * broadcast-style visibility options (from the since-removed
+	 * `AnnotationModal.svelte`), which the real Backend never implemented. */
 	let {
 		open,
 		mode,

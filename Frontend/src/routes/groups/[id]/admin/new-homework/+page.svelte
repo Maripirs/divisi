@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { withSubmitting } from '$lib/utils/enhance';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
@@ -35,13 +36,7 @@
 	{:else}
 		<form
 			method="POST"
-			use:enhance={() => {
-				submitting = true;
-				return async ({ update }) => {
-					submitting = false;
-					await update();
-				};
-			}}
+			use:enhance={withSubmitting((v) => (submitting = v))}
 		>
 			<section class="card">
 				<label class="field">

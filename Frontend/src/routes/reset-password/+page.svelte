@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { withSubmitting } from '$lib/utils/enhance';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -29,13 +30,7 @@
 		<form
 			class="card"
 			method="POST"
-			use:enhance={() => {
-				submitting = true;
-				return async ({ update }) => {
-					submitting = false;
-					await update();
-				};
-			}}
+			use:enhance={withSubmitting((v) => (submitting = v))}
 		>
 			<input type="hidden" name="token" value={data.token} />
 			<label class="field">

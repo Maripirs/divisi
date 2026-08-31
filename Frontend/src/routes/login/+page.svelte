@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { withSubmitting } from '$lib/utils/enhance';
 	import { page } from '$app/state';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
@@ -50,13 +51,7 @@
 		class="card"
 		method="POST"
 		action={mode === 'login' ? '?/login' : '?/register'}
-		use:enhance={() => {
-			submitting = true;
-			return async ({ update }) => {
-				submitting = false;
-				await update();
-			};
-		}}
+		use:enhance={withSubmitting((v) => (submitting = v))}
 	>
 		<input type="hidden" name="redirectTo" value={redirectTo} />
 		{#if mode === 'register'}

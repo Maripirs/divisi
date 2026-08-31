@@ -7,6 +7,13 @@
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
 	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
+	import {
+		formatCalendarDate,
+		formatDateTime,
+		toDateInputValue,
+		toDatetimeLocalValue
+	} from '$lib/utils/dates';
+	import { withSubmitting, afterSubmit } from '$lib/utils/enhance';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -234,23 +241,6 @@
 		})
 	);
 
-	// Both homework `due_date` and Weekly Notes' `note_date` are plain
-	// calendar dates with no time-of-day meaning (an admin picks one via
-	// `<input type="date">`, see `new-homework`'s and the create/update
-	// weekly-note actions' UTC-midnight round trip) — `timeZone: 'UTC'`
-	// keeps the display matching the date the admin typed; local-time
-	// conversion rolls it back a calendar day in any timezone behind UTC
-	// (caught live: a Sept 1 note showed "Aug 31", a Sept 2 due date showed
-	// "Sep 1").
-	function formatDate(iso: string | null) {
-		if (!iso) return m.home_no_due_date();
-		return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-	}
-
-	function formatDateTime(iso: string) {
-		return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-	}
-
 	// `Group.rehearsal_weekday` is 0=Monday..6=Sunday (matches Python's
 	// `date.weekday()`, what the Backend stores) — distinct from JS's own
 	// `Date.getDay()`, which is 0=Sunday..6=Saturday. Every place below that
@@ -285,26 +275,6 @@
 		next.setDate(next.getDate() + daysUntil);
 		const pad = (n: number) => String(n).padStart(2, '0');
 		return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}T${pad(next.getHours())}:${pad(next.getMinutes())}`;
-	}
-
-	// `<input type="datetime-local">` wants "YYYY-MM-DDTHH:mm" in the
-	// browser's local time, not the ISO string's own UTC offset — used to
-	// prefill the responsibility date editor with its current value.
-	function toDatetimeLocalValue(iso: string): string {
-		const d = new Date(iso);
-		const pad = (n: number) => String(n).padStart(2, '0');
-		return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-	}
-
-	// Same idea as `toDatetimeLocalValue`, for a plain `<input type="date">`
-	// (Weekly Notes' `note_date` has no time-of-day meaning) — uses UTC
-	// getters since `note_date` round-trips through `new Date(...).toISOString()`
-	// as UTC midnight (see the create/update actions), so reading it back
-	// with local getters could roll the date a day off in a UTC-behind zone.
-	function toDateInputValue(iso: string): string {
-		const d = new Date(iso);
-		const pad = (n: number) => String(n).padStart(2, '0');
-		return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 	}
 
 	function coverageLabel(status: string) {
@@ -380,7 +350,7 @@
 							onclick={() => toggleHomeworkCollapsed(hw.id)}
 						>
 							<span class="hw-collapsed-text">
-								<span class="card-eyebrow">{formatDate(hw.due_date)}</span>
+								<span class="card-eyebrow">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
 								<span class="card-title">{hw.pieceTitle ?? hw.title}</span>
 							</span>
 							<span class="chevron" aria-hidden="true"></span>
@@ -393,7 +363,7 @@
 							onclick={() => toggleHomeworkCollapsed(hw.id)}
 						>
 							<span class="hw-summary-text">
-								<p class="card-eyebrow">{formatDate(hw.due_date)}</p>
+								<p class="card-eyebrow">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</p>
 								<p class="card-title">{hw.title}</p>
 								<p class="card-meta">{hw.range}{hw.pieceTitle ? ` · ${hw.pieceTitle}` : ''}</p>
 							</span>
@@ -406,15 +376,7 @@
 							<form
 								method="POST"
 								action="?/updateHomework"
-								use:enhance={() => {
-									savingHomework = true;
-									return async ({ update }) => {
-										savingHomework = false;
-										editingHomeworkId = null;
-										confirmingDeleteHomeworkId = null;
-										await update();
-									};
-								}}
+								use:enhance={withSubmitting((v) => (savingHomework = v), () => { editingHomeworkId = null; confirmingDeleteHomeworkId = null; })}
 							>
 								<input type="hidden" name="homeworkId" value={hw.id} />
 								<label class="field">
@@ -584,14 +546,7 @@
 								method="POST"
 								action="?/updatePieceDetails"
 								enctype="multipart/form-data"
-								use:enhance={() => {
-									savingDetails = true;
-									return async ({ update }) => {
-										savingDetails = false;
-										editingDetailsPieceId = null;
-										await update();
-									};
-								}}
+								use:enhance={withSubmitting((v) => (savingDetails = v), () => (editingDetailsPieceId = null))}
 							>
 								<input type="hidden" name="pieceId" value={track.piece_id} />
 								<label class="field">
@@ -675,15 +630,7 @@
 									<form
 										method="POST"
 										action="?/deleteTrack"
-										use:enhance={() => {
-											deletingTrack = true;
-											return async ({ update }) => {
-												deletingTrack = false;
-												confirmingDeleteTrackPieceId = null;
-												editingDetailsPieceId = null;
-												await update();
-											};
-										}}
+										use:enhance={withSubmitting((v) => (deletingTrack = v), () => { confirmingDeleteTrackPieceId = null; editingDetailsPieceId = null; })}
 										class="track-delete-corner-form"
 									>
 										<input type="hidden" name="pieceId" value={track.piece_id} />
@@ -787,14 +734,7 @@
 						method="POST"
 						action="?/uploadTrack"
 						enctype="multipart/form-data"
-						use:enhance={() => {
-							uploadingTrack = true;
-							return async ({ update }) => {
-								uploadingTrack = false;
-								showUploadForm = false;
-								await update();
-							};
-						}}
+						use:enhance={withSubmitting((v) => (uploadingTrack = v), () => (showUploadForm = false))}
 					>
 						<label class="field">
 							<span>{m.groups_upload_name()}</span>
@@ -872,13 +812,7 @@
 				<form
 					method="POST"
 					action="?/createWeeklyNote"
-					use:enhance={() => {
-						creatingWeeklyNote = true;
-						return async ({ update }) => {
-							creatingWeeklyNote = false;
-							await update();
-						};
-					}}
+					use:enhance={withSubmitting((v) => (creatingWeeklyNote = v))}
 				>
 					<label class="field">
 						<span>{m.new_homework_title_field()}</span>
@@ -911,14 +845,7 @@
 						<form
 							method="POST"
 							action="?/updateWeeklyNote"
-							use:enhance={() => {
-								savingWeeklyNoteEdit = true;
-								return async ({ update }) => {
-									savingWeeklyNoteEdit = false;
-									editingWeeklyNoteId = null;
-									await update();
-								};
-							}}
+							use:enhance={withSubmitting((v) => (savingWeeklyNoteEdit = v), () => (editingWeeklyNoteId = null))}
 						>
 							<input type="hidden" name="noteId" value={n.id} />
 							<label class="field">
@@ -946,7 +873,7 @@
 							</div>
 						</form>
 					{:else}
-						<p class="card-eyebrow">{m.join_week_of({ date: formatDate(n.note_date) })}</p>
+						<p class="card-eyebrow">{m.join_week_of({ date: formatCalendarDate(n.note_date, m.home_no_due_date()) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
 							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
@@ -976,10 +903,7 @@
 								<form
 									method="POST"
 									action="?/deleteWeeklyNote"
-									use:enhance={() => async ({ update }) => {
-										confirmingDeleteWeeklyNoteId = null;
-										await update();
-									}}
+									use:enhance={afterSubmit(() => (confirmingDeleteWeeklyNoteId = null))}
 								>
 									<input type="hidden" name="noteId" value={n.id} />
 									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
@@ -1008,14 +932,7 @@
 							<form
 								method="POST"
 								action="?/updateMemberTitle"
-								use:enhance={() => {
-									savingTitle = true;
-									return async ({ update }) => {
-										savingTitle = false;
-										editingTitleUserId = null;
-										await update();
-									};
-								}}
+								use:enhance={withSubmitting((v) => (savingTitle = v), () => (editingTitleUserId = null))}
 								class="inline-edit-row"
 							>
 								<input type="hidden" name="userId" value={member.user_id} />
@@ -1052,10 +969,7 @@
 								<form
 									method="POST"
 									action="?/removeMember"
-									use:enhance={() => async ({ update }) => {
-										confirmingRemoveMemberId = null;
-										await update();
-									}}
+									use:enhance={afterSubmit(() => (confirmingRemoveMemberId = null))}
 								>
 									<input type="hidden" name="userId" value={member.user_id} />
 									<button type="submit" class="text-link text-link--danger">{m.groups_confirm()}</button>
@@ -1094,14 +1008,7 @@
 				<form
 					method="POST"
 					action="?/addMember"
-					use:enhance={() => {
-						addingMember = true;
-						return async ({ update }) => {
-							addingMember = false;
-							memberEmail = '';
-							await update();
-						};
-					}}
+					use:enhance={withSubmitting((v) => (addingMember = v), () => (memberEmail = ''))}
 				>
 					<label class="field">
 						<span>{m.login_email()}</span>
@@ -1161,10 +1068,7 @@
 							<form
 								method="POST"
 								action="?/deleteResponsibilitySchedule"
-								use:enhance={() => async ({ update }) => {
-									confirmingDeleteScheduleId = null;
-									await update();
-								}}
+								use:enhance={afterSubmit(() => (confirmingDeleteScheduleId = null))}
 							>
 								<input type="hidden" name="scheduleId" value={schedule.id} />
 								<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
@@ -1190,14 +1094,7 @@
 				<form
 					method="POST"
 					action="?/createResponsibilitySchedule"
-					use:enhance={() => {
-						creatingSchedule = true;
-						return async ({ update }) => {
-							creatingSchedule = false;
-							roleRowCount = 1;
-							await update();
-						};
-					}}
+					use:enhance={withSubmitting((v) => (creatingSchedule = v), () => (roleRowCount = 1))}
 				>
 					<label class="field">
 						<span>{m.groups_upload_name()}</span>
@@ -1226,13 +1123,7 @@
 					<form
 						method="POST"
 						action="?/addResponsibilityDate"
-						use:enhance={() => {
-							addingDate = true;
-							return async ({ update }) => {
-								addingDate = false;
-								await update();
-							};
-						}}
+						use:enhance={withSubmitting((v) => (addingDate = v))}
 					>
 						<label class="field">
 							<span>{m.responsibilities_singular()}</span>
@@ -1281,14 +1172,7 @@
 						<form
 							method="POST"
 							action="?/updateResponsibilityDate"
-							use:enhance={() => {
-								savingDateEdit = true;
-								return async ({ update }) => {
-									savingDateEdit = false;
-									editingDateId = null;
-									await update();
-								};
-							}}
+							use:enhance={withSubmitting((v) => (savingDateEdit = v), () => (editingDateId = null))}
 						>
 							<input type="hidden" name="dateId" value={d.id} />
 							<label class="field">
@@ -1412,10 +1296,7 @@
 								<form
 									method="POST"
 									action="?/deleteResponsibilityDate"
-									use:enhance={() => async ({ update }) => {
-										confirmingDeleteDateId = null;
-										await update();
-									}}
+									use:enhance={afterSubmit(() => (confirmingDeleteDateId = null))}
 								>
 									<input type="hidden" name="dateId" value={d.id} />
 									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
@@ -1447,14 +1328,7 @@
 				<form
 					method="POST"
 					action="?/updateDescription"
-					use:enhance={() => {
-						savingDescription = true;
-						return async ({ update }) => {
-							savingDescription = false;
-							editingDescription = false;
-							await update();
-						};
-					}}
+					use:enhance={withSubmitting((v) => (savingDescription = v), () => (editingDescription = false))}
 				>
 					<label class="field">
 						<span>{m.groups_description()}</span>
@@ -1505,14 +1379,7 @@
 				<form
 					method="POST"
 					action="?/updateRehearsalSchedule"
-					use:enhance={() => {
-						savingRehearsal = true;
-						return async ({ update }) => {
-							savingRehearsal = false;
-							editingRehearsal = false;
-							await update();
-						};
-					}}
+					use:enhance={withSubmitting((v) => (savingRehearsal = v), () => (editingRehearsal = false))}
 				>
 					<label class="field">
 						<span>{m.groups_day()}</span>
@@ -1569,14 +1436,7 @@
 			<form
 				method="POST"
 				action="?/updateGuestSettings"
-				use:enhance={() => {
-					savingGuestSettings = true;
-					return async ({ update }) => {
-						savingGuestSettings = false;
-						removePassword = false;
-						await update();
-					};
-				}}
+				use:enhance={withSubmitting((v) => (savingGuestSettings = v), () => (removePassword = false))}
 			>
 				<label class="field">
 					<span>{data.group.has_guest_password ? m.groups_change_password() : m.groups_set_password()}</span>
@@ -1706,13 +1566,7 @@
 					<form
 						method="POST"
 						action="?/leaveGroup"
-						use:enhance={() => {
-							leavingGroup = true;
-							return async ({ update }) => {
-								leavingGroup = false;
-								await update();
-							};
-						}}
+						use:enhance={withSubmitting((v) => (leavingGroup = v))}
 					>
 						<button type="submit" class="btn btn-danger" disabled={leavingGroup}>
 							{leavingGroup ? m.groups_leaving() : m.groups_yes_leave()}

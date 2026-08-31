@@ -8,6 +8,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { formatCalendarDate, formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -52,21 +53,6 @@
 		dismissedResponsibilityIds = next;
 		if (browser) window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
 	}
-
-	// For a responsibility's real, time-of-day-anchored date (a rehearsal at
-	// a specific hour) — local-time conversion is exactly what's wanted here.
-	function formatDate(iso: string | null) {
-		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : m.home_no_due_date();
-	}
-
-	// Homework `due_date`, unlike the above, is a plain calendar date with no
-	// time-of-day meaning (an admin picks one via `<input type="date">`) —
-	// `formatDate`'s local-time conversion rolls it back a calendar day in
-	// any timezone behind UTC (caught live: a Sept 2 due date showed
-	// "Sep 1"). Same fix as the group page's own `formatDate`.
-	function formatDueDate(iso: string | null) {
-		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }) : m.home_no_due_date();
-	}
 </script>
 
 <main class="shell">
@@ -101,7 +87,7 @@
 					>
 						<span>{hw.title}, {hw.range}</span>
 						<span class="hw-row-end">
-							<span class="dim">{formatDueDate(hw.due_date)}</span>
+							<span class="dim">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
 							<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
 						</span>
 					</button>
@@ -110,7 +96,7 @@
 					     plain info row, no chevron implying there's more to tap. -->
 					<div class="hw-row hw-row--static">
 						<span>{hw.title}, {hw.range}</span>
-						<span class="dim">{formatDueDate(hw.due_date)}</span>
+						<span class="dim">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
 					</div>
 				{/if}
 				{#if expandedHomeworkId === hw.id}
@@ -146,7 +132,7 @@
 								{r.reason === 'enrolled' ? m.home_resp_enrolled() : m.join_coverage_underfilled()}
 							</span>
 						</span>
-						<span class="dim">{formatDate(r.date)}</span>
+						<span class="dim">{formatEventDate(r.date, m.home_no_due_date())}</span>
 					</a>
 					{#if r.reason === 'needs_volunteers'}
 						<button
