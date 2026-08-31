@@ -6,6 +6,7 @@
 	import FileSlot from '$lib/components/FileSlot.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
+	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -79,6 +80,24 @@
 	let addDateDraft = $state('');
 	// Create-schedule form's dynamic role rows — starts with one blank row.
 	let roleRowCount = $state(1);
+	// Homework tab: which assignment's "View"/"View assignment" button has
+	// expanded in place to reveal its Practice link (and, for an admin, an
+	// Edit link) — at most one at a time. Homework never got its own detail
+	// page (per the human's call — same reasoning applies on Home); this is
+	// the entire replacement for what `/groups/[id]/homework/[hwId]` used
+	// to show.
+	let expandedHomeworkId = $state<string | null>(null);
+	// Same tab, admin only: which expanded assignment's "Edit" link has
+	// swapped for the inline edit form — same click-to-reveal pattern as
+	// the Tracks tab's "Edit details" panel below. Only reachable while
+	// that assignment is already the expanded one.
+	let editingHomeworkId = $state<string | null>(null);
+	let hwTitleDraft = $state('');
+	let hwPieceIdDraft = $state('');
+	let hwRangeDraft = $state('');
+	let hwDueDateDraft = $state('');
+	let hwInstructionsDraft = $state('');
+	let savingHomework = $state(false);
 	// Members tab: which member's row (by id) has its "Remove" button
 	// expanded into a confirm/cancel pair — at most one at a time.
 	let confirmingRemoveMemberId = $state<string | null>(null);
@@ -343,11 +362,105 @@
 					{#if hw.instructions}
 						<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
 					{/if}
-					<div class="btn-row">
-						<a class="btn btn-primary" href={lh(`/groups/${data.group.id}/homework/${hw.id}`)}>
-							{mode === 'admin' ? m.groups_view() : m.groups_view_assignment()}
-						</a>
-					</div>
+					<!-- Admin always has something behind this (Edit, at least) — a
+					     member only does when there's a linked piece to practice.
+					     Without that gate, a piece-less assignment's button flips its
+					     chevron but reveals nothing, which just reads as broken. -->
+					{#if mode === 'admin' || hw.piece_id}
+						<div class="btn-row">
+							<button
+								type="button"
+								class="btn btn-primary disclosure-btn"
+								aria-expanded={expandedHomeworkId === hw.id}
+								onclick={() => (expandedHomeworkId = expandedHomeworkId === hw.id ? null : hw.id)}
+							>
+								<span>{mode === 'admin' ? m.groups_view() : m.groups_view_assignment()}</span>
+								<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
+							</button>
+						</div>
+					{/if}
+					{#if expandedHomeworkId === hw.id}
+						{#if mode === 'admin' && editingHomeworkId === hw.id}
+							<form
+								method="POST"
+								action="?/updateHomework"
+								use:enhance={() => {
+									savingHomework = true;
+									return async ({ update }) => {
+										savingHomework = false;
+										editingHomeworkId = null;
+										await update();
+									};
+								}}
+							>
+								<input type="hidden" name="homeworkId" value={hw.id} />
+								<label class="field">
+									<span>{m.new_homework_piece()}</span>
+									<select name="pieceId" bind:value={hwPieceIdDraft}>
+										<option value="">{m.new_homework_no_piece()}</option>
+										{#each data.tracks as track (track.piece_id)}
+											<option value={track.piece_id}>{track.title}</option>
+										{/each}
+									</select>
+								</label>
+								<label class="field">
+									<span>{m.new_homework_title_field()}</span>
+									<input type="text" name="title" bind:value={hwTitleDraft} required />
+								</label>
+								<label class="field">
+									<span>{m.new_homework_range()}</span>
+									<input type="text" name="range" bind:value={hwRangeDraft} required />
+								</label>
+								<label class="field">
+									<span>{m.new_homework_due_date()}</span>
+									<input type="date" name="dueDate" bind:value={hwDueDateDraft} />
+								</label>
+								<label class="field">
+									<span>{m.new_homework_instructions()}</span>
+									<textarea name="instructions" bind:value={hwInstructionsDraft}></textarea>
+								</label>
+
+								{#if form?.form === 'updateHomework' && form?.error}
+									<p class="error">{form.error}</p>
+								{/if}
+								<div class="btn-row">
+									<button type="submit" class="btn btn-outline" disabled={savingHomework}>
+										{savingHomework ? m.new_homework_assigning() : m.action_save()}
+									</button>
+									<button
+										type="button"
+										class="text-link"
+										onclick={() => (editingHomeworkId = null)}
+										disabled={savingHomework}
+									>
+										{m.action_cancel()}
+									</button>
+								</div>
+							</form>
+						{:else}
+							{#if hw.piece_id}
+								<div class="btn-row">
+									<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
+								</div>
+							{/if}
+							{#if mode === 'admin'}
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => {
+										hwTitleDraft = hw.title;
+										hwPieceIdDraft = hw.piece_id ?? '';
+										hwRangeDraft = hw.range;
+										hwDueDateDraft = hw.due_date ? hw.due_date.slice(0, 10) : '';
+										hwInstructionsDraft = hw.instructions;
+										editingHomeworkId = hw.id;
+									}}
+								>
+									{m.groups_edit_details()}
+								</button>
+							{/if}
+						{/if}
+					{/if}
 				</section>
 			{/each}
 		{/if}
@@ -763,7 +876,7 @@
 						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.note_date) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
-							<p class="card-note">{n.body}</p>
+							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
 						{/if}
 					{/if}
 					{#if mode === 'admin' && editingWeeklyNoteId !== n.id}

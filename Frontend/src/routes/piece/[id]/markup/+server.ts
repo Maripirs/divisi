@@ -4,12 +4,13 @@ import type { RequestHandler } from './$types';
 /** Proxies the Backend's `GET`/`POST /piece-markup` — same authenticated-
  * proxy shape as `../annotations/+server.ts`. Always requires a session
  * (no guest path — marks are personal, same as annotations). */
-export const GET: RequestHandler = async ({ params, locals, fetch }) => {
+export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 	if (!locals.token) return new Response(null, { status: 401 });
+	const scope = url.searchParams.get('scope') === 'group' ? 'group' : 'mine';
 	try {
 		const body = await backendJson(
 			locals.token,
-			`/piece-markup?piece_id=${encodeURIComponent(params.id)}`,
+			`/piece-markup?piece_id=${encodeURIComponent(params.id)}&scope=${scope}`,
 			undefined,
 			fetch
 		);

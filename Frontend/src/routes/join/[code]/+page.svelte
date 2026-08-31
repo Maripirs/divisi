@@ -2,6 +2,7 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import Logo from '$lib/components/Logo.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -140,7 +141,7 @@
 						<p class="card-eyebrow">{m.join_week_of({ date: formatNoteDate(n.noteDate) })}</p>
 						<p class="card-title">{n.title}</p>
 						{#if n.body}
-							<p class="card-note">{n.body}</p>
+							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
 						{/if}
 					</section>
 				{/each}

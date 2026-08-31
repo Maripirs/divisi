@@ -1196,6 +1196,7 @@
 						active={viewMode === 'pdf'}
 						pieceId={remoteMeta?.pieceId}
 						canMarkup={canAnnotate}
+						currentUserId={page.data.user?.id}
 					/>
 					</div>
 				</div>

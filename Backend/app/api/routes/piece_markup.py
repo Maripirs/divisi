@@ -1,19 +1,17 @@
-"""Freehand pen strokes + stamps drawn on a piece's PDF pages.
+"""Freehand pen strokes, stamps, and text drawn on a piece's PDF pages.
 
-Personal-only: every mark is scoped to its creator (`user_id`), same as
-private notation an actual musician would pencil into their own copy of the
-music — nobody else's marks show up here, and there's no share/unshare like
-`Annotation` (B5) has. A group-published layer (an admin publishes their
-markup for the whole group, members opt in to see it) is a planned
-fast-follow — see Backend/plan.md's B15 note — deliberately not built this
-pass.
+Every mark keeps its creator (`user_id`). The caller can list just their own
+marks, or all marks on a group-owned piece they can access; deletion remains
+owner-only.
 """
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import MarkupMarkCreate, MarkupMarkOut
+from app.api.schemas import MarkupMarkCreate, MarkupMarkOut, MarkupMarkUpdate
 from app.db.models import GroupMembership, OwnerType, Piece, PieceMarkupMark, User
 from app.db.session import get_db
 
@@ -62,6 +60,7 @@ def create_mark(
         stamp_type=payload.stamp_type,
         x=payload.x,
         y=payload.y,
+        text=payload.text,
     )
     db.add(mark)
     db.commit()
@@ -72,20 +71,49 @@ def create_mark(
 @router.get("", response_model=list[MarkupMarkOut])
 def list_marks(
     piece_id: str,
+    scope: Literal["mine", "group"] = "mine",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[MarkupMarkOut]:
-    """The caller's own marks on a piece, every page — the Frontend filters
-    to the page currently in view itself, same as it already loads a whole
-    piece's `Annotation`s in one call."""
-    _get_piece_or_404(piece_id, db)
-    marks = (
-        db.query(PieceMarkupMark)
-        .filter(PieceMarkupMark.piece_id == piece_id, PieceMarkupMark.user_id == current_user.id)
-        .order_by(PieceMarkupMark.created_at)
-        .all()
-    )
+    """Marks on a piece, every page — the Frontend filters to the page
+    currently in view itself. `mine` returns only the caller's marks; `group`
+    returns all marks on a group-owned piece the caller can access."""
+    piece = _get_piece_or_404(piece_id, db)
+    if not _can_access_piece(piece, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to this piece")
+
+    query = db.query(PieceMarkupMark).filter(PieceMarkupMark.piece_id == piece_id)
+    if scope != "group" or piece.owner_type != OwnerType.group:
+        query = query.filter(PieceMarkupMark.user_id == current_user.id)
+    marks = query.order_by(PieceMarkupMark.created_at).all()
     return marks
+
+
+@router.patch("/{mark_id}", response_model=MarkupMarkOut)
+def update_mark(
+    mark_id: str,
+    payload: MarkupMarkUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MarkupMarkOut:
+    """Edits movable marks in place. Ownership stays strict even in the group
+    visibility view, so tapping another singer's text never rewrites it."""
+    mark = db.get(PieceMarkupMark, mark_id)
+    if mark is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mark not found")
+    if mark.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can do this")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "text" in updates and mark.kind == "text":
+        text = updates["text"]
+        if text is None or not text.strip():
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Text cannot be empty")
+    for field, value in updates.items():
+        setattr(mark, field, value)
+    db.commit()
+    db.refresh(mark)
+    return mark
 
 
 @router.delete("/{mark_id}", status_code=status.HTTP_204_NO_CONTENT)

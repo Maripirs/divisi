@@ -13,6 +13,14 @@ class HomeworkCreate(BaseModel):
     due_date: datetime | None = None
 
 
+class HomeworkUpdate(BaseModel):
+    piece_id: str | None = None
+    title: str
+    range: str
+    instructions: str = ""
+    due_date: datetime | None = None
+
+
 class HomeworkOut(BaseModel):
     id: str
     group_id: str

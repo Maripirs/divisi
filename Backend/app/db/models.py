@@ -9,7 +9,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -280,17 +280,16 @@ class AnnotationShare(Base):
 
 
 class PieceMarkupMark(Base):
-    """A piaScore-style freehand mark (pen stroke or stamp) drawn directly on
+    """A piaScore-style freehand mark drawn directly on
     one page of a piece's PDF — distinct from `Annotation` (a single text
-    note at one score position, no drawing involved). Personal-only for now
-    (always scoped to `user_id`, no sharing) — a group-published layer is a
-    planned fast-follow, deliberately not built this pass; see
-    Backend/plan.md's B15 note.
+    note at one score position, no drawing involved). Every mark is scoped
+    to `user_id`; group-owned pieces can also expose a combined group view,
+    while deletion stays owner-only.
 
     `x`/`y`/`points` are fractions of the PDF page's own rendered *width*
     (both axes, not width/height respectively — so 1 unit means the same
     physical length horizontally and vertically, keeping a stroke's
-    thickness/a stamp's size undistorted regardless of the page's aspect
+    thickness, stamp size, and text size undistorted regardless of the page's aspect
     ratio) — never raw pixels, so a mark stays correctly positioned
     regardless of zoom level or the viewing device's resolution. `y` can
     exceed 1.0 for a page taller than it is wide.
@@ -302,7 +301,7 @@ class PieceMarkupMark(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-indexed, matches pdf.js
-    kind: Mapped[str] = mapped_column(String, nullable=False)  # "stroke" | "stamp"
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # "stroke" | "stamp" | "text"
     color: Mapped[str] = mapped_column(String, nullable=False)  # CSS hex color
 
     # Stroke-only (kind == "stroke"):
@@ -315,6 +314,9 @@ class PieceMarkupMark(Base):
     stamp_type: Mapped[str | None] = mapped_column(String, nullable=True)
     x: Mapped[float | None] = mapped_column(Float, nullable=True)
     y: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Text-only (kind == "text"): inline score text placed at `x`/`y`.
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

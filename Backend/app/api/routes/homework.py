@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import HomeworkCreate, HomeworkOut
+from app.api.schemas import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.db.models import Group, GroupPage, GroupRole, Homework, User
 from app.db.session import get_db
 from app.services.pages import require_member_page_access
@@ -94,6 +94,27 @@ def get_homework(
     homework = _get_homework_or_404(homework_id, db)
     _require_member(homework.group_id, current_user, db)
     require_member_page_access(homework.group_id, GroupPage.homework, current_user.id, db)
+    return homework
+
+
+@router.put("/homework/{homework_id}", response_model=HomeworkOut)
+def update_homework(
+    homework_id: str,
+    payload: HomeworkUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Homework:
+    """Admin-only, full replace — same shape as `weekly_notes.py`'s
+    `update_weekly_note`."""
+    homework = _get_homework_or_404(homework_id, db)
+    _require_admin(homework.group_id, current_user, db)
+    homework.piece_id = payload.piece_id
+    homework.title = payload.title
+    homework.range = payload.range
+    homework.instructions = payload.instructions
+    homework.due_date = payload.due_date
+    db.commit()
+    db.refresh(homework)
     return homework
 
 

@@ -10,10 +10,14 @@
 		MarkupApiError,
 		createStamp,
 		createStroke,
+		createText,
 		deleteMark,
 		listMarks,
+		updateMark,
+		type MarkupScope,
 		type MarkupMark
 	} from '$lib/api/pieceMarkup';
+	import StampShape from '$lib/components/StampShape.svelte';
 	import { m } from '$lib/paraglide/messages';
 
 	/**
@@ -25,10 +29,11 @@
 	 * Rendering via pdf.js onto canvases gives identical zoom behavior on
 	 * every platform, matching ScoreView's own zoom controls.
 	 *
-	 * When `canMarkup` is on, also renders a piaScore-style freehand
-	 * drawing layer on top of each page — pen strokes and stamps, personal
-	 * only (see `$lib/api/pieceMarkup.ts`). Points are stored as fractions
-	 * of the page's own rendered *width* (not a 0-1-per-axis square), so a
+	 * When `canMarkup` is on, also renders a piaScore-style markup layer on
+	 * top of each page: pen strokes, stamps, and text annotations. Visibility
+	 * can be personal or group-wide (see `$lib/api/pieceMarkup.ts`). Points
+	 * are stored as fractions of the page's own rendered *width* (not a
+	 * 0-1-per-axis square), so a
 	 * stroke's thickness reads the same in both directions and a mark
 	 * stays correctly placed across zoom levels without any conversion.
 	 */
@@ -37,7 +42,8 @@
 		zoom = $bindable(1),
 		active = true,
 		pieceId,
-		canMarkup = false
+		canMarkup = false,
+		currentUserId
 	}: {
 		pdfUrl: string;
 		zoom?: number;
@@ -59,6 +65,7 @@
 		 * feature. Doesn't by itself show the toolbar/marks; see this
 		 * component's own `annotationMode` (F12) for the on/off within that. */
 		canMarkup?: boolean;
+		currentUserId?: string;
 	} = $props();
 
 	const MIN_ZOOM = 0.5;
@@ -92,30 +99,49 @@
 	 * `renderAllPages`, once real page dimensions are known. */
 	let pageAspects = $state<number[]>([]);
 	let marks = $state<MarkupMark[]>([]);
-	let marksLoadedForPiece: string | undefined;
+	let marksLoadedKey: string | undefined;
 
-	// F12: a master on/off separate from which tool is armed — `canMarkup`
-	// alone used to always show the toolbar and every existing mark, with no
-	// way back to a plain, guaranteed-scrollable PDF. Off by default each
-	// visit (session-local, matching F4's `annotateMode`), same as `tool`
-	// below never persists across a reload either.
+	type MarkupVisibility = 'none' | MarkupScope;
+	const MARKUP_VISIBILITY_OPTIONS: { value: MarkupVisibility; label: () => string }[] = [
+		{ value: 'none', label: () => m.markup_visibility_none() },
+		{ value: 'mine', label: () => m.markup_visibility_mine() },
+		{ value: 'group', label: () => m.markup_visibility_group() }
+	];
+	let markupVisibility = $state<MarkupVisibility>('mine');
+
+	// F12: a master edit-mode toggle separate from which tool is armed. The
+	// visibility segmented control decides whether saved marks are shown.
 	let annotationMode = $state(false);
-	type MarkupTool = 'pen' | 'stamp' | 'eraser' | null;
+	type MarkupTool = 'pen' | 'stamp' | 'text' | 'eraser' | null;
 	let tool = $state<MarkupTool>(null);
 	const PEN_COLORS = ['#e11d48', '#2563eb', '#16a34a', '#111827'];
 	const PEN_WIDTHS = [0.0018, 0.003, 0.005];
 	let penColor = $state(PEN_COLORS[0]);
 	let penWidth = $state(PEN_WIDTHS[1]);
 
-	const STAMPS: { type: string; glyph: string; label: () => string }[] = [
-		{ type: 'breath', glyph: '’', label: () => m.markup_stamp_breath() },
-		{ type: 'accent', glyph: '>', label: () => m.markup_stamp_accent() },
-		{ type: 'fermata', glyph: '\u{1D110}', label: () => m.markup_stamp_fermata() },
-		{ type: 'staccato', glyph: '·', label: () => m.markup_stamp_staccato() },
-		{ type: 'circle', glyph: '○', label: () => m.markup_stamp_circle() },
-		{ type: 'star', glyph: '★', label: () => m.markup_stamp_star() }
+	const STAMPS: { type: string; label: () => string }[] = [
+		{ type: 'crescendo', label: () => m.markup_stamp_crescendo() },
+		{ type: 'diminuendo', label: () => m.markup_stamp_diminuendo() },
+		{ type: 'breath', label: () => m.markup_stamp_breath() },
+		{ type: 'no-breath', label: () => m.markup_stamp_no_breath() },
+		{ type: 'cutoff', label: () => m.markup_stamp_cutoff() },
+		{ type: 'fermata', label: () => m.markup_stamp_fermata() },
+		{ type: 'tenuto', label: () => m.markup_stamp_tenuto() },
+		{ type: 'accent', label: () => m.markup_stamp_accent() },
+		{ type: 'staccato', label: () => m.markup_stamp_staccato() },
+		{ type: 'phrase-arc', label: () => m.markup_stamp_phrase_arc() }
 	];
 	let stampType = $state(STAMPS[0].type);
+	const MIN_STAMP_SIZE = 0.024;
+	const MAX_STAMP_SIZE = 0.08;
+	const STAMP_SIZE_STEP = 0.002;
+	const DEFAULT_STAMP_SIZE = 0.04;
+	let stampSize = $state(DEFAULT_STAMP_SIZE);
+	const MIN_TEXT_SIZE = 0.024;
+	const MAX_TEXT_SIZE = 0.08;
+	const TEXT_SIZE_STEP = 0.002;
+	const DEFAULT_TEXT_SIZE = 0.04;
+	let textSize = $state(DEFAULT_TEXT_SIZE);
 
 	// Both read directly in the template (the live-stroke preview, the
 	// Undo button's disabled state) alongside `activeStroke`/`marks`, so
@@ -129,17 +155,42 @@
 	// local stack, same as any ordinary pen-and-paper undo would be.
 	let recentMarkIds = $state<string[]>([]);
 	let markupError = $state<string | null>(null);
+	let textEditorInput = $state<HTMLInputElement | undefined>();
+	let textEditor = $state<{
+		markId?: string;
+		pageIndex: number;
+		x: number;
+		y: number;
+		value: string;
+		color: string;
+		width: number;
+	} | null>(null);
+	let activeTextDrag = $state<{
+		markId: string;
+		pageIndex: number;
+		start: [number, number];
+		origin: [number, number];
+		moved: boolean;
+	} | null>(null);
 
 	$effect(() => {
 		const id = pieceId;
-		if (!canMarkup || !id || marksLoadedForPiece === id) return;
-		marksLoadedForPiece = id;
-		void loadMarks(id);
+		const visibility = markupVisibility;
+		if (!canMarkup || !id || visibility === 'none') {
+			marks = [];
+			marksLoadedKey = undefined;
+			return;
+		}
+		const key = `${id}:${visibility}`;
+		if (marksLoadedKey === key) return;
+		marksLoadedKey = key;
+		void loadMarks(id, visibility, key);
 	});
 
-	async function loadMarks(id: string): Promise<void> {
+	async function loadMarks(id: string, scope: MarkupScope, key: string): Promise<void> {
 		try {
-			marks = await listMarks(id);
+			const loaded = await listMarks(id, scope);
+			if (marksLoadedKey === key) marks = loaded;
 		} catch {
 			// A failed load just means no prior marks show yet — not worth a
 			// blocking error state on top of the PDF's own; the toolbar still
@@ -153,6 +204,10 @@
 		return marks.filter((mark) => mark.pageNumber === pageNumber);
 	}
 
+	function isOwnMark(mark: MarkupMark): boolean {
+		return mark.userId === currentUserId;
+	}
+
 	/** SVG path `d` for a stroke's point list — a plain polyline (move to
 	 * the first point, line to every point after), not a smoothed curve.
 	 * Good enough for handwriting-speed input; a curve-fit pass is a
@@ -162,13 +217,98 @@
 		return points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x} ${y}`).join(' ');
 	}
 
-	function stampGlyph(type: string | null): string {
-		return STAMPS.find((s) => s.type === type)?.glyph ?? '?';
+	function sizeForStamp(mark: MarkupMark): number {
+		return mark.width ?? DEFAULT_STAMP_SIZE;
+	}
+
+	function sizeForText(mark: MarkupMark): number {
+		return mark.width ?? DEFAULT_TEXT_SIZE;
+	}
+
+	function textHitWidth(mark: MarkupMark): number {
+		return Math.max(sizeForText(mark), (mark.text?.length ?? 1) * sizeForText(mark) * 0.54);
+	}
+
+	function textEditorStyle(pageIndex: number): string {
+		if (!textEditor) return '';
+		const aspect = pageAspects[pageIndex] ?? 1.4142;
+		const canvasWidth = canvasRefs[pageIndex]?.getBoundingClientRect().width ?? 720;
+		const fontSize = Math.max(14, Math.round(textEditor.width * canvasWidth));
+		return [
+			`left: ${textEditor.x * 100}%`,
+			`top: ${(textEditor.y / aspect) * 100}%`,
+			`color: ${textEditor.color}`,
+			`font-size: ${fontSize}px`
+		].join('; ');
+	}
+
+	async function focusTextEditor(): Promise<void> {
+		await tick();
+		textEditorInput?.focus();
+		textEditorInput?.select();
+	}
+
+	function openTextEditorForCreate(pageIndex: number, point: [number, number]): void {
+		textEditor = {
+			pageIndex,
+			x: point[0],
+			y: point[1],
+			value: '',
+			color: penColor,
+			width: textSize
+		};
+		void focusTextEditor();
+	}
+
+	function openTextEditorForMark(mark: MarkupMark, pageIndex: number): void {
+		if (mark.kind !== 'text' || !isOwnMark(mark) || mark.x === null || mark.y === null) return;
+		textEditor = {
+			markId: mark.id,
+			pageIndex,
+			x: mark.x,
+			y: mark.y,
+			value: mark.text ?? '',
+			color: mark.color,
+			width: sizeForText(mark)
+		};
+		void focusTextEditor();
+	}
+
+	function cancelTextEditor(): void {
+		textEditor = null;
+	}
+
+	async function commitTextEditor(): Promise<void> {
+		const editor = textEditor;
+		if (!editor || !pieceId) return;
+		const value = editor.value.trim();
+		textEditor = null;
+		if (!value) return;
+		markupError = null;
+		try {
+			if (editor.markId) {
+				const updated = await updateMark(pieceId, editor.markId, {
+					color: editor.color,
+					width: editor.width,
+					text: value,
+					x: editor.x,
+					y: editor.y
+				});
+				marks = marks.map((mark) => (mark.id === updated.id ? updated : mark));
+			} else {
+				const created = await createText(pieceId, editor.pageIndex + 1, editor.color, editor.width, value, editor.x, editor.y);
+				marks = [...marks, created];
+				recentMarkIds = [...recentMarkIds, created.id];
+			}
+		} catch (err) {
+			markupError = markupErrorMessage(err);
+		}
 	}
 
 	function setTool(next: MarkupTool): void {
 		tool = tool === next ? null : next;
 		activeStroke = null;
+		activeTextDrag = null;
 	}
 
 	/** Flips the master toggle. Turning it off also disarms whatever tool was
@@ -176,11 +316,26 @@
 	 * come back on already armed, or a pointerup after the layer's already
 	 * unmounted could try to commit a stroke nobody can see anymore. */
 	function toggleAnnotationMode(): void {
+		if (!annotationMode && markupVisibility === 'none') markupVisibility = 'mine';
 		annotationMode = !annotationMode;
 		if (!annotationMode) {
 			tool = null;
 			activeStroke = null;
 			activeStrokePage = -1;
+			textEditor = null;
+			activeTextDrag = null;
+		}
+	}
+
+	function setMarkupVisibility(next: MarkupVisibility): void {
+		markupVisibility = next;
+		if (next === 'none') {
+			annotationMode = false;
+			tool = null;
+			activeStroke = null;
+			activeStrokePage = -1;
+			textEditor = null;
+			activeTextDrag = null;
 		}
 	}
 
@@ -209,6 +364,8 @@
 			activeStroke = [point];
 		} else if (tool === 'stamp') {
 			void placeStamp(pageIndex, point);
+		} else if (tool === 'text') {
+			openTextEditorForCreate(pageIndex, point);
 		} else if (tool === 'eraser') {
 			eraseNear(pageIndex, point);
 		}
@@ -244,12 +401,74 @@
 		if (!pieceId) return;
 		markupError = null;
 		try {
-			const created = await createStamp(pieceId, pageIndex + 1, penColor, stampType, point[0], point[1]);
+			const created = await createStamp(pieceId, pageIndex + 1, penColor, stampType, stampSize, point[0], point[1]);
 			marks = [...marks, created];
 			recentMarkIds = [...recentMarkIds, created.id];
 		} catch (err) {
 			markupError = markupErrorMessage(err);
 		}
+	}
+
+	function handleTextPointerDown(event: PointerEvent, mark: MarkupMark, pageIndex: number): void {
+		if (!annotationMode || !isOwnMark(mark) || mark.x === null || mark.y === null) return;
+		event.stopPropagation();
+		const point = pointFromEvent(event, pageIndex);
+		if (!point) return;
+		(event.currentTarget as Element).setPointerCapture(event.pointerId);
+		textEditor = null;
+		activeTextDrag = {
+			markId: mark.id,
+			pageIndex,
+			start: point,
+			origin: [mark.x, mark.y],
+			moved: false
+		};
+	}
+
+	function handleTextPointerMove(event: PointerEvent): void {
+		const drag = activeTextDrag;
+		if (!drag) return;
+		event.stopPropagation();
+		const point = pointFromEvent(event, drag.pageIndex);
+		if (!point) return;
+		const nextX = Math.max(0, Math.min(1, drag.origin[0] + point[0] - drag.start[0]));
+		const aspect = pageAspects[drag.pageIndex] ?? 1.4142;
+		const nextY = Math.max(0, Math.min(aspect, drag.origin[1] + point[1] - drag.start[1]));
+		const moved = drag.moved || Math.hypot(nextX - drag.origin[0], nextY - drag.origin[1]) > 0.006;
+		activeTextDrag = { ...drag, moved };
+		marks = marks.map((mark) => (mark.id === drag.markId ? { ...mark, x: nextX, y: nextY } : mark));
+	}
+
+	async function handleTextPointerUp(event: PointerEvent, mark: MarkupMark, pageIndex: number): Promise<void> {
+		const drag = activeTextDrag;
+		if (!drag || drag.markId !== mark.id) return;
+		event.stopPropagation();
+		activeTextDrag = null;
+		const current = marks.find((candidate) => candidate.id === mark.id) ?? mark;
+		if (!drag.moved) {
+			openTextEditorForMark(current, pageIndex);
+			return;
+		}
+		if (!pieceId || current.x === null || current.y === null) return;
+		markupError = null;
+		try {
+			const updated = await updateMark(pieceId, current.id, { x: current.x, y: current.y });
+			marks = marks.map((candidate) => (candidate.id === updated.id ? updated : candidate));
+		} catch (err) {
+			marks = marks.map((candidate) =>
+				candidate.id === mark.id ? { ...candidate, x: drag.origin[0], y: drag.origin[1] } : candidate
+			);
+			markupError = markupErrorMessage(err);
+		}
+	}
+
+	function handleTextPointerCancel(mark: MarkupMark): void {
+		const drag = activeTextDrag;
+		if (!drag || drag.markId !== mark.id) return;
+		activeTextDrag = null;
+		marks = marks.map((candidate) =>
+			candidate.id === mark.id ? { ...candidate, x: drag.origin[0], y: drag.origin[1] } : candidate
+		);
 	}
 
 	// Page-width fractions — matches the point-space `pointFromEvent` uses,
@@ -276,12 +495,28 @@
 	}
 
 	function eraseNear(pageIndex: number, point: [number, number]): void {
-		const hit = marksForPage(pageIndex).find((mark) => {
-			if (mark.kind === 'stamp') {
-				return mark.x !== null && mark.y !== null && Math.hypot(mark.x - point[0], mark.y - point[1]) < ERASE_RADIUS;
-			}
-			return mark.points !== null && distanceToStroke(mark.points, point) < ERASE_RADIUS;
-		});
+		const hit = marksForPage(pageIndex)
+			.filter(isOwnMark)
+			.find((mark) => {
+				if (mark.kind === 'stamp') {
+					return (
+						mark.x !== null &&
+						mark.y !== null &&
+						Math.hypot(mark.x - point[0], mark.y - point[1]) < Math.max(ERASE_RADIUS, sizeForStamp(mark) * 0.65)
+					);
+				}
+				if (mark.kind === 'text') {
+					return (
+						mark.x !== null &&
+						mark.y !== null &&
+						point[0] >= mark.x - ERASE_RADIUS * 0.5 &&
+						point[0] <= mark.x + textHitWidth(mark) + ERASE_RADIUS * 0.5 &&
+						point[1] >= mark.y - ERASE_RADIUS * 0.5 &&
+						point[1] <= mark.y + sizeForText(mark) * 1.25 + ERASE_RADIUS * 0.5
+					);
+				}
+				return mark.points !== null && distanceToStroke(mark.points, point) < ERASE_RADIUS;
+			});
 		if (hit) void removeMark(hit.id);
 	}
 
@@ -534,10 +769,11 @@
 				<div class="pdf-page">
 					<div class="page-inner">
 						<canvas bind:this={canvasRefs[i]}></canvas>
-						{#if canMarkup && annotationMode}
+						{#if canMarkup && markupVisibility !== 'none'}
 							<svg
 								class="markup-layer"
-								class:markup-layer--active={tool !== null}
+								class:markup-layer--editable={annotationMode}
+								class:markup-layer--active={annotationMode && tool !== null}
 								viewBox="0 0 1 {pageAspects[i] ?? 1.4142}"
 								preserveAspectRatio="xMidYMid meet"
 								role="presentation"
@@ -557,9 +793,39 @@
 											stroke-linejoin="round"
 										/>
 									{:else if mark.kind === 'stamp' && mark.x !== null && mark.y !== null}
-										<text x={mark.x} y={mark.y} fill={mark.color} font-size={0.035} text-anchor="middle" dominant-baseline="central">
-											{stampGlyph(mark.stampType)}
-										</text>
+										<g class="stamp-mark" style:color={mark.color} transform={`translate(${mark.x} ${mark.y}) scale(${sizeForStamp(mark)})`}>
+											<StampShape type={mark.stampType} />
+										</g>
+									{:else if mark.kind === 'text' && mark.x !== null && mark.y !== null && mark.text}
+										<g
+											class="text-mark"
+											class:text-mark--editable={annotationMode && isOwnMark(mark)}
+											style:color={mark.color}
+											transform={`translate(${mark.x} ${mark.y})`}
+											role="button"
+											tabindex={annotationMode && isOwnMark(mark) ? 0 : -1}
+											aria-label={m.markup_text_field()}
+											onpointerdown={(e) => handleTextPointerDown(e, mark, i)}
+											onpointermove={handleTextPointerMove}
+											onpointerup={(e) => handleTextPointerUp(e, mark, i)}
+											onpointercancel={() => handleTextPointerCancel(mark)}
+											onkeydown={(event) => {
+												if ((event.key === 'Enter' || event.key === ' ') && annotationMode && isOwnMark(mark)) {
+													event.preventDefault();
+													openTextEditorForMark(mark, i);
+												}
+											}}
+										>
+											<rect
+												class="text-mark-hitbox"
+												x="-0.006"
+												y="-0.006"
+												width={textHitWidth(mark) + 0.012}
+												height={sizeForText(mark) * 1.25}
+												rx="0.004"
+											/>
+											<text x="0" y="0" font-size={sizeForText(mark)} fill="currentColor" dominant-baseline="hanging">{mark.text}</text>
+										</g>
 									{/if}
 								{/each}
 								{#if activeStroke && activeStrokePage === i}
@@ -573,6 +839,29 @@
 									/>
 								{/if}
 							</svg>
+							{#if textEditor && textEditor.pageIndex === i}
+								<form
+									class="text-editor"
+									style={textEditorStyle(i)}
+									onsubmit={(event) => {
+										event.preventDefault();
+										void commitTextEditor();
+									}}
+								>
+									<input
+										bind:this={textEditorInput}
+										value={textEditor.value}
+										oninput={(event) => {
+											if (textEditor) textEditor.value = (event.currentTarget as HTMLInputElement).value;
+										}}
+										onkeydown={(event) => {
+											if (event.key === 'Escape') cancelTextEditor();
+										}}
+										onblur={() => void commitTextEditor()}
+										aria-label={m.markup_text_field()}
+									/>
+								</form>
+							{/if}
 						{/if}
 					</div>
 				</div>
@@ -588,18 +877,31 @@
 
 	{#if canMarkup}
 		<!-- F12: master on/off — always shown (even while off) so there's a way
-		     back in, but the toolbar/marks below only render while it's on.
+		     into editing, while saved marks remain visible as read-only markup.
 		     Its own corner (top-left), clear of both the zoom controls and the
 		     tool toolbar, which only appears once this is on. -->
-		<button
-			class="annotation-mode-toggle"
-			class:active={annotationMode}
-			onclick={toggleAnnotationMode}
-			aria-label={annotationMode ? m.markup_mode_off() : m.markup_mode_on()}
-			aria-pressed={annotationMode}
-		>
-			✎
-		</button>
+		<div class="markup-top-controls">
+			<button
+				class="annotation-mode-toggle"
+				class:active={annotationMode}
+				onclick={toggleAnnotationMode}
+				aria-label={annotationMode ? m.markup_mode_off() : m.markup_mode_on()}
+				aria-pressed={annotationMode}
+			>
+				✎
+			</button>
+			<div class="visibility-toggle" aria-label={m.markup_visibility()}>
+				{#each MARKUP_VISIBILITY_OPTIONS as option (option.value)}
+					<button
+						class:active={markupVisibility === option.value}
+						onclick={() => setMarkupVisibility(option.value)}
+						aria-pressed={markupVisibility === option.value}
+					>
+						{option.label()}
+					</button>
+				{/each}
+			</div>
+		</div>
 	{/if}
 
 	{#if canMarkup && annotationMode}
@@ -621,7 +923,18 @@
 					aria-label={m.markup_tool_stamp()}
 					aria-pressed={tool === 'stamp'}
 				>
-					{stampGlyph(stampType)}
+					<svg class="tool-stamp-icon" viewBox="-0.5 -0.5 1 1" aria-hidden="true">
+						<StampShape type={stampType} />
+					</svg>
+				</button>
+				<button
+					class="tool-btn tool-btn--text"
+					class:active={tool === 'text'}
+					onclick={() => setTool('text')}
+					aria-label={m.markup_tool_text()}
+					aria-pressed={tool === 'text'}
+				>
+					T
 				</button>
 				<button
 					class="tool-btn"
@@ -636,7 +949,7 @@
 					↺
 				</button>
 			</div>
-			{#if tool === 'pen' || tool === 'stamp'}
+			{#if tool === 'pen' || tool === 'stamp' || tool === 'text'}
 				<div class="option-row">
 					{#each PEN_COLORS as color (color)}
 						<button
@@ -672,9 +985,43 @@
 							onclick={() => (stampType = stamp.type)}
 							aria-label={stamp.label()}
 						>
-							{stamp.glyph}
+							<svg class="stamp-icon" viewBox="-0.5 -0.5 1 1" aria-hidden="true">
+								<StampShape type={stamp.type} />
+							</svg>
 						</button>
 					{/each}
+				</div>
+				<div class="stamp-size-control">
+					<svg class="stamp-size-preview stamp-size-preview--small" viewBox="-0.5 -0.5 1 1" aria-hidden="true">
+						<StampShape type={stampType} />
+					</svg>
+					<input
+						type="range"
+						min={MIN_STAMP_SIZE}
+						max={MAX_STAMP_SIZE}
+						step={STAMP_SIZE_STEP}
+						value={stampSize}
+						oninput={(event) => (stampSize = Number((event.currentTarget as HTMLInputElement).value))}
+						aria-label={m.markup_stamp_size()}
+					/>
+					<svg class="stamp-size-preview stamp-size-preview--large" viewBox="-0.5 -0.5 1 1" aria-hidden="true">
+						<StampShape type={stampType} />
+					</svg>
+				</div>
+			{/if}
+			{#if tool === 'text'}
+				<div class="text-size-control">
+					<span class="text-size-preview text-size-preview--small" aria-hidden="true">T</span>
+					<input
+						type="range"
+						min={MIN_TEXT_SIZE}
+						max={MAX_TEXT_SIZE}
+						step={TEXT_SIZE_STEP}
+						value={textSize}
+						oninput={(event) => (textSize = Number((event.currentTarget as HTMLInputElement).value))}
+						aria-label={m.markup_text_size()}
+					/>
+					<span class="text-size-preview text-size-preview--large" aria-hidden="true">T</span>
 				</div>
 			{/if}
 			{#if markupError}
@@ -731,6 +1078,11 @@
 		width: 100%;
 		height: 100%;
 		touch-action: pan-x pan-y;
+		pointer-events: none;
+	}
+
+	.markup-layer--editable {
+		pointer-events: auto;
 	}
 
 	.markup-layer--active {
@@ -740,8 +1092,53 @@
 		cursor: crosshair;
 	}
 
-	.markup-layer text {
+	.stamp-mark {
+		pointer-events: none;
+	}
+
+	.text-mark {
+		pointer-events: none;
+	}
+
+	.markup-layer--editable .text-mark--editable {
+		pointer-events: auto;
+		cursor: move;
+	}
+
+	.text-mark-hitbox {
+		fill: transparent;
+	}
+
+	.text-mark text {
+		font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+		font-weight: 750;
+		paint-order: stroke;
+		stroke: var(--surface);
+		stroke-width: 0.003;
+		stroke-linejoin: round;
 		user-select: none;
+	}
+
+	.text-editor {
+		position: absolute;
+		z-index: 2;
+		transform: translate(-0.25rem, -0.25rem);
+		margin: 0;
+		color: inherit;
+	}
+
+	.text-editor input {
+		min-width: 7rem;
+		max-width: min(18rem, 58vw);
+		border: 2px solid currentColor;
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		color: currentColor;
+		box-shadow: var(--shadow);
+		padding: 0.2rem 0.35rem;
+		font: inherit;
+		font-weight: 750;
+		outline: none;
 	}
 
 	.status-card {
@@ -826,10 +1223,17 @@
 
 	/* Top-left — clear of `.zoom-controls` (bottom-right) and
 	   `.markup-toolbar` (bottom-left, only present once this is on). */
-	.annotation-mode-toggle {
+	.markup-top-controls {
 		position: absolute;
 		left: 0.75rem;
 		top: 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		max-width: calc(100% - 1.5rem);
+	}
+
+	.annotation-mode-toggle {
 		min-width: 2.125rem;
 		min-height: 2.125rem;
 		border: 1px solid var(--border);
@@ -840,6 +1244,37 @@
 		font-size: 1rem;
 		line-height: 1;
 		cursor: pointer;
+	}
+
+	.visibility-toggle {
+		display: flex;
+		gap: 2px;
+		padding: 3px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		box-shadow: var(--shadow);
+	}
+
+	.visibility-toggle button {
+		border: none;
+		background: transparent;
+		color: var(--text-muted);
+		border-radius: var(--radius-full);
+		padding: 0.4rem 0.6rem;
+		font-size: 0.8125rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.visibility-toggle button:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+
+	.visibility-toggle button.active {
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		color: var(--accent);
 	}
 
 	.annotation-mode-toggle:hover {
@@ -903,6 +1338,12 @@
 		color: var(--accent);
 	}
 
+	.tool-btn--text {
+		font-family: ui-serif, Georgia, serif;
+		font-size: 1.05rem;
+		font-weight: 800;
+	}
+
 	.color-swatch {
 		width: 1.5rem;
 		height: 1.5rem;
@@ -931,11 +1372,83 @@
 		cursor: pointer;
 	}
 
+	.stamp-btn {
+		width: 2rem;
+		height: 2rem;
+	}
+
 	.width-btn.active,
 	.stamp-btn.active {
 		border-color: var(--accent);
 		background: color-mix(in srgb, var(--accent) 16%, transparent);
 		color: var(--accent);
+	}
+
+	.tool-stamp-icon,
+	.stamp-icon,
+	.stamp-size-preview {
+		display: block;
+		color: currentColor;
+		overflow: visible;
+	}
+
+	.tool-stamp-icon {
+		width: 1.2rem;
+		height: 1.2rem;
+	}
+
+	.stamp-icon {
+		width: 1.15rem;
+		height: 1.15rem;
+	}
+
+	.stamp-size-control,
+	.text-size-control {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.1rem 0.25rem 0.15rem;
+		color: var(--text-muted);
+	}
+
+	.stamp-size-control input,
+	.text-size-control input {
+		width: min(10rem, 48vw);
+		accent-color: var(--accent);
+		cursor: pointer;
+	}
+
+	.stamp-size-preview {
+		color: var(--text-muted);
+	}
+
+	.stamp-size-preview--small {
+		width: 0.85rem;
+		height: 0.85rem;
+	}
+
+	.stamp-size-preview--large {
+		width: 1.45rem;
+		height: 1.45rem;
+	}
+
+	.text-size-preview {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.45rem;
+		font-family: ui-serif, Georgia, serif;
+		font-weight: 800;
+		line-height: 1;
+		color: var(--text-muted);
+	}
+
+	.text-size-preview--small {
+		font-size: 0.8rem;
+	}
+
+	.text-size-preview--large {
+		font-size: 1.35rem;
 	}
 
 	.width-dot {

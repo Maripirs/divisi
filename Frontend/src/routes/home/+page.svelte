@@ -17,6 +17,13 @@
 	// shows up if this happens to line up with one; otherwise just "Details".
 	const nextBundledPiece = next?.piece_id ? getPiece(next.piece_id) : undefined;
 
+	// Homework doesn't get its own page (per the human's call) — "Details"
+	// expands a card in place instead of navigating to
+	// `/groups/[id]/homework/[hwId]`, same pattern as the group page's own
+	// homework list. One id at a time, keyed across both the spotlighted
+	// card and the "Due soon" list below.
+	let expandedHomeworkId = $state<string | null>(null);
+
 	function formatDate(iso: string | null) {
 		return iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : m.home_no_due_date();
 	}
@@ -30,11 +37,29 @@
 			<p class="card-eyebrow">{m.home_next_practice()}</p>
 			<p class="card-title">{next.title}</p>
 			<p class="card-meta">{next.range} · {formatDate(next.due_date)} · {next.groupName}</p>
+			{#if expandedHomeworkId === next.id && next.instructions}
+				<p class="card-note">&ldquo;{next.instructions}&rdquo;</p>
+			{/if}
 			<div class="btn-row">
 				{#if nextBundledPiece}
 					<a class="btn btn-primary" href={lh(`/piece/${nextBundledPiece.id}`)}>{m.home_start()}</a>
+				{:else if expandedHomeworkId === next.id && next.piece_id}
+					<a class="btn btn-primary" href={lh(`/piece/${next.piece_id}`)}>{m.homework_detail_practice()}</a>
 				{/if}
-				<a class="btn btn-outline" href={lh(`/groups/${next.group_id}/homework/${next.id}`)}>{m.home_details()}</a>
+				<!-- Only worth expanding if there's instructions or a piece to
+				     practice behind it — otherwise the button would flip its
+				     chevron and reveal nothing. -->
+				{#if next.instructions || next.piece_id}
+					<button
+						type="button"
+						class="btn btn-outline disclosure-btn"
+						aria-expanded={expandedHomeworkId === next.id}
+						onclick={() => (expandedHomeworkId = expandedHomeworkId === next.id ? null : next.id)}
+					>
+						<span>{m.home_details()}</span>
+						<span class="chevron" class:is-open={expandedHomeworkId === next.id} aria-hidden="true"></span>
+					</button>
+				{/if}
 			</div>
 		</section>
 	{/if}
@@ -44,14 +69,42 @@
 	     every user), and nothing tracks a real last-opened piece yet. See
 	     Frontend/plan.md's backlog for building it for real. -->
 
-	{#if data.homework.length > 0}
+	<!-- The spotlighted card above already covers `data.homework[0]` — this
+	     list is everything *after* it, so the same assignment never shows
+	     twice on one page. -->
+	{#if data.homework.length > 1}
 		<section class="card">
 			<p class="card-eyebrow">{m.home_due_soon()}</p>
-			{#each data.homework as hw (hw.id)}
-				<a class="list-row-link" href={lh(`/groups/${hw.group_id}/homework/${hw.id}`)}>
-					<span>{hw.title}, {hw.range}</span>
-					<span class="dim">{formatDate(hw.due_date)}</span>
-				</a>
+			{#each data.homework.slice(1) as hw (hw.id)}
+				{#if hw.instructions || hw.piece_id}
+					<button
+						type="button"
+						class="list-row-link is-expandable"
+						class:is-open={expandedHomeworkId === hw.id}
+						aria-expanded={expandedHomeworkId === hw.id}
+						onclick={() => (expandedHomeworkId = expandedHomeworkId === hw.id ? null : hw.id)}
+					>
+						<span>{hw.title}, {hw.range}</span>
+						<span class="dim">{formatDate(hw.due_date)}</span>
+					</button>
+				{:else}
+					<!-- Nothing to expand into (no instructions, no linked piece) —
+					     plain info row, no chevron implying there's more to tap. -->
+					<div class="list-row-link no-chevron">
+						<span>{hw.title}, {hw.range}</span>
+						<span class="dim">{formatDate(hw.due_date)}</span>
+					</div>
+				{/if}
+				{#if expandedHomeworkId === hw.id}
+					<div class="due-soon-detail">
+						{#if hw.instructions}
+							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
+						{/if}
+						{#if hw.piece_id}
+							<a class="btn btn-outline btn-block" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
+						{/if}
+					</div>
+				{/if}
 			{/each}
 		</section>
 	{/if}
@@ -104,5 +157,13 @@
 
 	.join-group {
 		margin-top: 0.75rem;
+	}
+
+	/* A "Due soon" row's expanded detail — sits right under that row, not
+	   inside it (the row itself is a `<button>`, so this has to be a sibling
+	   rather than nested content). Indented slightly so it still reads as
+	   belonging to the row above it. */
+	.due-soon-detail {
+		padding-left: 0.9rem;
 	}
 </style>

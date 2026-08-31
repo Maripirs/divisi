@@ -1,12 +1,13 @@
 import { m } from '$lib/paraglide/messages';
 
-/** Freehand pen strokes + stamps drawn on a piece's PDF pages — personal
- * only (no sharing), rendered by `PdfView.svelte`. Calls
+/** Freehand pen strokes, stamps, and text drawn on a piece's PDF pages, rendered by
+ * `PdfView.svelte`. Calls
  * `routes/piece/[id]/markup/**`'s authenticated proxy routes, same
  * session-stays-server-side pattern as `$lib/api/annotations.ts`. `x`/`y`/
- * `points` are fractions (0-1) of the PDF page's own rendered width/height
- * — see `app.db.models.PieceMarkupMark`'s doc comment for why. */
-export type MarkKind = 'stroke' | 'stamp';
+ * `points` are fractions of the PDF page's own rendered width — see
+ * `app.db.models.PieceMarkupMark`'s doc comment for why. */
+export type MarkKind = 'stroke' | 'stamp' | 'text';
+export type MarkupScope = 'mine' | 'group';
 
 export interface MarkupMark {
 	id: string;
@@ -20,6 +21,7 @@ export interface MarkupMark {
 	stampType: string | null;
 	x: number | null;
 	y: number | null;
+	text: string | null;
 	createdAt: string;
 }
 
@@ -35,7 +37,16 @@ interface MarkupMarkResponse {
 	stamp_type: string | null;
 	x: number | null;
 	y: number | null;
+	text: string | null;
 	created_at: string;
+}
+
+export interface MarkupMarkPatch {
+	color?: string;
+	width?: number;
+	text?: string;
+	x?: number;
+	y?: number;
 }
 
 export class MarkupApiError extends Error {
@@ -61,6 +72,7 @@ function toMark(body: MarkupMarkResponse): MarkupMark {
 		stampType: body.stamp_type,
 		x: body.x,
 		y: body.y,
+		text: body.text,
 		createdAt: body.created_at
 	};
 }
@@ -90,8 +102,8 @@ function jsonInit(method: string, body: unknown): RequestInit {
 	return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
-export async function listMarks(pieceId: string): Promise<MarkupMark[]> {
-	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup`);
+export async function listMarks(pieceId: string, scope: MarkupScope = 'mine'): Promise<MarkupMark[]> {
+	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup?scope=${scope}`);
 	const body = (await res.json()) as MarkupMarkResponse[];
 	return body.map(toMark);
 }
@@ -115,13 +127,35 @@ export async function createStamp(
 	pageNumber: number,
 	color: string,
 	stampType: string,
+	width: number,
 	x: number,
 	y: number
 ): Promise<MarkupMark> {
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/markup`,
-		jsonInit('POST', { page_number: pageNumber, kind: 'stamp', color, stamp_type: stampType, x, y })
+		jsonInit('POST', { page_number: pageNumber, kind: 'stamp', color, width, stamp_type: stampType, x, y })
 	);
+	return toMark(await res.json());
+}
+
+export async function createText(
+	pieceId: string,
+	pageNumber: number,
+	color: string,
+	width: number,
+	text: string,
+	x: number,
+	y: number
+): Promise<MarkupMark> {
+	const res = await call(
+		`/piece/${encodeURIComponent(pieceId)}/markup`,
+		jsonInit('POST', { page_number: pageNumber, kind: 'text', color, width, text, x, y })
+	);
+	return toMark(await res.json());
+}
+
+export async function updateMark(pieceId: string, markId: string, patch: MarkupMarkPatch): Promise<MarkupMark> {
+	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup/${markId}`, jsonInit('PATCH', patch));
 	return toMark(await res.json());
 }
 

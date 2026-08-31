@@ -97,6 +97,50 @@ def test_admin_can_delete_homework(client):
     assert client.get("/homework/" + created["id"], headers=admin_headers).status_code == 404
 
 
+def test_admin_can_update_homework(client):
+    admin_headers = _register_and_login(client, "hw-admin8@example.com")
+    member_headers = _register_and_login(client, "hw-member8@example.com")
+    group_id = _make_group(client, admin_headers)
+    client.post("/groups/" + group_id + "/members", json={"email": "hw-member8@example.com"}, headers=admin_headers)
+    created = client.post(
+        "/groups/" + group_id + "/homework",
+        json={"title": "Thor", "range": "Full piece", "instructions": "Sing loud"},
+        headers=admin_headers,
+    ).json()
+
+    forbidden = client.put(
+        "/homework/" + created["id"],
+        json={"title": "Thor", "range": "mm. 1-20", "instructions": "Sing loud"},
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
+
+    updated = client.put(
+        "/homework/" + created["id"],
+        json={"title": "The Challenge of Thor", "range": "mm. 1-20", "instructions": "Watch dynamics", "due_date": "2026-09-05T00:00:00Z"},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["title"] == "The Challenge of Thor"
+    assert body["range"] == "mm. 1-20"
+    assert body["instructions"] == "Watch dynamics"
+    assert body["due_date"] == "2026-09-05T00:00:00"
+
+    fetched = client.get("/homework/" + created["id"], headers=admin_headers).json()
+    assert fetched["title"] == "The Challenge of Thor"
+
+
+def test_update_unknown_homework_id_404s(client):
+    headers = _register_and_login(client, "hw-admin9@example.com")
+    resp = client.put(
+        "/homework/does-not-exist",
+        json={"title": "X", "range": "Full piece"},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
 def test_homework_ordered_by_due_date(client):
     admin_headers = _register_and_login(client, "hw-admin7@example.com")
     group_id = _make_group(client, admin_headers)

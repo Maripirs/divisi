@@ -37,7 +37,7 @@ from app.api.schemas.groups import (
     GroupPageSettingUpdate,
     GroupRehearsalScheduleUpdate,
 )
-from app.api.schemas.homework import HomeworkCreate, HomeworkOut
+from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     DistributionOut,
     GuestGroupOut,
@@ -52,7 +52,7 @@ from app.api.schemas.library import (
     TimeSignatureOut,
 )
 from app.api.schemas.omr import OmrImportOut, OmrImportRequest, OmrJobOut
-from app.api.schemas.piece_markup import MarkupMarkCreate, MarkupMarkOut
+from app.api.schemas.piece_markup import MarkupMarkCreate, MarkupMarkOut, MarkupMarkUpdate
 from app.api.schemas.responsibilities import (
     ResponsibilityDateCreate,
     ResponsibilityDateOut,
@@ -97,9 +97,11 @@ __all__ = [
     "GuestPieceOut",
     "HomeworkCreate",
     "HomeworkOut",
+    "HomeworkUpdate",
     "LibraryEntryOut",
     "MarkupMarkCreate",
     "MarkupMarkOut",
+    "MarkupMarkUpdate",
     "OAuthProviderStatusOut",
     "OmrImportOut",
     "OmrImportRequest",
