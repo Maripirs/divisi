@@ -8,12 +8,19 @@ name: Backend keep-alive
 # that isn't listening yet. See Frontend/plan.md's log for the real
 # incident this fixed.
 #
-# A ping every 10 minutes (comfortably under the 15-minute idle window)
-# keeps an instance always warm, so nobody hits a cold start at all. Cheap
-# and reversible — delete this file to stop.
+# A ping every 5 minutes keeps an instance always warm, so nobody hits a
+# cold start at all. The interval is deliberately well under the 15-minute
+# idle window: GitHub's scheduler runs cron workflows late (or skips runs)
+# under load, especially on the hour and during US-daytime peak, so a
+# 10-minute nominal interval was in practice drifting past 15 and letting
+# the Backend sleep. That is how the "30s white screen first thing in the
+# morning" slipped through. Cheap and reversible: delete this file to stop.
+# The Frontend also degrades a cold start to a spinner now (see
+# `Frontend/src/routes/+layout.server.ts`), so a missed ping is no longer
+# catastrophic, just slower.
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch: {}
 
 jobs:

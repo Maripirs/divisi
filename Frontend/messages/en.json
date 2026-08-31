@@ -57,6 +57,9 @@
 	"reset_password_missing_link": "Missing or invalid reset link",
 
 	"layout_waiting_for_backend": "Waiting for backend…",
+	"layout_backend_waking": "This website is hosted with limited resources. After a long period of inactivity, the server has to wake up again before the app can load. This usually takes up to a minute.",
+	"loading": "Loading…",
+	"load_failed": "Couldn't load this. Try again in a moment.",
 
 	"library_title": "Library",
 	"library_log_in": "Log in",

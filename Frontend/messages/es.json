@@ -57,6 +57,9 @@
 	"reset_password_missing_link": "Enlace de restablecimiento faltante o inválido",
 
 	"layout_waiting_for_backend": "Esperando al servidor…",
+	"layout_backend_waking": "Este sitio se aloja con recursos limitados. Tras un largo periodo de inactividad, el servidor tiene que reactivarse antes de que la app pueda cargar; esto suele tardar hasta un minuto.",
+	"loading": "Cargando…",
+	"load_failed": "No se pudo cargar. Inténtalo de nuevo en un momento.",
 
 	"library_title": "Biblioteca",
 	"library_log_in": "Inicia sesión",

@@ -1,5 +1,6 @@
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { clearSessionCookie } from '$lib/server/session';
+import { subjectFromToken } from '$lib/server/jwt';
 import type { LayoutServerLoad } from './$types';
 
 export interface SessionUser {
@@ -8,27 +9,51 @@ export interface SessionUser {
 	name: string;
 }
 
+/** How long the session resolve gets to block the very first paint. A warm
+ * Backend answers `/auth/me` in well under this; a cold one (Render free
+ * tier waking from idle) can take 30s+, which is the white screen this
+ * budget avoids. Past it we paint anyway with an optimistic session and
+ * let `+layout.svelte` reconcile once the Backend is up. */
+const SESSION_RESOLVE_BUDGET_MS = 1500;
+
 /** Resolves the session cookie to a real user once per navigation, so every
  * page gets `data.user` (or `null` if logged out) without re-fetching
- * `/auth/me` itself. An expired/invalid token (a real 401) clears the
- * cookie; any other failure (a Backend outage — see `backendFetch`'s
- * synthetic 503 for a network failure, or an unexpected 4xx/5xx from
- * `/auth/me` itself) is dropped the same way, deliberately *not* thrown —
- * this load runs for every route including fully public ones (`/welcome`,
- * `/join`), so surfacing an error here would block pages that need no user
- * at all over a transient hiccup. The session cookie itself is left alone
- * in that case (only a real 401 clears it), so once the Backend recovers
- * the same cookie resolves normally again — self-healing rather than
- * forcing a real re-login over what was just a blip. */
+ * `/auth/me` itself.
+ *
+ * `/auth/me` is the app's first Backend call on a cold start, so it eats
+ * the whole cold-start latency. Rather than block the first paint on it
+ * (nothing renders, not even a loading state, until it returns), race it
+ * against a short budget:
+ *
+ *  - Answers in time: use it. A real 401 clears the cookie here (response
+ *    headers aren't flushed yet); any other failure (Backend outage, see
+ *    `backendFetch`'s synthetic 503) is dropped to `user: null` without
+ *    throwing, since this load runs for fully public routes too.
+ *  - Doesn't answer in time: paint now with an *optimistic* user built
+ *    from the JWT's own `sub` claim (the id is real; name/email are blank
+ *    for a beat) and set `sessionPending`, which tells `+layout.svelte` to
+ *    re-run this load once we're interactive and the Backend has woken.
+ *    The cookie isn't cleared on this path even if the token turns out
+ *    expired; that gets caught and cleared on the reconcile pass. */
 export const load: LayoutServerLoad = async ({ locals, cookies, fetch }) => {
-	if (!locals.token) return { user: null as SessionUser | null };
-	try {
-		const user = await backendJson<SessionUser>(locals.token, '/auth/me', undefined, fetch);
-		return { user };
-	} catch (err) {
-		if (err instanceof BackendApiError && err.status === 401) {
-			clearSessionCookie(cookies);
-		}
-		return { user: null as SessionUser | null };
+	if (!locals.token) return { user: null as SessionUser | null, sessionPending: false };
+
+	const resolved = backendJson<SessionUser>(locals.token, '/auth/me', undefined, fetch).then(
+		(user) => ({ kind: 'ok' as const, user }),
+		(err: unknown) => ({ kind: 'err' as const, err })
+	);
+	const raced = await Promise.race([
+		resolved,
+		new Promise<{ kind: 'timeout' }>((r) => setTimeout(() => r({ kind: 'timeout' }), SESSION_RESOLVE_BUDGET_MS))
+	]);
+
+	if (raced.kind === 'ok') return { user: raced.user, sessionPending: false };
+	if (raced.kind === 'err') {
+		if (raced.err instanceof BackendApiError && raced.err.status === 401) clearSessionCookie(cookies);
+		return { user: null as SessionUser | null, sessionPending: false };
 	}
+
+	const id = subjectFromToken(locals.token);
+	if (!id) return { user: null as SessionUser | null, sessionPending: false };
+	return { user: { id, email: '', name: '' } as SessionUser, sessionPending: true };
 };

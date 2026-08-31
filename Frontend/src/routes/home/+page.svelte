@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
 	import { getPiece } from '$lib/pieces/registry';
 	// Annotations are hidden app-wide for now (see Frontend/plan.md's F3 log) —
 	// not imported here.
@@ -45,7 +46,6 @@
 	}
 
 	let dismissedResponsibilityIds = $state<Set<string>>(loadDismissedResponsibilities());
-	let visibleResponsibilities = $derived(data.responsibilities.filter((r) => !dismissedResponsibilityIds.has(r.id)));
 
 	function dismissResponsibility(id: string): void {
 		const next = new Set(dismissedResponsibilityIds);
@@ -68,10 +68,16 @@
 	     top-level nav on this page; a `card--highlight`-style item per
 	     homework entry made the page read as an equally-weighted wall of
 	     buttons instead of one clear hierarchy. -->
-	{#if data.homework.length > 0}
+	{#await data.home}
+		<LoadingBlock />
+	{:then home}
+		{@const visibleResponsibilities = home.responsibilities.filter(
+			(r) => !dismissedResponsibilityIds.has(r.id)
+		)}
+	{#if home.homework.length > 0}
 		<section class="card">
 			<p class="card-eyebrow">{m.home_due_soon()}</p>
-			{#each data.homework as hw (hw.id)}
+			{#each home.homework as hw (hw.id)}
 				<!-- Real homework points at a real Backend piece — the player
 				     only knows bundled demo pieces (see Frontend/plan.md's
 				     backlog), so a "Start" shortcut only shows up if this
@@ -155,10 +161,10 @@
 
 	<section class="card">
 		<p class="card-eyebrow">{m.home_my_groups()}</p>
-		{#if data.groups.length === 0}
+		{#if home.groups.length === 0}
 			<p class="empty">{m.home_no_groups()}</p>
 		{:else}
-			{#each data.groups as group (group.id)}
+			{#each home.groups as group (group.id)}
 				<a class="list-row-link" href={lh(`/groups/${group.id}`)}>
 					<span>{group.name}</span>
 					<span class="dim">{m.home_active_count({ count: group.homeworkCount })}</span>
@@ -170,6 +176,12 @@
 		     of pointing at a page that no longer exists. -->
 		<a class="btn btn-outline btn-block join-group" href={lh('/join')}>{m.home_join_group()}</a>
 	</section>
+	{:catch}
+		<section class="card">
+			<p class="empty">{m.load_failed()}</p>
+			<a class="btn btn-outline btn-block join-group" href={lh('/join')}>{m.home_join_group()}</a>
+		</section>
+	{/await}
 
 </main>
 

@@ -22,17 +22,28 @@ async function groupJsonOrEmpty<T>(
 	}
 }
 
+/** The redirect gate keys off the session cookie, not `parent()`'s `user`:
+ * on a cold Backend start the root layout hands back an optimistic user
+ * (see `+layout.server.ts`) and this just needs "is there a session". The
+ * actual Home data is returned as an unawaited promise so the shell +
+ * loading state paint immediately instead of blocking on a fan-out of
+ * per-group Backend calls while the Backend is still waking. */
 export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
+	if (!locals.token) throw redirect(303, lh('/login?redirectTo=/home'));
 	const { user } = await parent();
-	if (!user) throw redirect(303, lh('/login?redirectTo=/home'));
+	// `user` may be the layout's cold-start stub, but its `id` is real
+	// (decoded from the session JWT), which is all the `reason` calc needs.
+	return { home: loadHome(locals.token, user?.id ?? '', fetch) };
+};
 
-	const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
+async function loadHome(token: string, userId: string, fetch: typeof globalThis.fetch) {
+	const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetch);
 	const homeworkByGroup = await Promise.all(
-		groups.map((g) => groupJsonOrEmpty<HomeworkOut>(locals.token, `/groups/${g.id}/homework`, fetch))
+		groups.map((g) => groupJsonOrEmpty<HomeworkOut>(token, `/groups/${g.id}/homework`, fetch))
 	);
 	const responsibilitiesByGroup = await Promise.all(
 		groups.map((g) =>
-			groupJsonOrEmpty<ResponsibilityDateOut>(locals.token, `/groups/${g.id}/responsibilities/dates`, fetch)
+			groupJsonOrEmpty<ResponsibilityDateOut>(token, `/groups/${g.id}/responsibilities/dates`, fetch)
 		)
 	);
 	const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
@@ -71,7 +82,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 			// an open call for volunteers is). Enrolled wins when both are
 			// true — "you're already covering this" matters more to the
 			// member than "it also still needs others".
-			reason: d.roles.some((r) => r.signups.some((s) => s.user_id === user.id))
+			reason: d.roles.some((r) => r.signups.some((s) => s.user_id === userId))
 				? ('enrolled' as const)
 				: ('needs_volunteers' as const)
 		}))
@@ -86,4 +97,4 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 		homework,
 		responsibilities
 	};
-};
+}

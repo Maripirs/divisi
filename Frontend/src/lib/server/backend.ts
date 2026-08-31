@@ -2,6 +2,15 @@ import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { m } from '$lib/paraglide/messages';
 import { ApiError, errorDetail } from '$lib/api/client';
 
+/** Hard ceiling on a single Backend call. Render's free tier can take
+ * tens of seconds to cold-start, and a `fetch` with no signal would just
+ * sit there the whole time, pinning the SSR response (and, on Cloudflare,
+ * a Worker invocation) open with it. Past this, we give up and surface the
+ * same synthetic 503 a flat-out network failure produces; callers that
+ * want to keep waiting (the root layout's session resolve) race their own,
+ * shorter budget on top of this. */
+const BACKEND_TIMEOUT_MS = 20_000;
+
 /** Any non-2xx response from an authenticated Backend call. Carries the
  * real HTTP status so callers can tell "not found" (404) from "not allowed"
  * (403) apart, same distinction `$lib/api/guest.ts` draws for the
@@ -36,14 +45,20 @@ export async function backendFetch(
 
 	let res: Response;
 	try {
-		res = await fetchFn(`${PUBLIC_API_BASE_URL}${path}`, { ...init, headers });
+		res = await fetchFn(`${PUBLIC_API_BASE_URL}${path}`, {
+			...init,
+			headers,
+			// A caller-supplied signal wins; otherwise cap the wait so a cold
+			// Backend can't hang the request indefinitely.
+			signal: init.signal ?? AbortSignal.timeout(BACKEND_TIMEOUT_MS)
+		});
 	} catch {
-		// The Backend is down/unreachable, or a real network error — `fetch`
-		// itself threw rather than resolving to any response at all (e.g.
-		// Render's free tier cold-starting past a client timeout). Distinct
-		// from a resolved-but-non-2xx response below; normalized into the
-		// same `BackendApiError` shape (a synthetic 503) so callers don't
-		// need to special-case it.
+		// The Backend is down/unreachable, a real network error, or our own
+		// timeout above fired: `fetch` threw rather than resolving to any
+		// response at all (e.g. Render's free tier cold-starting past the
+		// ceiling). Distinct from a resolved-but-non-2xx response below;
+		// normalized into the same `BackendApiError` shape (a synthetic 503)
+		// so callers don't need to special-case it.
 		throw new BackendApiError(503, m.errors_could_not_reach_server());
 	}
 	if (!res.ok) {

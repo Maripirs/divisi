@@ -2,6 +2,7 @@
 	import PieceLibrary from '$lib/components/PieceLibrary.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import { buildRemotePiece } from '$lib/pieces/remotePiece';
 	import '$lib/styles/shell.css';
@@ -25,7 +26,10 @@
 			<a href={lh('/login')}>{m.library_log_in()}</a> {m.library_log_in_note()}
 		</p>
 	{:else}
-		{#each data.groupSections as { group, pieces } (group.id)}
+		{#await data.groupSections}
+			<LoadingBlock />
+		{:then groupSections}
+		{#each groupSections as { group, pieces } (group.id)}
 			<!-- Only pieces with a real practice file get shown here — a
 			     distributed track with nothing wired up yet has nothing this
 			     view could do with it, same call the group page's own Tracks
@@ -70,6 +74,9 @@
 				{/if}
 			</section>
 		{/each}
+		{:catch}
+			<p class="empty-note">{m.load_failed()}</p>
+		{/await}
 	{/if}
 </main>
 
