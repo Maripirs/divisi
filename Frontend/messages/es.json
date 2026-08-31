@@ -522,6 +522,11 @@
 	"piece_visual_state_label": "Estado visual de {part}: {state}",
 	"piece_balance_label": "Balance de {part}",
 
+	"piece_editor_title": "Editar música",
+	"piece_editor_coming_soon": "Aquí podrás corregir la notación de esta pista y guardarla como una nueva versión en borrador. Esta pantalla aún se está construyendo.",
+	"piece_editor_no_edit_access": "No tienes permiso para editar la música de esta pista.",
+	"piece_editor_back_to_piece": "Volver a esta pista",
+
 	"error_404_title": "Página no encontrada",
 	"error_403_title": "No permitido",
 	"error_503_title": "No se pudo conectar con el servidor",

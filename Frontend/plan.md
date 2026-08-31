@@ -782,9 +782,16 @@ already enforces server-side.
       `src/lib/spike/musicXmlEdit.ts`). OSMD cleared path 1; Verovio not
       prototyped (bundle + MEI round-trip not worth it once OSMD worked).
       Decision + findings recorded above.
-- [ ] Editor route (`/piece/[id]/edit`, `ssr: false`) + server `load`
-      that resolves the piece and enforces edit access, mirroring
-      `piece/[id]/+page.server.ts`
+- [x] Editor route (`/piece/[id]/edit`, `ssr: false`) + server `load`
+      that resolves the piece and enforces edit access (done 2026-08-31).
+      Unlike the player route (whose `load` stays instant for shared-link
+      cold-start first paint), this route's `load` hits the Backend:
+      resolves the piece via `/library/pieces`, then grants for a personal
+      piece's owner (JWT `sub` vs `owner_id`) or an `admin` of the owning
+      group (`/groups` `role`) — the same rule the Backend's
+      `_require_review_authority` enforces on save. `denied`/`notFound`/
+      `unreachable` all render as cards; the placeholder editor body only
+      mounts for `granted`.
 - [ ] Load + parse the track's music file into an editable model (reuse
       `$lib/midi/musicXmlConverter.ts` / `$lib/musicxml/parser.ts`; a
       MIDI source goes through the existing conversion first)
@@ -856,6 +863,11 @@ fetching or required accounts.
 - 2026-08-31: Added F14 (in-app notation editor for a track's music) as the next milestone at the human's request — the editing counterpart to B8's OMR, so a rough generated score gets corrected in the app instead of via desktop MuseScore. Engine choice (correction-only on our own OSMD/Verovio render vs. adopting an editing library) is deliberately left to a spike, recorded in the milestone.
 - 2026-08-31: F14 spike done — engine decided: **path 1, correction-only editor on OSMD with a MusicXML-DOM editable model** (not Verovio, not an editing library). Throwaway spike at `/spike/f14-editor` + `src/lib/spike/musicXmlEdit.ts` proved click → transpose/delete → `osmd.load()`+`render()` in a real browser (Playwright) against the bundled Elgar fixture. Verovio not prototyped: OSMD cleared every path-1 bar, and Verovio's ~2 MB WASM + MusicXML↔MEI round-trip isn't worth it for a page choir members open on phones. Decision, the four findings (OSMD stays a pure view; click→note needs part-awareness because OSMD numbers staves globally; full re-render ~1.2 s on a 3.7k-note score so debounce; rough edges = re-highlight/chord-delete/accidental-respelling/duration edits), and the paths considered are all written into the F14 milestone. `check`/`build` clean. Spike route/module to be deleted when the real editor lands.
 - 2026-08-31: Shipped a header alert (`AppHeader` → new `OmrJobAlerts.svelte`, `$lib/stores/omrJobs.svelte.ts`, `/omr/jobs` proxy route) that tells an admin a "Generate music from PDF" job they started has finished or failed, from any screen with the app header — previously only visible by reloading that track's row in the group Tracks tab. Seeds on navigation, polls ~20s only while a job is still running (skips a hidden tab), remembers dismissals in `localStorage`. Backed by a new Backend `GET /omr/jobs` (see `Backend/plan.md`). `check`/`build` clean, frontend + backend suites green.
+- 2026-08-31: **F14 build in progress** (running breadcrumb, updated per task; resume from here after a `/clear`). Engine + plan already committed. Checklist state:
+  - [x] Task 1 — editor route `/piece/[id]/edit` (`ssr: false`) + access-gated server `load`. Commit: see below.
+  - [ ] Task 2 (NEXT) — load + parse the track's music file into an editable model (MIDI source converts first).
+  - [ ] Tasks 3-9 — editing surface, MusicXML export, save action, unsaved-changes guard, entry points, i18n sweep, final `check`/`build`.
+  - Working method: each substantial task in a fresh subagent; this session coordinates, reviews the diff, commits, updates this breadcrumb.
 - 2026-08-30: Found and fixed a real bug live-testing F13: `getPieceByTitle()` (F10) was preferred *unconditionally* over a real Backend piece's own content in all three places it's used (`/`'s personal library, the group Tracks tab, the guest join page) — so a real, admin-uploaded track that happened to share a title with a bundled fixture (e.g. "Lacrymosa") always played/showed the bundled asset instead, silently ignoring the admin's own music file/PDF/YouTube link. F13 surfaced this concretely: Lacrymosa's real reference-recording link never worked because the app was never actually reaching the real `Piece` it was set on. Fixed by only falling back to the bundled match when the real piece has neither `has_music` nor `has_pdf` of its own — `getPieceByTitle()`'s original intent (a working Practice button for a track with nothing wired up yet), not a permanent override once real content exists.
 - 2026-08-30: `piece/[id]`'s back button now does a real `history.back()` when there's history to go back to, landing wherever the human actually came from (a specific group's Tracks tab, its scroll position, admin vs. member view) instead of always the generic library/guest-join page regardless of origin. The old destination-guessing logic (guest join code -> that group; logged-in -> `/`; guest -> `/?guest=1`) stays as the fallback for when there's genuinely nothing to go back to (opened directly, a fresh tab, a deep link).
 - 2026-08-30: `/settings/more` brought in line with every other screen — now carries the same `AppHeader`/`BottomNav` chrome (title in the header, brand link home, gear button, bottom nav) instead of its own bare `<main>` with a hand-rolled breadcrumb/`<h1>`; also handles a guest reached via a join code the same way `/settings` itself does (home/footer point back to their group, not a login-gated dashboard). Dropped the redundant "Settings / More" breadcrumb text now that the header already names the page. Removed the "How Divisi works" link/section at the human's request (`more_how_it_works` message key deleted, now unused).

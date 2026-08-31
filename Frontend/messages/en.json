@@ -522,6 +522,11 @@
 	"piece_visual_state_label": "{part} visual state: {state}",
 	"piece_balance_label": "{part} balance",
 
+	"piece_editor_title": "Edit music",
+	"piece_editor_coming_soon": "You'll be able to correct this track's notation here and save it as a new draft version. This screen is still being built.",
+	"piece_editor_no_edit_access": "You don't have permission to edit this track's music.",
+	"piece_editor_back_to_piece": "Back to this track",
+
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",
 	"error_503_title": "Can't reach the server",
