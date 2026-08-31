@@ -270,6 +270,7 @@
 					<option value="system">{m.settings_theme_system()}</option>
 					<option value="light">{m.settings_theme_light()}</option>
 					<option value="dark">{m.settings_theme_dark()}</option>
+					<option value="classic">{m.settings_theme_classic()}</option>
 				</select>
 			</label>
 		</section>

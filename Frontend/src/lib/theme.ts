@@ -1,9 +1,14 @@
 import { browser } from '$app/environment';
 import { writable } from 'svelte/store';
 
-export const THEME_MODES = ['system', 'light', 'dark'] as const;
+export const THEME_MODES = ['system', 'light', 'dark', 'classic'] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];
-export type ResolvedTheme = 'light' | 'dark';
+// `classic` is a warm paper skin that stands alongside light/dark rather
+// than under `system` — the OS only ever reports light or dark, so it can
+// only be chosen explicitly. Score-rendering code branches on `=== 'dark'`
+// and otherwise treats a theme as light-on-paper, which is exactly right
+// for `classic`, so it needs no special-casing there.
+export type ResolvedTheme = 'light' | 'dark' | 'classic';
 
 const STORAGE_KEY = 'divisi.theme';
 
@@ -29,6 +34,13 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
 		ink: '#d8d9e6',
 		muted: '#9a9aac',
 		accent: '#818cf8'
+	},
+	classic: {
+		background: '#e9e0cc',
+		surface: '#faf4e4',
+		ink: '#2b2418',
+		muted: '#6d5f45',
+		accent: '#8a4b2f'
 	}
 };
 
@@ -74,7 +86,9 @@ function applyTheme(mode: ThemeMode): void {
 	const palette = THEME_PALETTES[resolved];
 	document.documentElement.dataset.themeMode = mode;
 	document.documentElement.dataset.theme = resolved;
-	document.documentElement.style.colorScheme = resolved;
+	// `color-scheme` only understands `light`/`dark`; `classic` is a
+	// light-on-paper skin as far as native form controls are concerned.
+	document.documentElement.style.colorScheme = resolved === 'dark' ? 'dark' : 'light';
 	document.documentElement.style.setProperty('--palette-bg', palette.background);
 	document.documentElement.style.setProperty('--palette-surface', palette.surface);
 	document.documentElement.style.setProperty('--palette-ink', palette.ink);
