@@ -8,37 +8,66 @@
 	// runner can't interop with a static import, so it's only ever
 	// *constructed* inside `onMount` via a dynamic `import()`. Same reasoning
 	// (and same workaround) as `ScoreView.svelte`.
-	import type { OpenSheetMusicDisplay as OSMDType } from 'opensheetmusicdisplay';
+	import type {
+		OpenSheetMusicDisplay as OSMDType,
+		PointF2D as PointF2DType
+	} from 'opensheetmusicdisplay';
 
 	/**
-	 * F14: a read-only OSMD render of the notation editor's working score.
-	 * Deliberately *not* `ScoreView.svelte` — that component is built around
-	 * a moving playback cursor (a required `positionWholeNotes`, an
-	 * always-shown cursor, annotation cursors, follow-scroll) that a
-	 * correction editor has no use for, and it exposes a note click only as a
-	 * bare timestamp. Later editor tasks need part-aware hit-testing
-	 * (`GraphicSheet.GetNearestNote` -> `sourceNote.ParentStaffEntry`...) and
-	 * a selection highlight, which belong on an editor-owned mount rather
-	 * than bent into the shared player view. For now this just engraves
-	 * `xml`, re-engraving whenever it changes (every edit re-serializes the
-	 * model), with a small zoom control and a readable parse-failure state.
+	 * F14: a read-only OSMD render of the notation editor's working score,
+	 * plus the click hit-testing and selection marker the editing surface
+	 * (task 3) sits on top of. Deliberately *not* `ScoreView.svelte` — that
+	 * component is built around a moving playback cursor (a required
+	 * `positionWholeNotes`, an always-shown cursor, annotation cursors,
+	 * follow-scroll) that a correction editor has no use for, and it exposes
+	 * a note click only as a bare timestamp. The editor needs part-aware
+	 * hit-testing (`GraphicSheet.GetNearestNote` -> `sourceNote.ParentStaffEntry`...)
+	 * and a selection highlight, which belong on an editor-owned mount rather
+	 * than bent into the shared player view.
+	 *
+	 * This component stays a pure view: it engraves `xml` (re-engraving
+	 * whenever it changes, since every edit re-serializes the model), reports
+	 * a clicked notehead back through `onPickNote`, and parks OSMD's cursor
+	 * on `selectedOnset` as the selection marker. The editor page owns the
+	 * `EditableScore`, resolves the click, and decides what is selected.
 	 */
 	let {
 		xml,
 		scoreTheme = 'light',
-		rendering = $bindable(false)
+		rendering = $bindable(false),
+		selectedOnset = undefined,
+		onPickNote = undefined
 	}: {
 		xml: string;
 		scoreTheme?: ResolvedTheme;
 		// Bindable out: true while OSMD is (re-)engraving, so the parent can
 		// show its own "updating" hint next to whatever triggered the change.
 		rendering?: boolean;
+		// Absolute whole-note onset of the selected note, or undefined for no
+		// selection. The page resolves a click/keyboard selection to a model
+		// note and passes its onset back down; the view parks OSMD's playback
+		// cursor there as the on-screen selection marker (see
+		// `parkSelectionCursor`). A plain number, not the note object, keeps
+		// this component ignorant of the editable model.
+		selectedOnset?: number | undefined;
+		// Called when the user clicks a notehead. The page resolves the hit
+		// to a `<note>` via `EditableScore.findByOnset` and updates selection.
+		onPickNote?: (hit: {
+			onsetWholeNotes: number;
+			partId: string;
+			staff: number;
+			octave: number | undefined;
+		}) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
 	// $state, not a plain `let`: assigned after `onMount`'s dynamic import
 	// resolves, and the render effect below has to re-run once it exists.
 	let osmd = $state<OSMDType | undefined>(undefined);
+	// The `PointF2D` constructor, captured from the same dynamic import as
+	// OSMD itself (a type-only static import can't give us the runtime value,
+	// and OSMD's CJS bundle can't be statically imported under SSR).
+	let pointF2D: (new (x: number, y: number) => PointF2DType) | undefined;
 	let loadedXml: string | undefined;
 	let loadError = $state<string | null>(null);
 	let zoom = $state(1);
@@ -68,12 +97,82 @@
 
 	onMount(async () => {
 		const osmdModule = await import('opensheetmusicdisplay');
+		pointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(scoreTheme));
+		container.addEventListener('click', handlePick);
 	});
 
 	onDestroy(() => {
+		container?.removeEventListener('click', handlePick);
 		osmd = undefined;
 	});
+
+	// Click -> nearest notehead -> report its identity to the page. Ported
+	// from the F14 spike: OSMD's `GetNearestNote` takes sheet-space
+	// coordinates (SVG units, 10 * Zoom px each), and OSMD numbers staves
+	// globally, so we hand the page the in-instrument staff index plus the
+	// MusicXML part id and let it resolve the actual `<note>`.
+	function handlePick(event: MouseEvent): void {
+		const osmdRef = osmd;
+		if (!osmdRef || !pointF2D || !onPickNote || !renderedOnce) return;
+		const rect = container.getBoundingClientRect();
+		const perPixel = 1 / (10 * osmdRef.Zoom);
+		// `scrollLeft`/`scrollTop`: the container scrolls, and `rect` is only
+		// the visible box, so add the hidden offset to get true sheet space.
+		const x = (event.clientX - rect.left + container.scrollLeft) * perPixel;
+		const y = (event.clientY - rect.top + container.scrollTop) * perPixel;
+		const nearest = osmdRef.GraphicSheet.GetNearestNote(
+			new pointF2D(x, y),
+			new pointF2D(1, 1)
+		);
+		// OSMD's deep source model isn't fully surfaced in its types, hence
+		// the cast — same shape the spike relied on.
+		const src = nearest?.sourceNote as
+			| {
+					getAbsoluteTimestamp(): { RealValue: number };
+					ParentStaffEntry?: {
+						ParentStaff?: { Id?: number; ParentInstrument?: { IdString?: string } };
+					};
+					Pitch?: { Octave?: number };
+			  }
+			| undefined;
+		if (!src) return;
+		const onsetWholeNotes = src.getAbsoluteTimestamp().RealValue;
+		const staff = src.ParentStaffEntry?.ParentStaff?.Id ?? 1;
+		const partId = src.ParentStaffEntry?.ParentStaff?.ParentInstrument?.IdString ?? '';
+		// OSMD's `Pitch.Octave` is scientific octave minus 3.
+		const octave = src.Pitch?.Octave != null ? src.Pitch.Octave + 3 : undefined;
+		onPickNote({ onsetWholeNotes, partId, staff, octave });
+	}
+
+	// The selection marker. F14's spike found that coloring a
+	// `GraphicalNote` doesn't survive OSMD rebuilding its graphical sheet on
+	// every re-engrave, whereas the playback cursor is re-derived from
+	// timestamps on each render, so it is the reliable marker here. Walk the
+	// cursor forward to the last entry at or before `selectedOnset`.
+	function parkSelectionCursor(): void {
+		const cursor = osmd?.cursor;
+		if (!cursor) return;
+		if (selectedOnset === undefined) {
+			cursor.hide();
+			return;
+		}
+		cursor.show();
+		cursor.reset();
+		const target = selectedOnset;
+		let guard = 0;
+		while (
+			cursor.iterator.currentTimeStamp.RealValue < target &&
+			!cursor.iterator.EndReached &&
+			guard++ < 10000
+		) {
+			cursor.next();
+			if (cursor.iterator.currentTimeStamp.RealValue > target) {
+				cursor.previous();
+				break;
+			}
+		}
+	}
 
 	// Re-engrave whenever `xml` changes — the editor hands a freshly
 	// serialized model after every edit, and OSMD has no partial update, so
@@ -93,6 +192,9 @@
 			.then(() => {
 				osmdRef.render();
 				renderedOnce = true;
+				// OSMD rebuilds the cursor with the sheet, so re-place the
+				// selection marker after every re-engrave.
+				parkSelectionCursor();
 			})
 			.catch((e: unknown) => {
 				loadError = String(e);
@@ -113,6 +215,17 @@
 		osmd.setOptions(osmdOptions(theme));
 		osmd.Zoom = level;
 		osmd.render();
+		parkSelectionCursor();
+	});
+
+	// Re-park when the selection moves without an edit — keyboard
+	// ArrowLeft/ArrowRight between notes changes `selectedOnset` but not
+	// `xml`, so the re-engrave effect above doesn't run.
+	$effect(() => {
+		const onset = selectedOnset;
+		void onset;
+		if (!osmd || !renderedOnce) return;
+		parkSelectionCursor();
 	});
 
 	function zoomBy(delta: number): void {
@@ -196,6 +309,8 @@
 		overflow: auto;
 		background: var(--score-page);
 		touch-action: pan-x pan-y;
+		/* Noteheads are clickable to select; hint it across the sheet. */
+		cursor: pointer;
 	}
 	.score-container :global(svg) {
 		display: block;
