@@ -254,8 +254,8 @@ Effort XS. Risk XS.
   `groups/[id]`, 1 in `AnnotationSheet`); 8 `confirming*` state vars deleted;
   unused `afterSubmit` helper removed. `check` + `build` clean. Details in
   the A3 section above.
-- [x] Step 3 (A1 + A2) — DONE on the working tree (not committed). Scope
-  narrowed 2026-08-30 (see "Step 3 execution plan" below). What landed:
+- [x] Step 3 (A1 + A2) — committed (65899a8). Scope narrowed 2026-08-30
+  (see "Step 3 execution plan" below). What landed:
   - New `lib/components/groupCards.ts` — normalized `HomeworkCardItem`,
     `WeeklyNoteCardItem`, `ResponsibilityDateCardItem` (+ `ResponsibilityRole`,
     `ResponsibilityRoleSignup`).
@@ -310,8 +310,19 @@ Effort XS. Risk XS.
   `npm run check` — 0 errors, 11 pre-existing warnings (none in the new
   files). `npm run build` clean. **Not manually verified in a browser**
   (no browser on this machine — the standing Frontend blocker).
-- [ ] Step 4+ — `.piece-action` / `.track-card` CSS fold into shell.css
-  (Tier D leftover from Step 3's out-of-scope list); TrackCard not extracted.
+- [x] Step 4 (Tier D: .track-card / .piece-action CSS → shell.css) — committed (b568c33).
+  Circular icon-button family + track-card row layout deduped from 3 files; groups/[id]
+  keeps a local `.track-card { position: relative }`. check + build clean, no visual change.
+- [x] A4 (AuthShell scaffold) — committed (34c9158). New
+  `lib/components/AuthShell.svelte` owns the `.shell` chrome + default "Back to
+  login" footer for `login` / `forgot-password` / `reset-password`; login
+  overrides the footer via a snippet (its `/welcome` link + OAuth row). `.note`
+  and `.btn:disabled` moved into `shell.css` next to `.error` / `.success`.
+  Minor intended changes: disabled `.btn` now dims app-wide (several pages did
+  this locally, login/reset never did); auth-page `.error` top margin
+  0.25rem → shell.css's 0.4rem. `check` + `build` clean, not browser-verified.
+- [ ] Step 4+ — TrackCard component itself still not extracted (CSS-only fold above,
+  markup duplication remains).
 
 ## Step 3 execution plan (scoped 2026-08-30)
 
