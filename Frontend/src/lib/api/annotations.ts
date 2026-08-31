@@ -1,4 +1,4 @@
-import { m } from '$lib/paraglide/messages';
+import { ApiError, jsonInit, makeCall } from './client';
 
 /** F4: client-side calls against `routes/piece/[id]/annotations/**`'s
  * authenticated proxy routes (never the Backend directly — same
@@ -38,15 +38,14 @@ interface AnnotationShareResponse {
 	email: string;
 }
 
-export class AnnotationApiError extends Error {
-	constructor(
-		public readonly status: number,
-		message: string
-	) {
-		super(message);
+export class AnnotationApiError extends ApiError {
+	constructor(status: number, message: string) {
+		super(status, message);
 		this.name = 'AnnotationApiError';
 	}
 }
+
+const call = makeCall(AnnotationApiError);
 
 function toAnnotation(body: AnnotationResponse): Annotation {
 	return {
@@ -61,31 +60,6 @@ function toAnnotation(body: AnnotationResponse): Annotation {
 
 function toShare(body: AnnotationShareResponse): AnnotationShare {
 	return { annotationId: body.annotation_id, sharedWithUserId: body.shared_with_user_id, email: body.email };
-}
-
-async function errorDetail(res: Response): Promise<string> {
-	try {
-		const body = (await res.json()) as { detail?: string };
-		if (body.detail) return body.detail;
-	} catch {
-		// Non-JSON error body (e.g. the proxy's bare 401/503) — fall through.
-	}
-	return m.errors_request_failed({ status: res.status });
-}
-
-async function call(url: string, init?: RequestInit): Promise<Response> {
-	let res: Response;
-	try {
-		res = await fetch(url, init);
-	} catch {
-		throw new AnnotationApiError(503, m.errors_could_not_reach_server());
-	}
-	if (!res.ok) throw new AnnotationApiError(res.status, await errorDetail(res));
-	return res;
-}
-
-function jsonInit(method: string, body: unknown): RequestInit {
-	return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
 export async function listAnnotations(pieceId: string): Promise<Annotation[]> {

@@ -1,4 +1,4 @@
-import { m } from '$lib/paraglide/messages';
+import { ApiError, jsonInit, makeCall } from './client';
 
 /** Freehand pen strokes, stamps, and text drawn on a piece's PDF pages, rendered by
  * `PdfView.svelte`. Calls
@@ -49,15 +49,14 @@ export interface MarkupMarkPatch {
 	y?: number;
 }
 
-export class MarkupApiError extends Error {
-	constructor(
-		public readonly status: number,
-		message: string
-	) {
-		super(message);
+export class MarkupApiError extends ApiError {
+	constructor(status: number, message: string) {
+		super(status, message);
 		this.name = 'MarkupApiError';
 	}
 }
+
+const call = makeCall(MarkupApiError);
 
 function toMark(body: MarkupMarkResponse): MarkupMark {
 	return {
@@ -75,31 +74,6 @@ function toMark(body: MarkupMarkResponse): MarkupMark {
 		text: body.text,
 		createdAt: body.created_at
 	};
-}
-
-async function errorDetail(res: Response): Promise<string> {
-	try {
-		const body = (await res.json()) as { detail?: string };
-		if (body.detail) return body.detail;
-	} catch {
-		// Non-JSON error body (e.g. the proxy's bare 401/503) — fall through.
-	}
-	return m.errors_request_failed({ status: res.status });
-}
-
-async function call(url: string, init?: RequestInit): Promise<Response> {
-	let res: Response;
-	try {
-		res = await fetch(url, init);
-	} catch {
-		throw new MarkupApiError(503, m.errors_could_not_reach_server());
-	}
-	if (!res.ok) throw new MarkupApiError(res.status, await errorDetail(res));
-	return res;
-}
-
-function jsonInit(method: string, body: unknown): RequestInit {
-	return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
 export async function listMarks(pieceId: string, scope: MarkupScope = 'mine'): Promise<MarkupMark[]> {

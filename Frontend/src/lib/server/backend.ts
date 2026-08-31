@@ -1,5 +1,6 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { m } from '$lib/paraglide/messages';
+import { ApiError, errorDetail } from '$lib/api/client';
 
 /** Any non-2xx response from an authenticated Backend call. Carries the
  * real HTTP status so callers can tell "not found" (404) from "not allowed"
@@ -11,24 +12,11 @@ import { m } from '$lib/paraglide/messages';
  * existing `catch (err) { if (err instanceof BackendApiError) ... }` call
  * site across the app already handles it gracefully with no changes of its
  * own needed. */
-export class BackendApiError extends Error {
-	constructor(
-		public readonly status: number,
-		message: string
-	) {
-		super(message);
+export class BackendApiError extends ApiError {
+	constructor(status: number, message: string) {
+		super(status, message);
 		this.name = 'BackendApiError';
 	}
-}
-
-async function errorDetail(res: Response): Promise<string> {
-	try {
-		const body = (await res.json()) as { detail?: string };
-		if (body.detail) return body.detail;
-	} catch {
-		// Non-JSON error body — fall through to the generic message.
-	}
-	return m.errors_request_failed({ status: res.status });
 }
 
 /** Server-only authenticated fetch against the Backend API — `token` comes

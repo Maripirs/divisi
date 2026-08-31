@@ -1,5 +1,6 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { m } from '$lib/paraglide/messages';
+import { ApiError, fetchOr503 } from './client';
 
 /** Mirrors the Backend's `GuestPieceOut`/`GuestGroupOut` (B6) — one of a
  * group's currently-distributed pieces, as seen by an unauthenticated guest
@@ -91,12 +92,9 @@ export class GuestPasswordRequiredError extends Error {
  * error, etc.) — distinct from the two errors above so callers can show
  * "check your code"/"enter a password" only for the cases actually about
  * those. */
-export class GuestApiError extends Error {
-	constructor(
-		public readonly status: number,
-		message: string
-	) {
-		super(message);
+export class GuestApiError extends ApiError {
+	constructor(status: number, message: string) {
+		super(status, message);
 		this.name = 'GuestApiError';
 	}
 }
@@ -167,13 +165,10 @@ function guestUrl(path: string, password?: string): string {
  * any response) surfaces as the same `GuestApiError` shape every caller
  * already knows how to handle, instead of an unhandled exception. Distinct
  * from a resolved-but-non-2xx response, which callers check via `res.ok`/
- * `res.status` themselves afterward. */
+ * `res.status` themselves afterward (which is why this stays a thin wrapper
+ * over `fetchOr503` and not the shared `makeCall`). */
 async function guestFetch(url: string, fetchFn: typeof fetch): Promise<Response> {
-	try {
-		return await fetchFn(url);
-	} catch {
-		throw new GuestApiError(503, m.errors_could_not_reach_server());
-	}
+	return fetchOr503(GuestApiError, url, undefined, fetchFn);
 }
 
 async function throwForStatus(res: Response, code: string): Promise<never> {
