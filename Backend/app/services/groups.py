@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models import Group, GroupMembership, GroupRole, User
+from app.services.common import get_or_404
 
 
 def group_role(group_id: str, user_id: str, db: Session) -> GroupRole | None:
@@ -30,10 +31,7 @@ def group_role(group_id: str, user_id: str, db: Session) -> GroupRole | None:
 
 
 def get_group_or_404(group_id: str, db: Session) -> Group:
-    group = db.get(Group, group_id)
-    if group is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
-    return group
+    return get_or_404(db, Group, group_id, "Group not found")
 
 
 def require_member(group_id: str, user: User, db: Session) -> None:

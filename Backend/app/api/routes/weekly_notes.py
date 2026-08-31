@@ -7,13 +7,14 @@ since a single note's URL doesn't need its group in the path once you have
 the id).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import WeeklyNoteCreate, WeeklyNoteOut, WeeklyNoteUpdate
 from app.db.models import GroupPage, User, WeeklyNote
 from app.db.session import get_db
+from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, require_admin, require_member
 from app.services.pages import require_member_page_access
 
@@ -21,10 +22,7 @@ router = APIRouter(tags=["weekly-notes"])
 
 
 def _get_note_or_404(note_id: str, db: Session) -> WeeklyNote:
-    note = db.get(WeeklyNote, note_id)
-    if note is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly note not found")
-    return note
+    return get_or_404(db, WeeklyNote, note_id, "Weekly note not found")
 
 
 @router.post(

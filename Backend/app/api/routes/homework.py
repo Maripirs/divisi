@@ -5,13 +5,14 @@ group-scoped) and `/homework/{homework_id}` (get/delete, since a single
 assignment's URL doesn't need its group in the path once you have the id).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.schemas import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.db.models import GroupPage, Homework, User
 from app.db.session import get_db
+from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, require_admin, require_member
 from app.services.pages import require_member_page_access
 
@@ -19,10 +20,7 @@ router = APIRouter(tags=["homework"])
 
 
 def _get_homework_or_404(homework_id: str, db: Session) -> Homework:
-    homework = db.get(Homework, homework_id)
-    if homework is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Homework not found")
-    return homework
+    return get_or_404(db, Homework, homework_id, "Homework not found")
 
 
 @router.post(

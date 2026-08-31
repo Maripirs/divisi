@@ -39,6 +39,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 from app.storage.files import resolve_existing_source_path
+from app.services.common import get_or_404
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
@@ -79,10 +80,7 @@ _group_role = group_role
 
 
 def _get_version_or_404(version_id: str, db: Session) -> PieceVersion:
-    version = db.get(PieceVersion, version_id)
-    if version is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
-    return version
+    return get_or_404(db, PieceVersion, version_id, "Version not found")
 
 
 def _require_piece_access(piece: Piece, user: User, db: Session) -> None:

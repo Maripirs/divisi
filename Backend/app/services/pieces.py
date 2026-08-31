@@ -27,14 +27,12 @@ from app.db.models import (
     VersionStatus,
 )
 
+from app.services.common import get_or_404
 from app.services.groups import group_role  # noqa: F401  (re-exported for existing `from app.services.pieces import group_role` call sites; home is now app/services/groups.py)
 
 
 def get_piece_or_404(piece_id: str, db: Session) -> Piece:
-    piece = db.get(Piece, piece_id)
-    if piece is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
-    return piece
+    return get_or_404(db, Piece, piece_id, "Piece not found")
 
 
 def require_piece_access(piece: Piece, user_id: str, db: Session) -> None:

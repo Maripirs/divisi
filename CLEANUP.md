@@ -340,6 +340,24 @@ Effort XS. Risk XS.
   it). check + build clean, not browser-verified.
 - [ ] Step 4+ — TrackCard component itself still not extracted (CSS-only fold above,
   markup duplication remains).
+- [x] B4 (`get_or_404` generic helper) — committed.
+  New `Backend/app/services/common.py::get_or_404(db, model, pk, detail)` —
+  the one `db.get` + 404 body. 10 domain helpers collapsed to one-line
+  wrappers (names + error strings kept, so no call sites touched):
+  `services/pieces.py::get_piece_or_404`,
+  `services/groups.py::get_group_or_404`,
+  `routes/homework.py::_get_homework_or_404`,
+  `routes/weekly_notes.py::_get_note_or_404`,
+  `routes/annotations.py::_get_annotation_or_404`,
+  `routes/library.py::_get_version_or_404`,
+  `routes/responsibilities.py` all 4 (`_get_schedule/role/date/signup_or_404`).
+  Dropped now-unused `HTTPException` import from `homework.py` /
+  `weekly_notes.py`. Left alone (different logic):
+  `guest.py::_get_group_by_join_code_or_404` (query-by-field),
+  `omr.py::_get_own_job_or_404` (ownership check),
+  `*::_source_path_or_404` (filesystem). Net -23 lines.
+  Touched-area subset (annotations, groups, guest, homework, library,
+  piece_markup, responsibilities, weekly_notes, omr_api) — **115 passed**.
 - [~] A5 (BottomSheet shell) — **not worth doing as specced.** C1 already
   deleted the duplicate (`AnnotationModal`). Only `AnnotationSheet` uses the
   bottom-sheet pattern now, and it deliberately can't import `shell.css`.

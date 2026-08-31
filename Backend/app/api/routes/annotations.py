@@ -19,6 +19,7 @@ from app.api.schemas import (
 )
 from app.db.models import Annotation, AnnotationShare, GroupMembership, OwnerType, Piece, User
 from app.db.session import get_db
+from app.services.common import get_or_404
 from app.services.pieces import get_piece_or_404
 
 router = APIRouter(prefix="/annotations", tags=["annotations"])
@@ -37,10 +38,7 @@ def _can_access_piece(piece: Piece, user: User, db: Session) -> bool:
 
 
 def _get_annotation_or_404(annotation_id: str, db: Session) -> Annotation:
-    annotation = db.get(Annotation, annotation_id)
-    if annotation is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
-    return annotation
+    return get_or_404(db, Annotation, annotation_id, "Annotation not found")
 
 
 def _can_view_annotation(annotation: Annotation, user: User, db: Session) -> bool:

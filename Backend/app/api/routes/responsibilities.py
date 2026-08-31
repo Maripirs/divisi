@@ -42,6 +42,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
+from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access
 from app.services.responsibilities import role_coverage
@@ -57,31 +58,19 @@ def _is_admin(group_id: str, user: User, db: Session) -> bool:
 
 
 def _get_schedule_or_404(schedule_id: str, db: Session) -> ResponsibilitySchedule:
-    schedule = db.get(ResponsibilitySchedule, schedule_id)
-    if schedule is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
-    return schedule
+    return get_or_404(db, ResponsibilitySchedule, schedule_id, "Schedule not found")
 
 
 def _get_role_or_404(role_id: str, db: Session) -> ResponsibilityRole:
-    role = db.get(ResponsibilityRole, role_id)
-    if role is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
-    return role
+    return get_or_404(db, ResponsibilityRole, role_id, "Role not found")
 
 
 def _get_date_or_404(date_id: str, db: Session) -> ResponsibilityDate:
-    date = db.get(ResponsibilityDate, date_id)
-    if date is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Date not found")
-    return date
+    return get_or_404(db, ResponsibilityDate, date_id, "Date not found")
 
 
 def _get_signup_or_404(signup_id: str, db: Session) -> ResponsibilitySignup:
-    signup = db.get(ResponsibilitySignup, signup_id)
-    if signup is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Signup not found")
-    return signup
+    return get_or_404(db, ResponsibilitySignup, signup_id, "Signup not found")
 
 
 def _roles_for_schedule(schedule_id: str, db: Session) -> list[ResponsibilityRole]:
