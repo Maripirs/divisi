@@ -10,17 +10,27 @@
 	import {
 		DISPLAY_MODES,
 		MIX_MODES,
-		MIX_PARTS,
 		VOICE_PARTS,
 		VISUAL_STATES,
 		type DisplayMode,
-		type MixBase,
 		type MixMode,
 		type MixPart,
 		type ParsedMIDI,
 		type VisualState,
 		type VoicePart
 	} from '$lib/midi/types';
+	import {
+		collapseToBaseRecord,
+		expandBaseRecord,
+		materializePartRecord,
+		matchingDisplayMode,
+		matchingMixMode,
+		presetBalances,
+		presetVisualStates,
+		sameBalances,
+		sameVisualStates
+	} from '$lib/player/mixMath';
+	import { loadPersistedSettings, savePersistedSettings } from '$lib/player/persistence';
 	import { getPiece } from '$lib/pieces/registry';
 	import { buildRemotePiece, type RemotePieceMeta } from '$lib/pieces/remotePiece';
 	import type { Piece } from '$lib/pieces/types';
@@ -249,8 +259,12 @@
 	);
 	let mixMatchesDefault = $derived(
 		parsed !== undefined &&
-			sameBalances(balance, expandBaseRecord(parsed.parts, $playerDefaults.mix.balance)) &&
-			sameVisualStates(visualStates, expandBaseRecord(parsed.parts, $playerDefaults.mix.visualStates))
+			sameBalances(parsed.parts, balance, expandBaseRecord(parsed.parts, $playerDefaults.mix.balance)) &&
+			sameVisualStates(
+				parsed.parts,
+				visualStates,
+				expandBaseRecord(parsed.parts, $playerDefaults.mix.visualStates)
+			)
 	);
 	let rafHandle: number;
 	let destroyed = false;
@@ -324,30 +338,6 @@
 		referencePlayer = undefined;
 		clearMediaSession();
 	});
-
-	// Expands a record keyed by the 5 base buckets into one with exactly the
-	// ids this piece's `parsed.parts` uses — every desk of a base starts out
-	// inheriting that base's value.
-	function expandBaseRecord<T>(parts: ParsedMIDI['parts'], baseDefaults: Record<MixBase, T>): Record<MixPart, T> {
-		return Object.fromEntries(parts.map((part) => [part.id, baseDefaults[part.base]])) as Record<MixPart, T>;
-	}
-
-	// Same idea, but `current` (a piece's own, possibly-persisted ids) is
-	// checked first so a persisted per-piece choice always wins; only a
-	// divisi desk with no id-specific entry yet — a brand-new split, or a
-	// stale value left over from before this file happened to split —
-	// inherits its base voice's value instead of coming up empty.
-	function materializePartRecord<T>(
-		parts: ParsedMIDI['parts'],
-		current: Record<MixPart, T>,
-		baseDefaults: Record<MixBase, T>
-	): Record<MixPart, T> {
-		const expanded = expandBaseRecord(parts, baseDefaults);
-		return Object.fromEntries(parts.map((part) => [part.id, current[part.id] ?? expanded[part.id]])) as Record<
-			MixPart,
-			T
-		>;
-	}
 
 	async function bootstrap() {
 		if (!piece) return;
@@ -521,45 +511,14 @@
 	function setBalance(part: MixPart, value: number) {
 		const nextBalance = { ...balance, [part]: value };
 		balance = nextBalance;
-		mixMode = matchingMixMode(nextBalance, voicePart);
+		mixMode = matchingMixMode(parsed?.parts ?? [], nextBalance, voicePart, subPart);
 		player?.setPartVolume(part, value);
 		persistSettings();
 	}
 
-	// Every user-adjustable player setting, keyed per piece id so switching
-	// pieces doesn't bleed one piece's mix/tempo/view into another's, and
-	// restored on the next visit instead of always starting from the
-	// hardcoded defaults above.
-	interface PersistedSettings {
-		tempoBpm: number;
-		voicePart: VoicePart;
-		subPart: MixPart | null;
-		displayMode: DisplayMode;
-		visualStates: Record<MixPart, VisualState>;
-		mixMode: MixMode;
-		balance: Record<MixPart, number>;
-		viewMode: ViewMode;
-		zoomLevel: number;
-		pdfZoomLevel: number;
-	}
-
-	function settingsStorageKey(id: string): string {
-		return `divisi:settings:${id}`;
-	}
-
-	function loadPersistedSettings(id: string): Partial<PersistedSettings> {
-		const raw = localStorage.getItem(settingsStorageKey(id));
-		if (!raw) return {};
-		try {
-			return JSON.parse(raw) as Partial<PersistedSettings>;
-		} catch {
-			return {};
-		}
-	}
-
 	function persistSettings() {
 		if (!piece) return;
-		const settings: PersistedSettings = {
+		savePersistedSettings(piece.id, {
 			tempoBpm,
 			voicePart,
 			subPart,
@@ -570,8 +529,7 @@
 			viewMode,
 			zoomLevel,
 			pdfZoomLevel
-		};
-		localStorage.setItem(settingsStorageKey(piece.id), JSON.stringify(settings));
+		});
 	}
 
 	function setTempo(bpm: number, persist = true) {
@@ -608,7 +566,7 @@
 		// A desk pick only makes sense for the voice it was made under.
 		subPart = null;
 		if (displayMode === 'highlighted' || displayMode === 'solo') {
-			visualStates = presetVisualStates(displayMode, part);
+			visualStates = presetVisualStates(parsed?.parts ?? [], displayMode, part, subPart);
 		}
 		if (mixMode !== 'custom') applyMixPreset(mixMode, part);
 		persistSettings();
@@ -620,7 +578,7 @@
 	function setSubPart(id: MixPart | null) {
 		subPart = id;
 		if (displayMode === 'highlighted' || displayMode === 'solo') {
-			visualStates = presetVisualStates(displayMode, voicePart);
+			visualStates = presetVisualStates(parsed?.parts ?? [], displayMode, voicePart, subPart);
 		}
 		if (mixMode !== 'custom') applyMixPreset(mixMode, voicePart);
 		persistSettings();
@@ -628,7 +586,7 @@
 
 	function setDisplayMode(mode: DisplayMode) {
 		displayMode = mode;
-		if (mode !== 'custom') visualStates = presetVisualStates(mode, voicePart);
+		if (mode !== 'custom') visualStates = presetVisualStates(parsed?.parts ?? [], mode, voicePart, subPart);
 		persistSettings();
 	}
 
@@ -641,7 +599,7 @@
 	/** Pushes a mix preset's volumes into both `balance` (so the UI reflects
 	 * it) and the live player (so it's heard immediately, no restart). */
 	function applyMixPreset(mode: Exclude<MixMode, 'custom'>, focusPart: VoicePart) {
-		balance = presetBalances(mode, focusPart);
+		balance = presetBalances(parsed?.parts ?? [], mode, focusPart, subPart);
 		for (const part of parsed?.parts ?? []) player?.setPartVolume(part.id, balance[part.id]);
 	}
 
@@ -684,88 +642,13 @@
 		flashDefault('mix');
 	}
 
-	// Presets below all key off `isFocusPart`, not a bare `part.base`
-	// comparison — "my part"/"highlighted" is a file-independent choice (see
-	// `VoicePart` vs `MixPart` in `midi/types.ts`), so every desk of a split
-	// voice moves together under a preset *unless* `subPart` narrows it down
-	// to one specific desk. Individual desks only diverge on their own once
-	// the user switches to Custom mode and adjusts one directly.
-	function isFocusPart(part: { id: MixPart; base: MixBase }, focusPart: VoicePart): boolean {
-		if (part.base !== focusPart) return false;
-		return subPart === null || part.id === subPart;
-	}
-
-	function presetVisualStates(mode: DisplayMode, focusPart: VoicePart): Record<MixPart, VisualState> {
-		return Object.fromEntries(
-			(parsed?.parts ?? []).map((part) => {
-				let state: VisualState;
-				if (mode === 'flat' || mode === 'custom') state = 'active';
-				else if (mode === 'highlighted') state = isFocusPart(part, focusPart) ? 'active' : 'muted';
-				else state = isFocusPart(part, focusPart) ? 'active' : 'off';
-				return [part.id, state];
-			})
-		) as Record<MixPart, VisualState>;
-	}
-
 	function cycleVisualState(part: MixPart) {
 		const currentIndex = VISUAL_STATES.indexOf(visualStates[part]);
 		const nextState = VISUAL_STATES[(currentIndex + 1) % VISUAL_STATES.length];
 		const nextStates = { ...visualStates, [part]: nextState };
 		visualStates = nextStates;
-		displayMode = matchingDisplayMode(nextStates, voicePart);
+		displayMode = matchingDisplayMode(parsed?.parts ?? [], nextStates, voicePart, subPart);
 		persistSettings();
-	}
-
-	function matchingDisplayMode(states: Record<MixPart, VisualState>, focusPart: VoicePart): DisplayMode {
-		const presetModes: DisplayMode[] = ['flat', 'highlighted', 'solo'];
-		return presetModes.find((mode) => sameVisualStates(states, presetVisualStates(mode, focusPart))) ?? 'custom';
-	}
-
-	function sameVisualStates(a: Record<MixPart, VisualState>, b: Record<MixPart, VisualState>): boolean {
-		return (parsed?.parts ?? []).every((part) => a[part.id] === b[part.id]);
-	}
-
-	// 0.5 is this app's "normal" per-part volume (see `describeBalance`,
-	// which labels it "Even") — so "Everyone" leaves every bucket there,
-	// "Minus Me" just cuts the non-focus buckets to silence rather than
-	// boosting anything above normal. "Mostly Me" is the first preset that
-	// actually deviates from that: focus part boosted to full (1),
-	// everyone else turned down low but still audible (0.15) -- singing
-	// along with a quiet backing track, per the human's own description
-	// of it. ("My Part" — focus-only, everyone else silenced — used to be
-	// a preset here too; removed per the human's call, true solo is still
-	// reachable via the Custom sliders if someone wants it.)
-	function presetBalances(mode: Exclude<MixMode, 'custom'>, focusPart: VoicePart): Record<MixPart, number> {
-		return Object.fromEntries(
-			(parsed?.parts ?? []).map((part) => {
-				let value: number;
-				if (mode === 'everyone') value = 0.5;
-				else if (mode === 'minusMe') value = isFocusPart(part, focusPart) ? 0 : 0.5;
-				else value = isFocusPart(part, focusPart) ? 1 : 0.15; // mostlyMe
-				return [part.id, value];
-			})
-		) as Record<MixPart, number>;
-	}
-
-	function matchingMixMode(balances: Record<MixPart, number>, focusPart: VoicePart): MixMode {
-		const presetModes: Exclude<MixMode, 'custom'>[] = ['everyone', 'minusMe', 'mostlyMe'];
-		return presetModes.find((mode) => sameBalances(balances, presetBalances(mode, focusPart))) ?? 'custom';
-	}
-
-	function sameBalances(a: Record<MixPart, number>, b: Record<MixPart, number>): boolean {
-		return (parsed?.parts ?? []).every((part) => a[part.id] === b[part.id]);
-	}
-
-	// Collapses a per-piece, possibly-split record down to the 5 base
-	// buckets `playerDefaults.ts` stores — "Make this my default" promotes
-	// the *voice's* balance, not a specific file's desk numbering. Presets
-	// keep every desk of a base in lockstep (see above), so this is lossless
-	// for anything but a Custom mix with desks pulled apart on purpose, where
-	// it keeps the first desk's value as the base's representative.
-	function collapseToBaseRecord<T>(parts: ParsedMIDI['parts'], record: Record<MixPart, T>): Record<MixBase, T> {
-		return Object.fromEntries(
-			MIX_PARTS.map((base) => [base, record[parts.find((p) => p.base === base)!.id]])
-		) as Record<MixBase, T>;
 	}
 
 	function handleGlobalKeydown(event: KeyboardEvent) {
