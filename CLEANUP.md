@@ -118,14 +118,25 @@ lives in-form level with Save/Cancel — treat that as the intended good design.
 Pairs with A1 — the A1 cards use EditableCard internally for their admin snippet.
 Effort L. Risk M.
 
-#### A3. `ConfirmButton` — click-to-confirm destructive action
-Button that swaps to `[confirm] [cancel]` pair on first click. Hand-rolled
-with a `confirming*Id`/`confirming*` state var **10+ times**:
-- `groups/[id]/+page.svelte`: leave group `:1700`, remove member `:1046`,
-  delete schedule `:1155`, delete date `:1406`, delete track `:674`,
-  delete homework `:466`, delete weekly note `:970`
-- `lib/components/AnnotationSheet.svelte:113`
-Effort M. Risk L (small, self-contained).
+#### A3. `ConfirmButton` — click-to-confirm destructive action  ✅ DONE
+`lib/components/ConfirmButton.svelte` — 15-line component, two slotted
+snippets (`trigger(start)` / `confirm(cancel)`), owns a local `confirming`
+boolean + the `{#if}/{:else}` swap. Optional `bind:confirming`.
+
+Migrated all 8 hand-rolled copies, deleting 6 module `confirming*Id` state
+vars + 1 `confirmingLeave` + 1 `confirmingDelete`:
+- `groups/[id]/+page.svelte` (7): leave group, remove member, delete
+  schedule, delete date, delete track, delete homework, delete weekly note
+- `lib/components/AnnotationSheet.svelte` (1, uses `bind:confirming` since
+  the sheet stays mounted and resets in an `$effect`)
+
+Each call site keeps its exact bespoke markup (text links, `btn-danger`
+rows, corner trash icons, the homework `formaction` submit) inside the
+snippets. `$lib/utils/enhance.ts`'s `afterSubmit` helper (added in Step 1
+for these 4 delete forms) is now unused — removed; those forms use bare
+`use:enhance`. Behavior change: a *failed* delete now leaves the confirm
+pair open (page shows the error) instead of snapping back to idle.
+`check` + `build` clean.
 
 #### A4. `AuthCard` / form-page scaffold
 `routes/login`, `routes/forgot-password`, `routes/reset-password` (partly
@@ -225,7 +236,7 @@ Effort XS. Risk XS.
   to Neon Object Storage (the long-open B11 gap). Committed 9d7ef53; credential
   minted + verified (8bc2e31). Remaining human step: set `AWS_*` on Render,
   redeploy, re-upload the 6 nulled PDFs. Tracked in `Backend/plan.md`.
-- [x] Step 1 (C1 + B-fe-2 + B-fe-1) — done on the working tree, NOT committed.
+- [x] Step 1 (C1 + B-fe-2 + B-fe-1) — committed (648fbaa).
   `npm run check` clean (0 errors; 11 pre-existing warnings, none in touched code).
   - C1: `AnnotationModal.svelte` deleted; stale mention in an `AnnotationSheet.svelte`
     comment reworded.
@@ -238,6 +249,10 @@ Effort XS. Risk XS.
     `forgot-password`, `reset-password`, `groups/new`, `new-homework`. Left inline
     by design: `groups/[id]` page-settings form (`update({ reset: false })`) and
     `SettingsDrawer.svelte` (branches on `result.type`).
-- [ ] Step 2 (A3)
+- [x] Step 2 (A3 `ConfirmButton`) — done on the working tree, NOT committed.
+  New `lib/components/ConfirmButton.svelte`; 8 call sites migrated (7 in
+  `groups/[id]`, 1 in `AnnotationSheet`); 8 `confirming*` state vars deleted;
+  unused `afterSubmit` helper removed. `check` + `build` clean. Details in
+  the A3 section above.
 - [ ] Step 3 (A1 + A2)
 - [ ] Step 4+

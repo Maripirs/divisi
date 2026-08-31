@@ -4,6 +4,7 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import FileSlot from '$lib/components/FileSlot.svelte';
+	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
 	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
@@ -13,7 +14,7 @@
 		toDateInputValue,
 		toDatetimeLocalValue
 	} from '$lib/utils/dates';
-	import { withSubmitting, afterSubmit } from '$lib/utils/enhance';
+	import { withSubmitting } from '$lib/utils/enhance';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -118,13 +119,6 @@
 	// delete-confirm icon, via `formaction` — see below) since both trigger
 	// the same submit/disable/reset behavior.
 	let savingHomework = $state(false);
-	// Same edit form: whether its trash icon has expanded into a
-	// confirm/cancel pair — same click-to-confirm pattern as the Tracks
-	// tab's "Delete track" below.
-	let confirmingDeleteHomeworkId = $state<string | null>(null);
-	// Members tab: which member's row (by id) has its "Remove" button
-	// expanded into a confirm/cancel pair — at most one at a time.
-	let confirmingRemoveMemberId = $state<string | null>(null);
 	// Tracks tab (admin only): which track's row (by piece id) has its
 	// title/composer/YouTube link/default-tempo/files swapped for the
 	// inline edit form — one panel for the whole track, same
@@ -146,40 +140,32 @@
 	let uploadMusicFiles = $state<FileList | null>(null);
 	let uploadPdfFiles = $state<FileList | null>(null);
 	let canSubmitUpload = $derived(!!uploadMusicFiles?.length || !!uploadPdfFiles?.length);
-	// Tracks tab (admin only): which track's row has its "Delete track"
-	// button expanded into a confirm/cancel pair — same click-to-confirm
-	// pattern as the Members tab's "Remove" below, at most one at a time.
-	// A whole track (every version, distribution, annotation, markup mark
-	// on it) is a lot more to lose than one file slot, so unlike the file
-	// Remove buttons inside the edit panel (which only take effect on
-	// Save), this is its own explicit step.
-	let confirmingDeleteTrackPieceId = $state<string | null>(null);
+	// Tracks tab (admin only): a whole track (every version, distribution,
+	// annotation, markup mark on it) is a lot more to lose than one file
+	// slot, so unlike the file Remove buttons inside the edit panel (which
+	// only take effect on Save), deleting a track is its own explicit
+	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
 	let titleDraft = $state('');
 	let savingTitle = $state(false);
-	// Responsibilities admin panel: same click-to-confirm pattern, keyed by
-	// schedule id, for the destructive "Delete responsibility" action.
-	let confirmingDeleteScheduleId = $state<string | null>(null);
-	// Same two patterns, one level down — per responsibility date rather
-	// than per responsibility.
+	// Responsibilities admin panel: per-responsibility-date inline edit
+	// (one level down from the schedule).
 	let editingDateId = $state<string | null>(null);
 	let dateEditDraft = $state('');
 	let notesEditDraft = $state('');
 	let savingDateEdit = $state(false);
-	let confirmingDeleteDateId = $state<string | null>(null);
-	// Weekly Notes admin panel: same create/inline-edit/click-to-confirm
-	// patterns as Responsibilities' dates above, one level flatter (no
-	// separate schedule concept — every note stands alone).
+	// Weekly Notes admin panel: same create/inline-edit patterns as
+	// Responsibilities' dates above, one level flatter (no separate schedule
+	// concept — every note stands alone).
 	let creatingWeeklyNote = $state(false);
 	let editingWeeklyNoteId = $state<string | null>(null);
 	let weeklyNoteTitleDraft = $state('');
 	let weeklyNoteDateDraft = $state('');
 	let weeklyNoteBodyDraft = $state('');
 	let savingWeeklyNoteEdit = $state(false);
-	let confirmingDeleteWeeklyNoteId = $state<string | null>(null);
 	// Info/About tab: the admin's description editor.
 	let editingDescription = $state(false);
 	let descriptionDraft = $state(data.group.description ?? '');
@@ -193,8 +179,8 @@
 	);
 	let rehearsalTimeDraft = $state(data.group.rehearsal_time ?? '');
 	let savingRehearsal = $state(false);
-	// Info/About tab: "Leave group" click-to-confirm.
-	let confirmingLeave = $state(false);
+	// Info/About tab: "Leave group" in-flight flag (the click-to-confirm
+	// toggle itself lives in its `ConfirmButton`).
 	let leavingGroup = $state(false);
 	// Info/About tab: "Copy link" briefly confirms itself, same pattern as
 	// elsewhere in this file for a one-shot action with no server round trip.
@@ -376,7 +362,7 @@
 							<form
 								method="POST"
 								action="?/updateHomework"
-								use:enhance={withSubmitting((v) => (savingHomework = v), () => { editingHomeworkId = null; confirmingDeleteHomeworkId = null; })}
+								use:enhance={withSubmitting((v) => (savingHomework = v), () => (editingHomeworkId = null))}
 							>
 								<input type="hidden" name="homeworkId" value={hw.id} />
 								<label class="field">
@@ -425,50 +411,53 @@
 										{m.action_cancel()}
 									</button>
 									<span class="hw-edit-delete">
-										{#if confirmingDeleteHomeworkId === hw.id}
-											<button
-												type="submit"
-												formaction="?/deleteHomework"
-												formnovalidate
-												class="hw-icon-btn hw-icon-btn--danger"
-												disabled={savingHomework}
-												aria-label={m.groups_delete()}
-												title={m.groups_delete_homework_confirm()}
-											>
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-													<polyline points="20 6 9 17 4 12" />
-												</svg>
-											</button>
-											<button
-												type="button"
-												class="hw-icon-btn"
-												onclick={() => (confirmingDeleteHomeworkId = null)}
-												disabled={savingHomework}
-												aria-label={m.action_cancel()}
-												title={m.action_cancel()}
-											>
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-													<line x1="18" y1="6" x2="6" y2="18" />
-													<line x1="6" y1="6" x2="18" y2="18" />
-												</svg>
-											</button>
-										{:else}
-											<button
-												type="button"
-												class="hw-icon-btn hw-icon-btn--danger"
-												onclick={() => (confirmingDeleteHomeworkId = hw.id)}
-												aria-label={m.groups_delete_homework()}
-												title={m.groups_delete_homework()}
-											>
-												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-													<path d="M3 6h18" />
-													<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-													<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-													<line x1="10" y1="11" x2="10" y2="17" />
-													<line x1="14" y1="11" x2="14" y2="17" />
-												</svg>
-											</button>
-										{/if}
+										<ConfirmButton>
+											{#snippet trigger(start)}
+												<button
+													type="button"
+													class="hw-icon-btn hw-icon-btn--danger"
+													onclick={start}
+													aria-label={m.groups_delete_homework()}
+													title={m.groups_delete_homework()}
+												>
+													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+														<path d="M3 6h18" />
+														<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+														<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+														<line x1="10" y1="11" x2="10" y2="17" />
+														<line x1="14" y1="11" x2="14" y2="17" />
+													</svg>
+												</button>
+											{/snippet}
+											{#snippet confirm(cancel)}
+												<button
+													type="submit"
+													formaction="?/deleteHomework"
+													formnovalidate
+													class="hw-icon-btn hw-icon-btn--danger"
+													disabled={savingHomework}
+													aria-label={m.groups_delete()}
+													title={m.groups_delete_homework_confirm()}
+												>
+													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+														<polyline points="20 6 9 17 4 12" />
+													</svg>
+												</button>
+												<button
+													type="button"
+													class="hw-icon-btn"
+													onclick={cancel}
+													disabled={savingHomework}
+													aria-label={m.action_cancel()}
+													title={m.action_cancel()}
+												>
+													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+														<line x1="18" y1="6" x2="6" y2="18" />
+														<line x1="6" y1="6" x2="18" y2="18" />
+													</svg>
+												</button>
+											{/snippet}
+										</ConfirmButton>
 									</span>
 								</div>
 							</form>
@@ -626,56 +615,59 @@
 							     enough friction for something this hard to undo. Only shown
 							     in edit mode, same as the rest of this panel. -->
 							<div class="track-delete-corner">
-								{#if confirmingDeleteTrackPieceId === track.piece_id}
-									<form
-										method="POST"
-										action="?/deleteTrack"
-										use:enhance={withSubmitting((v) => (deletingTrack = v), () => { confirmingDeleteTrackPieceId = null; editingDetailsPieceId = null; })}
-										class="track-delete-corner-form"
-									>
-										<input type="hidden" name="pieceId" value={track.piece_id} />
-										<button
-											type="submit"
-											class="piece-action piece-action--sm piece-action--danger"
-											disabled={deletingTrack}
-											aria-label={m.groups_delete()}
-											title={m.groups_delete_track_confirm()}
-										>
-											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-												<polyline points="20 6 9 17 4 12" />
-											</svg>
-										</button>
+								<ConfirmButton>
+									{#snippet trigger(start)}
 										<button
 											type="button"
-											class="piece-action piece-action--sm"
-											onclick={() => (confirmingDeleteTrackPieceId = null)}
-											disabled={deletingTrack}
-											aria-label={m.action_cancel()}
-											title={m.action_cancel()}
+											class="piece-action piece-action--sm piece-action--danger"
+											onclick={start}
+											aria-label={m.groups_delete_track()}
+											title={m.groups_delete_track()}
 										>
 											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-												<line x1="18" y1="6" x2="6" y2="18" />
-												<line x1="6" y1="6" x2="18" y2="18" />
+												<path d="M3 6h18" />
+												<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+												<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+												<line x1="10" y1="11" x2="10" y2="17" />
+												<line x1="14" y1="11" x2="14" y2="17" />
 											</svg>
 										</button>
-									</form>
-								{:else}
-									<button
-										type="button"
-										class="piece-action piece-action--sm piece-action--danger"
-										onclick={() => (confirmingDeleteTrackPieceId = track.piece_id)}
-										aria-label={m.groups_delete_track()}
-										title={m.groups_delete_track()}
-									>
-										<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-											<path d="M3 6h18" />
-											<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-											<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-											<line x1="10" y1="11" x2="10" y2="17" />
-											<line x1="14" y1="11" x2="14" y2="17" />
-										</svg>
-									</button>
-								{/if}
+									{/snippet}
+									{#snippet confirm(cancel)}
+										<form
+											method="POST"
+											action="?/deleteTrack"
+											use:enhance={withSubmitting((v) => (deletingTrack = v), () => (editingDetailsPieceId = null))}
+											class="track-delete-corner-form"
+										>
+											<input type="hidden" name="pieceId" value={track.piece_id} />
+											<button
+												type="submit"
+												class="piece-action piece-action--sm piece-action--danger"
+												disabled={deletingTrack}
+												aria-label={m.groups_delete()}
+												title={m.groups_delete_track_confirm()}
+											>
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<polyline points="20 6 9 17 4 12" />
+												</svg>
+											</button>
+											<button
+												type="button"
+												class="piece-action piece-action--sm"
+												onclick={cancel}
+												disabled={deletingTrack}
+												aria-label={m.action_cancel()}
+												title={m.action_cancel()}
+											>
+												<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<line x1="18" y1="6" x2="6" y2="18" />
+													<line x1="6" y1="6" x2="18" y2="18" />
+												</svg>
+											</button>
+										</form>
+									{/snippet}
+								</ConfirmButton>
 							</div>
 						{:else}
 							<p class="card-title">{track.title}</p>
@@ -702,7 +694,6 @@
 										composerEditDraft = track.composer ?? '';
 										youtubeEditDraft = track.youtube_url ?? '';
 										tempoEditDraft = track.default_tempo_bpm ? String(track.default_tempo_bpm) : '';
-										confirmingDeleteTrackPieceId = null;
 										editingDetailsPieceId = track.piece_id;
 									}}
 								>
@@ -894,30 +885,25 @@
 								{m.drawer_edit()}
 							</button>
 						</div>
-						{#if confirmingDeleteWeeklyNoteId === n.id}
-							<div class="btn-row">
-								<span class="dim">{m.groups_delete_note_confirm()}</span>
-								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteWeeklyNoteId = null)}>
-									{m.action_cancel()}
+						<ConfirmButton>
+							{#snippet trigger(start)}
+								<button type="button" class="text-link text-link--danger" onclick={start}>
+									{m.groups_delete_note()}
 								</button>
-								<form
-									method="POST"
-									action="?/deleteWeeklyNote"
-									use:enhance={afterSubmit(() => (confirmingDeleteWeeklyNoteId = null))}
-								>
-									<input type="hidden" name="noteId" value={n.id} />
-									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
-								</form>
-							</div>
-						{:else}
-							<button
-								type="button"
-								class="text-link text-link--danger"
-								onclick={() => (confirmingDeleteWeeklyNoteId = n.id)}
-							>
-								{m.groups_delete_note()}
-							</button>
-						{/if}
+							{/snippet}
+							{#snippet confirm(cancel)}
+								<div class="btn-row">
+									<span class="dim">{m.groups_delete_note_confirm()}</span>
+									<button type="button" class="btn btn-outline" onclick={cancel}>
+										{m.action_cancel()}
+									</button>
+									<form method="POST" action="?/deleteWeeklyNote" use:enhance>
+										<input type="hidden" name="noteId" value={n.id} />
+										<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
+									</form>
+								</div>
+							{/snippet}
+						</ConfirmButton>
 					{/if}
 				</section>
 			{/each}
@@ -960,35 +946,34 @@
 						{/if}
 					</div>
 					{#if mode === 'admin' && member.user_id !== data.user.id}
-						{#if confirmingRemoveMemberId === member.user_id}
-							<div class="member-actions">
-								<span class="dim">{m.groups_remove_confirm()}</span>
-								<button type="button" class="text-link" onclick={() => (confirmingRemoveMemberId = null)}>
-									{m.action_cancel()}
-								</button>
-								<form
-									method="POST"
-									action="?/removeMember"
-									use:enhance={afterSubmit(() => (confirmingRemoveMemberId = null))}
-								>
-									<input type="hidden" name="userId" value={member.user_id} />
-									<button type="submit" class="text-link text-link--danger">{m.groups_confirm()}</button>
-								</form>
-							</div>
-						{:else}
-							<div class="member-actions">
-								<form method="POST" action="?/updateMemberRole" use:enhance>
-									<input type="hidden" name="userId" value={member.user_id} />
-									<input type="hidden" name="role" value={member.role === 'admin' ? 'member' : 'admin'} />
-									<button type="submit" class="text-link">
-										{member.role === 'admin' ? m.groups_remove_admin() : m.groups_make_admin()}
+						<ConfirmButton>
+							{#snippet trigger(start)}
+								<div class="member-actions">
+									<form method="POST" action="?/updateMemberRole" use:enhance>
+										<input type="hidden" name="userId" value={member.user_id} />
+										<input type="hidden" name="role" value={member.role === 'admin' ? 'member' : 'admin'} />
+										<button type="submit" class="text-link">
+											{member.role === 'admin' ? m.groups_remove_admin() : m.groups_make_admin()}
+										</button>
+									</form>
+									<button type="button" class="text-link" onclick={start}>
+										{m.groups_remove()}
 									</button>
-								</form>
-								<button type="button" class="text-link" onclick={() => (confirmingRemoveMemberId = member.user_id)}>
-									{m.groups_remove()}
-								</button>
-							</div>
-						{/if}
+								</div>
+							{/snippet}
+							{#snippet confirm(cancel)}
+								<div class="member-actions">
+									<span class="dim">{m.groups_remove_confirm()}</span>
+									<button type="button" class="text-link" onclick={cancel}>
+										{m.action_cancel()}
+									</button>
+									<form method="POST" action="?/removeMember" use:enhance>
+										<input type="hidden" name="userId" value={member.user_id} />
+										<button type="submit" class="text-link text-link--danger">{m.groups_confirm()}</button>
+									</form>
+								</div>
+							{/snippet}
+						</ConfirmButton>
 					{/if}
 				</div>
 			{/each}
@@ -1059,30 +1044,25 @@
 						<p class="error">{form.error}</p>
 					{/if}
 
-					{#if confirmingDeleteScheduleId === schedule.id}
-						<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
-						<div class="btn-row">
-							<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteScheduleId = null)}>
-								{m.action_cancel()}
+					<ConfirmButton>
+						{#snippet trigger(start)}
+							<button type="button" class="text-link text-link--danger" onclick={start}>
+								{m.groups_delete_responsibility()}
 							</button>
-							<form
-								method="POST"
-								action="?/deleteResponsibilitySchedule"
-								use:enhance={afterSubmit(() => (confirmingDeleteScheduleId = null))}
-							>
-								<input type="hidden" name="scheduleId" value={schedule.id} />
-								<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
-							</form>
-						</div>
-					{:else}
-						<button
-							type="button"
-							class="text-link text-link--danger"
-							onclick={() => (confirmingDeleteScheduleId = schedule.id)}
-						>
-							{m.groups_delete_responsibility()}
-						</button>
-					{/if}
+						{/snippet}
+						{#snippet confirm(cancel)}
+							<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
+							<div class="btn-row">
+								<button type="button" class="btn btn-outline" onclick={cancel}>
+									{m.action_cancel()}
+								</button>
+								<form method="POST" action="?/deleteResponsibilitySchedule" use:enhance>
+									<input type="hidden" name="scheduleId" value={schedule.id} />
+									<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
+								</form>
+							</div>
+						{/snippet}
+					</ConfirmButton>
 				</section>
 			{/each}
 
@@ -1287,30 +1267,25 @@
 								<button type="submit" class="btn btn-outline">{d.canceled ? m.groups_reinstate() : m.action_cancel()}</button>
 							</form>
 						</div>
-						{#if confirmingDeleteDateId === d.id}
-							<div class="btn-row">
-								<span class="dim">{m.groups_delete_date_confirm()}</span>
-								<button type="button" class="btn btn-outline" onclick={() => (confirmingDeleteDateId = null)}>
-									{m.action_cancel()}
+						<ConfirmButton>
+							{#snippet trigger(start)}
+								<button type="button" class="text-link text-link--danger" onclick={start}>
+									{m.groups_delete_date()}
 								</button>
-								<form
-									method="POST"
-									action="?/deleteResponsibilityDate"
-									use:enhance={afterSubmit(() => (confirmingDeleteDateId = null))}
-								>
-									<input type="hidden" name="dateId" value={d.id} />
-									<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
-								</form>
-							</div>
-						{:else}
-							<button
-								type="button"
-								class="text-link text-link--danger"
-								onclick={() => (confirmingDeleteDateId = d.id)}
-							>
-								{m.groups_delete_date()}
-							</button>
-						{/if}
+							{/snippet}
+							{#snippet confirm(cancel)}
+								<div class="btn-row">
+									<span class="dim">{m.groups_delete_date_confirm()}</span>
+									<button type="button" class="btn btn-outline" onclick={cancel}>
+										{m.action_cancel()}
+									</button>
+									<form method="POST" action="?/deleteResponsibilityDate" use:enhance>
+										<input type="hidden" name="dateId" value={d.id} />
+										<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
+									</form>
+								</div>
+							{/snippet}
+						</ConfirmButton>
 					{/if}
 				</section>
 			{/each}
@@ -1551,33 +1526,36 @@
 		</section>
 
 		<section class="card">
-			{#if confirmingLeave}
-				<p class="card-eyebrow">{m.groups_leave_confirm({ name: data.group.name })}</p>
-				<p class="card-note">
-					{m.groups_leave_note()}
-				</p>
-				{#if form?.form === 'leaveGroup' && form?.error}
-					<p class="error">{form.error}</p>
-				{/if}
-				<div class="btn-row">
-					<button type="button" class="btn btn-outline" onclick={() => (confirmingLeave = false)} disabled={leavingGroup}>
-						{m.action_cancel()}
+			<ConfirmButton>
+				{#snippet trigger(start)}
+					<button type="button" class="btn btn-outline btn-block" onclick={start}>
+						{m.groups_leave_group()}
 					</button>
-					<form
-						method="POST"
-						action="?/leaveGroup"
-						use:enhance={withSubmitting((v) => (leavingGroup = v))}
-					>
-						<button type="submit" class="btn btn-danger" disabled={leavingGroup}>
-							{leavingGroup ? m.groups_leaving() : m.groups_yes_leave()}
+				{/snippet}
+				{#snippet confirm(cancel)}
+					<p class="card-eyebrow">{m.groups_leave_confirm({ name: data.group.name })}</p>
+					<p class="card-note">
+						{m.groups_leave_note()}
+					</p>
+					{#if form?.form === 'leaveGroup' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
+					<div class="btn-row">
+						<button type="button" class="btn btn-outline" onclick={cancel} disabled={leavingGroup}>
+							{m.action_cancel()}
 						</button>
-					</form>
-				</div>
-			{:else}
-				<button type="button" class="btn btn-outline btn-block" onclick={() => (confirmingLeave = true)}>
-					{m.groups_leave_group()}
-				</button>
-			{/if}
+						<form
+							method="POST"
+							action="?/leaveGroup"
+							use:enhance={withSubmitting((v) => (leavingGroup = v))}
+						>
+							<button type="submit" class="btn btn-danger" disabled={leavingGroup}>
+								{leavingGroup ? m.groups_leaving() : m.groups_yes_leave()}
+							</button>
+						</form>
+					</div>
+				{/snippet}
+			</ConfirmButton>
 		</section>
 	{/if}
 </main>

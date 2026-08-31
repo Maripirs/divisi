@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { AnnotationShare } from '$lib/api/annotations';
 	import { m } from '$lib/paraglide/messages';
+	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 
 	/** F4: the create/view/edit/share sheet for one score annotation,
 	 * opened either from `ScoreView`'s "place a marker" tap (mode `create`)
@@ -110,13 +111,18 @@
 			{#if isOwner}
 				<div class="btn-row">
 					<button class="btn" onclick={() => (editing = true)}>{m.piece_annotation_edit()}</button>
-					{#if confirmingDelete}
-						<button class="btn btn-danger btn-block" onclick={onDelete}>{m.piece_annotation_confirm_delete()}</button>
-					{:else}
-						<button class="btn btn-block" onclick={() => (confirmingDelete = true)}>
-							{m.piece_annotation_delete()}
-						</button>
-					{/if}
+					<ConfirmButton bind:confirming={confirmingDelete}>
+						{#snippet trigger(start)}
+							<button class="btn btn-block" onclick={start}>
+								{m.piece_annotation_delete()}
+							</button>
+						{/snippet}
+						{#snippet confirm()}
+							<button class="btn btn-danger btn-block" onclick={onDelete}>
+								{m.piece_annotation_confirm_delete()}
+							</button>
+						{/snippet}
+					</ConfirmButton>
 				</div>
 
 				<div class="sharing">

@@ -1,10 +1,10 @@
-// `use:enhance` callbacks in this app almost all follow one of two shapes.
-// These two helpers collapse the ~30 hand-written copies down to a single
-// expression each.
+// `use:enhance` callbacks in this app almost all set a "submitting" flag
+// for the request's lifetime, then optionally run one line of cleanup
+// (close an inline editor, clear a draft). This helper collapses the ~25
+// hand-written copies of that down to a single expression:
 //
 //   withSubmitting((v) => (saving = v))
 //   withSubmitting((v) => (saving = v), () => (editingId = null))
-//   afterSubmit(() => (confirmingDeleteId = null))
 //
 // Forms that need `update({ reset: false })`, or that branch on
 // `result.type` (see `SettingsDrawer.svelte`), still write the callback
@@ -30,17 +30,5 @@ export function withSubmitting(
 			onSettled?.();
 			await update();
 		};
-	};
-}
-
-/**
- * No in-flight flag — just run some cleanup once the action resolves, then
- * `update()`. Used by the click-to-confirm delete forms, which only need
- * to drop their "confirming" state.
- */
-export function afterSubmit(onSettled: () => void): SubmitFunction {
-	return () => async ({ update }) => {
-		onSettled();
-		await update();
 	};
 }
