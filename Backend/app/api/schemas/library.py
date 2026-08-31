@@ -20,6 +20,22 @@ class PieceOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PieceDetailsUpdate(BaseModel):
+    """Same review-authority boundary as default-tempo: full replace of a
+    piece's editable metadata (title/composer/reference link/default
+    tempo), not just the upload-time write-once fields they look like.
+    `composer`/`youtube_url`/`default_tempo_bpm` of `None` (or blank)
+    clears them; `title` is required — a piece must always have one. One
+    endpoint covering what used to be two (this plus the dedicated
+    default-tempo route) so the Frontend's single "Edit details" panel
+    only needs one call."""
+
+    title: str
+    composer: str | None = None
+    youtube_url: str | None = None
+    default_tempo_bpm: int | None = None
+
+
 class PieceDefaultTempoUpdate(BaseModel):
     """Admin (group-owned piece) or owner (personal piece) only, full
     replace — `None`/omitted clears it back to "use the MIDI file's own
@@ -72,6 +88,12 @@ class LibraryEntryOut(BaseModel):
     # reaches actual bytes only through the file-serving routes below.
     has_music: bool = False
     has_pdf: bool = False
+    # Original uploaded filenames, display-only (e.g. the Tracks tab's edit
+    # panel showing "PDF: 'lacrymosa.pdf' — Replace"). Safe to expose,
+    # unlike `PieceVersion.file_path`/`pdf_file_path` — those are
+    # storage-relative and never sent to the client.
+    music_file_name: str | None = None
+    pdf_file_name: str | None = None
 
 
 class GuestPieceOut(BaseModel):

@@ -232,6 +232,12 @@ class PieceVersion(Base):
     # constraints minimal.
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     pdf_file_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Original uploaded filenames, purely for display (e.g. the Tracks
+    # tab's edit panel showing "PDF: lacrymosa.pdf" next to "Replace") —
+    # `file_path`/`pdf_file_path` are storage-relative, uuid-named paths,
+    # never the name a human recognizes.
+    file_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    pdf_file_name: Mapped[str | None] = mapped_column(String, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

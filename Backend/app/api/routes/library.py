@@ -19,6 +19,7 @@ from app.api.schemas import (
     DistributionOut,
     LibraryEntryOut,
     PieceDefaultTempoUpdate,
+    PieceDetailsUpdate,
     PieceOut,
     PieceUploadOut,
     PieceVersionOut,
@@ -41,6 +42,7 @@ from app.storage.files import resolve_source_path
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
+    delete_piece,
     get_piece_or_404,
     group_role,
     require_piece_access,
@@ -82,6 +84,45 @@ def _require_review_authority(piece: Piece, user: User, db: Session) -> None:
     else:
         if _group_role(piece.owner_id, user.id, db) != GroupRole.admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+
+
+@router.patch("/pieces/{piece_id}", response_model=PieceOut)
+def update_piece_details(
+    piece_id: str,
+    payload: PieceDetailsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Piece:
+    """Same review authority as approve/reject/default-tempo — editing a
+    piece's title, composer, reference recording link, or default tempo
+    isn't a review decision either, but it's the same "who's allowed to
+    make calls about this piece" boundary."""
+    piece = _get_piece_or_404(piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title is required")
+    piece.title = title
+    piece.composer = payload.composer.strip() if payload.composer and payload.composer.strip() else None
+    piece.youtube_url = payload.youtube_url.strip() if payload.youtube_url and payload.youtube_url.strip() else None
+    piece.default_tempo_bpm = payload.default_tempo_bpm
+    db.commit()
+    db.refresh(piece)
+    return piece
+
+
+@router.delete("/pieces/{piece_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_piece_route(
+    piece_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """F5 edit panel: delete a track entirely. Same review-authority
+    boundary as editing its details — see `delete_piece`'s own doc comment
+    for what actually gets cleaned up."""
+    piece = _get_piece_or_404(piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    delete_piece(piece, db)
 
 
 @router.put("/pieces/{piece_id}/default-tempo", response_model=PieceOut)
@@ -139,6 +180,8 @@ async def upload_piece(
         created_by=current_user.id,
         file_path=file_path,
         pdf_file_path=pdf_file_path,
+        file_name=file.filename if file is not None else None,
+        pdf_file_name=pdf_file.filename if pdf_file is not None else None,
         composer=composer,
         youtube_url=youtube_url,
         default_tempo_bpm=default_tempo_bpm,
@@ -154,24 +197,59 @@ async def upload_version(
     piece_id: str,
     file: UploadFile | None = File(None),
     pdf_file: UploadFile | None = File(None),
+    # F5 edit panel: explicit "Remove" for a slot that isn't being replaced
+    # with a new file this call — distinct from just omitting `file`/
+    # `pdf_file`, which means "leave it exactly as-is" (see the
+    # carry-forward below). Ignored if the matching file *is* given —
+    # uploading a new music file while also asking to remove it makes no
+    # sense, and the new file wins.
+    remove_file: bool = Form(False),
+    remove_pdf_file: bool = Form(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> PieceVersionOut:
-    if file is None and pdf_file is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a music file, a PDF, or both"
-        )
     piece = _get_piece_or_404(piece_id, db)
     _require_piece_access(piece, current_user, db)
 
     file_path = _save_upload(file, await file.read()) if file is not None else None
     pdf_file_path = _save_upload(pdf_file, await pdf_file.read()) if pdf_file is not None else None
+    file_name = file.filename if file is not None else None
+    pdf_file_name = pdf_file.filename if pdf_file is not None else None
+
+    # A version only replaces the file slot(s) actually given here — carry
+    # the other slot (path and display filename alike) forward from the
+    # piece's latest version rather than silently dropping it (e.g.
+    # replacing just the music file must not erase an already-uploaded
+    # PDF, and vice versa) — *unless* that slot's own `remove_*` flag asked
+    # for it to be cleared instead.
+    if (file is None and not remove_file) or (pdf_file is None and not remove_pdf_file):
+        latest = (
+            db.query(PieceVersion)
+            .filter(PieceVersion.piece_id == piece.id)
+            .order_by(PieceVersion.created_at.desc())
+            .first()
+        )
+        if latest is not None:
+            if file is None and not remove_file:
+                file_path = latest.file_path
+                file_name = latest.file_name
+            if pdf_file is None and not remove_pdf_file:
+                pdf_file_path = latest.pdf_file_path
+                pdf_file_name = latest.pdf_file_name
+
+    if file_path is None and pdf_file_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A piece needs at least a music file or a PDF — remove the only one it has by replacing it instead",
+        )
 
     version = add_version(
         piece=piece,
         created_by=current_user.id,
         file_path=file_path,
         pdf_file_path=pdf_file_path,
+        file_name=file_name,
+        pdf_file_name=pdf_file_name,
         source=VersionSource.modification,
         db=db,
     )
@@ -306,6 +384,8 @@ def list_my_library(
                 youtube_url=piece.youtube_url,
                 has_music=latest.file_path is not None,
                 has_pdf=latest.pdf_file_path is not None,
+                music_file_name=latest.file_name,
+                pdf_file_name=latest.pdf_file_name,
             )
         )
 
@@ -342,6 +422,8 @@ def list_my_library(
                     youtube_url=piece.youtube_url,
                     has_music=version.file_path is not None,
                     has_pdf=version.pdf_file_path is not None,
+                    music_file_name=version.file_name,
+                    pdf_file_name=version.pdf_file_name,
                 )
             )
 

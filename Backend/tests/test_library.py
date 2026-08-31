@@ -191,6 +191,152 @@ def test_default_tempo_non_owner_and_non_admin_forbidden(client):
     assert admin_res.json()["default_tempo_bpm"] == 90
 
 
+def test_piece_details_owner_can_edit_and_clear(client):
+    headers = _register_and_login(client, "detailsowner@example.com")
+    piece_id = _upload_file(client, headers, title="Draft Title", composer="Old Composer").json()["piece"]["id"]
+
+    edit_res = client.patch(
+        f"/library/pieces/{piece_id}",
+        json={"title": "Final Title", "composer": "New Composer", "youtube_url": "https://youtu.be/abc123"},
+        headers=headers,
+    )
+    assert edit_res.status_code == 200
+    body = edit_res.json()
+    assert body["title"] == "Final Title"
+    assert body["composer"] == "New Composer"
+    assert body["youtube_url"] == "https://youtu.be/abc123"
+
+    library = client.get("/library/pieces", headers=headers)
+    assert library.json()[0]["title"] == "Final Title"
+
+    clear_res = client.patch(
+        f"/library/pieces/{piece_id}", json={"title": "Final Title", "composer": None, "youtube_url": None},
+        headers=headers,
+    )
+    assert clear_res.status_code == 200
+    assert clear_res.json()["composer"] is None
+    assert clear_res.json()["youtube_url"] is None
+
+
+def test_piece_details_can_set_and_clear_default_tempo(client):
+    # The edit-details panel folds default-tempo editing into this same
+    # endpoint rather than a separate one — see `update_piece_details`.
+    headers = _register_and_login(client, "detailstempo@example.com")
+    piece_id = _upload_file(client, headers).json()["piece"]["id"]
+
+    set_res = client.patch(
+        f"/library/pieces/{piece_id}", json={"title": "Ave Maria", "default_tempo_bpm": 84}, headers=headers
+    )
+    assert set_res.status_code == 200
+    assert set_res.json()["default_tempo_bpm"] == 84
+
+    clear_res = client.patch(
+        f"/library/pieces/{piece_id}", json={"title": "Ave Maria", "default_tempo_bpm": None}, headers=headers
+    )
+    assert clear_res.status_code == 200
+    assert clear_res.json()["default_tempo_bpm"] is None
+
+
+def test_piece_details_blank_title_rejected(client):
+    headers = _register_and_login(client, "detailsblank@example.com")
+    piece_id = _upload_file(client, headers).json()["piece"]["id"]
+
+    res = client.patch(f"/library/pieces/{piece_id}", json={"title": "   "}, headers=headers)
+    assert res.status_code == 400
+
+
+def test_piece_details_non_owner_and_non_admin_forbidden(client):
+    owner_headers = _register_and_login(client, "detailsowner2@example.com")
+    other_headers = _register_and_login(client, "detailsstranger@example.com")
+    piece_id = _upload_file(client, owner_headers).json()["piece"]["id"]
+
+    res = client.patch(f"/library/pieces/{piece_id}", json={"title": "Hijacked"}, headers=other_headers)
+    assert res.status_code == 403
+
+    admin_headers = _register_and_login(client, "detailsgadmin@example.com")
+    member_headers = _register_and_login(client, "detailsgmember@example.com")
+    group_id = client.post("/groups", json={"name": "Details Choir"}, headers=admin_headers).json()["id"]
+    client.post(
+        f"/groups/{group_id}/members", json={"email": "detailsgmember@example.com"}, headers=admin_headers
+    )
+    group_piece_id = _upload_file(
+        client, admin_headers, title="Group Piece", owner_type="group", group_id=group_id
+    ).json()["piece"]["id"]
+
+    member_res = client.patch(
+        f"/library/pieces/{group_piece_id}", json={"title": "Member Edit"}, headers=member_headers
+    )
+    assert member_res.status_code == 403
+
+    admin_res = client.patch(
+        f"/library/pieces/{group_piece_id}", json={"title": "Admin Edit"}, headers=admin_headers
+    )
+    assert admin_res.status_code == 200
+    assert admin_res.json()["title"] == "Admin Edit"
+
+
+def test_delete_piece_owner_can_delete_and_it_disappears(client):
+    headers = _register_and_login(client, "deleteowner@example.com")
+    piece_id = _upload_file(client, headers).json()["piece"]["id"]
+    assert client.get("/library/pieces", headers=headers).json() != []
+
+    res = client.delete(f"/library/pieces/{piece_id}", headers=headers)
+    assert res.status_code == 204
+    assert client.get("/library/pieces", headers=headers).json() == []
+
+    # Gone, not just hidden — a second delete/patch 404s.
+    assert client.delete(f"/library/pieces/{piece_id}", headers=headers).status_code == 404
+    assert client.patch(f"/library/pieces/{piece_id}", json={"title": "x"}, headers=headers).status_code == 404
+
+
+def test_delete_piece_cleans_up_annotations_and_distributions(client):
+    admin_headers = _register_and_login(client, "deleteadmin@example.com")
+    member_headers = _register_and_login(client, "deletemember@example.com")
+    group_id = client.post("/groups", json={"name": "Delete Choir"}, headers=admin_headers).json()["id"]
+    client.post(f"/groups/{group_id}/members", json={"email": "deletemember@example.com"}, headers=admin_headers)
+
+    upload = _upload_file(client, admin_headers, owner_type="group", group_id=group_id)
+    piece_id = upload.json()["piece"]["id"]
+    version_id = upload.json()["version"]["id"]
+    client.post(f"/library/versions/{version_id}/submit", headers=admin_headers)
+    client.post(f"/library/versions/{version_id}/approve", headers=admin_headers)
+    client.post(f"/library/pieces/{piece_id}/versions/{version_id}/distribute", headers=admin_headers)
+
+    annotation = client.post(
+        "/annotations",
+        json={"piece_id": piece_id, "position": "0", "content": "watch the tempo here"},
+        headers=member_headers,
+    )
+    assert annotation.status_code == 201
+
+    res = client.delete(f"/library/pieces/{piece_id}", headers=admin_headers)
+    assert res.status_code == 204
+    assert client.get("/library/pieces", headers=member_headers).json() == []
+
+
+def test_delete_piece_non_owner_and_non_admin_forbidden(client):
+    owner_headers = _register_and_login(client, "deleteowner2@example.com")
+    other_headers = _register_and_login(client, "deletestranger@example.com")
+    piece_id = _upload_file(client, owner_headers).json()["piece"]["id"]
+
+    res = client.delete(f"/library/pieces/{piece_id}", headers=other_headers)
+    assert res.status_code == 403
+
+    admin_headers = _register_and_login(client, "deletegadmin@example.com")
+    member_headers = _register_and_login(client, "deletegmember@example.com")
+    group_id = client.post("/groups", json={"name": "Delete Choir 2"}, headers=admin_headers).json()["id"]
+    client.post(f"/groups/{group_id}/members", json={"email": "deletegmember@example.com"}, headers=admin_headers)
+    group_piece_id = _upload_file(
+        client, admin_headers, title="Group Piece", owner_type="group", group_id=group_id
+    ).json()["piece"]["id"]
+
+    member_res = client.delete(f"/library/pieces/{group_piece_id}", headers=member_headers)
+    assert member_res.status_code == 403
+
+    admin_res = client.delete(f"/library/pieces/{group_piece_id}", headers=admin_headers)
+    assert admin_res.status_code == 204
+
+
 # --- Real piece uploads: MIDI/MusicXML + PDF + reference audio ---
 
 
@@ -227,6 +373,77 @@ def test_upload_music_and_pdf(client):
     entry = library.json()[0]
     assert entry["has_music"] is True
     assert entry["has_pdf"] is True
+    assert entry["music_file_name"] == "piece.xml"
+    assert entry["pdf_file_name"] == "piece.pdf"
+
+
+def test_new_version_carries_forward_untouched_file_slot(client):
+    # The edit panel's "replace/add a file" fields are independent — giving
+    # just a new music file must not erase an already-uploaded PDF, and
+    # vice versa. See `upload_version`'s carry-forward.
+    headers = _register_and_login(client, "carryforward@example.com")
+    piece_id = _upload_file(client, headers, include_music=True, include_pdf=True).json()["piece"]["id"]
+
+    music_only = client.post(
+        f"/library/pieces/{piece_id}/versions",
+        files={"file": ("v2.xml", io.BytesIO(b"<musicxml v2/>"), "application/xml")},
+        headers=headers,
+    )
+    assert music_only.status_code == 201
+    version_id = music_only.json()["id"]
+    assert client.get(f"/library/versions/{version_id}/file", headers=headers).status_code == 200
+    assert client.get(f"/library/versions/{version_id}/pdf", headers=headers).status_code == 200
+    entry = client.get("/library/pieces", headers=headers).json()[0]
+    assert entry["music_file_name"] == "v2.xml"
+    assert entry["pdf_file_name"] == "piece.pdf"
+
+    pdf_only = client.post(
+        f"/library/pieces/{piece_id}/versions",
+        files={"pdf_file": ("v3.pdf", io.BytesIO(b"%PDF-1.4 v3"), "application/pdf")},
+        headers=headers,
+    )
+    assert pdf_only.status_code == 201
+    version_id_2 = pdf_only.json()["id"]
+    assert client.get(f"/library/versions/{version_id_2}/file", headers=headers).status_code == 200
+    assert client.get(f"/library/versions/{version_id_2}/pdf", headers=headers).status_code == 200
+    entry_2 = client.get("/library/pieces", headers=headers).json()[0]
+    assert entry_2["music_file_name"] == "v2.xml"
+    assert entry_2["pdf_file_name"] == "v3.pdf"
+
+
+def test_new_version_can_explicitly_remove_a_file_slot(client):
+    # `remove_file`/`remove_pdf_file` — distinct from just omitting the
+    # file (which carries the existing one forward, per the test above).
+    headers = _register_and_login(client, "removefile@example.com")
+    piece_id = _upload_file(client, headers, include_music=True, include_pdf=True).json()["piece"]["id"]
+
+    remove_pdf = client.post(
+        f"/library/pieces/{piece_id}/versions", data={"remove_pdf_file": "true"}, headers=headers
+    )
+    assert remove_pdf.status_code == 201
+    entry = client.get("/library/pieces", headers=headers).json()[0]
+    assert entry["has_music"] is True
+    assert entry["has_pdf"] is False
+    assert entry["pdf_file_name"] is None
+
+    remove_music_too = client.post(
+        f"/library/pieces/{piece_id}/versions", data={"remove_file": "true"}, headers=headers
+    )
+    assert remove_music_too.status_code == 400
+
+    # Removing the last file while simultaneously supplying a replacement
+    # for it is fine — it's not actually left with nothing.
+    replace_and_remove_other = client.post(
+        f"/library/pieces/{piece_id}/versions",
+        data={"remove_pdf_file": "true"},
+        files={"file": ("v2.xml", io.BytesIO(b"<musicxml v2/>"), "application/xml")},
+        headers=headers,
+    )
+    assert replace_and_remove_other.status_code == 201
+    entry_2 = client.get("/library/pieces", headers=headers).json()[0]
+    assert entry_2["has_music"] is True
+    assert entry_2["has_pdf"] is False
+    assert entry_2["music_file_name"] == "v2.xml"
 
 
 def test_upload_neither_music_nor_pdf_rejected(client):

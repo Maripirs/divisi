@@ -13,11 +13,16 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    Annotation,
+    AnnotationShare,
+    Distribution,
     Group,
     GroupMembership,
     GroupRole,
+    Homework,
     OwnerType,
     Piece,
+    PieceMarkupMark,
     PieceVersion,
     VersionSource,
     VersionStatus,
@@ -82,6 +87,8 @@ def create_piece_with_version(
     youtube_url: str | None = None,
     default_tempo_bpm: int | None = None,
     pdf_file_path: str | None = None,
+    file_name: str | None = None,
+    pdf_file_name: str | None = None,
 ) -> tuple[Piece, PieceVersion]:
     piece = Piece(
         title=title,
@@ -100,6 +107,8 @@ def create_piece_with_version(
         status=VersionStatus.draft,
         file_path=file_path,
         pdf_file_path=pdf_file_path,
+        file_name=file_name,
+        pdf_file_name=pdf_file_name,
     )
     db.add(version)
     db.commit()
@@ -116,6 +125,8 @@ def add_version(
     source: VersionSource,
     db: Session,
     pdf_file_path: str | None = None,
+    file_name: str | None = None,
+    pdf_file_name: str | None = None,
 ) -> PieceVersion:
     version = PieceVersion(
         piece_id=piece.id,
@@ -124,8 +135,50 @@ def add_version(
         status=VersionStatus.draft,
         file_path=file_path,
         pdf_file_path=pdf_file_path,
+        file_name=file_name,
+        pdf_file_name=pdf_file_name,
     )
     db.add(version)
     db.commit()
     db.refresh(version)
     return version
+
+
+def delete_piece(piece: Piece, db: Session) -> None:
+    """F5 edit panel: delete a track entirely, not just one of its files —
+    a harder, less-reversible action than anything else in this module, so
+    the route calling this gates it behind `_require_review_authority`
+    (group admin, or the owner for a personal piece), same as
+    approve/reject/default-tempo.
+
+    No `ondelete="CASCADE"` on any of these FKs (this codebase keeps DB
+    constraints minimal, per `models.py`'s own comments) — so every child
+    row needs an explicit delete here, ordered leaves-first so nothing
+    trips its own FK on the way out. `Homework.piece_id` is the one
+    exception: nullable by design ("an assignment can exist before a piece
+    is picked" — see `Homework`'s doc comment), so a homework entry
+    survives its piece being deleted, just pointing at nothing again.
+    Storage files (`file_path`/`pdf_file_path`) are deliberately left on
+    disk, not deleted — same as this codebase's existing "Render's
+    free-tier restart wipes storage_dir anyway" stance elsewhere; nothing
+    else here depends on cleaning them up immediately.
+    """
+    version_ids = [v.id for v in db.query(PieceVersion.id).filter(PieceVersion.piece_id == piece.id)]
+    annotation_ids = [a.id for a in db.query(Annotation.id).filter(Annotation.piece_id == piece.id)]
+
+    if annotation_ids:
+        db.query(AnnotationShare).filter(AnnotationShare.annotation_id.in_(annotation_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(Annotation).filter(Annotation.piece_id == piece.id).delete(synchronize_session=False)
+    db.query(PieceMarkupMark).filter(PieceMarkupMark.piece_id == piece.id).delete(synchronize_session=False)
+    if version_ids:
+        db.query(Distribution).filter(Distribution.piece_version_id.in_(version_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).delete(synchronize_session=False)
+    db.query(Homework).filter(Homework.piece_id == piece.id).update(
+        {Homework.piece_id: None}, synchronize_session=False
+    )
+    db.delete(piece)
+    db.commit()

@@ -44,6 +44,7 @@ from app.api.schemas.library import (
     GuestPieceOut,
     LibraryEntryOut,
     PieceDefaultTempoUpdate,
+    PieceDetailsUpdate,
     PieceOut,
     PieceUploadOut,
     PieceVersionOut,
