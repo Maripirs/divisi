@@ -188,7 +188,21 @@ in the same pass.
       compact). + mixMath.test.ts (23 tests) + persistence.test.ts (5 tests,
       Map-backed localStorage stub, stays node env). check 0 errors, build ok,
       35 tests green.
-- [ ] Step 3 — pinchZoom action
+- [x] Step 3 — pinchZoom action — `src/lib/actions/pinchZoom.ts`: a Svelte
+      `use:` action (first custom action in the repo — only `use:enhance` from
+      SvelteKit existed before) plus `clampZoom` + `MIN/MAX_ZOOM`/`ZOOM_STEP`
+      exports. Both components dropped their local pinch block (touchDistance /
+      handleTouch{Start,Move,End} / pinchState/pinchRaf/pendingZoom, the 4
+      touch listeners in onMount/onDestroy, and the duplicated MIN/MAX/STEP
+      consts) for `use:pinchZoom={{ zoom, onZoom, onPan? }}` on the container.
+      ScoreView's one-finger-drag → cancelFollow branch is preserved via the
+      optional `onPan` param; PdfView omits it. `zoomBy`/`resetZoom` stay
+      component-local (they mutate each component's own `zoom` $state) but now
+      call `clampZoom`. ScoreView 839→775, PdfView 1466→1412 (−118 total),
+      shared action is 108 lines with the two components' comments merged. +
+      pinchZoom.test.ts (3 tests on clampZoom; the action stays build+manual
+      per the jsdom-no-TouchEvent caveat). check 0 errors, build ok, 38 tests
+      green.
 - [ ] Step 4 — player annotations.svelte.ts
 - [ ] Step 5 — PdfMarkupLayer.svelte
 - [ ] Step 6 — groups/[id] tabs/*.svelte
