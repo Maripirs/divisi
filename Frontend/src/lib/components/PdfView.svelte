@@ -18,6 +18,7 @@
 		type MarkupMark
 	} from '$lib/api/pieceMarkup';
 	import StampShape from '$lib/components/StampShape.svelte';
+	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 
 	/**
@@ -67,10 +68,6 @@
 		canMarkup?: boolean;
 		currentUserId?: string;
 	} = $props();
-
-	const MIN_ZOOM = 0.5;
-	const MAX_ZOOM = 2;
-	const ZOOM_STEP = 0.1;
 
 	let container: HTMLDivElement;
 	let pageCount = $state(0);
@@ -542,21 +539,12 @@
 			if (doc) void computeBaseScaleAndRender(doc);
 		});
 		resizeObserver.observe(container);
-		container.addEventListener('touchstart', handleTouchStart, { passive: true });
-		container.addEventListener('touchmove', handleTouchMove, { passive: false });
-		container.addEventListener('touchend', handleTouchEnd);
-		container.addEventListener('touchcancel', handleTouchEnd);
 		return () => {
 			resizeObserver.disconnect();
-			container.removeEventListener('touchstart', handleTouchStart);
-			container.removeEventListener('touchmove', handleTouchMove);
-			container.removeEventListener('touchend', handleTouchEnd);
-			container.removeEventListener('touchcancel', handleTouchEnd);
 		};
 	});
 
 	onDestroy(() => {
-		if (pinchRaf !== null) cancelAnimationFrame(pinchRaf);
 		void loadingTask?.destroy();
 	});
 
@@ -698,62 +686,20 @@
 	});
 
 	function zoomBy(delta: number): void {
-		zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 100) / 100));
+		zoom = clampZoom(zoom + delta);
 	}
 
 	function resetZoom(): void {
 		zoom = 1;
 	}
-
-	// Mirrors ScoreView's identical pinch-gesture handling — see its own
-	// comments for the rationale (rAF-throttled commits, native pinch-zoom
-	// disabled only on this container via `touch-action` below so the app's
-	// anchored bars never scale with it).
-	let pinchState: { initialDistance: number; initialZoom: number } | null = null;
-	let pinchRaf: number | null = null;
-	let pendingZoom: number | null = null;
-
-	function touchDistance(touches: TouchList): number {
-		return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
-	}
-
-	function handleTouchStart(event: TouchEvent): void {
-		if (event.touches.length !== 2) {
-			pinchState = null;
-			return;
-		}
-		pinchState = { initialDistance: touchDistance(event.touches), initialZoom: zoom };
-	}
-
-	function handleTouchMove(event: TouchEvent): void {
-		if (!pinchState || event.touches.length !== 2) return;
-		event.preventDefault();
-		const scale = touchDistance(event.touches) / pinchState.initialDistance;
-		pendingZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(pinchState.initialZoom * scale * 100) / 100));
-		if (pinchRaf === null) {
-			pinchRaf = requestAnimationFrame(() => {
-				pinchRaf = null;
-				if (pendingZoom !== null) zoom = pendingZoom;
-			});
-		}
-	}
-
-	function handleTouchEnd(event: TouchEvent): void {
-		if (event.touches.length >= 2) return;
-		pinchState = null;
-		if (pinchRaf !== null) {
-			cancelAnimationFrame(pinchRaf);
-			pinchRaf = null;
-		}
-		if (pendingZoom !== null) {
-			zoom = pendingZoom;
-			pendingZoom = null;
-		}
-	}
 </script>
 
 <div class="pdf-view">
-	<div class="pdf-container" bind:this={container}>
+	<div
+		class="pdf-container"
+		bind:this={container}
+		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z) }}
+	>
 		{#if loading}
 			<div class="status-card">
 				<div class="spinner" aria-hidden="true"></div>

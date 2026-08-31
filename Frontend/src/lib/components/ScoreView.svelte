@@ -7,6 +7,7 @@
 		renderedStaffBands,
 		paintSymbolsInMutedBands
 	} from '$lib/components/score/scoreTreatments';
+	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time, so it can't trigger a
 	// runtime module resolution during SSR. OSMD manipulates the DOM
@@ -87,9 +88,6 @@
 	let cursorReady = $state(false);
 	let loadError = $state<string | null>(null);
 
-	const MIN_ZOOM = 0.5;
-	const MAX_ZOOM = 2;
-	const ZOOM_STEP = 0.1;
 	const CURSOR_TYPE_THIN_LEFT = 1;
 	// F4: "short thin line on top of stave and left of the note" — reads as
 	// a small mark sitting above a note rather than a full-height bar
@@ -139,24 +137,15 @@
 		PointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(displayMode, scoreTheme));
 		container.addEventListener('click', handleContainerClick);
-		container.addEventListener('touchstart', handleTouchStart, { passive: true });
-		container.addEventListener('touchmove', handleTouchMove, { passive: false });
-		container.addEventListener('touchend', handleTouchEnd);
-		container.addEventListener('touchcancel', handleTouchEnd);
 		container.addEventListener('wheel', cancelFollow, { passive: true });
 		window.addEventListener('resize', handleWindowResize);
 	});
 
 	onDestroy(() => {
 		container?.removeEventListener('click', handleContainerClick);
-		container?.removeEventListener('touchstart', handleTouchStart);
-		container?.removeEventListener('touchmove', handleTouchMove);
-		container?.removeEventListener('touchend', handleTouchEnd);
-		container?.removeEventListener('touchcancel', handleTouchEnd);
 		container?.removeEventListener('wheel', cancelFollow);
 		window.removeEventListener('resize', handleWindowResize);
 		if (resizeReapplyTimeout !== undefined) clearTimeout(resizeReapplyTimeout);
-		if (pinchRaf !== null) cancelAnimationFrame(pinchRaf);
 		osmd = undefined;
 	});
 
@@ -181,64 +170,6 @@
 
 	function cancelFollow(): void {
 		following = false;
-	}
-
-	// Two-finger pinch drives the same `zoom` state the +/− buttons do, so
-	// score-only zoom works without touching the page's own bars — those
-	// live outside this component entirely. Native pinch-zoom is disabled
-	// on this container via `touch-action` in the stylesheet below, since
-	// that's a whole-page camera pass that would scale the anchored
-	// top/bottom bars right along with the score.
-	let pinchState: { initialDistance: number; initialZoom: number } | null = null;
-	let pinchRaf: number | null = null;
-	let pendingZoom: number | null = null;
-
-	function touchDistance(touches: TouchList): number {
-		return Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
-	}
-
-	function handleTouchStart(event: TouchEvent): void {
-		if (event.touches.length !== 2) {
-			pinchState = null;
-			return;
-		}
-		pinchState = { initialDistance: touchDistance(event.touches), initialZoom: zoom };
-	}
-
-	function handleTouchMove(event: TouchEvent): void {
-		if (event.touches.length === 1) {
-			// A one-finger drag is a manual scroll/pan, not a pinch — let it
-			// proceed natively, just stop auto-following since the human is
-			// clearly looking somewhere else on purpose.
-			cancelFollow();
-			return;
-		}
-		if (!pinchState || event.touches.length !== 2) return;
-		event.preventDefault();
-		const scale = touchDistance(event.touches) / pinchState.initialDistance;
-		pendingZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(pinchState.initialZoom * scale * 100) / 100));
-		// Committing straight into `zoom` on every touchmove would trigger a
-		// full OSMD re-render dozens of times a second — throttle to once
-		// per animation frame instead.
-		if (pinchRaf === null) {
-			pinchRaf = requestAnimationFrame(() => {
-				pinchRaf = null;
-				if (pendingZoom !== null) zoom = pendingZoom;
-			});
-		}
-	}
-
-	function handleTouchEnd(event: TouchEvent): void {
-		if (event.touches.length >= 2) return;
-		pinchState = null;
-		if (pinchRaf !== null) {
-			cancelAnimationFrame(pinchRaf);
-			pinchRaf = null;
-		}
-		if (pendingZoom !== null) {
-			zoom = pendingZoom;
-			pendingZoom = null;
-		}
 	}
 
 	/** Hit-tests a click against the rendered score and, if it landed near a
@@ -625,7 +556,7 @@
 	}
 
 	function zoomBy(delta: number): void {
-		zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 100) / 100));
+		zoom = clampZoom(zoom + delta);
 	}
 
 	function resetZoom(): void {
@@ -722,7 +653,12 @@
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
-	<div class="score-container" class:annotate-mode={annotateMode} bind:this={container}></div>
+	<div
+		class="score-container"
+		class:annotate-mode={annotateMode}
+		bind:this={container}
+		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z), onPan: cancelFollow }}
+	></div>
 	{#if loadError}
 		<p class="error">{loadError}</p>
 	{/if}
