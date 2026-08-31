@@ -249,10 +249,112 @@ Effort XS. Risk XS.
     `forgot-password`, `reset-password`, `groups/new`, `new-homework`. Left inline
     by design: `groups/[id]` page-settings form (`update({ reset: false })`) and
     `SettingsDrawer.svelte` (branches on `result.type`).
-- [x] Step 2 (A3 `ConfirmButton`) — done on the working tree, NOT committed.
+- [x] Step 2 (A3 `ConfirmButton`) — committed (f448761).
   New `lib/components/ConfirmButton.svelte`; 8 call sites migrated (7 in
   `groups/[id]`, 1 in `AnnotationSheet`); 8 `confirming*` state vars deleted;
   unused `afterSubmit` helper removed. `check` + `build` clean. Details in
   the A3 section above.
-- [ ] Step 3 (A1 + A2)
-- [ ] Step 4+
+- [x] Step 3 (A1 + A2) — DONE on the working tree (not committed). Scope
+  narrowed 2026-08-30 (see "Step 3 execution plan" below). What landed:
+  - New `lib/components/groupCards.ts` — normalized `HomeworkCardItem`,
+    `WeeklyNoteCardItem`, `ResponsibilityDateCardItem` (+ `ResponsibilityRole`,
+    `ResponsibilityRoleSignup`).
+  - New `HomeworkCard.svelte` / `WeeklyNoteCard.svelte` /
+    `ResponsibilityDateCard.svelte` — render `<section class="card">` from a
+    normalized item. HomeworkCard has the `collapsible` toggle (member only,
+    collapse state now local per card — `collapsedHomeworkIds` Set + toggle
+    deleted from the group page). Weekly/Responsibility cards take
+    `editing` + `edit` snippet (editing replaces the header).
+    ResponsibilityDateCard owns `coverageLabel` and takes `roleExtra(role)`.
+  - New `EditableCard.svelte` — the inline-edit shell (Homework flow as the
+    reference). `<form use:enhance={withSubmitting(...)}>` + slotted `fields()`
+    + error line + `.btn-row`[Save / Cancel / in-form `formaction`
+    delete-confirm via `ConfirmButton`, bare ✓/✕ icons `.icon-btn`].
+  - `join/[code]/+page.svelte` — homework/weeklyNotes/responsibilities `#each`
+    blocks now render the 3 cards, passing the raw guest DTOs straight through
+    (guest camelCase already == the normalized shape). Dropped now-unused
+    imports (`formatCalendarDate`, `formatDateTime`, `renderNoteMarkdown`) and
+    the local `coverageLabel`.
+  - `groups/[id]/+page.svelte` — homework / weekly-notes / responsibility-date
+    `#each` blocks migrated to the cards + `EditableCard`. Deleted the inline
+    edit `<form>`s, the `collapsedHomeworkIds` machinery, `coverageLabel`, and
+    the now-unused `formatCalendarDate`/`formatDateTime`/`renderNoteMarkdown`
+    imports. Style block: removed `.hw-summary*`, `.hw-collapsed*`,
+    `.hw-edit-delete`, `.hw-icon-btn*`, `.responsibility-role*`, `.badge*`
+    (moved into the components) and `.text-link*` / `.error` / `.success`
+    (moved to shell.css). Kept `.role-switch .text-link` override,
+    `.assign-*`, `.role-row*`, `.inline-edit-row*`, `.track-*`,
+    `.piece-action*`.
+  - `lib/styles/shell.css` — added shared `.text-link`, `.text-link--danger`,
+    `.error`, `.success` (needed by EditableCard + the cards).
+
+  **Behavior changes (all intended — Homework flow is the target per the
+  user's A2 decision):**
+  - Weekly-note and responsibility-date **delete moved into the edit form**
+    (was a standalone "Delete note"/"Delete date" `ConfirmButton` visible
+    without entering edit mode). Now: Edit → in-form trash ✓/✕.
+  - Weekly-note / responsibility-date edit **Save button restyled**
+    `btn-primary` → `btn-outline`; Cancel `btn-outline` → `text-link`
+    (matches Homework).
+  - Guest responsibilities: role coverage indicator **`<span class="dim">`
+    → `<span class="badge badge--{status}">`**, and role rows now sit in
+    `.responsibility-role` (top-border separators) instead of bare
+    `.list-row` (bottom-border). Cosmetic.
+  - Delete-confirm icon `aria-label` on homework went from "Delete" to
+    "Delete homework?" (uses the same string as `title` now).
+  - Known wart carried over unchanged: a *failed* inline save still closes
+    the editor (its `onCancel` runs on settle regardless), so the
+    page-level error isn't shown inline. Not fixed here to keep this a
+    pure refactor.
+
+  `npm run check` — 0 errors, 11 pre-existing warnings (none in the new
+  files). `npm run build` clean. **Not manually verified in a browser**
+  (no browser on this machine — the standing Frontend blocker).
+- [ ] Step 4+ — `.piece-action` / `.track-card` CSS fold into shell.css
+  (Tier D leftover from Step 3's out-of-scope list); TrackCard not extracted.
+
+## Step 3 execution plan (scoped 2026-08-30)
+
+Full read of `groups/[id]/+page.svelte` (1954 L), `join/[code]/+page.svelte`,
+`home/+page.svelte`, `PieceLibrary.svelte`, both loaders. Finding: A1's
+"5 variants" table is overstated. **In scope:**
+
+- **HomeworkCard / WeeklyNoteCard / ResponsibilityDateCard** — genuine
+  guest↔member(read) dup. Each takes a *normalized* item (camelCase);
+  normalize snake_case at the member call site, guest is already camelCase.
+  - HomeworkCard: renders `<section class="card">` + collapsed/expanded
+    toggle (member has it, guest doesn't → `collapsible` prop, default off)
+    + eyebrow(dueDate)/title/range/instructions. `children` snippet after
+    the display for admin edit trigger / edit form.
+  - WeeklyNoteCard: eyebrow("Week of" date)/title/markdown body. `children`.
+  - ResponsibilityDateCard: eyebrow(date + canceled/locked)/title/notes +
+    roles list (name · active/needed + status badge). Guest currently uses
+    `<span class="dim">` for status; **standardizing on the `badge--{status}`
+    both sides** (minor visual change to guest — an improvement). Optional
+    `roleExtra` snippet per role (member: signup sublist + assign/signup
+    controls; guest: none). `coverageLabel` moves into the card.
+- **EditableCard** — inline-edit shell, Homework flow as the reference
+  (per user decision). API: `bind:editing`, `bind:saving`, `saveAction`,
+  `deleteAction?`, `idFieldName`, `idValue`, `error?`, label props,
+  `fields()` snippet, optional `enctype`/extra hidden inputs via a
+  `beforeFields` snippet (track needs `enctype=multipart/form-data`).
+  Renders the `<form use:enhance={withSubmitting(...)}>` + `{@render fields()}`
+  + error + btn-row[Save / Cancel / in-form `formaction` delete-confirm
+  (ConfirmButton, `hw-icon-btn` ✓/✕)]. Weekly-note + responsibility-date
+  delete move *into* the edit form (from their current outside-the-form
+  spot) — that convergence is the point.
+- Leftover **`.piece-action` / `.track-card` / `.error` / `.success` /
+  `.text-link`** CSS: fold shared copies into `lib/styles/shell.css`
+  (Tier D) as the member/guest pages lose their local per-card styles.
+
+**Out of scope** (documented divergence, thin overlap):
+- Home "Due soon" / "Upcoming responsibilities" rows — deliberately a
+  quieter divided-list design, not `.card` boxes (code comments say so).
+- PieceLibrary — `<ul>` grid of `.piece-card`, different layout.
+- TrackCard guest↔member — guest side ~6 L, member side ~95% admin editing.
+  Keep both; just dedup the `.piece-action` CSS via shell.css.
+
+Sequence: (1) build 3 cards + EditableCard, (2) migrate guest page + its
+`+page.ts` normalization, `check`/`build`, commit. (3) migrate member page
+tab-by-tab (homework → weekly notes → responsibilities), `check`/`build`,
+commit. (4) shell.css CSS fold, `check`/`build`, commit.

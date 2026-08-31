@@ -1,12 +1,14 @@
 <script lang="ts">
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import Logo from '$lib/components/Logo.svelte';
+	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
+	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
+	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
-	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
-	import { formatCalendarDate, formatEventDate, formatDateTime } from '$lib/utils/dates';
+	import { formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -18,12 +20,6 @@
 	// (plain `$state`, not `localStorage`), so it reappears every visit
 	// since guests aren't tracked across sessions at all.
 	let bannerDismissed = $state(false);
-
-	function coverageLabel(status: string) {
-		if (status === 'underfilled') return m.join_coverage_underfilled();
-		if (status === 'overfilled') return m.join_coverage_overfilled();
-		return m.join_coverage_covered();
-	}
 </script>
 
 <main class="shell join-result">
@@ -104,14 +100,7 @@
 				<p class="empty">{m.join_no_homework()}</p>
 			{:else}
 				{#each data.homework as hw (hw.id)}
-					<section class="card">
-						<p class="card-eyebrow">{formatCalendarDate(hw.dueDate, m.home_no_due_date())}</p>
-						<p class="card-title">{hw.title}</p>
-						<p class="card-meta">{hw.range}</p>
-						{#if hw.instructions}
-							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
-						{/if}
-					</section>
+					<HomeworkCard item={hw} />
 				{/each}
 			{/if}
 		{:else if tab === 'weeklyNotes' && data.weeklyNotesVisible}
@@ -119,13 +108,7 @@
 				<p class="empty">{m.join_no_weekly_notes()}</p>
 			{:else}
 				{#each data.weeklyNotes as n (n.id)}
-					<section class="card">
-						<p class="card-eyebrow">{m.join_week_of({ date: formatCalendarDate(n.noteDate) })}</p>
-						<p class="card-title">{n.title}</p>
-						{#if n.body}
-							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
-						{/if}
-					</section>
+					<WeeklyNoteCard item={n} />
 				{/each}
 			{/if}
 		{:else if tab === 'responsibilities' && data.responsibilitiesVisible}
@@ -136,21 +119,7 @@
 				<p class="empty">{m.join_no_responsibilities()}</p>
 			{:else}
 				{#each data.responsibilities as d (d.id)}
-					<section class="card">
-						<p class="card-eyebrow">
-							{formatDateTime(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
-						</p>
-						<p class="card-title">{d.scheduleName}</p>
-						{#if d.notes}
-							<p class="card-note">{d.notes}</p>
-						{/if}
-						{#each d.roles as role (role.roleId)}
-							<div class="list-row">
-								<span>{role.roleName} · {role.activeCount}/{role.neededCount}</span>
-								<span class="dim">{coverageLabel(role.status)}</span>
-							</div>
-						{/each}
-					</section>
+					<ResponsibilityDateCard item={d} />
 				{/each}
 			{/if}
 		{:else}

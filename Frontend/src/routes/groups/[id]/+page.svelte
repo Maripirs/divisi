@@ -5,15 +5,13 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import FileSlot from '$lib/components/FileSlot.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import EditableCard from '$lib/components/EditableCard.svelte';
+	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
+	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
+	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
-	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
-	import {
-		formatCalendarDate,
-		formatDateTime,
-		toDateInputValue,
-		toDatetimeLocalValue
-	} from '$lib/utils/dates';
+	import { toDateInputValue, toDatetimeLocalValue } from '$lib/utils/dates';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
@@ -88,24 +86,13 @@
 	let addDateDraft = $state('');
 	// Create-schedule form's dynamic role rows — starts with one blank row.
 	let roleRowCount = $state(1);
-	// Homework tab: each card shows its full detail (title, range,
-	// instructions, Practice link, admin Edit) by default — no "View
-	// assignment" button, since it never revealed anything a member didn't
-	// already need to see. Tapping a card's summary (date/title/range)
-	// collapses it down to a single "date · piece" row instead; tapping
-	// that collapsed row expands it back. Any number can be collapsed at
-	// once, independently — unlike the old single-expanded accordion, there
-	// isn't a reason collapsing one should force another back open.
-	// Homework never got its own detail page (per the human's call — same
-	// reasoning applies on Home); this is the entire replacement for what
-	// `/groups/[id]/homework/[hwId]` used to show.
-	let collapsedHomeworkIds = $state<Set<string>>(new Set());
-	function toggleHomeworkCollapsed(id: string): void {
-		const next = new Set(collapsedHomeworkIds);
-		if (next.has(id)) next.delete(id);
-		else next.add(id);
-		collapsedHomeworkIds = next;
-	}
+	// Homework tab: each card shows its full detail by default and can be
+	// tapped to collapse to a single "date · piece" row — that collapse
+	// state now lives inside `HomeworkCard` (local per card, any number
+	// collapsed at once). Homework never got its own detail page (per the
+	// human's call — same reasoning applies on Home); the card is the
+	// entire replacement for what `/groups/[id]/homework/[hwId]` showed.
+	//
 	// Same tab, admin only: which card's "Edit details" link has swapped
 	// for the inline edit form — same click-to-reveal pattern as the
 	// Tracks tab's "Edit details" panel below.
@@ -262,12 +249,6 @@
 		const pad = (n: number) => String(n).padStart(2, '0');
 		return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}T${pad(next.getHours())}:${pad(next.getMinutes())}`;
 	}
-
-	function coverageLabel(status: string) {
-		if (status === 'underfilled') return m.join_coverage_underfilled();
-		if (status === 'overfilled') return m.join_coverage_overfilled();
-		return m.join_coverage_covered();
-	}
 </script>
 
 <main class="shell">
@@ -327,44 +308,29 @@
 			<p class="empty">{m.join_no_homework()}</p>
 		{:else}
 			{#each data.homework as hw (hw.id)}
-				<section class="card">
-					{#if collapsedHomeworkIds.has(hw.id)}
-						<button
-							type="button"
-							class="hw-collapsed-row"
-							aria-expanded="false"
-							onclick={() => toggleHomeworkCollapsed(hw.id)}
+				{@const hwItem = {
+					id: hw.id,
+					title: hw.title,
+					range: hw.range,
+					instructions: hw.instructions,
+					dueDate: hw.due_date,
+					pieceTitle: hw.pieceTitle
+				}}
+				<HomeworkCard item={hwItem} collapsible>
+					{#if mode === 'admin' && editingHomeworkId === hw.id}
+						<EditableCard
+							saveAction="?/updateHomework"
+							deleteAction="?/deleteHomework"
+							idName="homeworkId"
+							idValue={hw.id}
+							bind:saving={savingHomework}
+							error={form?.form === 'updateHomework' && form?.error}
+							savingLabel={m.new_homework_assigning()}
+							deleteLabel={m.groups_delete_homework()}
+							deleteConfirmLabel={m.groups_delete_homework_confirm()}
+							onCancel={() => (editingHomeworkId = null)}
 						>
-							<span class="hw-collapsed-text">
-								<span class="card-eyebrow">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
-								<span class="card-title">{hw.pieceTitle ?? hw.title}</span>
-							</span>
-							<span class="chevron" aria-hidden="true"></span>
-						</button>
-					{:else}
-						<button
-							type="button"
-							class="hw-summary"
-							aria-expanded="true"
-							onclick={() => toggleHomeworkCollapsed(hw.id)}
-						>
-							<span class="hw-summary-text">
-								<p class="card-eyebrow">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</p>
-								<p class="card-title">{hw.title}</p>
-								<p class="card-meta">{hw.range}{hw.pieceTitle ? ` · ${hw.pieceTitle}` : ''}</p>
-							</span>
-							<span class="chevron is-open" aria-hidden="true"></span>
-						</button>
-						{#if hw.instructions}
-							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
-						{/if}
-						{#if mode === 'admin' && editingHomeworkId === hw.id}
-							<form
-								method="POST"
-								action="?/updateHomework"
-								use:enhance={withSubmitting((v) => (savingHomework = v), () => (editingHomeworkId = null))}
-							>
-								<input type="hidden" name="homeworkId" value={hw.id} />
+							{#snippet fields()}
 								<label class="field">
 									<span>{m.new_homework_piece()}</span>
 									<select name="pieceId" bind:value={hwPieceIdDraft}>
@@ -390,102 +356,32 @@
 									<span>{m.new_homework_instructions()}</span>
 									<textarea name="instructions" bind:value={hwInstructionsDraft}></textarea>
 								</label>
-
-								{#if form?.form === 'updateHomework' && form?.error}
-									<p class="error">{form.error}</p>
-								{/if}
-								<!-- Delete lives in this same row (via `formaction`, still
-								     one shared `<form>` — a nested `<form>` isn't valid
-								     HTML) so it's naturally level with Save/Cancel instead
-								     of floating at some independently-guessed position. -->
-								<div class="btn-row hw-edit-actions">
-									<button type="submit" class="btn btn-outline" disabled={savingHomework}>
-										{savingHomework ? m.new_homework_assigning() : m.action_save()}
-									</button>
-									<button
-										type="button"
-										class="text-link"
-										onclick={() => (editingHomeworkId = null)}
-										disabled={savingHomework}
-									>
-										{m.action_cancel()}
-									</button>
-									<span class="hw-edit-delete">
-										<ConfirmButton>
-											{#snippet trigger(start)}
-												<button
-													type="button"
-													class="hw-icon-btn hw-icon-btn--danger"
-													onclick={start}
-													aria-label={m.groups_delete_homework()}
-													title={m.groups_delete_homework()}
-												>
-													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-														<path d="M3 6h18" />
-														<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-														<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-														<line x1="10" y1="11" x2="10" y2="17" />
-														<line x1="14" y1="11" x2="14" y2="17" />
-													</svg>
-												</button>
-											{/snippet}
-											{#snippet confirm(cancel)}
-												<button
-													type="submit"
-													formaction="?/deleteHomework"
-													formnovalidate
-													class="hw-icon-btn hw-icon-btn--danger"
-													disabled={savingHomework}
-													aria-label={m.groups_delete()}
-													title={m.groups_delete_homework_confirm()}
-												>
-													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-														<polyline points="20 6 9 17 4 12" />
-													</svg>
-												</button>
-												<button
-													type="button"
-													class="hw-icon-btn"
-													onclick={cancel}
-													disabled={savingHomework}
-													aria-label={m.action_cancel()}
-													title={m.action_cancel()}
-												>
-													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-														<line x1="18" y1="6" x2="6" y2="18" />
-														<line x1="6" y1="6" x2="18" y2="18" />
-													</svg>
-												</button>
-											{/snippet}
-										</ConfirmButton>
-									</span>
-								</div>
-							</form>
-						{:else}
-							{#if hw.piece_id}
-								<div class="btn-row">
-									<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
-								</div>
-							{/if}
-							{#if mode === 'admin'}
-								<button
-									type="button"
-									class="text-link"
-									onclick={() => {
-										hwTitleDraft = hw.title;
-										hwPieceIdDraft = hw.piece_id ?? '';
-										hwRangeDraft = hw.range;
-										hwDueDateDraft = hw.due_date ? hw.due_date.slice(0, 10) : '';
-										hwInstructionsDraft = hw.instructions;
-										editingHomeworkId = hw.id;
-									}}
-								>
-									{m.groups_edit_details()}
-								</button>
-							{/if}
+							{/snippet}
+						</EditableCard>
+					{:else}
+						{#if hw.piece_id}
+							<div class="btn-row">
+								<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
+							</div>
+						{/if}
+						{#if mode === 'admin'}
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									hwTitleDraft = hw.title;
+									hwPieceIdDraft = hw.piece_id ?? '';
+									hwRangeDraft = hw.range;
+									hwDueDateDraft = hw.due_date ? hw.due_date.slice(0, 10) : '';
+									hwInstructionsDraft = hw.instructions;
+									editingHomeworkId = hw.id;
+								}}
+							>
+								{m.groups_edit_details()}
+							</button>
 						{/if}
 					{/if}
-				</section>
+				</HomeworkCard>
 			{/each}
 		{/if}
 		{#if mode === 'admin'}
@@ -831,46 +727,41 @@
 			<p class="empty">{m.join_no_weekly_notes()}</p>
 		{:else}
 			{#each data.weeklyNotes as n (n.id)}
-				<section class="card">
-					{#if editingWeeklyNoteId === n.id}
-						<form
-							method="POST"
-							action="?/updateWeeklyNote"
-							use:enhance={withSubmitting((v) => (savingWeeklyNoteEdit = v), () => (editingWeeklyNoteId = null))}
+				{@const noteItem = { id: n.id, title: n.title, body: n.body, noteDate: n.note_date }}
+				<WeeklyNoteCard
+					item={noteItem}
+					editing={mode === 'admin' && editingWeeklyNoteId === n.id}
+				>
+					{#snippet edit()}
+						<EditableCard
+							saveAction="?/updateWeeklyNote"
+							deleteAction="?/deleteWeeklyNote"
+							idName="noteId"
+							idValue={n.id}
+							bind:saving={savingWeeklyNoteEdit}
+							error={form?.form === 'editWeeklyNote' && form?.error}
+							deleteLabel={m.groups_delete_note()}
+							deleteConfirmLabel={m.groups_delete_note_confirm()}
+							onCancel={() => (editingWeeklyNoteId = null)}
 						>
-							<input type="hidden" name="noteId" value={n.id} />
-							<label class="field">
-								<span>{m.new_homework_title_field()}</span>
-								<input name="title" bind:value={weeklyNoteTitleDraft} required />
-							</label>
-							<label class="field">
-								<span>{m.groups_week_of()}</span>
-								<input type="date" name="noteDate" bind:value={weeklyNoteDateDraft} required />
-							</label>
-							<label class="field">
-								<span>{m.groups_note()}</span>
-								<textarea name="body" bind:value={weeklyNoteBodyDraft}></textarea>
-							</label>
-							{#if form?.form === 'editWeeklyNote' && form?.error}
-								<p class="error">{form.error}</p>
-							{/if}
-							<div class="btn-row">
-								<button type="button" class="btn btn-outline" onclick={() => (editingWeeklyNoteId = null)}>
-									{m.action_cancel()}
-								</button>
-								<button type="submit" class="btn btn-primary" disabled={savingWeeklyNoteEdit}>
-									{savingWeeklyNoteEdit ? m.reset_password_saving() : m.action_save()}
-								</button>
-							</div>
-						</form>
-					{:else}
-						<p class="card-eyebrow">{m.join_week_of({ date: formatCalendarDate(n.note_date, m.home_no_due_date()) })}</p>
-						<p class="card-title">{n.title}</p>
-						{#if n.body}
-							<div class="card-note note-markdown">{@html renderNoteMarkdown(n.body)}</div>
-						{/if}
-					{/if}
-					{#if mode === 'admin' && editingWeeklyNoteId !== n.id}
+							{#snippet fields()}
+								<label class="field">
+									<span>{m.new_homework_title_field()}</span>
+									<input name="title" bind:value={weeklyNoteTitleDraft} required />
+								</label>
+								<label class="field">
+									<span>{m.groups_week_of()}</span>
+									<input type="date" name="noteDate" bind:value={weeklyNoteDateDraft} required />
+								</label>
+								<label class="field">
+									<span>{m.groups_note()}</span>
+									<textarea name="body" bind:value={weeklyNoteBodyDraft}></textarea>
+								</label>
+							{/snippet}
+						</EditableCard>
+					{/snippet}
+
+					{#if mode === 'admin'}
 						<div class="btn-row">
 							<button
 								type="button"
@@ -885,27 +776,8 @@
 								{m.drawer_edit()}
 							</button>
 						</div>
-						<ConfirmButton>
-							{#snippet trigger(start)}
-								<button type="button" class="text-link text-link--danger" onclick={start}>
-									{m.groups_delete_note()}
-								</button>
-							{/snippet}
-							{#snippet confirm(cancel)}
-								<div class="btn-row">
-									<span class="dim">{m.groups_delete_note_confirm()}</span>
-									<button type="button" class="btn btn-outline" onclick={cancel}>
-										{m.action_cancel()}
-									</button>
-									<form method="POST" action="?/deleteWeeklyNote" use:enhance>
-										<input type="hidden" name="noteId" value={n.id} />
-										<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
-									</form>
-								</div>
-							{/snippet}
-						</ConfirmButton>
 					{/if}
-				</section>
+				</WeeklyNoteCard>
 			{/each}
 		{/if}
 	{:else if tab === 'members'}
@@ -1147,102 +1019,105 @@
 			<p class="empty">{m.join_no_responsibilities()}</p>
 		{:else}
 			{#each data.responsibilities as d (d.id)}
-				<section class="card">
-					{#if editingDateId === d.id}
-						<form
-							method="POST"
-							action="?/updateResponsibilityDate"
-							use:enhance={withSubmitting((v) => (savingDateEdit = v), () => (editingDateId = null))}
+				{@const dateItem = {
+					id: d.id,
+					scheduleName: d.schedule_name,
+					date: d.date,
+					notes: d.notes,
+					locked: d.locked,
+					canceled: d.canceled,
+					roles: d.roles.map((role) => ({
+						roleId: role.role_id,
+						roleName: role.role_name,
+						neededCount: role.needed_count,
+						activeCount: role.active_count,
+						status: role.status,
+						signups: role.signups.map((s) => ({ id: s.id, name: s.name, userId: s.user_id }))
+					}))
+				}}
+				<ResponsibilityDateCard
+					item={dateItem}
+					editing={mode === 'admin' && editingDateId === d.id}
+				>
+					{#snippet edit()}
+						<EditableCard
+							saveAction="?/updateResponsibilityDate"
+							deleteAction="?/deleteResponsibilityDate"
+							idName="dateId"
+							idValue={d.id}
+							bind:saving={savingDateEdit}
+							error={form?.form === 'editDate' && form?.error}
+							deleteLabel={m.groups_delete_date()}
+							deleteConfirmLabel={m.groups_delete_date_confirm()}
+							onCancel={() => (editingDateId = null)}
 						>
-							<input type="hidden" name="dateId" value={d.id} />
-							<label class="field">
-								<span>{m.groups_date_and_time()}</span>
-								<input type="datetime-local" name="date" bind:value={dateEditDraft} required />
-							</label>
-							<label class="field">
-								<span>{m.groups_note()}</span>
-								<input name="notes" bind:value={notesEditDraft} placeholder={m.groups_optional()} />
-							</label>
-							{#if form?.form === 'editDate' && form?.error}
-								<p class="error">{form.error}</p>
-							{/if}
-							<div class="btn-row">
-								<button type="button" class="btn btn-outline" onclick={() => (editingDateId = null)}>
-									{m.action_cancel()}
-								</button>
-								<button type="submit" class="btn btn-primary" disabled={savingDateEdit}>
-									{savingDateEdit ? m.reset_password_saving() : m.action_save()}
-								</button>
-							</div>
-						</form>
-					{:else}
-						<p class="card-eyebrow">
-							{formatDateTime(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
-						</p>
-						<p class="card-title">{d.schedule_name}</p>
-						{#if d.notes}
-							<p class="card-note">{d.notes}</p>
-						{/if}
-					{/if}
-					{#each d.roles as role (role.role_id)}
-						{@const alreadySignedUp = role.signups.some((s) => s.user_id === data.user.id)}
-						<div class="responsibility-role">
+							{#snippet fields()}
+								<label class="field">
+									<span>{m.groups_date_and_time()}</span>
+									<input type="datetime-local" name="date" bind:value={dateEditDraft} required />
+								</label>
+								<label class="field">
+									<span>{m.groups_note()}</span>
+									<input name="notes" bind:value={notesEditDraft} placeholder={m.groups_optional()} />
+								</label>
+							{/snippet}
+						</EditableCard>
+					{/snippet}
+
+					{#snippet roleExtra(role)}
+						{@const alreadySignedUp = (role.signups ?? []).some((s) => s.userId === data.user.id)}
+						<!-- Signup names are visible to any member, not just the
+						     admin (the Backend's member route returns the same
+						     full signup list an admin sees — only the guest route
+						     strips names) — remove/assign controls are still
+						     scoped per-viewer below. -->
+						{#each role.signups ?? [] as s (s.id)}
 							<div class="list-row">
-								<span>{role.role_name} · {role.active_count}/{role.needed_count}</span>
-								<span class="badge badge--{role.status}">{coverageLabel(role.status)}</span>
+								<span class="dim">{s.name}</span>
+								{#if mode === 'admin'}
+									<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
+										<input type="hidden" name="signupId" value={s.id} />
+										<button type="submit" class="text-link">{m.groups_remove()}</button>
+									</form>
+								{:else if s.userId === data.user.id}
+									<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
+										<input type="hidden" name="signupId" value={s.id} />
+										<button type="submit" class="text-link">{m.groups_remove_me()}</button>
+									</form>
+								{/if}
 							</div>
-							<!-- Signup names are visible to any member, not just the
-							     admin (the Backend's member route returns the same
-							     full signup list an admin sees — only the guest route
-							     strips names) — remove/assign controls are still
-							     scoped per-viewer below. -->
-							{#each role.signups as s (s.id)}
-								<div class="list-row">
-									<span class="dim">{s.name}</span>
-									{#if mode === 'admin'}
-										<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
-											<input type="hidden" name="signupId" value={s.id} />
-											<button type="submit" class="text-link">{m.groups_remove()}</button>
-										</form>
-									{:else if s.user_id === data.user.id}
-										<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
-											<input type="hidden" name="signupId" value={s.id} />
-											<button type="submit" class="text-link">{m.groups_remove_me()}</button>
-										</form>
-									{/if}
-								</div>
-							{/each}
-							{#if mode === 'admin' && role.status === 'underfilled'}
-								<div class="assign-group">
-									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
-										<input type="hidden" name="dateId" value={d.id} />
-										<input type="hidden" name="roleId" value={role.role_id} />
-										<select name="userId">
-											{#each data.members as mem (mem.user_id)}<option value={mem.user_id}>{mem.name}</option>{/each}
-										</select>
-										<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
-									</form>
-									<!-- For someone who isn't (and may never be) a group
-									     member — a name only, no account. See the Backend's
-									     `ResponsibilitySignup` docstring for why this and the
-									     member picker above are two separate forms rather
-									     than one with both fields, which the Backend rejects. -->
-									<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
-										<input type="hidden" name="dateId" value={d.id} />
-										<input type="hidden" name="roleId" value={role.role_id} />
-										<input name="name" placeholder={m.groups_or_type_name()} />
-										<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
-									</form>
-								</div>
-							{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
-								<form method="POST" action="?/signUpResponsibility" use:enhance>
+						{/each}
+						{#if mode === 'admin' && role.status === 'underfilled'}
+							<div class="assign-group">
+								<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
 									<input type="hidden" name="dateId" value={d.id} />
-									<input type="hidden" name="roleId" value={role.role_id} />
-									<button type="submit" class="text-link">{m.groups_sign_up()}</button>
+									<input type="hidden" name="roleId" value={role.roleId} />
+									<select name="userId">
+										{#each data.members as mem (mem.user_id)}<option value={mem.user_id}>{mem.name}</option>{/each}
+									</select>
+									<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
 								</form>
-							{/if}
-						</div>
-					{/each}
+								<!-- For someone who isn't (and may never be) a group
+								     member — a name only, no account. See the Backend's
+								     `ResponsibilitySignup` docstring for why this and the
+								     member picker above are two separate forms rather
+								     than one with both fields, which the Backend rejects. -->
+								<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
+									<input type="hidden" name="dateId" value={d.id} />
+									<input type="hidden" name="roleId" value={role.roleId} />
+									<input name="name" placeholder={m.groups_or_type_name()} />
+									<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
+								</form>
+							</div>
+						{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
+							<form method="POST" action="?/signUpResponsibility" use:enhance>
+								<input type="hidden" name="dateId" value={d.id} />
+								<input type="hidden" name="roleId" value={role.roleId} />
+								<button type="submit" class="text-link">{m.groups_sign_up()}</button>
+							</form>
+						{/if}
+					{/snippet}
+
 					{#if mode === 'admin' && editingDateId !== d.id}
 						<div class="btn-row">
 							<button
@@ -1267,27 +1142,8 @@
 								<button type="submit" class="btn btn-outline">{d.canceled ? m.groups_reinstate() : m.action_cancel()}</button>
 							</form>
 						</div>
-						<ConfirmButton>
-							{#snippet trigger(start)}
-								<button type="button" class="text-link text-link--danger" onclick={start}>
-									{m.groups_delete_date()}
-								</button>
-							{/snippet}
-							{#snippet confirm(cancel)}
-								<div class="btn-row">
-									<span class="dim">{m.groups_delete_date_confirm()}</span>
-									<button type="button" class="btn btn-outline" onclick={cancel}>
-										{m.action_cancel()}
-									</button>
-									<form method="POST" action="?/deleteResponsibilityDate" use:enhance>
-										<input type="hidden" name="dateId" value={d.id} />
-										<button type="submit" class="btn btn-danger">{m.groups_delete()}</button>
-									</form>
-								</div>
-							{/snippet}
-						</ConfirmButton>
 					{/if}
-				</section>
+				</ResponsibilityDateCard>
 			{/each}
 		{/if}
 	{:else if mode === 'admin'}
@@ -1608,22 +1464,8 @@
 		min-width: 0;
 	}
 
-	.text-link {
-		flex: 0 0 auto;
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		font-size: 0.8125rem;
-		font-weight: 700;
-		color: var(--accent);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.text-link--danger {
-		color: var(--danger);
-	}
+	/* `.text-link` / `.text-link--danger` / `.error` / `.success` now live
+	   in shell.css (shared with EditableCard and the group cards). */
 
 	.member-actions {
 		display: flex;
@@ -1763,106 +1605,8 @@
 		margin-left: -0.1rem;
 	}
 
-	.error {
-		margin: 0.4rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--danger);
-	}
-
-	/* Homework tab: a card's tappable summary — full detail by default, no
-	   button chrome of its own (just an unstyled wrapper around the same
-	   `.card-eyebrow`/`.card-title`/`.card-meta` the old always-expanded
-	   markup used), so tapping the date/title/range collapses the card
-	   without looking like a separate control sitting on top of them. A
-	   `.chevron` on the trailing edge is the only thing that says "tap to
-	   toggle" — text alone (date/title/range) doesn't read as interactive. */
-	.hw-summary {
-		all: unset;
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 0.5rem;
-		width: 100%;
-		cursor: pointer;
-	}
-
-	.hw-summary-text {
-		min-width: 0;
-	}
-
-	.hw-summary .chevron {
-		margin-top: 0.4rem;
-	}
-
-	/* The collapsed state that tap produces — one row, date + piece (or
-	   title if no piece is linked), same eyebrow/title styling reused
-	   inline instead of stacked. */
-	.hw-collapsed-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		width: 100%;
-		border: none;
-		background: none;
-		padding: 0;
-		margin: 0;
-		color: inherit;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.hw-collapsed-text {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		min-width: 0;
-	}
-
-	.hw-collapsed-row .card-eyebrow,
-	.hw-collapsed-row .card-title {
-		margin: 0;
-	}
-
-	/* Delete sits in the same `.btn-row` as Save/Cancel (pushed to the row's
-	   far end), so it's naturally level with them instead of independently
-	   positioned. Bare icon, not the circular chip Tracks' "Delete track"
-	   uses — smaller and quieter since it's one of three controls sharing
-	   a row here, not sitting alone in a card corner. */
-	.hw-edit-delete {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin-left: auto;
-	}
-
-	.hw-icon-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.35rem;
-		height: 1.35rem;
-		border: none;
-		background: none;
-		padding: 0;
-		color: var(--text-muted);
-		cursor: pointer;
-	}
-
-	.hw-icon-btn:hover {
-		opacity: 0.7;
-	}
-
-	.hw-icon-btn--danger {
-		color: var(--danger);
-	}
-
-	.success {
-		margin: 0.4rem 0 0;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
+	/* Homework summary/collapsed-row styles moved to HomeworkCard.svelte;
+	   the inline-edit delete-icon styles moved to EditableCard.svelte. */
 
 	.role-row {
 		display: flex;
@@ -1877,15 +1621,8 @@
 		flex: 0 0 4.5rem;
 	}
 
-	.responsibility-role {
-		border-top: 1px solid var(--border);
-		padding-top: 0.5rem;
-	}
-
-	.responsibility-role:first-of-type {
-		border-top: none;
-		padding-top: 0;
-	}
+	/* `.responsibility-role` (the per-role divider) moved to
+	   ResponsibilityDateCard.svelte, which renders that wrapper. */
 
 	.assign-group {
 		display: flex;
@@ -1915,30 +1652,7 @@
 		padding: 0.5rem 0.6rem;
 	}
 
-	.badge {
-		font-size: 0.6875rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 0.15rem 0.5rem;
-		border-radius: 999px;
-		white-space: nowrap;
-	}
-
-	.badge--covered {
-		background: var(--surface-2);
-		color: var(--text-muted);
-	}
-
-	.badge--underfilled {
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
-		color: var(--danger);
-	}
-
-	.badge--overfilled {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-		color: var(--accent);
-	}
+	/* `.badge` coverage chips moved to ResponsibilityDateCard.svelte. */
 
 	.page-setting-row {
 		display: flex;
