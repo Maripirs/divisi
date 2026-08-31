@@ -526,6 +526,12 @@
 	"piece_editor_coming_soon": "Aquí podrás corregir la notación de esta pista y guardarla como una nueva versión en borrador. Esta pantalla aún se está construyendo.",
 	"piece_editor_no_edit_access": "No tienes permiso para editar la música de esta pista.",
 	"piece_editor_back_to_piece": "Volver a esta pista",
+	"piece_editor_loading_score": "Cargando la partitura…",
+	"piece_editor_notes_loaded": "{count} notas cargadas",
+	"piece_editor_no_music_file": "Esta pista todavía no tiene un archivo de música para editar.",
+	"piece_editor_unsupported_format": "Este archivo de música es un MusicXML comprimido (.mxl), que el editor aún no puede abrir. Vuelve a subirlo como un .musicxml sin comprimir o como un archivo MIDI.",
+	"piece_editor_score_load_failed": "No se pudo leer el archivo de música de esta pista.",
+	"piece_editor_score_render_failed": "No se pudo mostrar la partitura.",
 
 	"error_404_title": "Página no encontrada",
 	"error_403_title": "No permitido",

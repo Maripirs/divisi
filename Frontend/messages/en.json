@@ -526,6 +526,12 @@
 	"piece_editor_coming_soon": "You'll be able to correct this track's notation here and save it as a new draft version. This screen is still being built.",
 	"piece_editor_no_edit_access": "You don't have permission to edit this track's music.",
 	"piece_editor_back_to_piece": "Back to this track",
+	"piece_editor_loading_score": "Loading the score…",
+	"piece_editor_notes_loaded": "{count} notes loaded",
+	"piece_editor_no_music_file": "This track has no music file to edit yet.",
+	"piece_editor_unsupported_format": "This music file is a compressed MusicXML (.mxl), which the editor can't open yet. Re-upload it as an uncompressed .musicxml or a MIDI file.",
+	"piece_editor_score_load_failed": "Couldn't read this track's music file.",
+	"piece_editor_score_render_failed": "The score couldn't be displayed.",
 
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",
