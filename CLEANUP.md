@@ -329,10 +329,17 @@ Effort XS. Risk XS.
   `server/backend.ts` (~70 lines of copy removed). `guest.ts`'s `guestFetch`
   stays a thin `fetchOr503` wrapper (maps 404/401 to distinct error types
   itself). No behavior change. check + build clean.
+- [x] B-fe-4 (`groups/[id]/+page.server.ts` `runAction` wrapper) — committed (e833504).
+  22 form actions' shared `try/catch BackendApiError → fail() / return
+  { success, form }` tail hoisted into `runAction(form, work)`. -138 lines.
+  `leaveGroup` throws its success `redirect` from inside `work`;
+  `removeMember` self-guard + the raw multipart fetches in
+  `updatePieceDetails`/`uploadTrack` `throw new BackendApiError(...)` to
+  route through the same handling. One intended change: `updateGuestSettings`
+  failure now carries `form: 'guestSettings'` (was the only action omitting
+  it). check + build clean, not browser-verified.
 - [ ] Step 4+ — TrackCard component itself still not extracted (CSS-only fold above,
   markup duplication remains).
-- [ ] B-fe-4 — `groups/[id]/+page.server.ts` `formAction` wrapper (~28
-  identical `try/catch BackendApiError → fail()` blocks). Next up.
 
 ## Step 3 execution plan (scoped 2026-08-30)
 
