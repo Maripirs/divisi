@@ -91,7 +91,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
-| F14 | In-app notation editor for a track's music | 🚧 Code-complete (all Claude tasks done 2026-08-31: route, editable model, editing surface, export, save-as-draft, unsaved guard, entry points, i18n; `check`/`build`/tests green) — awaiting the human live-test on a real OMR track |
+| F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31**: the "play back inside the editor" acceptance criterion was never built; now expanded to a full transport (play/stop, seek, tempo, per-part mix) + note-preview-on-select + a full-screen player-style shell. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -664,7 +664,7 @@ pausing background video decode) so only its audio is ever heard.
       bottom bar, and that the reference recording is genuinely audio-only
       (nothing visible, just sound) on a real device
 
-### F14 — In-app notation editor for a track's music [ ]
+### F14 — In-app notation editor for a track's music [~]
 
 Requested 2026-08-31. Backend B8 (OMR) can now generate a track's music
 straight from its scanned PDF, but the output is rough (wrong accidentals,
@@ -764,7 +764,24 @@ already enforces server-side.
       change its duration, delete a note, and fix key/clef/accidental) the
       admin can make an edit and see it reflected in the rendered notation
 - [ ] Playing back inside the editor reflects the edits (reuses the
-      client-side synth path, not a separate engine)
+      client-side synth path — `MidiPlayer` + `parseMusicXmlFile` — not a
+      separate engine). The editor carries a full transport: play/stop, a
+      seek scrubber with elapsed/total time, a tempo control, and a
+      per-part (SATB + accompaniment) mix, in the same visual language as
+      the practice player's bottom bar
+- [ ] A playback cursor tracks the audio position across the score while
+      playing, with follow-scroll and a "scroll to cursor" control; it
+      does not fight the click-to-select marker (selection marker is
+      suppressed while playing, restored on stop)
+- [ ] Editing the score while it is loaded for playback is handled
+      sanely: the old audio keeps playing, a hint says the edits aren't
+      audible yet, and the next play/seek reloads from the edited model
+- [ ] Selecting a note (click or arrow-key nav) and changing a note's
+      pitch both sound that note through the same synth, so a correction
+      can be heard, not just seen
+- [ ] The editor is a focused, full-screen surface with its own chrome
+      (back / title / Save, no `AppHeader`/`BottomNav`), matching the
+      practice player's shell; designed desktop-first for this pass
 - [ ] Saving POSTs the edited MusicXML as a new `draft` version on that
       piece; the existing PDF slot is preserved; the new draft then flows
       through the normal submit/approve/distribute review workflow
@@ -817,11 +834,72 @@ already enforces server-side.
 - [x] `messages/en.json` + `es.json` keys (2026-08-31)
 - [x] `npm run check` / `npm run build` clean (2026-08-31)
 
+**Tasks — Claude (reopened 2026-08-31 — in-editor playback + note preview + full-screen shell):**
+
+Desktop-first for this pass; a mobile layout for the toolbars/mix panel is
+a follow-up (the three toolbar rows already eat ~40% of a phone screen).
+Audio path is settled: `EditableScore.serialize()` → `parseMusicXmlFile()`
+(`src/lib/musicxml/parser.ts`, already returns `ParsedMIDI` with SATB +
+accompaniment buckets) → `MidiPlayer` (`src/lib/audio/player.ts`, the same
+FluidSynth engine the player route uses).
+
+- [~] **Shell:** editor page → full-screen player-style chrome. Drop
+      `AppHeader` + `.shell`; fixed `.editor-shell` column, a `.top-bar`
+      lifted from the player (back arrow / centered title + "Edit music"
+      subtitle / Save top-right where the player parks Practice Setup),
+      toolbars pinned under the bar, score fills the rest via a new `fill`
+      prop on `EditorScoreView`. Error/denied/loading states → centered
+      `.status-card` like the player. **Done this session, not yet
+      committed** (`check`/`build` green).
+- [ ] **Working score → audio.** `parseMusicXmlFile(score.serialize())`
+      → `ParsedMIDI`, memoized; recompute only when `workingXml` changed
+      since the last successful parse. Surface a parse failure (an edit
+      that left the model briefly invalid) as a disabled transport with a
+      reason, not a thrown error.
+- [ ] **`MidiPlayer` lifecycle in the editor.** Lazy `MidiPlayer.create()`
+      on the first Play (or first note preview — whichever comes first),
+      `destroy()` in `onDestroy`. RAF loop updating `positionMs` /
+      `isPlaying` off the player, same shape as the player route's loop.
+- [ ] **Transport bar.** A `.bottom-bar` in the shell: play/stop toggle,
+      seek `<input type=range>` scrubber with `--fill`, elapsed/total time
+      via `formatTime`. Match the player's markup/styles.
+- [ ] **Tempo control.** Reuse `MIN_TEMPO_BPM` / `MAX_TEMPO_BPM` /
+      `describeTempo` / `stepTempo`; `player.setTempo`. Place in the
+      transport bar (compact) or the mix panel — decide during build.
+- [ ] **Per-part mix panel.** Discover parts from `ParsedMIDI.parts`;
+      SATB + accompaniment volume sliders + the `everyone/minusMe/…`
+      presets (reuse `$lib/player/mixMath`). A right-hand panel on desktop,
+      toggled from a top-bar button (the editor's analogue of Practice
+      Setup). `player.setPartVolume(partId, value)`.
+- [ ] **Playback cursor in `EditorScoreView`.** New optional
+      `playbackWholeNotes` prop: while playing, drive the OSMD cursor from
+      the audio position instead of the selection `selectedOnset`; restore
+      the selection marker on stop. Port the player's follow-scroll +
+      expose a `scrollCursorIntoView()` for a "scroll to cursor" button.
+- [ ] **Edit-during-playback.** Keep the currently-loaded audio playing on
+      an edit; mark the parsed MIDI stale; show a subtle "restart to hear
+      your edits" hint; reload (and resume near the current bar, or restart
+      if past the new end) on the next play or seek.
+- [ ] **Note preview.** Add `midiNoteOn` / `midiNoteOff` (or a
+      `previewNote(midi, ms)`) to `MidiPlayer` on a dedicated preview
+      channel. Editor calls it on click-select, arrow-key nav to a pitched
+      note, and after a pitch edit (`transpose` / `setAccidental`) — not on
+      duration/key/clef edits. Debounce a held arrow key.
+- [ ] **i18n** for the new strings (play/pause/seek/tempo/mix/scroll-to-
+      cursor/"restart to hear edits") in `en.json` + `es.json`; reuse the
+      player's `piece_play` / `piece_pause` / `piece_seek` / `piece_tempo`
+      etc. where they already exist. `npm run check` / `npm run build`
+      clean.
+
 **Tasks — Human:**
 - [ ] Confirm the spike's engine choice before the build proceeds
 - [ ] In a real browser: open the editor on a real OMR-generated track,
       make each kind of edit, save, and confirm the new draft plays back
       with the corrections and moves through review normally
+- [ ] In a real browser (desktop): play the working score inside the
+      editor — transport, seek, tempo, per-part mix, follow cursor — make
+      an edit mid-playback, and confirm note-preview-on-select sounds
+      right
 
 ## Backlog
 
@@ -881,9 +959,10 @@ fetching or required accounts.
   - [x] Task 3b — duration change. `EditableScore.setDuration(index, {type, dots}) -> boolean` (false = refused, no mutation): rewrites `<type>`/`<dot>`/`<duration>` against the measure's active `<divisions>`, re-fits by absorbing the delta into the following same-voice rest run (grows/inserts a rest when shorter, eats rests when longer, refuses if the bar can't hold it or the value is off-grid). Applies to every chord member; grace notes refused. Toolbar value row + dot toggle, digit keys 1-5 + `.`. Transient refusal notice.
   - [x] Task 3c — key / clef / per-note accidental. `EditableScore` gains `setAccidental(index, alter)` (single notehead, not the chord: rewrites `<pitch><alter>` + `<note><accidental>` in DTD order, `natural` written explicitly, changes sounding pitch), `setKey(index, fifths)` (−7..7, applied to **every part** at the selected note's measure — a key change is global), `setClef(index, {sign, line})` (selected note's part + staff only; `number` attr only when the part declares `<staves>` > 1), plus `keyAt`/`clefAt` readers for the toolbar. UX decision made (human, 2026-08-31): both key and clef act on the **selected note's measure** — bar 1 edits the piece-initial value, a later bar inserts a change from that bar onward. New `findOrCreateAttributes` places a fresh `<attributes>` at measure start (after a leading `<print>`/`<barline location="left">`) with children in DTD order. All ops refuse no-ops / out-of-range without touching the DOM. UI: third toolbar row (accidental buttons ♭♭ ♭ ♮ ♯ ♯♯, key stepper, clef presets Treble/Bass/Alto/Tenor), each via `applyEdit`, active state from the in-effect value. No new keyboard shortcuts (digit keys taken by durations, `handleKeydown` frozen). New `src/lib/musicxml/editableScore.test.ts` (jsdom, 15 tests). New en/es i18n keys.
   - [x] Tasks 4-9 (2026-08-31) — `EditableScore.exportMusicXml()` (declaration + partwise DOCTYPE on top of `serialize()`, 2 tests); save via new `piece/[id]/edit/save/+server.ts` → `POST /library/pieces/{id}/versions` (draft only, no auto submit/approve/distribute — the plan's review-flow note), then `goto` back to the piece page; unsaved-changes guard (`beforeNavigate` `confirm()` + `beforeunload`, both off `dirty`); "Edit music" entry points in the `groups/[id]` Tracks admin panel (when `track.has_music`) and the piece page practice-setup drawer (new `canEditMusic` from `resolve/+server.ts`, same owner/admin rule as the editor route's `load`); en/es keys added, `piece_editor_coming_soon` removed; `check` + `build` + 55-test vitest suite all green.
-  - Remaining: **Human live-test task** only (open the editor on a real OMR track, make each edit kind, save, confirm the draft plays back corrected and moves through review). No Claude tasks left in F14.
+  - Edit/save/export loop (tasks 1-9) done. **F14 reopened 2026-08-31** — its "play back inside the editor" acceptance criterion was never implemented; now expanded to a full transport + note-preview + full-screen shell. New Claude task list under "**Tasks — Claude (reopened 2026-08-31 …)**" above; resume from the first unchecked one. The shell task is done but uncommitted as of the reopen.
   - Known follow-ups from task 2: MIDI-sourced tracks open as a lossy `convertAllParts` approximation (16th-grid quantized rhythm, table-based enharmonics) — a later task may add a "came from MIDI" hint using the returned `sourceFormat`. `parseError` card shows raw detail (`HTTP 500`, parser message) like `ScoreView` does.
   - Working method (from 2026-08-31): tasks built inline in the main session, no subagents; commit + breadcrumb update per task.
+- 2026-08-31: **F14 reopened.** Live-testing the editor surfaced that its own "play back inside the editor" acceptance criterion was never implemented — there was no Claude task for it, and the milestone had been treated as code-complete pending only the human live-test. Human asked for the full version: play the working score in the editor with a real transport (play/stop, seek, tempo, per-part SATB+accompaniment mix), preview a note's sound when it's selected or re-pitched, and a focused full-screen shell matching the practice player. Audio path settled without a new engine: `EditableScore.serialize()` → `parseMusicXmlFile()` (already emits `ParsedMIDI`) → the player route's `MidiPlayer`. New Claude task list added under F14; the full-screen shell task is done this session but left uncommitted at the reopen. This pass is desktop-first; a phone layout for the toolbars/mix panel is a follow-up.
 - 2026-08-30: Found and fixed a real bug live-testing F13: `getPieceByTitle()` (F10) was preferred *unconditionally* over a real Backend piece's own content in all three places it's used (`/`'s personal library, the group Tracks tab, the guest join page) — so a real, admin-uploaded track that happened to share a title with a bundled fixture (e.g. "Lacrymosa") always played/showed the bundled asset instead, silently ignoring the admin's own music file/PDF/YouTube link. F13 surfaced this concretely: Lacrymosa's real reference-recording link never worked because the app was never actually reaching the real `Piece` it was set on. Fixed by only falling back to the bundled match when the real piece has neither `has_music` nor `has_pdf` of its own — `getPieceByTitle()`'s original intent (a working Practice button for a track with nothing wired up yet), not a permanent override once real content exists.
 - 2026-08-30: `piece/[id]`'s back button now does a real `history.back()` when there's history to go back to, landing wherever the human actually came from (a specific group's Tracks tab, its scroll position, admin vs. member view) instead of always the generic library/guest-join page regardless of origin. The old destination-guessing logic (guest join code -> that group; logged-in -> `/`; guest -> `/?guest=1`) stays as the fallback for when there's genuinely nothing to go back to (opened directly, a fresh tab, a deep link).
 - 2026-08-30: `/settings/more` brought in line with every other screen — now carries the same `AppHeader`/`BottomNav` chrome (title in the header, brand link home, gear button, bottom nav) instead of its own bare `<main>` with a hand-rolled breadcrumb/`<h1>`; also handles a guest reached via a join code the same way `/settings` itself does (home/footer point back to their group, not a login-gated dashboard). Dropped the redundant "Settings / More" breadcrumb text now that the header already names the page. Removed the "How Divisi works" link/section at the human's request (`more_how_it_works` message key deleted, now unused).

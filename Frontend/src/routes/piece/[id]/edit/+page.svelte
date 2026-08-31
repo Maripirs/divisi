@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
-	import AppHeader from '$lib/components/AppHeader.svelte';
 	import EditorScoreView from '$lib/components/EditorScoreView.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
@@ -26,7 +25,6 @@
 	// a navigation between two `/piece/[id]/edit` ids (no remount), so these
 	// have to track `data` rather than freeze its first value.
 	const backToPieceHref = $derived(lh(`/piece/${data.id}`));
-	const headerTitle = $derived(data.pieceTitle ?? m.piece_editor_title());
 
 	// F14 task 2: on the `granted` state, fetch the track's current music
 	// file, build the editable model, and render it read-only. Editing
@@ -473,37 +471,65 @@
 	});
 </script>
 
-<main class="shell">
-	<AppHeader title={headerTitle} />
+<!-- F14: a focused, full-screen editing surface — same "own chrome, no
+     AppHeader/BottomNav" shape as the practice player (`piece/[id]`), so
+     moving between playing a track and correcting its notation feels like
+     one place. Back arrow + title on the left, the primary Save action
+     top-right (the player parks Practice Setup there); the toolbars pin
+     under the bar and the score takes the rest of the viewport. -->
+<div class="editor-shell">
+	<header class="top-bar">
+		<a class="icon-btn" href={backToPieceHref} aria-label={m.piece_editor_back_to_piece()}>
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M15 18l-6-6 6-6" />
+			</svg>
+		</a>
+
+		<div class="top-bar-title">
+			<h1>{data.pieceTitle ?? 'Divisi'}</h1>
+			<p>{m.piece_editor_title()}</p>
+		</div>
+
+		{#if data.access === 'granted' && phase === 'ready'}
+			<button
+				class="btn btn-primary save-btn"
+				onclick={save}
+				disabled={!dirty || saving || reRendering}
+			>
+				{saving ? m.piece_editor_saving() : m.piece_editor_save()}
+			</button>
+		{:else}
+			<span class="top-bar-slot" aria-hidden="true"></span>
+		{/if}
+	</header>
 
 	{#if data.access === 'granted'}
 		{#if phase === 'loading'}
-			<section class="card">
-				<p class="card-eyebrow">{m.piece_editor_title()}</p>
-				<p class="card-meta" role="status" aria-live="polite">{m.piece_editor_loading_score()}</p>
-			</section>
+			<div class="editor-fill editor-fill--center">
+				<div class="status-card">
+					<div class="spinner" aria-hidden="true"></div>
+					<p role="status" aria-live="polite">{m.piece_editor_loading_score()}</p>
+				</div>
+			</div>
 		{:else if phase === 'ready'}
-			<section class="card">
-				<p class="card-eyebrow">{m.piece_editor_title()}</p>
-				<p class="card-note">{m.piece_editor_notes_loaded({ count: noteCount })}</p>
-
-				<!--
-					The editing surface is a custom keyboard-driven widget
-					(`role="application"`): the arrow-key map in `handleKeydown`
-					is only live while this region holds focus, which is exactly
-					the constraint task 3 asks for. The a11y linter still treats
-					a `<div>` as non-interactive, hence the scoped ignore.
-				-->
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-				<div
-					class="editor-surface"
-					bind:this={surfaceEl}
-					role="application"
-					aria-label={m.piece_editor_editing_region()}
-					tabindex="0"
-					onkeydown={handleKeydown}
-				>
+			<!--
+				The editing surface is a custom keyboard-driven widget
+				(`role="application"`): the arrow-key map in `handleKeydown`
+				is only live while this region holds focus, which is exactly
+				the constraint task 3 asks for. The a11y linter still treats
+				a `<div>` as non-interactive, hence the scoped ignore.
+			-->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+			<div
+				class="editor-surface"
+				bind:this={surfaceEl}
+				role="application"
+				aria-label={m.piece_editor_editing_region()}
+				tabindex="0"
+				onkeydown={handleKeydown}
+			>
+				<div class="editor-toolbars">
 					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_editing_region()}>
 						<button
 							class="btn"
@@ -622,106 +648,295 @@
 					{#if editNotice}
 						<p class="editor-notice" role="status" aria-live="polite">{editNotice}</p>
 					{/if}
+					{#if saveError}
+						<p class="editor-notice" role="alert">{saveError}</p>
+					{/if}
+				</div>
 
+				<div class="editor-scroll">
 					<EditorScoreView
 						xml={workingXml}
 						scoreTheme={$resolvedTheme}
 						{selectedOnset}
 						onPickNote={handlePickNote}
 						bind:rendering={reRendering}
+						fill
 					/>
-
-					<p class="editor-hint">{m.piece_editor_keyboard_hint()}</p>
 				</div>
 
-				{#if saveError}
-					<p class="editor-notice" role="alert">{saveError}</p>
-				{/if}
-				<div class="btn-row">
-					<button
-						class="btn btn-primary"
-						onclick={save}
-						disabled={!dirty || saving || reRendering}
-					>
-						{saving ? m.piece_editor_saving() : m.piece_editor_save()}
-					</button>
-					<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
-				</div>
-			</section>
+				<footer class="editor-footer">
+					<span class="editor-count">{m.piece_editor_notes_loaded({ count: noteCount })}</span>
+					<span class="editor-hint">{m.piece_editor_keyboard_hint()}</span>
+				</footer>
+			</div>
 		{:else if errorKind === 'noFile'}
-			<section class="card">
-				<p class="card-meta">{m.piece_editor_no_music_file()}</p>
-				<div class="btn-row">
-					<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+			<div class="editor-fill editor-fill--center">
+				<div class="status-card">
+					<p>{m.piece_editor_no_music_file()}</p>
+					<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
 				</div>
-			</section>
+			</div>
 		{:else if errorKind === 'unreachable'}
-			<section class="card">
-				<p class="card-meta">{m.errors_could_not_reach_server()}</p>
-				<div class="btn-row">
-					<button class="btn" onclick={() => loadScore()}>{m.piece_retry()}</button>
+			<div class="editor-fill editor-fill--center">
+				<div class="status-card status-card--error">
+					<p>{m.errors_could_not_reach_server()}</p>
+					<button class="text-link" onclick={() => loadScore()}>{m.piece_retry()}</button>
 				</div>
-			</section>
+			</div>
 		{:else if errorKind === 'unsupported'}
-			<section class="card">
-				<p class="card-eyebrow">{m.piece_editor_title()}</p>
-				<p class="card-meta">{m.piece_editor_unsupported_format()}</p>
-				<div class="btn-row">
-					<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+			<div class="editor-fill editor-fill--center">
+				<div class="status-card">
+					<p>{m.piece_editor_unsupported_format()}</p>
+					<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
 				</div>
-			</section>
+			</div>
 		{:else}
-			<section class="card">
-				<p class="card-eyebrow">{m.piece_editor_title()}</p>
-				<p class="card-meta">{m.piece_editor_score_load_failed()}</p>
-				{#if errorDetail}<p class="card-note">{errorDetail}</p>{/if}
-				<div class="btn-row">
-					<button class="btn" onclick={() => loadScore()}>{m.piece_retry()}</button>
-					<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+			<div class="editor-fill editor-fill--center">
+				<div class="status-card status-card--error">
+					<p>{m.piece_editor_score_load_failed()}</p>
+					{#if errorDetail}<p class="status-detail">{errorDetail}</p>{/if}
+					<div class="status-actions">
+						<button class="text-link" onclick={() => loadScore()}>{m.piece_retry()}</button>
+						<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+					</div>
 				</div>
-			</section>
+			</div>
 		{/if}
 	{:else if data.access === 'notFound'}
-		<section class="card">
-			<p class="card-meta">{m.piece_not_found()}</p>
-			<div class="btn-row">
-				<a class="btn" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+		<div class="editor-fill editor-fill--center">
+			<div class="status-card status-card--error">
+				<p>{m.piece_not_found()}</p>
+				<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
 			</div>
-		</section>
+		</div>
 	{:else if data.access === 'unreachable'}
-		<section class="card">
-			<p class="card-meta">{m.errors_could_not_reach_server()}</p>
-			<div class="btn-row">
-				<button class="btn" onclick={() => location.reload()}>{m.piece_retry()}</button>
+		<div class="editor-fill editor-fill--center">
+			<div class="status-card status-card--error">
+				<p>{m.errors_could_not_reach_server()}</p>
+				<button class="text-link" onclick={() => location.reload()}>{m.piece_retry()}</button>
 			</div>
-		</section>
+		</div>
 	{:else}
 		<!-- 'denied': the Backend resolved the piece fine, this user just
 		     isn't its owner (personal piece) or an admin of its group. The
 		     editor never mounts for them; the save endpoint would 403 them
 		     too, so this is a friendly bounce, not the only guard. -->
-		<section class="card">
-			<p class="card-eyebrow">{m.error_403_title()}</p>
-			<p class="card-meta">{m.piece_editor_no_edit_access()}</p>
-			<div class="btn-row">
-				<a class="btn btn-primary" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+		<div class="editor-fill editor-fill--center">
+			<div class="status-card status-card--error">
+				<p class="status-eyebrow">{m.error_403_title()}</p>
+				<p>{m.piece_editor_no_edit_access()}</p>
+				<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
 			</div>
-		</section>
+		</div>
 	{/if}
-</main>
+</div>
 
 <style>
-	/* The focusable editing region. A visible focus ring matters here — the
-	   keyboard map only works while this holds focus. */
-	.editor-surface {
+	/* Focused full-screen chrome, matching the practice player's own shell
+	   (`piece/[id]`): a fixed viewport-filling column, its own top bar, no
+	   AppHeader/BottomNav. */
+	.editor-shell {
+		position: fixed;
+		inset: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		background: var(--bg);
+		overscroll-behavior: none;
+	}
+
+	/* Lifted from the player's `.top-bar` so the two read as one place. */
+	.top-bar {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: calc(0.625rem + env(safe-area-inset-top, 0px)) 0.75rem 0.625rem;
+		background: var(--surface);
+		border-bottom: 1px solid var(--border);
+		z-index: 1;
+	}
+
+	.top-bar-title {
+		flex: 1;
+		min-width: 0;
+		text-align: center;
+	}
+	.top-bar-title h1 {
+		margin: 0;
+		overflow: hidden;
+		color: var(--text);
+		font-size: 1rem;
+		font-weight: 800;
+		line-height: 1.2;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.top-bar-title p {
+		margin: 0.125rem 0 0;
+		overflow: hidden;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		line-height: 1.2;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.icon-btn {
+		flex-shrink: 0;
+		width: 36px;
+		height: 36px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--text);
+		cursor: pointer;
+	}
+	.icon-btn:hover {
+		background: var(--surface-2);
+	}
+	.icon-btn svg {
+		width: 21px;
+		height: 21px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	/* Save takes the slot the player gives Practice Setup. A label reads
+	   clearer than an icon for a destructive-ish "make a new draft", so
+	   it's a compact pill rather than an `.icon-btn`. */
+	.save-btn {
+		flex-shrink: 0;
+		min-height: 2rem;
+		padding: 0 0.75rem;
+		font-size: 0.75rem;
+	}
+	/* Keeps the title centered when there's no Save button yet. */
+	.top-bar-slot {
+		flex-shrink: 0;
+		width: 36px;
+	}
+
+	/* A viewport-filling area for the loading / error / denied states, so
+	   their card sits centered in the same space the score would fill. */
+	.editor-fill {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+	}
+	.editor-fill--center {
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding: 2.5rem 1rem;
+	}
+
+	.status-card {
+		max-width: 520px;
+		width: 100%;
+		background: var(--surface);
+		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
-		outline-offset: 3px;
+		box-shadow: var(--shadow);
+		padding: 2.5rem 1.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		color: var(--text-muted);
+		text-align: center;
+	}
+	.status-card p {
+		margin: 0;
+	}
+	.status-card--error {
+		color: var(--danger);
+	}
+	.status-eyebrow {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+	.status-detail {
+		font-size: 0.8125rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		word-break: break-word;
+	}
+	.status-actions {
+		display: flex;
+		gap: 1rem;
+	}
+
+	.spinner {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		border: 3px solid var(--surface-2);
+		border-top-color: var(--accent);
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* The focusable editing region — now the whole content column below the
+	   top bar. A visible focus ring still matters: the keyboard map only
+	   works while this holds focus. Ring drawn inset so the fixed edges
+	   don't clip it. */
+	.editor-surface {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 	}
 	.editor-surface:focus-visible {
 		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+
+	/* The toolbars pin under the top bar; only the score scrolls. */
+	.editor-toolbars {
+		flex: 0 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--surface);
+		border-bottom: 1px solid var(--border);
+		max-height: 40vh;
+		overflow-y: auto;
+	}
+
+	.editor-scroll {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		overscroll-behavior: contain;
+	}
+
+	.editor-footer {
+		flex: 0 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 0.75rem;
+		padding: 0.4rem 0.75rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+		background: var(--surface);
+		border-top: 1px solid var(--border);
+	}
+	.editor-count {
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--text);
 	}
 
 	.editor-toolbar {

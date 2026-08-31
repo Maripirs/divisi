@@ -36,10 +36,15 @@
 		scoreTheme = 'light',
 		rendering = $bindable(false),
 		selectedOnset = undefined,
-		onPickNote = undefined
+		onPickNote = undefined,
+		fill = false
 	}: {
 		xml: string;
 		scoreTheme?: ResolvedTheme;
+		// When true, the view grows to fill its parent (a flex column) and
+		// the score itself becomes the only scroll region, instead of the
+		// default fixed `max-height`. Used by the full-screen editor shell.
+		fill?: boolean;
 		// Bindable out: true while OSMD is (re-)engraving, so the parent can
 		// show its own "updating" hint next to whatever triggered the change.
 		rendering?: boolean;
@@ -237,7 +242,7 @@
 	}
 </script>
 
-<div class="editor-score" data-theme={scoreTheme}>
+<div class="editor-score" class:fill data-theme={scoreTheme}>
 	<div class="zoom-controls">
 		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
@@ -263,6 +268,25 @@
 		border-radius: var(--radius-lg);
 		overflow: hidden;
 		background: var(--score-page);
+	}
+
+	/* Full-screen editor: fill the parent flex column and let the sheet
+	   itself be the scroll region (no fixed `max-height`, no rounded card
+	   edges against the viewport). */
+	.editor-score.fill {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
+		width: 100%;
+		border-radius: 0;
+		border-left: none;
+		border-right: none;
+		border-bottom: none;
+	}
+	.editor-score.fill .score-container {
+		flex: 1 1 auto;
+		max-height: none;
 	}
 
 	.zoom-controls {
