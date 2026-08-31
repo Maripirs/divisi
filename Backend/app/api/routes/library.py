@@ -48,6 +48,7 @@ from app.services.pieces import (
     delete_piece,
     get_piece_or_404,
     group_role,
+    pending_generated_version_id,
     require_piece_access,
     resolve_new_piece_owner_id,
 )
@@ -375,19 +376,9 @@ def _omr_fields(piece_id: str, db: Session) -> dict:
         .order_by(OmrJob.created_at.desc())
         .first()
     )
-    pending = (
-        db.query(PieceVersion)
-        .filter(
-            PieceVersion.piece_id == piece_id,
-            PieceVersion.status == VersionStatus.draft,
-            PieceVersion.source == VersionSource.modification,
-        )
-        .order_by(PieceVersion.created_at.desc())
-        .first()
-    )
     return {
         "latest_omr_job": LibraryEntryOmrJobOut.model_validate(job) if job is not None else None,
-        "pending_generated_version_id": pending.id if pending is not None else None,
+        "pending_generated_version_id": pending_generated_version_id(piece_id, db),
     }
 
 

@@ -147,3 +147,23 @@ export interface LibraryEntryOut {
 	latest_omr_job: { id: string; status: OmrJobStatus; error_message: string | null } | null;
 	pending_generated_version_id: string | null;
 }
+
+/** One row of `GET /omr/jobs` — the caller's own "Generate music from PDF"
+ * jobs, newest first. Feeds the header alert (`OmrJobAlerts.svelte`) that
+ * tells an admin a job they started has finished or failed while they were
+ * elsewhere in the app. `piece_*`/`group_id` are null for a job never
+ * tagged with a piece, or whose piece has since been deleted;
+ * `pending_generated_version_id` is set once the runner auto-imported the
+ * result as a draft nobody has accepted or discarded yet. Mirrors
+ * `Backend/app/api/schemas/omr.py`'s `OmrJobListItemOut`. */
+export interface OmrJobListItem {
+	id: string;
+	status: OmrJobStatus;
+	error_message: string | null;
+	piece_id: string | null;
+	piece_title: string | null;
+	group_id: string | null;
+	pending_generated_version_id: string | null;
+	created_at: string;
+	updated_at: string;
+}

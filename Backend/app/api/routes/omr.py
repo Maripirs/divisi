@@ -11,18 +11,26 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import OmrImportOut, OmrImportRequest, OmrJobOut
+from app.api.schemas import OmrImportOut, OmrImportRequest, OmrJobListItemOut, OmrJobOut
 from app.core.config import get_settings
-from app.db.models import OmrJob, OmrJobStatus, User, VersionSource
+from app.db.models import OmrJob, OmrJobStatus, OwnerType, Piece, User, VersionSource
 from app.db.session import get_db
 from app.jobs.omr_jobs import run_omr_job
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
     get_piece_or_404,
+    pending_generated_version_id,
     require_piece_access,
     resolve_new_piece_owner_id,
 )
+
+# How many of the caller's most recent jobs `GET /omr/jobs` returns. The
+# header alert only cares about still-running jobs and ones that finished
+# recently enough to still be worth a nudge; a caller with more than this
+# many jobs in total has plenty of older, already-dealt-with ones we can
+# safely leave out.
+_JOB_LIST_LIMIT = 20
 from app.storage.files import load_file, save_file
 
 router = APIRouter(prefix="/omr", tags=["omr"])
@@ -92,6 +100,48 @@ async def create_job(
 
     background_tasks.add_task(run_omr_job, job.id)
     return _job_out(job)
+
+
+@router.get("/jobs", response_model=list[OmrJobListItemOut])
+def list_jobs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[OmrJobListItemOut]:
+    """The caller's own OMR jobs, newest first — feeds the header alert
+    that tells an admin a "Generate music from PDF" job they kicked off
+    has finished (or failed). Jobs are already `user_id`-scoped, so "a
+    piece *you* had generating" needs no group-role check here: if you
+    started the job, it's yours to hear about.
+
+    Left-joins `Piece` so a job whose piece was deleted still lists
+    (with null title/group), rather than vanishing."""
+    rows = (
+        db.query(OmrJob, Piece)
+        .outerjoin(Piece, Piece.id == OmrJob.piece_id)
+        .filter(OmrJob.user_id == current_user.id)
+        .order_by(OmrJob.created_at.desc())
+        .limit(_JOB_LIST_LIMIT)
+        .all()
+    )
+    out: list[OmrJobListItemOut] = []
+    for job, piece in rows:
+        group_id = piece.owner_id if piece is not None and piece.owner_type == OwnerType.group else None
+        out.append(
+            OmrJobListItemOut(
+                id=job.id,
+                status=job.status,
+                error_message=job.error_message,
+                piece_id=job.piece_id,
+                piece_title=piece.title if piece is not None else None,
+                group_id=group_id,
+                pending_generated_version_id=(
+                    pending_generated_version_id(job.piece_id, db) if job.piece_id is not None else None
+                ),
+                created_at=job.created_at,
+                updated_at=job.updated_at,
+            )
+        )
+    return out
 
 
 @router.get("/jobs/{job_id}", response_model=OmrJobOut)

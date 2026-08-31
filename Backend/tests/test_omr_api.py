@@ -329,6 +329,85 @@ def test_generated_draft_can_be_discarded_via_reject(client, monkeypatch):
     assert entry["pending_generated_version_id"] is None
 
 
+def test_list_jobs_requires_auth(client):
+    assert client.get("/omr/jobs").status_code == 401
+
+
+def test_list_jobs_returns_own_jobs_newest_first_with_piece_context(client, monkeypatch):
+    headers = _register_and_login(client, "listjobs@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    piece_id, _ = _upload_pdf_track(client, headers, "Listed Track")
+
+    # A standalone job (no piece), then a piece-tagged one — the tagged one
+    # is created last, so it sorts first.
+    client.post(
+        "/omr/jobs",
+        files={"file": ("loose.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=headers,
+    )
+    client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=headers,
+    )
+
+    jobs = client.get("/omr/jobs", headers=headers)
+    assert jobs.status_code == 200
+    body = jobs.json()
+    assert len(body) == 2
+
+    tagged, loose = body
+    assert tagged["piece_id"] == piece_id
+    assert tagged["piece_title"] == "Listed Track"
+    assert tagged["group_id"] is None  # user-owned piece
+    assert tagged["status"] == "done"
+    assert tagged["pending_generated_version_id"] is not None
+
+    assert loose["piece_id"] is None
+    assert loose["piece_title"] is None
+    assert loose["pending_generated_version_id"] is None
+
+
+def test_list_jobs_does_not_leak_other_users_jobs(client, monkeypatch):
+    mine = _register_and_login(client, "mine-list@example.com")
+    theirs = _register_and_login(client, "theirs-list@example.com")
+    _fake_run_omr_ok(monkeypatch)
+
+    client.post(
+        "/omr/jobs",
+        files={"file": ("scan.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=theirs,
+    )
+
+    assert client.get("/omr/jobs", headers=mine).json() == []
+
+
+def test_list_jobs_reports_group_id_for_a_group_owned_track(client, monkeypatch):
+    admin = _register_and_login(client, "grouplist-admin@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    group_id = client.post("/groups", json={"name": "List Choir"}, headers=admin).json()["id"]
+
+    upload = client.post(
+        "/library/pieces",
+        data={"title": "Choir Track", "owner_type": "group", "group_id": group_id},
+        files={"pdf_file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=admin,
+    )
+    piece_id = upload.json()["piece"]["id"]
+
+    client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": piece_id},
+        headers=admin,
+    )
+
+    job = client.get("/omr/jobs", headers=admin).json()[0]
+    assert job["piece_id"] == piece_id
+    assert job["group_id"] == group_id
+
+
 def test_deleting_a_track_that_has_an_omr_job_succeeds(client, monkeypatch):
     headers = _register_and_login(client, "gendelete@example.com")
     _fake_run_omr_ok(monkeypatch)

@@ -135,6 +135,26 @@ def add_version(
     return version
 
 
+def pending_generated_version_id(piece_id: str, db: Session) -> str | None:
+    """The id of the un-promoted "Generate music from PDF" draft on this
+    piece, if any — a draft `PieceVersion` with `source == modification`
+    that the OMR runner auto-imported and nobody has accepted or discarded
+    yet. Shared by the Tracks tab's per-track state (`library._omr_fields`)
+    and the header alert's job list (`omr.list_jobs`) so both agree on
+    what "a draft is waiting" means."""
+    pending = (
+        db.query(PieceVersion.id)
+        .filter(
+            PieceVersion.piece_id == piece_id,
+            PieceVersion.status == VersionStatus.draft,
+            PieceVersion.source == VersionSource.modification,
+        )
+        .order_by(PieceVersion.created_at.desc())
+        .first()
+    )
+    return pending[0] if pending is not None else None
+
+
 def delete_piece(piece: Piece, db: Session) -> None:
     """F5 edit panel: delete a track entirely, not just one of its files —
     a harder, less-reversible action than anything else in this module, so
