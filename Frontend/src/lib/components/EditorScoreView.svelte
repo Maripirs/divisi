@@ -341,12 +341,21 @@
 	// without an edit — keyboard nav changes `selectedOnset`, and the RAF
 	// loop changes `playbackWholeNotes`, neither of which touches `xml`, so
 	// the re-engrave effect above doesn't run.
+	let wasPlaying = false;
 	$effect(() => {
 		const onset = selectedOnset;
 		const pb = playbackWholeNotes;
 		void onset;
-		void pb;
 		if (!osmd || !renderedOnce) return;
+		// Entering playback re-engages follow (a pre-playback manual scroll
+		// shouldn't leave the cursor un-followed once playback starts) and
+		// re-arms the "new system" tracking so the first jump lands.
+		const playingNow = pb !== undefined;
+		if (playingNow && !wasPlaying) {
+			following = true;
+			lastCursorSystemTop = undefined;
+		}
+		wasPlaying = playingNow;
 		placeCursor();
 	});
 
