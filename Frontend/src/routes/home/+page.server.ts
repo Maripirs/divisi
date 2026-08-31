@@ -63,11 +63,19 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	const responsibilities = responsibilitiesByGroup
 		.flatMap((dates, i) => dates.map((d) => ({ ...d, groupId: groups[i].id, groupName: groups[i].name })))
 		.filter((d) => !d.canceled && new Date(d.date) >= now)
-		.filter(
-			(d) =>
-				d.roles.some((r) => r.status === 'underfilled') ||
-				d.roles.some((r) => r.signups.some((s) => s.user_id === user.id))
-		)
+		.map((d) => ({
+			...d,
+			// Why this date is relevant enough to surface at all — shown on
+			// Home so the reason isn't a mystery, and used there to decide
+			// whether the row is dismissible (a personal commitment isn't;
+			// an open call for volunteers is). Enrolled wins when both are
+			// true — "you're already covering this" matters more to the
+			// member than "it also still needs others".
+			reason: d.roles.some((r) => r.signups.some((s) => s.user_id === user.id))
+				? ('enrolled' as const)
+				: ('needs_volunteers' as const)
+		}))
+		.filter((d) => d.reason === 'enrolled' || d.roles.some((r) => r.status === 'underfilled'))
 		.sort((a, b) => a.date.localeCompare(b.date))
 		// Capped to the soonest few — an admin planning ahead (dates months
 		// out) shouldn't turn this into a second homework list.

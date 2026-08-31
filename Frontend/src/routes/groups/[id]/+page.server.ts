@@ -475,6 +475,24 @@ export const actions: Actions = {
 		return { success: true, form: 'updateHomework' };
 	},
 
+	// Admin-only, `DELETE /homework/{id}` — same click-to-confirm-behind-a-
+	// trash-icon pattern as `deleteTrack` above, reachable from inside the
+	// edit form rather than sitting next to Save (one click apart from a
+	// non-destructive action is too easy to fat-finger).
+	deleteHomework: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const homeworkId = String(form.get('homeworkId') ?? '');
+		if (!homeworkId) return fail(400, { error: m.groups_missing_homework(), form: 'deleteHomework' });
+
+		try {
+			await backendFetch(locals.token, `/homework/${homeworkId}`, { method: 'DELETE' }, fetch);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message, form: 'deleteHomework' });
+			throw err;
+		}
+		return { success: true, form: 'deleteHomework' };
+	},
+
 	// Admin-only; promoting is always allowed, demoting the last admin gets
 	// the same 409 removing them would.
 	updateMemberRole: async ({ request, locals, fetch, params }) => {

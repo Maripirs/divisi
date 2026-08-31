@@ -335,13 +335,6 @@
 	border: 1px solid var(--border);
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
-	/* `<button class="list-row-link">` for a row that expands in place
-	   instead of navigating (see `.is-expandable` below) — these reset the
-	   button-element defaults an `<a>` never had, so both look identical. */
-	width: 100%;
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
 }
 
 .list-row-link > span:first-child {
@@ -382,20 +375,12 @@
 	opacity: 0.85;
 }
 
-/* Expand/collapse toggle for a card whose extra detail (instructions, a
-   Practice link, an edit form…) appears in place instead of navigating to a
-   separate page — homework cards on Home and the group page, notably. A
-   chevron that flips down↔up communicates open/closed on its own, so the
-   button's own label can stay constant instead of swapping between e.g.
-   "View" and "Hide", which read as two different actions rather than one
-   toggled state. */
-/* A button whose label stays put and only its `.chevron` flips — see above. */
-.disclosure-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.45rem;
-}
-
+/* Expand/collapse indicator for a row whose extra detail (instructions, a
+   Practice link…) appears in place instead of navigating to a separate
+   page — Home's homework rows. A chevron that flips down↔up communicates
+   open/closed on its own, so the row's own label can stay constant instead
+   of swapping between e.g. "View" and "Hide", which read as two different
+   actions rather than one toggled state. */
 .chevron {
 	display: inline-block;
 	flex: 0 0 auto;
@@ -410,36 +395,6 @@
 
 .chevron.is-open {
 	transform: rotate(225deg);
-}
-
-/* Same flip, applied to `.list-row-link`'s own trailing chevron (normally a
-   "▸ tap through to another page" hint) for rows that expand in place
-   instead of navigating. */
-.list-row-link.is-expandable::after {
-	transform: rotate(135deg);
-	transition: transform 0.15s ease;
-}
-
-.list-row-link.is-expandable.is-open::after {
-	transform: rotate(315deg);
-}
-
-/* A `.list-row-link`-styled row that isn't a link or a toggle at all — just
-   borrowing the same box for visual consistency — shouldn't carry the
-   chevron that implies "tap through" or "tap to expand". */
-.list-row-link.no-chevron::after {
-	content: none;
-}
-
-.list-row-link.no-chevron {
-	cursor: default;
-}
-
-.list-row-link.no-chevron:hover,
-.list-row-link.no-chevron:active {
-	border-color: var(--border);
-	background: var(--surface-2);
-	color: inherit;
 }
 
 /* ---------- Form fields ---------- */

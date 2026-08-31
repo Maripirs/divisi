@@ -80,24 +80,41 @@
 	let addDateDraft = $state('');
 	// Create-schedule form's dynamic role rows — starts with one blank row.
 	let roleRowCount = $state(1);
-	// Homework tab: which assignment's "View"/"View assignment" button has
-	// expanded in place to reveal its Practice link (and, for an admin, an
-	// Edit link) — at most one at a time. Homework never got its own detail
-	// page (per the human's call — same reasoning applies on Home); this is
-	// the entire replacement for what `/groups/[id]/homework/[hwId]` used
-	// to show.
-	let expandedHomeworkId = $state<string | null>(null);
-	// Same tab, admin only: which expanded assignment's "Edit" link has
-	// swapped for the inline edit form — same click-to-reveal pattern as
-	// the Tracks tab's "Edit details" panel below. Only reachable while
-	// that assignment is already the expanded one.
+	// Homework tab: each card shows its full detail (title, range,
+	// instructions, Practice link, admin Edit) by default — no "View
+	// assignment" button, since it never revealed anything a member didn't
+	// already need to see. Tapping a card's summary (date/title/range)
+	// collapses it down to a single "date · piece" row instead; tapping
+	// that collapsed row expands it back. Any number can be collapsed at
+	// once, independently — unlike the old single-expanded accordion, there
+	// isn't a reason collapsing one should force another back open.
+	// Homework never got its own detail page (per the human's call — same
+	// reasoning applies on Home); this is the entire replacement for what
+	// `/groups/[id]/homework/[hwId]` used to show.
+	let collapsedHomeworkIds = $state<Set<string>>(new Set());
+	function toggleHomeworkCollapsed(id: string): void {
+		const next = new Set(collapsedHomeworkIds);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		collapsedHomeworkIds = next;
+	}
+	// Same tab, admin only: which card's "Edit details" link has swapped
+	// for the inline edit form — same click-to-reveal pattern as the
+	// Tracks tab's "Edit details" panel below.
 	let editingHomeworkId = $state<string | null>(null);
 	let hwTitleDraft = $state('');
 	let hwPieceIdDraft = $state('');
 	let hwRangeDraft = $state('');
 	let hwDueDateDraft = $state('');
 	let hwInstructionsDraft = $state('');
+	// Shared by both submit buttons in the edit form's row (Save and the
+	// delete-confirm icon, via `formaction` — see below) since both trigger
+	// the same submit/disable/reset behavior.
 	let savingHomework = $state(false);
+	// Same edit form: whether its trash icon has expanded into a
+	// confirm/cancel pair — same click-to-confirm pattern as the Tracks
+	// tab's "Delete track" below.
+	let confirmingDeleteHomeworkId = $state<string | null>(null);
 	// Members tab: which member's row (by id) has its "Remove" button
 	// expanded into a confirm/cancel pair — at most one at a time.
 	let confirmingRemoveMemberId = $state<string | null>(null);
@@ -356,30 +373,36 @@
 		{:else}
 			{#each data.homework as hw (hw.id)}
 				<section class="card">
-					<p class="card-eyebrow">{formatDate(hw.due_date)}</p>
-					<p class="card-title">{hw.title}</p>
-					<p class="card-meta">{hw.range}{hw.pieceTitle ? ` · ${hw.pieceTitle}` : ''}</p>
-					{#if hw.instructions}
-						<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
-					{/if}
-					<!-- Admin always has something behind this (Edit, at least) — a
-					     member only does when there's a linked piece to practice.
-					     Without that gate, a piece-less assignment's button flips its
-					     chevron but reveals nothing, which just reads as broken. -->
-					{#if mode === 'admin' || hw.piece_id}
-						<div class="btn-row">
-							<button
-								type="button"
-								class="btn btn-primary disclosure-btn"
-								aria-expanded={expandedHomeworkId === hw.id}
-								onclick={() => (expandedHomeworkId = expandedHomeworkId === hw.id ? null : hw.id)}
-							>
-								<span>{mode === 'admin' ? m.groups_view() : m.groups_view_assignment()}</span>
-								<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
-							</button>
-						</div>
-					{/if}
-					{#if expandedHomeworkId === hw.id}
+					{#if collapsedHomeworkIds.has(hw.id)}
+						<button
+							type="button"
+							class="hw-collapsed-row"
+							aria-expanded="false"
+							onclick={() => toggleHomeworkCollapsed(hw.id)}
+						>
+							<span class="hw-collapsed-text">
+								<span class="card-eyebrow">{formatDate(hw.due_date)}</span>
+								<span class="card-title">{hw.pieceTitle ?? hw.title}</span>
+							</span>
+							<span class="chevron" aria-hidden="true"></span>
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="hw-summary"
+							aria-expanded="true"
+							onclick={() => toggleHomeworkCollapsed(hw.id)}
+						>
+							<span class="hw-summary-text">
+								<p class="card-eyebrow">{formatDate(hw.due_date)}</p>
+								<p class="card-title">{hw.title}</p>
+								<p class="card-meta">{hw.range}{hw.pieceTitle ? ` · ${hw.pieceTitle}` : ''}</p>
+							</span>
+							<span class="chevron is-open" aria-hidden="true"></span>
+						</button>
+						{#if hw.instructions}
+							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
+						{/if}
 						{#if mode === 'admin' && editingHomeworkId === hw.id}
 							<form
 								method="POST"
@@ -389,6 +412,7 @@
 									return async ({ update }) => {
 										savingHomework = false;
 										editingHomeworkId = null;
+										confirmingDeleteHomeworkId = null;
 										await update();
 									};
 								}}
@@ -423,7 +447,11 @@
 								{#if form?.form === 'updateHomework' && form?.error}
 									<p class="error">{form.error}</p>
 								{/if}
-								<div class="btn-row">
+								<!-- Delete lives in this same row (via `formaction`, still
+								     one shared `<form>` — a nested `<form>` isn't valid
+								     HTML) so it's naturally level with Save/Cancel instead
+								     of floating at some independently-guessed position. -->
+								<div class="btn-row hw-edit-actions">
 									<button type="submit" class="btn btn-outline" disabled={savingHomework}>
 										{savingHomework ? m.new_homework_assigning() : m.action_save()}
 									</button>
@@ -435,6 +463,52 @@
 									>
 										{m.action_cancel()}
 									</button>
+									<span class="hw-edit-delete">
+										{#if confirmingDeleteHomeworkId === hw.id}
+											<button
+												type="submit"
+												formaction="?/deleteHomework"
+												formnovalidate
+												class="hw-icon-btn hw-icon-btn--danger"
+												disabled={savingHomework}
+												aria-label={m.groups_delete()}
+												title={m.groups_delete_homework_confirm()}
+											>
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<polyline points="20 6 9 17 4 12" />
+												</svg>
+											</button>
+											<button
+												type="button"
+												class="hw-icon-btn"
+												onclick={() => (confirmingDeleteHomeworkId = null)}
+												disabled={savingHomework}
+												aria-label={m.action_cancel()}
+												title={m.action_cancel()}
+											>
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<line x1="18" y1="6" x2="6" y2="18" />
+													<line x1="6" y1="6" x2="18" y2="18" />
+												</svg>
+											</button>
+										{:else}
+											<button
+												type="button"
+												class="hw-icon-btn hw-icon-btn--danger"
+												onclick={() => (confirmingDeleteHomeworkId = hw.id)}
+												aria-label={m.groups_delete_homework()}
+												title={m.groups_delete_homework()}
+											>
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+													<path d="M3 6h18" />
+													<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+													<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+													<line x1="10" y1="11" x2="10" y2="17" />
+													<line x1="14" y1="11" x2="14" y2="17" />
+												</svg>
+											</button>
+										{/if}
+									</span>
 								</div>
 							</form>
 						{:else}
@@ -1861,6 +1935,95 @@
 	.error {
 		margin: 0.4rem 0 0;
 		font-size: 0.8125rem;
+		color: var(--danger);
+	}
+
+	/* Homework tab: a card's tappable summary — full detail by default, no
+	   button chrome of its own (just an unstyled wrapper around the same
+	   `.card-eyebrow`/`.card-title`/`.card-meta` the old always-expanded
+	   markup used), so tapping the date/title/range collapses the card
+	   without looking like a separate control sitting on top of them. A
+	   `.chevron` on the trailing edge is the only thing that says "tap to
+	   toggle" — text alone (date/title/range) doesn't read as interactive. */
+	.hw-summary {
+		all: unset;
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.5rem;
+		width: 100%;
+		cursor: pointer;
+	}
+
+	.hw-summary-text {
+		min-width: 0;
+	}
+
+	.hw-summary .chevron {
+		margin-top: 0.4rem;
+	}
+
+	/* The collapsed state that tap produces — one row, date + piece (or
+	   title if no piece is linked), same eyebrow/title styling reused
+	   inline instead of stacked. */
+	.hw-collapsed-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		width: 100%;
+		border: none;
+		background: none;
+		padding: 0;
+		margin: 0;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.hw-collapsed-text {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+
+	.hw-collapsed-row .card-eyebrow,
+	.hw-collapsed-row .card-title {
+		margin: 0;
+	}
+
+	/* Delete sits in the same `.btn-row` as Save/Cancel (pushed to the row's
+	   far end), so it's naturally level with them instead of independently
+	   positioned. Bare icon, not the circular chip Tracks' "Delete track"
+	   uses — smaller and quieter since it's one of three controls sharing
+	   a row here, not sitting alone in a card corner. */
+	.hw-edit-delete {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-left: auto;
+	}
+
+	.hw-icon-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.35rem;
+		height: 1.35rem;
+		border: none;
+		background: none;
+		padding: 0;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+
+	.hw-icon-btn:hover {
+		opacity: 0.7;
+	}
+
+	.hw-icon-btn--danger {
 		color: var(--danger);
 	}
 
