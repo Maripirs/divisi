@@ -14,11 +14,16 @@
 	const many = $derived(unseen.length > 1);
 	const failed = $derived(!many && primary?.status === 'failed');
 
-	// A group-owned track's draft is accepted or discarded on that group's
-	// Tracks tab (admin view). A job with no group (a personal piece, or one
-	// since deleted) has nowhere better to point than the library.
+	// F16: a single finished generate job the caller started points straight
+	// at the editor on that track's working draft ("Review generated draft").
+	// The multi-job and failed cases still point at the group's Tracks tab
+	// (admin view) — or the library for a job with no group.
 	const href = $derived(
-		primary?.group_id ? lh(`/groups/${primary.group_id}?view=admin&tab=tracks`) : lh('/')
+		!many && primary?.status === 'done' && primary.piece_id
+			? lh(`/piece/${primary.piece_id}/edit`)
+			: primary?.group_id
+				? lh(`/groups/${primary.group_id}?view=admin&tab=tracks`)
+				: lh('/')
 	);
 
 	const label = $derived(

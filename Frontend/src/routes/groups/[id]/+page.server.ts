@@ -450,11 +450,11 @@ export const actions: Actions = {
 		});
 	},
 
-	// Admin-only: "Use it" on a finished generate-from-PDF draft. Same
-	// submit → approve → distribute chain the other track flows use, so the
-	// generated music replaces the track's current version and lands on the
-	// Tracks tab. `submit` is creator-only on the Backend, so in practice the
-	// admin who started the job is the one who accepts it.
+	// Superseded by F16: promoting a generated draft to live now happens in
+	// the editor's "Publish as live version" (B17 `POST
+	// /library/versions/{id}/publish`), so the Tracks panel links to the
+	// editor instead of calling this. Kept for now in case a direct promote
+	// path is wanted again; nothing in the UI invokes it.
 	promoteGeneratedVersion: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const pieceId = String(form.get('pieceId') ?? '');

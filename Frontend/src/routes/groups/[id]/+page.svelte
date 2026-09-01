@@ -134,11 +134,11 @@
 	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
 	// Tracks tab (admin only): "Generate music from PDF" — in-flight flags for
-	// starting a job, and for accepting / discarding the draft a finished job
-	// leaves on the track. Not keyed by piece id: the whole block only renders
-	// inside the one open edit panel (`editingDetailsPieceId`).
+	// starting a job and for discarding the draft a finished job leaves on the
+	// track. Promoting the draft to live now happens in the editor's "Publish
+	// as live version" (F16), not from here. Not keyed by piece id: the whole
+	// block only renders inside the one open edit panel (`editingDetailsPieceId`).
 	let generatingFromPdf = $state(false);
-	let promotingGenerated = $state(false);
 	let discardingGenerated = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
@@ -519,38 +519,32 @@
 								{@const omrJob = track.latest_omr_job}
 								<div class="generate-from-pdf">
 									{#if omrJob?.status === 'pending' || omrJob?.status === 'running'}
-										<p class="card-note">{m.groups_generate_in_progress()}</p>
+										<p class="card-note">
+											{#if omrJob.status === 'running' && omrJob.pages_total}
+												{m.groups_generate_page_progress({
+													done: omrJob.pages_done ?? 0,
+													total: omrJob.pages_total
+												})}
+											{:else}
+												{m.groups_generate_in_progress()}
+											{/if}
+										</p>
 									{:else if track.pending_generated_version_id}
 										<p class="card-eyebrow">{m.groups_generate_draft_ready()}</p>
 										{#if omrJob?.needs_review}
 											<p class="card-note">{m.groups_generate_needs_review()}</p>
 										{/if}
 										<div class="btn-row">
-											<form
-												method="POST"
-												action="?/promoteGeneratedVersion"
-												use:enhance={withSubmitting(
-													(v) => (promotingGenerated = v),
-													() => (editingDetailsPieceId = null)
-												)}
-											>
-												<input type="hidden" name="pieceId" value={track.piece_id} />
-												<input type="hidden" name="versionId" value={track.pending_generated_version_id} />
-												<button
-													type="submit"
-													class="btn btn-outline"
-													disabled={promotingGenerated || discardingGenerated}
-												>
-													{promotingGenerated ? m.groups_generating() : m.groups_generate_use_it()}
-												</button>
-											</form>
+											<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/edit`)}>
+												{m.groups_generate_open_editor()}
+											</a>
 											<ConfirmButton>
 												{#snippet trigger(start)}
 													<button
 														type="button"
 														class="text-link text-link--danger"
 														onclick={start}
-														disabled={promotingGenerated || discardingGenerated}
+														disabled={discardingGenerated}
 													>
 														{m.groups_generate_discard()}
 													</button>
@@ -572,6 +566,7 @@
 												{/snippet}
 											</ConfirmButton>
 										</div>
+										<p class="card-note">{m.groups_generate_open_editor_hint()}</p>
 									{:else}
 										{#if omrJob?.status === 'failed'}
 											<p class="error">{m.groups_generate_failed({ error: omrJob.error_message ?? '' })}</p>
@@ -595,11 +590,12 @@
 								</div>
 							{/if}
 
-							<!-- F14: open the in-app notation editor on this track's
-							     current music file. Only shown when there's a music
-							     file to correct; the editor route re-checks admin
-							     access server-side and the Backend re-checks on save. -->
-							{#if track.has_music}
+							<!-- F14/F16: open the in-app notation editor on this track.
+							     Hidden while a generated draft is pending — that block
+							     above already links to the editor for its working
+							     draft. The editor route re-checks admin access
+							     server-side and the Backend re-checks on save/publish. -->
+							{#if track.has_music && !track.pending_generated_version_id}
 								<div class="edit-music-row">
 									<a class="text-link" href={lh(`/piece/${track.piece_id}/edit`)}>
 										{track.latest_omr_job?.needs_review
