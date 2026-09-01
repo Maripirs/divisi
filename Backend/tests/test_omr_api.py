@@ -491,7 +491,11 @@ def _fake_run_omr_paged(monkeypatch, *, needs_review=True, seg_paths=None):
                     "reason": "page 3 has 5 part(s), the run before it had 4",
                 }
             ],
-            "pages": [{"page": p, "ok": True, "error": None} for p in (1, 2, 3)],
+            "pages": [
+                {"page": 1, "ok": True, "error": None, "start_measure": 1, "measure_count": 3},
+                {"page": 2, "ok": True, "error": None, "start_measure": 4, "measure_count": 3},
+                {"page": 3, "ok": True, "error": None, "start_measure": 7, "measure_count": 3},
+            ],
         }
         (output_dir / "paged-report.json").write_text(json.dumps(report_dict), encoding="utf-8")
         return mx, mid, PagedReport(needs_review=needs_review, output_dir=output_dir)
@@ -535,6 +539,12 @@ def test_paged_report_route_rewrites_segment_paths_to_urls(client, monkeypatch):
     assert report["segments"][1]["midi_url"] == f"/omr/jobs/{job_id}/segments/2/midi"
     assert "musicxml" not in report["segments"][0]  # storage path never leaves the server
     assert report["unresolved_boundaries"][0]["merged_measure"] == 7
+    # B18: per-page measure offsets into the provisional merge pass through.
+    assert [(p["start_measure"], p["measure_count"]) for p in report["pages"]] == [
+        (1, 3),
+        (4, 3),
+        (7, 3),
+    ]
 
 
 def test_segment_download_serves_the_file(client, monkeypatch):

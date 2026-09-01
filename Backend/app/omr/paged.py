@@ -63,6 +63,13 @@ class PageResult:
     ok: bool
     musicxml_path: Path | None = None
     error: str | None = None
+    # Where this page's bars land in the provisional whole-score merge
+    # (`score.musicxml`), same 1-based numbering as `Segment.boundary_measure`.
+    # `_finalize_paged_run` fills these in from the actual merge, so a
+    # failed page gets `measure_count == 0` and a `start_measure` equal to
+    # the next real page's (an anchor for "insert N bars" in Frontend F19).
+    start_measure: int | None = None
+    measure_count: int | None = None
 
 
 @dataclass
@@ -131,7 +138,14 @@ class PagedReport:
                 for s in self.segments[1:]
             ],
             "pages": [
-                {"page": p.page, "ok": p.ok, "error": p.error} for p in self.pages
+                {
+                    "page": p.page,
+                    "ok": p.ok,
+                    "error": p.error,
+                    "start_measure": p.start_measure,
+                    "measure_count": p.measure_count,
+                }
+                for p in self.pages
             ],
         }
 
@@ -209,7 +223,7 @@ def _part_count(page_xml: Path) -> int:
 
 def merge_musicxml(
     page_musicxml: list[tuple[int, Path]], out_path: Path
-) -> tuple[Path, list[str]]:
+) -> tuple[Path, list[str], dict[int, int]]:
     """Force-merge per-page MusicXML files (in page order) into one score
     at `out_path`, matching parts by position and rest-padding short or
     absent ones so every part stays the same length.
@@ -218,10 +232,15 @@ def merge_musicxml(
     count and this is exact; and for the whole-score *provisional* merge,
     where it papers over the boundaries `run_omr_paged` chose not to
     resolve. `page_musicxml` is `(page_number, xml_path)` pairs. Returns
-    `(out_path, notes)`."""
+    `(out_path, notes, per_page_measures)` — `per_page_measures` maps each
+    input page number to how many bars it contributed to this merge (0 for
+    a page with no detectable measures), so the caller can tile page
+    offsets over the result. `sum(per_page_measures.values())` equals the
+    measure count of `out_path`."""
     merged = stream.Score()
     canonical: list[stream.Part] = []
     review: list[str] = []
+    per_page_measures: dict[int, int] = {}
     prev_part_count: int | None = None
     # Measures every canonical part is expected to hold after each page,
     # so a part that first shows up on a later page can be back-filled to
@@ -237,6 +256,7 @@ def merge_musicxml(
         page_len = max(page_measure_counts, default=0)
         if page_len == 0:
             review.append(f"page {page_no}: no measures detected, skipped in merge")
+            per_page_measures[page_no] = 0
             continue
 
         if prev_part_count is not None and len(page_parts) != prev_part_count:
@@ -284,6 +304,7 @@ def merge_musicxml(
             for _ in range(page_len - got):
                 cp.append(_full_measure_rest(0))
 
+        per_page_measures[page_no] = page_len
         total_measures += page_len
 
     # Cumulative, gap-free measure numbers.
@@ -297,7 +318,7 @@ def merge_musicxml(
     # stitched score both wastes time and crashes on measures whose
     # duration doesn't match their contents (common in a rough OMR page).
     merged.write("musicxml", fp=str(out_path), makeNotation=False)
-    return out_path, review
+    return out_path, review, per_page_measures
 
 
 def _page_len(page_xml: Path) -> int:
@@ -387,6 +408,21 @@ def _split_page_pdf(output_dir: Path, page: int) -> Path:
     return output_dir / "pages" / f"page-{page:02d}.pdf"
 
 
+def _assign_page_offsets(pages: list[PageResult], per_page_measures: dict[int, int]) -> None:
+    """Set `start_measure` (1-based) / `measure_count` on every page from
+    `per_page_measures` (page number -> bars it put into the provisional
+    whole-score merge). Walking in page order makes the offsets tile the
+    merge with no gaps or overlaps; a page absent from the map (it failed,
+    or the merge dropped it) counts 0 and inherits the running offset, so
+    its `start_measure` is exactly where the next real page begins."""
+    running = 1
+    for p in pages:
+        count = per_page_measures.get(p.page, 0)
+        p.start_measure = running
+        p.measure_count = count
+        running += count
+
+
 def _finalize_paged_run(
     report: PagedReport, output_dir: Path
 ) -> tuple[Path | None, Path | None]:
@@ -404,20 +440,21 @@ def _finalize_paged_run(
 
     def _safe_merge(
         pairs: list[tuple[int, Path]], xml_out: Path, midi_name: str
-    ) -> tuple[Path | None, Path | None, str | None]:
+    ) -> tuple[Path | None, Path | None, str | None, dict[int, int]]:
         """Merge + derive MIDI, but never let one bad page abort the run.
-        Returns `(musicxml, midi, error)` — paths None and error set when
-        the merge or MIDI step blew up on malformed OMR output."""
+        Returns `(musicxml, midi, error, per_page_measures)` — paths None
+        and error set when the merge or MIDI step blew up on malformed OMR
+        output; `per_page_measures` is empty then too."""
         try:
-            mx, _ = merge_musicxml(pairs, xml_out)
+            mx, _, per_page = merge_musicxml(pairs, xml_out)
         except Exception as exc:  # noqa: BLE001
-            return None, None, f"merge failed: {exc}"
+            return None, None, f"merge failed: {exc}", {}
         try:
             _musicxml_to_midi(mx, xml_out.parent)  # writes <dir>/score.mid
             md = (xml_out.parent / "score.mid").replace(xml_out.parent / midi_name)
         except Exception as exc:  # noqa: BLE001
-            return mx, None, f"MIDI derivation failed: {exc}"
-        return mx, md, None
+            return mx, None, f"MIDI derivation failed: {exc}", per_page
+        return mx, md, None, per_page
 
     # Old segment files from a prior run would mislead the report if this
     # run produces fewer segments — clear and rewrite.
@@ -427,7 +464,7 @@ def _finalize_paged_run(
     segments = _segment_pages(report.pages)
     for seg in segments:
         seg_pairs = [(pg, page_xml[pg]) for pg in seg.pages]
-        mx, md, err = _safe_merge(
+        mx, md, err, _ = _safe_merge(
             seg_pairs,
             seg_dir / f"segment-{seg.index:02d}.musicxml",
             f"segment-{seg.index:02d}.mid",
@@ -444,11 +481,16 @@ def _finalize_paged_run(
     )
 
     report.combined_error = None
-    musicxml_path, midi_path, combined_err = _safe_merge(
+    musicxml_path, midi_path, combined_err, page_measures = _safe_merge(
         good_pairs, output_dir / "score.musicxml", "score.mid"
     )
     if combined_err:
         report.combined_error = combined_err
+
+    # Tile the provisional whole-score merge across every page (failed
+    # ones included) so Frontend F19 can scroll to a page's bar range
+    # without counting `<measure>`s itself.
+    _assign_page_offsets(report.pages, page_measures)
 
     (output_dir / "paged-report.json").write_text(
         json.dumps(report.as_dict(), indent=2), encoding="utf-8"

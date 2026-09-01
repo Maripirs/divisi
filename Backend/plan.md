@@ -76,6 +76,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
 | B16 | Paged OMR pipeline (per-page transcribe + merge) | ⏳ Claude tasks done (full suite 181 green); human hasn't run a real multi-page scan through it. Migration `d2f8a6c4e1b9` not yet on production — reaches prod only via merge to `main` (its parent `c1f7a4d2e8b6` is already on prod + `main` as of 2026-08-31, see Log) |
 | B17 | Working-draft slot + per-page OMR progress & re-run | ⏳ Claude tasks done (202 green); human hasn't run a real multi-page scan + re-run through it. Migration `e7b1c9d3a2f4` not on production — reaches prod only via merge to `main` |
+| B18 | Per-page measure offsets in the paged report | ✅ Built 2026-09-01 (`pytest` 205 green); no migration, report-shape only. Feeds Frontend F19 |
 
 ### B1 — Backend scaffold [x]
 
@@ -591,6 +592,57 @@ pile of unrelated `draft` rows.
 - [ ] Migration reaches prod only by merge to `main` (same rule as
       `d2f8a6c4e1b9` — see the 2026-08-31 outage Log entry).
 
+### B18 — Per-page measure offsets in the paged report [x]
+
+Feeds `Frontend/plan.md`'s **F19** (page-by-page review of a generated draft).
+F19's editor needs to map each source page to its measure range in the
+provisional whole-score merge, to scroll + highlight that range while the admin
+approves the page. The report already has segments → page lists and a
+`boundary_measure` per segment, but nothing per *page*, so the frontend would
+otherwise have to fetch all N `pages/pNN/page.musicxml` and count `<measure>`s.
+
+**Decisions:**
+- Report-shape change only — no new column, no migration. `paged-report.json` is
+  rewritten by `rerun_page` already, so a re-run keeps the offsets current.
+- Offsets are into the **provisional whole-score merge** (`score.musicxml`), the
+  same coordinate system as `boundary_measure`, so F19 can reconcile the two.
+- A failed page contributes 0 measures and gets `measure_count: 0` with
+  `start_measure` pointing at where it *would* begin (so "insert N bars" in F19
+  has an anchor).
+
+**Acceptance criteria:**
+- [x] `GET /omr/jobs/{id}/paged-report` returns `start_measure` (1-based) and
+      `measure_count` on every entry of `pages[]`; they tile the merge with no
+      gaps or overlaps and `sum(measure_count) == <measures in score.musicxml>`.
+- [x] A failed page has `measure_count: 0` and a `start_measure` equal to the
+      next real page's `start_measure`.
+- [x] `rerun_page` rewrites the offsets when a recovered page changes measure
+      counts downstream.
+- [x] `pytest` green (new assertions in `test_omr_paged.py` / `test_omr_api.py`).
+
+**Tasks — Claude:**
+- [x] `app/omr/paged.py`: `merge_musicxml` now returns a third value,
+      `per_page_measures` (page number -> bars it contributed to that merge;
+      `sum ==` the merged score's measure count). `_finalize_paged_run` feeds
+      the *whole-score* merge's map to a new `_assign_page_offsets`, which walks
+      `report.pages` in order setting `start_measure` / `measure_count` on every
+      `PageResult` (failed pages included — count 0, `start_measure` inherits
+      the running offset so it equals the next real page's). `rerun_page` goes
+      through `_finalize_paged_run`, so offsets are rewritten on a re-run.
+- [x] `PagedReport.as_dict()`'s `pages[]` entries emit the two fields;
+      `PageResult` gained `start_measure` / `measure_count`. The paged-report
+      route returns the dict as-is, so no `app/api/schemas/omr.py` change was
+      needed (that route has no pydantic model — it rewrites segment paths to
+      URLs dynamically); the shape is documented on `PageResult` / `as_dict`.
+- [x] Tests: `test_omr_paged.py` — `merge_musicxml` per-page-count return,
+      offsets tile the provisional merge + sum to its measure count,
+      failed-page zero-count at the next page's start, `rerun_page` rewrites
+      downstream offsets (on disk too). `test_omr_api.py` — the stub report
+      carries the fields and the route passes them through.
+
+**Tasks — Human:**
+- [ ] None beyond F19's end-to-end pass (no migration, no deploy gate).
+
 ## Backlog
 
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
@@ -610,6 +662,10 @@ pile of unrelated `draft` rows.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-01: **B18 built — Claude tasks.** Per-page measure offsets in the paged report, for Frontend F19. `merge_musicxml` now returns a third value — `per_page_measures`, mapping each input page to the bars it contributed to that merge (0 for a page with no detectable measures; the sum equals the merged score's measure count). `_finalize_paged_run` passes the *whole-score* provisional merge's map to a new `_assign_page_offsets`, which walks `report.pages` in order and sets `start_measure` (1-based) / `measure_count` on every `PageResult` — failed pages included, at count 0 with `start_measure` inheriting the running offset (so it equals the next real page's, an "insert N bars" anchor). `PageResult` gained the two fields; `PagedReport.as_dict()`'s `pages[]` emits them. `rerun_page` runs through `_finalize_paged_run`, so a recovered page's new bar count rewrites every downstream page's `start_measure` in `paged-report.json`. No schema change — the paged-report route returns the dict unmodeled (it rewrites segment paths to URLs at request time). No column, no migration; nothing for the human beyond F19's end-to-end pass. `pytest` 205/205 (+3 in `test_omr_paged.py`, plus assertions in existing paged tests).
+
+- 2026-09-01: **Designed B18** with the human — feeds Frontend F19 (page-by-page draft review). F19's editor needs each source page's measure range in the provisional whole-score merge to scroll + highlight it during per-page approval; the paged report has per-segment `boundary_measure` but nothing per page. B18 adds `start_measure` / `measure_count` to `PagedReport.pages[]`, computed during `merge_musicxml`'s existing 1..N renumber. Report-shape only — no column, no migration; `rerun_page` already rewrites the report so offsets stay current. Not started.
 
 - 2026-08-31: **B17 built — Claude tasks.** Working-draft slot: `services/pieces.py` gains `working_draft` (the open `draft`/`modification` version — B8's `pending_generated_version_id` is now a thin wrapper), `live_version` (a group piece's latest `distributed`, else newest non-rejected), `get_or_create_working_draft` (content-copies the live version's music + PDF via `save_file(load_file(...))`, idempotent), `replace_version_file` (in-place, drops the render cache), `publish_version` (draft → `approved` + reviewed_by/at + `seams_resolved_ack`, then a `Distribution` row for a group piece — walks the same statuses as submit/approve/distribute without the per-endpoint "creator only" submit check). Routes in `library.py`: `POST /pieces/{id}/working-draft` (review authority, returns `WorkingDraftOut{version, forked_from_live}`), `PUT /versions/{id}/file` (creator or review authority, 409 on a non-draft), `POST /versions/{id}/publish` (`{seams_resolved}`; `false` → 409, non-working-draft → 409, not review authority → 403). `_import_draft_version` now rejects an existing open working draft before importing the new one (never two open). Per-page OMR: `OmrJob.pages_done`/`pages_total` + `run_omr_paged(on_page_done=…)` callback bumping+committing the job row per page; `app/omr/paged.py` refactored into `_transcribe_page` + `_finalize_paged_run` so `rerun_page(output_dir, page_no)` re-runs one page from the on-disk split PDF (`pages/page-NN.pdf`) and rebuilds segments/merges/`paged-report.json`; each page's normalized XML now lands at a deterministic `pages/pNN/page.musicxml`. `needs_review` now also true whenever any page failed (was only `len(segments) > 1`). Routes: `POST /omr/jobs/{id}/pages/{n}/rerun` → `OmrPageRerunOut{ok, still_failed, measure_count, page_musicxml_url}` + `GET /omr/jobs/{id}/pages/{n}/musicxml`. New migration `e7b1c9d3a2f4` (chains off `d2f8a6c4e1b9`; `omr_jobs.pages_done`/`pages_total` + `piece_versions.seams_resolved_ack`) — **not run against prod from this branch** (2026-08-31 outage rule; reaches prod only by merge to `main`). `pytest` 202/202 (+21). Feeds Frontend F16.
 

@@ -42,7 +42,7 @@ def test_merge_renumbers_measures_end_to_end(tmp_path):
     p1 = _write_score(tmp_path / "p1.musicxml", parts=2, measures=3)
     p2 = _write_score(tmp_path / "p2.musicxml", parts=2, measures=2)
 
-    out, _ = merge_musicxml([(1, p1), (2, p2)], tmp_path / "merged.musicxml")
+    out, _, per_page = merge_musicxml([(1, p1), (2, p2)], tmp_path / "merged.musicxml")
 
     merged = converter.parse(str(out))
     parts = list(merged.parts)
@@ -50,13 +50,16 @@ def test_merge_renumbers_measures_end_to_end(tmp_path):
     for part in parts:
         numbers = [m.number for m in part.getElementsByClass(stream.Measure)]
         assert numbers == [1, 2, 3, 4, 5]
+    # Per-page bar counts tile the merged score.
+    assert per_page == {1: 3, 2: 2}
+    assert sum(per_page.values()) == 5
 
 
 def test_merge_rest_pads_a_part_that_appears_late(tmp_path):
     p1 = _write_score(tmp_path / "p1.musicxml", parts=2, measures=2)
     p2 = _write_score(tmp_path / "p2.musicxml", parts=3, measures=2)
 
-    out, notes = merge_musicxml([(1, p1), (2, p2)], tmp_path / "merged.musicxml")
+    out, notes, _ = merge_musicxml([(1, p1), (2, p2)], tmp_path / "merged.musicxml")
 
     merged = converter.parse(str(out))
     parts = list(merged.parts)
@@ -237,3 +240,60 @@ def test_rerun_page_out_of_range_raises(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError):
         rerun_page(out, 9)
+
+
+# --- B18: per-page measure offsets in the report ----------------------
+
+
+def _report_pages(report) -> list[dict]:
+    return report.as_dict()["pages"]
+
+
+def test_page_offsets_tile_the_provisional_merge(tmp_path, monkeypatch):
+    _stub_engine(monkeypatch, {1: (4, 3), 2: (4, 2), 3: (4, 4)})
+
+    mx, _mid, report = run_omr_paged(tmp_path / "src.pdf", tmp_path / "out")
+
+    pages = _report_pages(report)
+    assert [(p["start_measure"], p["measure_count"]) for p in pages] == [
+        (1, 3),
+        (4, 2),
+        (6, 4),
+    ]
+    # No gaps or overlaps: each page starts where the previous one ended.
+    for prev, nxt in zip(pages, pages[1:]):
+        assert nxt["start_measure"] == prev["start_measure"] + prev["measure_count"]
+    # And the counts sum to the measure count of `score.musicxml`.
+    merged = converter.parse(str(mx))
+    merge_len = max(len(p.getElementsByClass(stream.Measure)) for p in merged.parts)
+    assert sum(p["measure_count"] for p in pages) == merge_len
+
+
+def test_failed_page_gets_zero_count_at_the_next_pages_start(tmp_path, monkeypatch):
+    _stub_engine(monkeypatch, {1: (4, 3), 3: (4, 3)}, total=3)  # page 2 fails
+
+    _mx, _mid, report = run_omr_paged(tmp_path / "src.pdf", tmp_path / "out")
+
+    by_page = {p["page"]: p for p in _report_pages(report)}
+    assert by_page[2]["measure_count"] == 0
+    assert by_page[2]["start_measure"] == by_page[3]["start_measure"] == 4
+
+
+def test_rerun_page_rewrites_downstream_offsets(tmp_path, monkeypatch):
+    layout = {1: (4, 3), 3: (4, 2)}  # page 2 fails on the first run
+    _stub_engine(monkeypatch, layout, total=3)
+    out = tmp_path / "out"
+
+    _mx, _mid, report = run_omr_paged(tmp_path / "src.pdf", out)
+    before = {p["page"]: p["start_measure"] for p in _report_pages(report)}
+    assert before == {1: 1, 2: 4, 3: 4}
+
+    layout[2] = (4, 4)  # now page 2 transcribes with 4 bars
+    _new_pr, rebuilt = rerun_page(out, 2)
+
+    pages = {p["page"]: p for p in _report_pages(rebuilt)}
+    assert (pages[2]["start_measure"], pages[2]["measure_count"]) == (4, 4)
+    # Page 3 shifted from bar 4 to bar 8 now that page 2 contributes 4 bars.
+    assert pages[3]["start_measure"] == 8
+    on_disk = json.loads((out / "paged-report.json").read_text())
+    assert [p["start_measure"] for p in on_disk["pages"]] == [1, 4, 8]
