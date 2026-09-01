@@ -37,11 +37,17 @@
 		rendering = $bindable(false),
 		selectedOnset = undefined,
 		playbackWholeNotes = undefined,
+		seams = [],
 		onPickNote = undefined,
 		fill = false
 	}: {
 		xml: string;
 		scoreTheme?: ResolvedTheme;
+		// F15: page joins a B16 paged OMR run wasn't sure how to merge, each
+		// at an absolute whole-note onset in the working model with a short
+		// human-readable reason. The view draws a labelled rule at each so an
+		// admin can find and fix the seam. Pure overlay — never part of `xml`.
+		seams?: { onsetWholeNotes: number; reason: string }[];
 		// When true, the view grows to fill its parent (a flex column) and
 		// the score itself becomes the only scroll region, instead of the
 		// default fixed `max-height`. Used by the full-screen editor shell.
@@ -310,6 +316,10 @@
 				renderedOnce = true;
 				// A fresh sheet: the first system counts as "changed" again.
 				lastCursorSystemTop = undefined;
+				// Measure seam positions before parking the cursor — both walk
+				// the shared cursor, so seams first, then `placeCursor()` puts
+				// it back on the selection/playback position.
+				measureSeams();
 				// OSMD rebuilds the cursor with the sheet, so re-place it
 				// (playback or selection) after every re-engrave.
 				placeCursor();
@@ -334,6 +344,7 @@
 		osmd.Zoom = level;
 		osmd.render();
 		lastCursorSystemTop = undefined;
+		measureSeams();
 		placeCursor();
 	});
 
@@ -359,6 +370,53 @@
 		placeCursor();
 	});
 
+	// MARK: - Seam markers (F15)
+
+	// Content-space positions (px within the scrolling `.score-container`) of
+	// each seam, recomputed after every re-engrave / zoom / theme change and
+	// when `seams` itself changes — not on cursor moves, so playback doesn't
+	// thrash it. Measured by transiently walking the shared cursor to each
+	// seam onset; `placeCursor()` must run afterwards to put the cursor back.
+	let seamMarks = $state<{ key: string; top: number; left: number; height: number; reason: string }[]>(
+		[]
+	);
+
+	function measureSeams(): void {
+		const cursor = osmd?.cursor;
+		if (!cursor || !renderedOnce || !container || seams.length === 0) {
+			seamMarks = [];
+			return;
+		}
+		const box = container.getBoundingClientRect();
+		const marks: typeof seamMarks = [];
+		for (const seam of seams) {
+			cursor.show();
+			cursor.reset();
+			walkCursorTo(seam.onsetWholeNotes);
+			const el = cursor.cursorElement;
+			if (!el) continue;
+			const r = el.getBoundingClientRect();
+			marks.push({
+				key: `${seam.onsetWholeNotes}:${seam.reason}`,
+				top: r.top - box.top + container.scrollTop,
+				left: r.left - box.left + container.scrollLeft,
+				height: r.height || 48,
+				reason: seam.reason
+			});
+		}
+		seamMarks = marks;
+	}
+
+	// Recompute seam positions when the seam set changes (a fresh report, or
+	// an edit shifted onsets). Re-engrave/zoom/theme are handled inline in
+	// their own effects so `measureSeams()` and `placeCursor()` stay ordered.
+	$effect(() => {
+		void seams;
+		if (!osmd || !renderedOnce) return;
+		measureSeams();
+		placeCursor();
+	});
+
 	function zoomBy(delta: number): void {
 		zoom = clampZoom(zoom + delta);
 	}
@@ -374,7 +432,18 @@
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
-	<div class="score-container" bind:this={container}></div>
+	<div class="score-container" bind:this={container}>
+		{#each seamMarks as mark (mark.key)}
+			<div
+				class="seam-mark"
+				style:top="{mark.top}px"
+				style:left="{mark.left}px"
+				style:height="{mark.height}px"
+			>
+				<span class="seam-flag">{mark.reason}</span>
+			</div>
+		{/each}
+	</div>
 	{#if loadError}
 		<p class="error">{m.piece_editor_score_render_failed()}</p>
 	{/if}
@@ -461,11 +530,38 @@
 		touch-action: pan-x pan-y;
 		/* Noteheads are clickable to select; hint it across the sheet. */
 		cursor: pointer;
+		/* Anchor for the absolutely-positioned seam markers (F15). They live
+		   in this scrolling box, so they scroll with the engraving. */
+		position: relative;
 	}
 	.score-container :global(svg) {
 		display: block;
 		min-width: 100%;
 		background: var(--score-page);
+	}
+
+	/* F15: a labelled rule at each unresolved page join from a paged OMR
+	   run. `pointer-events: none` so it never blocks a notehead click. */
+	.seam-mark {
+		position: absolute;
+		width: 0;
+		border-left: 2px dashed var(--danger);
+		pointer-events: none;
+		z-index: 2;
+	}
+	.seam-flag {
+		position: absolute;
+		top: 0;
+		left: 0.25rem;
+		max-width: 16rem;
+		padding: 0.1rem 0.4rem;
+		border-radius: var(--radius-sm);
+		background: var(--danger);
+		color: var(--danger-contrast, #fff);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		line-height: 1.3;
+		white-space: normal;
 	}
 
 	.error {

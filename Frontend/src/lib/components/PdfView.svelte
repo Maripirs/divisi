@@ -757,13 +757,66 @@
 	function resetZoom(): void {
 		zoom = 1;
 	}
+
+	// --- Click-drag panning (mouse) ---
+	// Grab-and-drag to move around the page, the way a desktop PDF viewer
+	// works — most useful when zoomed in past the container. Mouse only:
+	// touch already pans natively (`touch-action: pan-x pan-y`) and pinches
+	// via the `pinchZoom` action, and a finger-drag that also scrolled here
+	// would fight that. Skipped while a markup tool is armed (the overlay
+	// owns that drag, to draw) and when the press lands on a control or an
+	// editable mark.
+	let panning = $state(false);
+	let panOrigin = { x: 0, y: 0, left: 0, top: 0 };
+
+	function handlePanPointerDown(event: PointerEvent): void {
+		if (event.pointerType !== 'mouse' || event.button !== 0) return;
+		if (annotationMode && tool !== null) return;
+		if ((event.target as Element | null)?.closest('button, input, .text-editor, .text-mark--editable')) {
+			return;
+		}
+		const overflowsX = container.scrollWidth > container.clientWidth;
+		const overflowsY = container.scrollHeight > container.clientHeight;
+		if (!overflowsX && !overflowsY) return;
+		panning = true;
+		panOrigin = {
+			x: event.clientX,
+			y: event.clientY,
+			left: container.scrollLeft,
+			top: container.scrollTop
+		};
+		container.setPointerCapture(event.pointerId);
+		event.preventDefault();
+	}
+
+	function handlePanPointerMove(event: PointerEvent): void {
+		if (!panning) return;
+		container.scrollLeft = panOrigin.left - (event.clientX - panOrigin.x);
+		container.scrollTop = panOrigin.top - (event.clientY - panOrigin.y);
+	}
+
+	function endPan(event: PointerEvent): void {
+		if (!panning) return;
+		panning = false;
+		if (container.hasPointerCapture(event.pointerId)) {
+			container.releasePointerCapture(event.pointerId);
+		}
+	}
 </script>
 
 <div class="pdf-view">
+	<!-- Scroll region; the pointer handlers add mouse click-drag panning as a
+	     progressive enhancement over the native scroll, no role needed. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="pdf-container"
+		class:panning
 		bind:this={container}
 		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z) }}
+		onpointerdown={handlePanPointerDown}
+		onpointermove={handlePanPointerMove}
+		onpointerup={endPan}
+		onpointercancel={endPan}
 	>
 		{#if loading}
 			<div class="status-card">
@@ -1073,6 +1126,12 @@
 		overflow: auto;
 		background: var(--score-page, var(--surface-2));
 		touch-action: pan-x pan-y;
+		cursor: grab;
+	}
+
+	.pdf-container.panning {
+		cursor: grabbing;
+		user-select: none;
 	}
 
 	.pdf-page {

@@ -14,7 +14,22 @@ import type { PageServerLoad } from './$types';
 type EditAccess = {
 	access: 'granted' | 'denied' | 'notFound' | 'unreachable';
 	pieceTitle: string | null;
+	/** Whether this piece has an uploaded PDF, so `+page.svelte` can offer
+	 * the side-by-side reference pane without a probe request. `false` for
+	 * every non-`granted` case (the editor never mounts then anyway). */
+	hasPdf: boolean;
+	/** B16/F15: the OMR job id whose paged run left seams to review, when
+	 * the track's current music came from one. `+page.svelte` fetches its
+	 * `/paged-report` and overlays a marker at each unresolved page join.
+	 * Null when the music wasn't OMR'd, or the paged run merged cleanly. */
+	pagedReportJobId: string | null;
 };
+
+/** The OMR job id to pull a paged report from for this track, or null. */
+function pagedReportJobId(entry: LibraryEntryOut): string | null {
+	const job = entry.latest_omr_job;
+	return job && job.paged && job.needs_review ? job.id : null;
+}
 
 /** Edit authority mirrors the Backend's own `_require_review_authority`
  * (`Backend/app/api/routes/library.py`): the owner of a personal
@@ -39,7 +54,7 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 		// either way, same as the player's `resolve/+server.ts`.
 		const entries = await backendJson<LibraryEntryOut[]>(token, '/library/pieces', undefined, fetchFn);
 		const entry = entries.find((e) => e.piece_id === pieceId);
-		if (!entry) return { access: 'notFound', pieceTitle: null };
+		if (!entry) return { access: 'notFound', pieceTitle: null, hasPdf: false, pagedReportJobId: null };
 
 		if (entry.owner_type === 'user') {
 			// Personal piece: only its owner may edit. The caller's own id is
@@ -47,9 +62,12 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 			// unverified decode on its cold-start path), so no extra
 			// `/auth/me` round trip is needed just for an id compare.
 			const userId = subjectFromToken(token);
+			const granted = userId !== null && entry.owner_id === userId;
 			return {
-				access: userId !== null && entry.owner_id === userId ? 'granted' : 'denied',
-				pieceTitle: entry.title
+				access: granted ? 'granted' : 'denied',
+				pieceTitle: entry.title,
+				hasPdf: entry.has_pdf,
+				pagedReportJobId: granted ? pagedReportJobId(entry) : null
 			};
 		}
 
@@ -59,9 +77,12 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 		// simply won't be found, which is a denial, not an error.
 		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
 		const group = groups.find((g) => g.id === entry.owner_id);
+		const granted = group?.role === 'admin';
 		return {
-			access: group?.role === 'admin' ? 'granted' : 'denied',
-			pieceTitle: entry.title
+			access: granted ? 'granted' : 'denied',
+			pieceTitle: entry.title,
+			hasPdf: entry.has_pdf,
+			pagedReportJobId: granted ? pagedReportJobId(entry) : null
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) {
@@ -70,7 +91,12 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 			// network failure (synthetic 503) degrades to a retry card; any
 			// other answer from the Backend is a real "no".
 			if (err.status === 401) throw redirect(303, lh(`/login?redirectTo=/piece/${pieceId}/edit`));
-			return { access: err.status === 503 ? 'unreachable' : 'denied', pieceTitle: null };
+			return {
+				access: err.status === 503 ? 'unreachable' : 'denied',
+				pieceTitle: null,
+				hasPdf: false,
+				pagedReportJobId: null
+			};
 		}
 		throw err;
 	}

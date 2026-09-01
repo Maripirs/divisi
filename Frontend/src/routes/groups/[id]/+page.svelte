@@ -522,6 +522,9 @@
 										<p class="card-note">{m.groups_generate_in_progress()}</p>
 									{:else if track.pending_generated_version_id}
 										<p class="card-eyebrow">{m.groups_generate_draft_ready()}</p>
+										{#if omrJob?.needs_review}
+											<p class="card-note">{m.groups_generate_needs_review()}</p>
+										{/if}
 										<div class="btn-row">
 											<form
 												method="POST"
@@ -599,9 +602,15 @@
 							{#if track.has_music}
 								<div class="edit-music-row">
 									<a class="text-link" href={lh(`/piece/${track.piece_id}/edit`)}>
-										{m.piece_editor_title()}
+										{track.latest_omr_job?.needs_review
+											? m.groups_generate_review_in_editor()
+											: m.piece_editor_title()}
 									</a>
-									<p class="card-note">{m.piece_editor_entry_hint()}</p>
+									<p class="card-note">
+										{track.latest_omr_job?.needs_review
+											? m.groups_generate_review_hint()
+											: m.piece_editor_entry_hint()}
+									</p>
 								</div>
 							{/if}
 

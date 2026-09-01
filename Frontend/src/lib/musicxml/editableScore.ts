@@ -269,6 +269,28 @@ export class EditableScore {
 		return best;
 	}
 
+	/** Onset (in whole notes, the same unit as `onsetWholeNotes` and OSMD's
+	 * `getAbsoluteTimestamp().RealValue`) where a given 1-based measure
+	 * number begins. Used by F15 to anchor a seam marker at the merged
+	 * measure the Backend's paged report calls a boundary — B16 renumbers
+	 * the provisional merge's measures 1..N gap-free and every part shares
+	 * the count, so `measureIndex === measureNumber - 1` lines up across
+	 * parts. Returns null if the score has no measure that high. */
+	measureOnset(measureNumber: number): number | null {
+		const target = measureNumber - 1;
+		if (target < 0) return null;
+		let atTarget = Number.POSITIVE_INFINITY;
+		let afterTarget = Number.POSITIVE_INFINITY;
+		for (const note of this.notes) {
+			if (note.measureIndex === target) atTarget = Math.min(atTarget, note.onsetWholeNotes);
+			else if (note.measureIndex > target)
+				afterTarget = Math.min(afterTarget, note.onsetWholeNotes);
+		}
+		if (Number.isFinite(atTarget)) return atTarget;
+		if (Number.isFinite(afterTarget)) return afterTarget;
+		return null;
+	}
+
 	/** Move a note by `semitones` (+/- 1 in the editor UI): rewrite
 	 * `<step>`/`<alter>`/`<octave>` and sync the drawn `<accidental>`. */
 	transpose(index: number, semitones: number): void {

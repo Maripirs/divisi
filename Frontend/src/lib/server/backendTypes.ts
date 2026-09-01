@@ -144,7 +144,18 @@ export interface LibraryEntryOut {
 	 * this track, and the id of a draft version a finished job produced and
 	 * that's waiting for an admin to accept or discard it. Both null when
 	 * the feature was never used on this track. */
-	latest_omr_job: { id: string; status: OmrJobStatus; error_message: string | null } | null;
+	latest_omr_job: {
+		id: string;
+		status: OmrJobStatus;
+		error_message: string | null;
+		/** B16: the job transcribed a multi-page PDF page-by-page and
+		 * re-merged. `needs_review` is then true when the pages didn't all
+		 * merge into one segment — the draft is a provisional guess across
+		 * the unresolved page joins, which F15 surfaces as seam markers in
+		 * the editor. */
+		paged: boolean;
+		needs_review: boolean | null;
+	} | null;
 	pending_generated_version_id: string | null;
 }
 
@@ -164,6 +175,39 @@ export interface OmrJobListItem {
 	piece_title: string | null;
 	group_id: string | null;
 	pending_generated_version_id: string | null;
+	/** B16: true when a paged run left more than one segment, i.e. the
+	 * auto-imported draft has page joins a human should review. */
+	needs_review: boolean | null;
 	created_at: string;
 	updated_at: string;
+}
+
+/** `GET /omr/jobs/{id}/paged-report` — the segment / unresolved-boundary /
+ * per-page breakdown of a B16 paged run. Mirrors `app/omr/paged.py`'s
+ * `PagedReport.as_dict()`, with each segment's on-disk path rewritten to a
+ * download URL by the route. */
+export interface PagedReport {
+	total: number;
+	ok: number;
+	failed_pages: number[];
+	needs_review: boolean;
+	combined_error: string | null;
+	segments: {
+		index: number;
+		pages: number[];
+		parts: number;
+		start_reason: string | null;
+		/** 1-based measure number in the provisional whole-score merge where
+		 * this segment begins; null for the first segment. The anchor F15
+		 * maps to an onset to place a seam marker. */
+		boundary_measure: number | null;
+		musicxml_url: string | null;
+		midi_url: string | null;
+	}[];
+	unresolved_boundaries: {
+		before_page: number;
+		merged_measure: number | null;
+		reason: string | null;
+	}[];
+	pages: { page: number; ok: boolean; error: string | null }[];
 }

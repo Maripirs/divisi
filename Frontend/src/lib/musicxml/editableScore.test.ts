@@ -345,3 +345,25 @@ describe('EditableScore.exportMusicXml', () => {
 		expect(out.match(/<!DOCTYPE/g)?.length ?? 0).toBe(1);
 	});
 });
+
+// F15: mapping a paged OMR report's boundary measure number to an onset the
+// editor's seam markers and playback cursor share.
+describe('EditableScore.measureOnset', () => {
+	it('returns the start onset (whole notes) of a 1-based measure number', () => {
+		const score = new EditableScore(ONE_PART); // divisions 1, quarter notes
+		expect(score.measureOnset(1)).toBe(0);
+		expect(score.measureOnset(2)).toBe(1); // measure 1 starts one whole note in
+	});
+
+	it('lines up across parts (every merged part shares the measure count)', () => {
+		const score = new EditableScore(TWO_PARTS); // whole notes, one bar each
+		expect(score.measureOnset(1)).toBe(0);
+		expect(score.measureOnset(2)).toBe(1);
+	});
+
+	it('returns null past the end of the score and for a non-positive number', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.measureOnset(3)).toBeNull();
+		expect(score.measureOnset(0)).toBeNull();
+	});
+});

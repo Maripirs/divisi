@@ -92,6 +92,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31** for in-editor playback — full transport (play/stop, seek, tempo, per-part mix), playback cursor + follow-scroll, note-preview-on-select, full-screen player-style shell: **all Claude tasks done 2026-08-31**, pending the human real-browser pass + acceptance-criteria sign-off. |
+| F15 | Review a segmented OMR result in the editor | ⏳ Built, `check`/`build`-clean, vitest 58 green; seam-marker pixel placement + the whole flow need a real-browser pass (also needs Backend B16 deployed) |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -916,6 +917,69 @@ FluidSynth engine the player route uses).
       an edit mid-playback, and confirm note-preview-on-select sounds
       right
 
+### F15 — Review a segmented OMR result in the editor [~]
+
+Backend B16 adds paged OMR: a multi-page scan is transcribed page-by-page and the
+*obvious* page joins are merged into segments, leaving the non-obvious joins (part
+count changed, a page failed) as **unresolved boundaries**. The job still
+auto-imports one provisional whole-score merge as the draft, plus a stored
+`paged-report.json`. This milestone surfaces that: the group Tracks review block
+tells the admin the draft was stitched from N sections, and the F14 editor
+overlays a marker at each unresolved boundary so they fix the seam right there
+with the existing correction tools instead of round-tripping through MuseScore.
+
+**Decisions:**
+- Seam markers are a pure overlay in `EditorScoreView` — never written into the
+  MusicXML, so a saved draft is clean. Each seam is anchored by mapping the
+  report's merged-measure number to an onset (whole notes) via `EditableScore`,
+  reusing the playback cursor's coordinate system.
+- The backend's boundary "reasons" are English prose; shown as-is for a first
+  cut. Localizing those strings is Backlog.
+- No multi-segment stitching UI (load each segment separately, join/reorder by
+  hand) — the provisional merge + seam markers cover the review need with far
+  less surface. That heavier option stays on the table if seam-fixing proves
+  insufficient.
+
+**Acceptance criteria:**
+- [x] On a group track whose latest OMR job needs review, the Tracks admin panel
+      shows a "stitched from pages, some joins unclear" note and the "Edit music"
+      link becomes "Review seams in editor" — alongside the existing Use it / Discard
+- [~] Opening the editor on such a track draws a labelled marker at each
+      unresolved boundary, at the correct measure, in both themes and after
+      re-render / zoom (built; pixel placement needs a real-browser check)
+- [x] A "Next seam" control cycles through the boundaries with a readout of which
+      one and why; suppressed-while-playing selection-cursor behaviour is unchanged
+- [x] Editing at a seam and saving produces a normal draft version whose
+      MusicXML contains no marker markup (markers are overlay DOM only)
+- [x] `npm run check` (0 errors) / `npm run build` clean; vitest 58 green (new
+      `measureOnset` tests)
+
+**Tasks — Claude:**
+- [x] `backendTypes.ts`: `needs_review` on `OmrJobListItem`, `needs_review`/`paged`
+      on `latest_omr_job`, a `PagedReport` type.
+- [x] `omr/jobs/[id]/paged-report/+server.ts` proxy route (mirrors
+      `omr/jobs/+server.ts`; 401 when logged out rather than an empty body).
+- [x] `groups/[id]` review block: the needs-review note + the "Review seams in
+      editor" relabel of the Edit-music link; new i18n keys (`groups_generate_*`).
+      Per-segment download `<details>` deferred — not needed once the editor
+      handles the seams.
+- [x] `editableScore.ts`: `measureOnset(measureNumber)` + 3 unit tests.
+- [x] `piece/[id]/edit/+page.server.ts`: returns `pagedReportJobId` when the
+      piece's latest OMR job is paged + needs review.
+- [x] `piece/[id]/edit/+page.svelte`: fetches the report, derives the seam list
+      from the live model (keyed on `workingXml` so onsets track edits), passes
+      `seamMarkers` down, adds the "Next seam" control + readout; new i18n keys.
+- [x] `EditorScoreView.svelte`: `seams` prop; `measureSeams()` walks the shared
+      cursor to each seam onset right after `render()` (and on zoom/theme/`seams`
+      change), records content-space px, draws absolutely-positioned `.seam-mark`
+      overlays inside `.score-container`; `placeCursor()` always runs after to
+      restore the selection/playback cursor.
+
+**Tasks — Human:**
+- [ ] In a real browser: run a real multi-page choral scan through Generate from
+      PDF, open the review, confirm the seam markers land where the joins
+      actually are, fix one, save, and confirm the draft is clean and plays.
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -963,6 +1027,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-31: Added and built F15 (review a segmented OMR result in the editor) alongside Backend B16. When a track's music came from a paged OMR run that couldn't merge every page join cleanly, the group Tracks review block says so and relabels "Edit music" → "Review seams in editor"; the editor pulls the job's `paged-report.json` (new `omr/jobs/[id]/paged-report` proxy), maps each unresolved boundary's merged-measure number to an onset via a new `EditableScore.measureOnset()` (keyed on `workingXml` so it tracks edits), and `EditorScoreView` draws an absolutely-positioned labelled rule at each — measured by transiently walking the shared OSMD cursor to the seam onset after each render, then restoring it. A "Next seam" control in the transport strip cycles the boundaries with a reason readout. Markers are overlay DOM only, never in the saved MusicXML. New `piece_editor_seam_*` / `groups_generate_*` keys in en+es. `check` 0 errors, `build` clean, vitest 58 green (+3 `measureOnset`). Seam-marker pixel placement + the end-to-end flow still need a real-browser pass (and B16 deployed).
 
 - 2026-08-31: Added F14 (in-app notation editor for a track's music) as the next milestone at the human's request — the editing counterpart to B8's OMR, so a rough generated score gets corrected in the app instead of via desktop MuseScore. Engine choice (correction-only on our own OSMD/Verovio render vs. adopting an editing library) is deliberately left to a spike, recorded in the milestone.
 - 2026-08-31: F14 spike done — engine decided: **path 1, correction-only editor on OSMD with a MusicXML-DOM editable model** (not Verovio, not an editing library). Throwaway spike at `/spike/f14-editor` + `src/lib/spike/musicXmlEdit.ts` proved click → transpose/delete → `osmd.load()`+`render()` in a real browser (Playwright) against the bundled Elgar fixture. Verovio not prototyped: OSMD cleared every path-1 bar, and Verovio's ~2 MB WASM + MusicXML↔MEI round-trip isn't worth it for a page choir members open on phones. Decision, the four findings (OSMD stays a pure view; click→note needs part-awareness because OSMD numbers staves globally; full re-render ~1.2 s on a 3.7k-note score so debounce; rough edges = re-highlight/chord-delete/accidental-respelling/duration edits), and the paths considered are all written into the F14 milestone. `check`/`build` clean. Spike route/module to be deleted when the real editor lands.

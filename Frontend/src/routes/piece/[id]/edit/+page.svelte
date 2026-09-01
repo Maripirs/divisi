@@ -2,6 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import EditorScoreView from '$lib/components/EditorScoreView.svelte';
+	import PdfView from '$lib/components/PdfView.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -11,6 +12,7 @@
 	import type { MixPart, ParsedMIDI } from '$lib/midi/types';
 	import type { EditableScore, EditableNote, DurationType } from '$lib/musicxml/editableScore';
 	import { loadEditableScore, UnsupportedMusicFileError } from '$lib/musicxml/loadEditableScore';
+	import type { PagedReport } from '$lib/server/backendTypes';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -28,6 +30,14 @@
 	// a navigation between two `/piece/[id]/edit` ids (no remount), so these
 	// have to track `data` rather than freeze its first value.
 	const backToPieceHref = $derived(lh(`/piece/${data.id}`));
+
+	// Side-by-side reference PDF. `data.hasPdf` (resolved server-side) gates
+	// the toggle so there's no probe request; the pane fetches the piece's
+	// current-version PDF through the same proxy the player route uses.
+	// Read-only here — markup lives in the practice player, not the editor.
+	const pdfHref = $derived(`/piece/${data.id}/pdf`);
+	let pdfPaneOpen = $state(false);
+	let pdfZoom = $state(1);
 
 	// F14 task 2: on the `granted` state, fetch the track's current music
 	// file, build the editable model, and render it read-only. Editing
@@ -78,6 +88,74 @@
 	let reRendering = $state(false);
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
 	let scoreView: EditorScoreView | undefined = $state();
+
+	// F15: seam review. When this track's music came from a B16 paged OMR run
+	// that couldn't merge every page join cleanly (`data.pagedReportJobId`),
+	// the run's report lists those joins by merged-measure number. We map
+	// each to an onset in the working model so `EditorScoreView` can draw a
+	// marker there, and offer a "next seam" jump. Onsets can shift as the
+	// admin edits, so the mapping is derived from the live model, keyed on
+	// `workingXml`, not resolved once.
+	let seamBoundaries = $state<{ measure: number; reason: string; page: number }[]>([]);
+	let seamAt = $state(-1); // index of the seam "Next seam" last jumped to
+	const seams = $derived.by(() => {
+		void workingXml; // re-resolve onsets after every edit
+		if (!score || seamBoundaries.length === 0) return [];
+		return seamBoundaries
+			.map((b) => ({ ...b, onsetWholeNotes: score!.measureOnset(b.measure) }))
+			.filter((s): s is { measure: number; reason: string; page: number; onsetWholeNotes: number } =>
+				s.onsetWholeNotes != null
+			)
+			.sort((a, b) => a.onsetWholeNotes - b.onsetWholeNotes);
+	});
+	// Pared to what `EditorScoreView` needs: onset + a short label.
+	const seamMarkers = $derived(
+		seams.map((s) => ({
+			onsetWholeNotes: s.onsetWholeNotes,
+			reason: m.piece_editor_seam_flag({ page: s.page })
+		}))
+	);
+
+	async function loadSeams(): Promise<void> {
+		seamBoundaries = [];
+		seamAt = -1;
+		if (!data.pagedReportJobId) return;
+		try {
+			const res = await fetch(`/omr/jobs/${data.pagedReportJobId}/paged-report`);
+			if (!res.ok) return; // seam hints are a bonus, never block the editor
+			const report = (await res.json()) as PagedReport;
+			seamBoundaries = report.unresolved_boundaries
+				.filter((b) => b.merged_measure != null)
+				.map((b) => ({
+					measure: b.merged_measure as number,
+					reason: b.reason ?? '',
+					page: b.before_page
+				}));
+		} catch {
+			// No overlay; the editor is still fully usable.
+		}
+	}
+
+	// Jump the view to the next seam, cycling. Selecting the nearest note to
+	// the seam onset parks the selection cursor there and follow-scroll
+	// centres it (same machinery the "scroll to cursor" button uses).
+	function goToNextSeam(): void {
+		if (seams.length === 0 || !score) return;
+		seamAt = (seamAt + 1) % seams.length;
+		const target = seams[seamAt];
+		const near = score.findByOnset(target.onsetWholeNotes, {});
+		if (near) {
+			selectByIndex(near.index);
+			previewSelected();
+		}
+		scoreView?.scrollCursorIntoView();
+	}
+
+	// Keep the readout index valid if the seam set shrinks (an edit dropped a
+	// boundary's measure, say).
+	$effect(() => {
+		if (seamAt >= seams.length) seamAt = -1;
+	});
 
 	// F14 reopened: in-editor playback. The audio path is the same one the
 	// player route uses, fed from the working model rather than a file:
@@ -643,6 +721,10 @@
 			selectByIndex(null);
 			dirty = false;
 			phase = 'ready';
+			// F15: if this music came from a paged OMR run with seams, pull the
+			// report and map its boundaries onto the model. Fire-and-forget —
+			// the editor is usable with or without the overlay.
+			void loadSeams();
 		} catch (err) {
 			if (err instanceof UnsupportedMusicFileError) {
 				phase = 'error';
@@ -742,6 +824,20 @@
 
 		{#if data.access === 'granted' && phase === 'ready'}
 			<div class="top-bar-actions">
+				{#if data.hasPdf}
+					<button
+						class="icon-btn"
+						class:icon-btn--active={pdfPaneOpen}
+						onclick={() => (pdfPaneOpen = !pdfPaneOpen)}
+						aria-label={m.piece_editor_pdf_pane()}
+						aria-pressed={pdfPaneOpen}
+					>
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							<rect x="3" y="4" width="8" height="16" rx="1" />
+							<rect x="13" y="4" width="8" height="16" rx="1" />
+						</svg>
+					</button>
+				{/if}
 				<button
 					class="icon-btn"
 					class:icon-btn--active={mixPanelOpen}
@@ -778,6 +874,9 @@
 				</div>
 			</div>
 		{:else if phase === 'ready'}
+			<!-- The editing surface and the optional reference-PDF pane share
+			     this row; the transport bar below stays full width. -->
+			<div class="editor-body" class:editor-body--split={pdfPaneOpen && data.hasPdf}>
 			<!--
 				The editing surface is a custom keyboard-driven widget
 				(`role="application"`): the arrow-key map in `handleKeydown`
@@ -926,6 +1025,7 @@
 						scoreTheme={$resolvedTheme}
 						{selectedOnset}
 						{playbackWholeNotes}
+						seams={seamMarkers}
 						onPickNote={handlePickNote}
 						bind:rendering={reRendering}
 						fill
@@ -938,10 +1038,35 @@
 				</footer>
 			</div>
 
+			{#if pdfPaneOpen && data.hasPdf}
+				<aside class="pdf-pane" aria-label={m.piece_editor_pdf_pane()}>
+					<PdfView pdfUrl={pdfHref} bind:zoom={pdfZoom} active={pdfPaneOpen} />
+				</aside>
+			{/if}
+			</div>
+
 			<!-- F14 reopened: the transport, in the same visual language as the
 			     practice player's bottom bar. Fed from the working model (see
 			     `syncAudioToModel`), not a file. -->
 			<footer class="transport-bar">
+				{#if seams.length > 0}
+					<div class="seam-bar" role="group" aria-label={m.piece_editor_seam_group()}>
+						<button class="seam-next" onclick={goToNextSeam}>
+							{m.piece_editor_seam_next()}
+						</button>
+						<span class="seam-readout" role="status" aria-live="polite">
+							{#if seamAt >= 0 && seamAt < seams.length}
+								{m.piece_editor_seam_counter({
+									n: seamAt + 1,
+									total: seams.length,
+									reason: seams[seamAt].reason
+								})}
+							{:else}
+								{m.piece_editor_seam_hint({ count: seams.length })}
+							{/if}
+						</span>
+					</div>
+				{/if}
 				{#if audioUnavailable}
 					<p class="transport-msg" role="status">{m.piece_editor_transport_unavailable()}</p>
 				{:else if audioParseError}
@@ -1142,6 +1267,13 @@
 		flex-direction: column;
 		background: var(--bg);
 		overscroll-behavior: none;
+		/* A pinch anywhere in the editor must never trigger the browser's
+		   whole-page zoom (which scales the fixed bars too). The score and
+		   PDF containers already block it locally; setting it on the shell
+		   covers the toolbars, top bar, transport bar and every gap between.
+		   Child scroll areas still pan/scroll normally, and the PDF pane's
+		   own pinch-to-zoom (JS-driven) is unaffected. */
+		touch-action: pan-x pan-y;
 	}
 
 	/* Lifted from the player's `.top-bar` so the two read as one place. */
@@ -1291,8 +1423,18 @@
 	   top bar. A visible focus ring still matters: the keyboard map only
 	   works while this holds focus. Ring drawn inset so the fixed edges
 	   don't clip it. */
+	/* Holds the editing surface and, when toggled on, the reference-PDF pane
+	   side by side. The transport bar is a sibling of this, so it stays full
+	   width under both. */
+	.editor-body {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+	}
+
 	.editor-surface {
 		flex: 1 1 auto;
+		min-width: 0;
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
@@ -1300,6 +1442,29 @@
 	.editor-surface:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: -2px;
+	}
+
+	/* The reference PDF, docked to the right of the editing surface. `PdfView`
+	   fills its host (`height: 100%`), so this just needs a definite box. */
+	.pdf-pane {
+		flex: 0 0 clamp(280px, 42%, 620px);
+		min-width: 0;
+		min-height: 0;
+		border-left: 1px solid var(--border);
+		background: var(--surface);
+	}
+
+	/* Narrow viewports can't fit two columns — stack the PDF under the
+	   surface instead, each taking half the height. */
+	@media (max-width: 860px) {
+		.editor-body--split {
+			flex-direction: column;
+		}
+		.editor-body--split .pdf-pane {
+			flex: 1 1 45%;
+			border-left: none;
+			border-top: 1px solid var(--border);
+		}
 	}
 
 	/* The toolbars pin under the top bar; only the score scrolls. */
@@ -1435,6 +1600,35 @@
 		margin: 0;
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	/* F15: the seam-review strip above the transport row. */
+	.seam-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.seam-next {
+		flex-shrink: 0;
+		border: 1px solid var(--danger);
+		background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+		color: var(--danger);
+		border-radius: var(--radius-full);
+		padding: 0.25rem 0.75rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.seam-next:hover {
+		background: color-mix(in srgb, var(--danger) 20%, var(--surface));
+	}
+	.seam-readout {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.play-btn {
