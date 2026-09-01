@@ -92,8 +92,11 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31** for in-editor playback — full transport (play/stop, seek, tempo, per-part mix), playback cursor + follow-scroll, note-preview-on-select, full-screen player-style shell: **all Claude tasks done 2026-08-31**, pending the human real-browser pass + acceptance-criteria sign-off. Playhead reworked + desync fixed 2026-09-01 (see Log), now with a Playwright e2e regression test (`Frontend/e2e/`) — that pass caught and fixed a per-frame `osmd.render()` stall. |
-| F15 | Review a segmented OMR result in the editor | ⏳ Built, `check`/`build`-clean, vitest 58 green; seam-marker pixel placement + the whole flow need a real-browser pass (also needs Backend B16 deployed) |
-| F16 | Working-draft slot: labelled editing, seam-fill, per-page OMR progress & re-run | ⏳ Claude tasks done, `check`/`build`-clean, vitest 67 green; needs the full real-browser pass (generate → edit → fill a failed page → re-run → publish) + Backend B17 deployed |
+| F15 | Review a segmented OMR result in the editor | ⏳ Built, `check`/`build`-clean, vitest 58 green. **Review UX superseded by F19** (page-by-page); seam-onset mapping + markers are kept and reused there |
+| F16 | Working-draft slot: labelled editing, seam-fill, per-page OMR progress & re-run | ⏳ Claude tasks done, `check`/`build`-clean, vitest 67 green. Working-draft slot / save / publish / re-run / insert-bars all kept; the seam-first **review flow is reorganised by F19**. Still needs Backend B17 deployed |
+| F17 | Editor "Measures" mode — select a bar range, change its clef | ⏳ Claude tasks done + first live-test round fixed (bar selection, highlight geometry, clef-row label), `check` 0 errors, vitest 76, e2e 6 green (new `editor-measures.spec.ts`); still wants a human confirm |
+| F18 | Editor undo / redo | ⏳ Claude tasks done — snapshot stack, toolbar buttons, Cmd/Ctrl+Z / Shift+Z / Ctrl+Y, dirty-state tracked back to last save; `check` 0 errors, vitest 89 (+6 `editHistory`), `build` clean; needs a real-browser pass |
+| F19 | Page-by-page review of a generated draft | ⏳ Claude tasks done 2026-09-01, `check`/`build`-clean, vitest 103 green; needs the full real-browser pass (replaces F15's + F16's pending passes). Supersedes the F15/F16 review UX |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1120,6 +1123,244 @@ counters, per-page re-run).
       confirm the live track now plays the corrected music and re-opening the
       editor starts a clean copy.
 
+### F17 — Editor "Measures" mode: select a bar range, change its clef [~]
+
+At the human's request: the editor was one flat surface (click a note, edits pin
+to its measure) with no way to act on a span of bars. Added an explicit
+**Notes / Measures** mode toggle rather than a hidden gesture — a visible
+affordance, no keyboard-map collision with the note-level arrows, and a home for
+the bar-scoped ops that already exist on the model with no UI
+(`insertMeasures`/`deleteMeasure`/`spliceMeasuresFromXml`) and for time-signature
+editing later. Time signature itself was considered and **deferred** here — it
+needs note re-barring with ties.
+
+**Tasks — Claude (done 2026-09-01):**
+- [x] `EditableScore.setClefRange(partId, staff, start, end, spec)` — writes the
+      clef at the range start, strips any other explicit `<clef>` for that staff
+      inside the range, and re-asserts the pre-range clef at `end+1` so later
+      bars are visually unchanged (skipped when that bar has its own clef, the
+      restore equals `spec`, or the range hits the end). No-op / out-of-range /
+      unknown-part all return `false` without mutating. Refactor:
+      `applyClefToMeasure` + `clefInEffectAt` extracted and shared with `setClef`
+      / `clefAt`. New readers `clefAtMeasure`, `measureCount`, `partName`.
+      +13 vitest (jsdom).
+- [x] `EditorScoreView`: `measureMode` + `measureBand` props; in measure mode a
+      click anywhere in a bar is a select (never a click-to-seek) and carries the
+      Shift key; a translucent `.measure-band` overlay per system row, boxes read
+      off `GraphicSheet.MeasureList` (same sheet-unit → px factor as the click
+      hit-testing), recomputed on re-engrave / zoom / theme / band change.
+- [x] `edit/+page.svelte`: `editMode` + `measureSel` ({partId, staff, anchor,
+      start, end}); Notes/Measures segmented control as the first toolbar row;
+      note-level rows hidden in measure mode; the clef row is shared (dispatches
+      to `applyClef` or `applyClefRange`, active pip from `clefAtMeasure`).
+      Click / Shift-click builds the range; keyboard: ←/→ move the bar, Shift+←/→
+      extend from the anchor, Esc back to Notes. Status line + footer hint adapt.
+- [x] en + es i18n (`piece_editor_mode_*`, `piece_editor_measure*_selected`,
+      `piece_editor_measures_hint`, `piece_editor_clef_range_refused`,
+      `piece_editor_clef_for_selection` / `_for_note`, `piece_editor_staff_n`).
+- [x] **Live-test round 1 fixes (2026-09-01):**
+  - Bar selection no longer goes through `EditableScore.findByOnset` — that
+    resolver misfires badly on a part that's tacet at the click's onset (a
+    choral intro: every click resolved to the same bar 11, so the range never
+    grew and clef edits landed in the wrong place, reading as "treble/bass
+    swapped"). `EditorScoreView` now reads the 1-based `measureNumber` straight
+    off OSMD's graphical note (`parentStaffEntry.parentMeasure`) and passes it
+    in the pick; the page uses `measureNumber - 1` directly.
+  - Highlight geometry: a bar's own bbox height collapses to ~1 unit for a
+    rest-only measure, so the band was a 10px sliver. Now uses
+    `ParentStaffLine.StaffHeight` for height, tints only the target staff (not
+    the whole part), one rect per system row a wrapped range crosses, +0.7-unit
+    padding, solid accent border.
+  - `applyClefRange` gives `measureSel` a fresh identity after a successful
+    edit so `selectedMeasureClef` / `measureBand` re-derive (score is mutated
+    in place).
+  - Clef row got a leading label (`Clef for the selected bars:` /
+    `Clef from this bar on:`) so it's clear what the presets act on; the status
+    line names the staff for a multi-staff part.
+- [x] `editor-measures.spec.ts` (4 tests): range select via click + Shift-click,
+      clef-range write + prior-clef restore + active pip, note toolbars hidden
+      in Measures mode + Escape returns.
+- [x] **Live-test round 2 (2026-09-01):** clef readout on a multi-staff part
+      (piano) showed the wrong staff's clef. `clefInEffectAt` /
+      `applyClefToMeasure` / `explicitClefsForStaff` now share one
+      `clefForStaffIn(attr, staff)`: a numbered `<clef>` matched by `number`,
+      else unnumbered `<clef>`s read positionally (1st -> staff 1, 2nd -> staff
+      2) — the old code returned nothing or the staff-1 clef when OMR output
+      omitted `number` on a 2-staff part. `handlePickNote` pins a single-staff
+      part (every SATB voice) to staff 1 and clamps a multi-staff part's staff
+      to `score.staffCount(partId)`. +1 vitest (`TWO_STAVES_UNNUMBERED`).
+      `check` 0 errors, vitest 77.
+      Blocked: the test piece's working draft is corrupt (won't parse —
+      pre-existing, not F17; discard + regenerate to retest the e2e).
+
+**Tasks — Human:**
+- [ ] Real-browser confirm: toggle Measures, click a bar + Shift-click a later
+      one, apply Bass, confirm bars in range switch and the bar after keeps its
+      clef, Save + reload to confirm it persisted, toggle back to Notes.
+
+### F18 — Editor undo / redo [~]
+
+At the human's request. The editor had no undo — a wrong transpose / delete /
+duration / clef edit could only be fixed by hand or by reloading and losing
+everything. Cheap to add because every edit already funnels through `applyEdit` /
+`applyStructuralEdit` / `applyClefRange` and each ends by re-serializing the whole
+model into `workingXml`, so a snapshot of every state already exists; undo just
+keeps a stack of those strings and rebuilds an `EditableScore` from the previous
+one. No command log, no inverse ops.
+
+**Mechanism:**
+- New `$lib/musicxml/editHistory.ts` — `EditHistory`: bounded undo stack + mirror
+  redo stack of `workingXml` strings (`record` / `undo(current)` / `redo(current)`
+  / `reset`, cap 60, oldest falls off). Plain class, no runes, so it unit-tests
+  under the existing node vitest config.
+- `edit/+page.svelte`: the three apply functions snapshot `workingXml` *before*
+  mutating and `record()` it only once the mutation reports success (a refused
+  no-op edit records nothing). `undoEdit` / `redoEdit` pop a snapshot,
+  `new EditableScore(xml)` it (snapshots are always clean `serialize()` output —
+  never MIDI/`.mxl`, so no loader needed), swap it in, clear the selection (indices
+  don't survive a structural undo), and re-render via the existing `xml` prop.
+- Dirty tracking: new `savedXml` = the serialized state as of the last load /
+  save; `dirty` is now `workingXml !== savedXml` everywhere it was set, so undoing
+  all the way back to the saved state clears the unsaved-nav guard instead of
+  leaving the editor falsely dirty.
+- Toolbar: an Undo / Redo group as the second row (under Notes/Measures, shown in
+  both modes), disabled when the matching stack is empty or mid-render/save.
+  Keyboard in `handleKeydown` (both modes, before the mode split): Cmd/Ctrl+Z
+  undo, Cmd/Ctrl+Shift+Z or Ctrl+Y redo.
+- `canUndo` / `canRedo` / `dirty` added to `window.__divisiEditorProbe()` for a
+  future e2e test.
+
+**Tasks — Claude (done 2026-09-01):**
+- [x] `editHistory.ts` + `editHistory.test.ts` (6 vitest: empty, undo→redo
+      round-trip, record clears redo, cap drops oldest, reset).
+- [x] `edit/+page.svelte` wiring (snapshots, `undoEdit`/`redoEdit`/`restoreSnapshot`,
+      `savedXml` dirty tracking, keyboard, toolbar row, probe fields).
+- [x] en + es i18n (`piece_editor_history_label`, `piece_editor_undo`,
+      `piece_editor_redo`).
+- [x] `check` 0 errors, vitest 89 green, `build` clean.
+
+**Tasks — Human:**
+- [ ] Real-browser confirm: make several edits (transpose, delete, duration,
+      clef, insert bars), Undo/Redo through them by button and by keyboard,
+      confirm the score and the dirty state track correctly and Save still works;
+      undo back past the last Save and confirm the unsaved-changes prompt goes away.
+
+### F19 — Page-by-page review of a generated draft [~]
+
+Redesign of the generate → review → publish loop, agreed with the human
+2026-09-01. F15/F16 drop the admin into the merged whole-score draft facing
+scattered seam markers, and never prompt a look at the *interior* of a segment:
+if pages 3–8 merged into one segment, pages 4–7 get no review at all. F19
+replaces that with a deliberate progression — approve each page against its PDF
+source, **then** resolve the joins between them — so "have I checked everything?"
+has an answer.
+
+**Model:**
+- The editor gains a **Review** panel, on by default when the working draft came
+  from a paged OMR run that needs review (`data.pagedReportJobId` is set). Three
+  steps: **Pages → Seams → Publish**. A single-run / non-paged generate has no
+  pages and no seams — the panel stays off and the editor opens exactly as today.
+- **Stepper over the existing continuous score**, not a paginated view (decided
+  with the human 2026-09-01): one editable `EditableScore` as now. Selecting page
+  K scrolls the reference PDF pane (`PdfView.scrollToPage`) and scrolls +
+  highlights K's measure range in the score, via a new full-system `pageBand`
+  overlay sibling to F17's single-staff `measureBand`. **Panel placement**
+  (decided with the human 2026-09-01): the transport bar's bottom, replacing
+  F15/F16's `.seam-bar` row — not a left dock pane or a top strip.
+- **Pages step:** a rail of pages 1..N, each `✓ approved / ⚠ review / ✗ failed /
+  – untouched` (seeded from the paged report's per-page ok/error). Page-scoped
+  toolbar: **Approve page** (advances to the next `–`), **Re-run page**, **Insert
+  N bars** (failed pages only — moved here from F16's seam step). A per-segment
+  **Approve pages X–Y** bulk action for a clean run.
+- **Seams step:** locked until every page is approved (or explicitly skipped).
+  This is F15/F16's seam review with the failed-page-fill removed — a failed page
+  is now a first-class stop in the Pages step, not a zero-width marker. Each seam
+  still shows the two pages it joins, the reason and the join bar, with Mark
+  resolved / Reopen (F16's `localStorage` per-seam state is unchanged).
+- **Publish:** gated on all-pages-approved **and** all-seams-resolved. The ack
+  the Backend records widens from `{ seams_resolved: true }` to
+  `{ pages_reviewed: true, seams_resolved: true }`.
+
+**Decisions:**
+- Page-approved state is client-only `localStorage`, keyed `jobId:page` — same
+  philosophy as F16's per-seam resolved state. No new server bookkeeping beyond
+  widening the publish ack; the Backend can't verify a page any more than it can
+  verify a seam, and trusts the F19 gate.
+- Approval is an honour-system "I looked" ack, exactly like a resolved seam.
+- Re-running a page or inserting bars into it clears that page's approval and
+  reopens any seam that touches it — the content moved.
+- A failed page can't be approved until a re-run succeeds or bars are hand-filled;
+  "skip for now" is allowed but blocks Publish.
+- **Supersedes the F15/F16 review UX.** Their pending human real-browser passes
+  fold into F19's — not worth verifying a flow that's being replaced. The
+  underlying machinery (seam-onset mapping, working-draft slot, save/publish,
+  re-run, insert-bars, measure-band) is all kept.
+
+**Paired backend change — B18** (`Backend/plan.md`): `PagedReport.pages[]` gains
+`start_measure` / `measure_count` (each page's position in the provisional
+whole-score merge) so the frontend can map page → measure range without fetching
+all N page XMLs and counting bars.
+
+**Acceptance criteria:**
+- [x] Opening the editor on a paged working draft that needs review shows the
+      Review panel at the Pages step; a non-paged draft opens with no panel.
+- [x] Selecting a page scrolls the PDF pane to that page and highlights the
+      page's measure range in the score; the highlight survives re-render / zoom
+      / theme change (same recompute triggers as F17's `measureBand`).
+- [x] Approving a page advances to the next untouched one; the rail reflects
+      `✓ / – / ⚠ / ✗`; a per-segment bulk approve marks the whole run at once.
+- [x] A failed page offers Re-run and Insert N bars; approving it is refused
+      until it's recovered or filled; a re-run clears a prior approval and
+      reopens a touching seam.
+- [x] The Seams step is locked until every page is approved; once unlocked it
+      cycles the joins with the F15 readout and Mark resolved / Reopen.
+- [x] Publish is disabled until every page is approved and every seam resolved;
+      publishing sends `{ pages_reviewed: true, seams_resolved: true }` and
+      leaves the editor.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green (103).
+
+**Tasks — Claude:**
+- [x] `backendTypes.ts`: `start_measure` / `measure_count` on
+      `PagedReport.pages[]`; `pages_reviewed` on the publish request shape.
+- [x] Page-range mapping: new pure `$lib/musicxml/reviewPages.ts` (`mapReport` /
+      `pageStatus` / `seamPages`, +11 vitest) turns the report into page →
+      `{ startMeasure, measureCount }`; `edit/+page.svelte`'s `reviewPages`
+      re-derives each page's live 0-based measure range + onset off the current
+      model on every `workingXml` change, same pattern as the F15 seam mapping,
+      so an insert / splice shifting later pages stays correct.
+- [x] `edit/+page.svelte`: the Review panel + a Pages / Seams / Publish stepper
+      state machine; the page rail; per-page approve + skip + per-segment bulk
+      approve (`localStorage` `divisi:pagesReviewed`, keyed `jobId:page`);
+      re-run / insert-bars retargeted from the seam onset to the selected review
+      page, clearing its approval and any seam touching it on success; Seams step
+      locked until every page is approved-or-skipped, Publish gated on
+      all-approved + all-seams-resolved.
+- [x] `EditorScoreView.svelte`: new `pageBand` prop — a full-system tint (every
+      part, not just F17's one staff) for the focused page's bar range, same
+      `GraphicSheet.MeasureList` geometry and recompute triggers as
+      `measureBand`.
+- [x] `edit/publish/+server.ts`: ack body carries `pages_reviewed: true` (the
+      Backend's `VersionPublishRequest` ignores unknown fields by default —
+      recording it server-side is an out-of-scope Backend follow-up, no B-number
+      yet).
+- [x] Relabelled the entry points so their copy names the page-by-page pass:
+      `OmrJobAlerts`'s done-job alert, and the `groups/[id]` Tracks-panel
+      review link/hint/needs-review copy. Both already deep-linked to the
+      editor, so no routing change.
+- [x] en + es i18n (step labels, page-rail statuses, approve / skip / bulk
+      approve, the publish-gate readout and blocked reason); reused the
+      existing `piece_editor_seam_*` keys for the Seams step and the fill/re-run
+      controls rather than duplicating them.
+- [x] `check` 0 errors / `build` clean / vitest 103 green.
+
+**Tasks — Human:**
+- [ ] Full real-browser pass, replacing F15's and F16's pending passes: generate
+      from a real multi-page choral scan, step through every page against the
+      PDF, approve the clean ones and bulk-approve a segment, recover a failed
+      page by re-run and by hand-fill, then resolve the seams and Publish;
+      confirm the live track plays the corrected music and re-opening the editor
+      starts a clean copy.
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -1169,6 +1410,15 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-01: **F19 built — page-by-page review of a generated draft.** *(on `feat/generate-track-from-pdf`, on top of F17/F18.)* Panel placement decided with the human this session: the transport bar's bottom, replacing F15/F16's `.seam-bar` row (not a left dock pane or a top strip). New pure `$lib/musicxml/reviewPages.ts` (`mapReport`/`pageStatus`/`seamPages`, +11 vitest) turns B18's per-page `start_measure`/`measure_count` into the Pages step's model; `edit/+page.svelte`'s `reviewPages` re-derives each page's live 0-based measure range off the current model on every edit, same "re-resolve, don't resolve once" pattern as the F15 seam mapping. Review state is one `localStorage` map `divisi:pagesReviewed` (`jobId:page` -> `approved`/`skipped`, missing = untouched) — a page can be skipped to unlock the Seams step without counting toward the Publish gate. `EditorScoreView` gained a `pageBand` prop: same `GraphicSheet.MeasureList` geometry as F17's `measureBand`, but a full-system tint (every part) instead of one staff, for the page focused in the rail. Re-run / insert-bars moved from the seam step onto the selected review page (`rerunReviewPage`/`insertPageBars`, replacing `rerunSeamPage`/`insertFillBars`) and now clear that page's approval plus any seam touching it (`before_page` at the page or the page after — "the content moved"). Publish's ack widened to `{ pages_reviewed: true, seams_resolved: true }`; the Backend's `VersionPublishRequest` ignores the unknown field today, recording it server-side is an out-of-scope Backend follow-up. Entry-point copy (`OmrJobAlerts`, the `groups/[id]` Tracks-panel link) relabelled to name pages, no routing change. en+es i18n. Supersedes the F15/F16 review UX; F15's seam-onset mapping and F16's working-draft slot/save/publish/re-run/insert-bars machinery are all kept underneath. `check` 0 errors, vitest 103 green, `build` clean. Needs the human real-browser pass (replaces F15's + F16's pending passes).
+
+- 2026-09-01: **Designed F19 — page-by-page review of a generated draft** (with the human). The generate → review → publish loop felt unintentional: F15/F16 merge every "obvious" page join into one whole-score draft and drop the admin into scattered seam markers, with nothing prompting a look inside a merged segment. F19 replaces it with a **Pages → Seams → Publish** stepper in the editor: approve each page against its reference PDF page (rail of `✓/⚠/✗/–`, per-segment bulk approve, failed-page re-run + insert-bars moved here), then the seam step unlocks, then Publish gates on all-pages-approved + all-seams-resolved (`{ pages_reviewed, seams_resolved }`). Decided: **stepper over the existing continuous score**, not a paginated view — reuses F17's `measureBand` for the page highlight and `PdfView.scrollToPage`; page-approved state is client-only `localStorage` `jobId:page`, same as F16's seams. Supersedes the F15/F16 review UX (their human passes fold into F19's); the machinery underneath is all kept. Paired backend change **B18**: `start_measure` / `measure_count` per page in `PagedReport.pages[]`. Not started.
+
+- 2026-09-01: **F18 built — editor undo / redo.** *(on `feat/generate-track-from-pdf`, on top of F17.)* Human asked for an undo button. Every editor edit already ends by re-serializing the whole model into `workingXml`, so no command log was needed: new `$lib/musicxml/editHistory.ts` (`EditHistory` — bounded undo stack + mirror redo stack of those strings, cap 60, plain class so it unit-tests under the node vitest config, +6 tests). `edit/+page.svelte`: `applyEdit` / `applyStructuralEdit` / `applyClefRange` snapshot `workingXml` before mutating and `record()` on success only; `undoEdit` / `redoEdit` rebuild an `EditableScore` from the popped snapshot (always clean `serialize()` output, no loader), clear the selection, re-render through the existing `xml` prop. New `savedXml` (serialized state as of last load/save) makes `dirty` a real `workingXml !== savedXml` comparison, so undoing back to the saved state clears the unsaved-nav guard. Undo/Redo toolbar row (both modes) + Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y in `handleKeydown`. `canUndo`/`canRedo`/`dirty` added to the e2e probe. en+es i18n. `check` 0 errors, vitest 89, `build` clean. Needs the real-browser pass.
+
+- 2026-09-01: **F17 built — editor "Measures" mode + range clef changes.** *(on `feat/generate-track-from-pdf`, on top of the playhead-desync work.)* Human asked to select several bars at once and change their clef; agreed on an explicit **Notes / Measures** mode toggle (not a hidden shift-click gesture) since it's the long-term home for bar-scoped editing and time-signature editing later — time signature deferred here (needs re-barring with ties). `EditableScore.setClefRange(partId, staff, start, end, spec)`: clef written at the range start, other explicit `<clef>`s for that staff inside the range removed, the pre-range clef re-asserted at `end+1` so downstream bars look unchanged; no-op / out-of-range / unknown-part return `false` without mutating. Extracted `applyClefToMeasure` + `clefInEffectAt` (shared with `setClef`/`clefAt`); added `clefAtMeasure` / `measureCount` / `partName`. `EditorScoreView` gains `measureMode` + `measureBand` props: measure-mode clicks always select a bar (Shift = extend), and a translucent `.measure-band` overlay tints the range, one rect per system row, boxes read off `GraphicSheet.MeasureList` with the same sheet-unit→px factor as the click hit-testing. `edit/+page.svelte`: `editMode` + `measureSel`, a segmented control as the first toolbar row, note-level rows hidden in measure mode, the clef row shared between modes, keyboard (←/→ move a bar, Shift+←/→ extend, Esc exits). en+es i18n. `check` 0 errors, vitest 76 green (+13 `setClefRange`), editor-playhead e2e 3 green.
+  **Live-test round 1 (same day):** bar selection was routed through `EditableScore.findByOnset`, which misfires on a part tacet at the click's onset (a choral intro — every click resolved to the same bar, so the range never grew and clef edits landed elsewhere, reading as "treble/bass swapped"). Now `EditorScoreView` reads the 1-based measure number straight off OSMD's graphical note and the page uses it directly. Highlight geometry fixed (a rest-only bar's bbox height is ~1 unit → the band was a 10px sliver; now uses `ParentStaffLine.StaffHeight`, tints only the target staff, one rect per wrapped system row). `applyClefRange` re-stamps `measureSel` so the derived clef/band refresh. Clef row got a "Clef for the selected bars:" / "Clef from this bar on:" label. New `editor-measures.spec.ts` (4 tests); e2e now 6 green.
 
 - 2026-09-01: **Editor playhead desync fixed + a Playwright e2e harness for it.** *(uncommitted at time of writing — on `feat/generate-track-from-pdf` on top of the F16 work.)* Live-testing F16 showed the editor's playback cursor lagging / desyncing / moving "per measure" against the audio, unlike the practice player's `ScoreView`. Root cause: `EditorScoreView` engraves the **raw** working model (`EditableScore.serialize()`), which keeps hidden notes and repeat structure the practice player's `convertVisualParts()` output strips. Three OSMD cursor fixes in `EditorScoreView.svelte`: (1) `SkipInvisibleNotes = false` on both cursors (re-asserted every render — OSMD rebuilds cursors on `render()`) so `next()` stops on every note, not just visible ones; (2) `EngravingRules.CursorIgnoreRepetitions = true` so the cursor walks linearly like `parseMusicXmlFile` (which never expands repeats) instead of back-jumping at end-repeats and spinning `walkCursorTo`'s guard loop every frame; (3) visibility/position-change gating so `show()`/`hide()`/re-style/follow-scroll (a forced reflow) only fire on an actual edge, not every frame. Playhead reworked alongside: `playbackWholeNotes` → `playheadWholeNotes` + a new `isPlaying` prop; the playhead is its own cursor (index 1, accent bar) shown whenever audio exists — playing **or** paused — so it's always draggable; new `onSeekTo` prop + `handleSeekTo` in `edit/+page.svelte` wire a drag of the bar (reposition) and a click on empty staff space (seek + play) back to the transport. Selection marker moved to cursor 0.
   New **`Frontend/e2e/`** (Playwright): `playwright.config.ts` (reuses the HTTPS dev server; FluidSynth's AudioWorklet does run under headless Chromium), `auth.setup.ts` (logs into the Backend, saves a `storageState`), `editor-playhead.spec.ts` (playhead vs transport: monotonic onset, note-level granularity, main-thread responsiveness, position tracking, drag-to-seek), `helpers/playback.ts`, `_diagnose`/`_profile` opt-in tools (`@tools` tag). Test seams: `window.__divisiEditorProbe()` (DEV / `?e2e` only), `data-role` on the cursor elements, `EditorScoreView.playheadOnset()`. Gated on `E2E_PIECE_ID` (used "Les djinns, Op. 12" locally); `npm run test:e2e`.

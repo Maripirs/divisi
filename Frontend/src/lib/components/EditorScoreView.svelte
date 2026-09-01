@@ -39,6 +39,9 @@
 		playheadWholeNotes = undefined,
 		isPlaying = false,
 		seams = [],
+		measureMode = false,
+		measureBand = null,
+		pageBand = null,
 		onPickNote = undefined,
 		onSeekTo = undefined,
 		fill = false
@@ -74,13 +77,44 @@
 		// a paused playhead (e.g. right after a click-to-seek) doesn't yank the
 		// score around.
 		isPlaying?: boolean;
-		// Called when the user clicks a notehead. The page resolves the hit
-		// to a `<note>` via `EditableScore.findByOnset` and updates selection.
+		// F17: Measures mode. When true, a click anywhere in a bar is a
+		// selection gesture (never a click-to-seek), and every `onPickNote`
+		// carries `extend` (the Shift key) so the page can grow a bar range.
+		measureMode?: boolean;
+		// F17: the bar range selected in Measures mode — a part id plus an
+		// inclusive 0-based measure span. The view tints those bars of that
+		// part. `null` when nothing is selected or not in Measures mode.
+		measureBand?: {
+			partId: string;
+			staff: number;
+			fromMeasure: number;
+			toMeasure: number;
+		} | null;
+		// F19: the source page focused in the Pages step of the review stepper —
+		// an inclusive 0-based measure span. The view tints the *full system*
+		// (every part) across that range, one rect per wrapped row, so the admin
+		// can see at a glance which bars a page produced. `null` when no page is
+		// focused or the draft isn't under review.
+		pageBand?: {
+			fromMeasure: number;
+			toMeasure: number;
+		} | null;
+		// Called when the user clicks a notehead (or, in Measures mode, anywhere
+		// in a bar). The page resolves the hit to a `<note>` via
+		// `EditableScore.findByOnset` and updates selection. `extend` is the
+		// Shift key at click time — Measures mode uses it to extend the range;
+		// note mode ignores it.
 		onPickNote?: (hit: {
 			onsetWholeNotes: number;
 			partId: string;
 			staff: number;
 			octave: number | undefined;
+			/** 1-based measure number read straight off OSMD's graphical model —
+			 * Measures mode uses this instead of resolving a bar through
+			 * `findByOnset`, which misfires on a part that's tacet at the click's
+			 * onset. `null` if OSMD's model didn't surface it. */
+			measureNumber: number | null;
+			extend: boolean;
 		}) => void;
 		// Called when the user drags the playhead bar or clicks an empty spot
 		// in the score. The page converts the onset to ms, seeks the audio,
@@ -212,14 +246,42 @@
 		getAbsoluteTimestamp(): { RealValue: number };
 		ParentStaffEntry?: {
 			ParentStaff?: { Id?: number; ParentInstrument?: { IdString?: string } };
+			VerticalSourceStaffEntryContainer?: { ParentMeasure?: { MeasureNumber?: number } };
 		};
 		Pitch?: { Octave?: number };
 	};
-	function nearestSourceAt(clientX: number, clientY: number): NearestSource | null {
+	// The graphical note OSMD returns for a hit; walked for the 1-based measure
+	// number (which `findByOnset` can't reliably give — a part that's tacet for
+	// the opening bars has no note there to match a click's onset against).
+	type NearestGraphical = {
+		sourceNote?: NearestSource;
+		parentVoiceEntry?: {
+			parentStaffEntry?: {
+				parentMeasure?: {
+					MeasureNumber?: number;
+					parentSourceMeasure?: { MeasureNumber?: number };
+				};
+			};
+		};
+	};
+	function nearestGraphicalAt(clientX: number, clientY: number): NearestGraphical | null {
 		const p = sheetPoint(clientX, clientY);
 		if (!p || !osmd || !pointF2D) return null;
-		const nearest = osmd.GraphicSheet.GetNearestNote(p, new pointF2D(1, 1));
-		return (nearest?.sourceNote as NearestSource | undefined) ?? null;
+		return (osmd.GraphicSheet.GetNearestNote(p, new pointF2D(1, 1)) as NearestGraphical) ?? null;
+	}
+	function nearestSourceAt(clientX: number, clientY: number): NearestSource | null {
+		return nearestGraphicalAt(clientX, clientY)?.sourceNote ?? null;
+	}
+	// 1-based measure number for a hit, from the graphical note or (fallback)
+	// the source staff entry's parent measure. `null` if neither is reachable.
+	function measureNumberOf(g: NearestGraphical | null): number | null {
+		const gm = g?.parentVoiceEntry?.parentStaffEntry?.parentMeasure;
+		const n = gm?.MeasureNumber ?? gm?.parentSourceMeasure?.MeasureNumber;
+		if (typeof n === 'number' && Number.isFinite(n)) return n;
+		const src =
+			g?.sourceNote?.ParentStaffEntry?.VerticalSourceStaffEntryContainer?.ParentMeasure
+				?.MeasureNumber;
+		return typeof src === 'number' && Number.isFinite(src) ? src : null;
 	}
 
 	// A click in the score is either "select this notehead" (an edit gesture,
@@ -232,12 +294,15 @@
 		// The pointerup that ends a playhead drag is followed by a synthetic
 		// `click` — ignore it so a drag never also seeks/selects.
 		if (justDragged) return;
-		const src = nearestSourceAt(event.clientX, event.clientY);
+		const g = nearestGraphicalAt(event.clientX, event.clientY);
+		const src = g?.sourceNote;
 		if (!src) return;
 		const onsetWholeNotes = src.getAbsoluteTimestamp().RealValue;
 		const target = event.target as Element | null;
 		const onNote = !!target?.closest?.('.vf-notehead, .vf-stavenote, .vf-rest');
-		if (!onNote) {
+		// In Measures mode every click selects a bar; a click on empty staff
+		// space only seeks in note mode.
+		if (!onNote && !measureMode) {
 			onSeekTo?.(onsetWholeNotes, { play: true });
 			return;
 		}
@@ -246,7 +311,14 @@
 		const partId = src.ParentStaffEntry?.ParentStaff?.ParentInstrument?.IdString ?? '';
 		// OSMD's `Pitch.Octave` is scientific octave minus 3.
 		const octave = src.Pitch?.Octave != null ? src.Pitch.Octave + 3 : undefined;
-		onPickNote({ onsetWholeNotes, partId, staff, octave });
+		onPickNote({
+			onsetWholeNotes,
+			partId,
+			staff,
+			octave,
+			measureNumber: measureNumberOf(g),
+			extend: event.shiftKey
+		});
 	}
 
 	// Step `cursor` forward to the last entry at or before `target` (whole
@@ -545,6 +617,18 @@
 		following = false;
 	}
 
+	/** Diagnostic seam (dev / `?e2e` only, via the page probe): the current
+	 * band inputs and the rects they produced. */
+	export function debugMeasureBand(): unknown {
+		return { measureMode, measureBand, rectCount: measureBandRects.length, rects: measureBandRects };
+	}
+
+	/** F19 diagnostic seam (dev / `?e2e` only): the focused page's band inputs
+	 * and the rects they produced. */
+	export function debugPageBand(): unknown {
+		return { pageBand, rectCount: pageBandRects.length, rects: pageBandRects };
+	}
+
 	/** Test seam (e2e playhead-sync spec): the playhead cursor's current
 	 * musical position in whole notes from the start, or `null` before it's
 	 * been placed. Lets the spec compare the rendered playhead against the
@@ -589,6 +673,8 @@
 				// OSMD rebuilds the cursor with the sheet, so re-place it
 				// (playback or selection) after every re-engrave.
 				placeCursor();
+				computeMeasureBand();
+				computePageBand();
 			})
 			.catch((e: unknown) => {
 				loadError = String(e);
@@ -626,6 +712,8 @@
 			cursorsStyled = false;
 			measureSeams();
 			placeCursor();
+			computeMeasureBand();
+			computePageBand();
 		});
 	});
 
@@ -715,6 +803,155 @@
 		});
 	});
 
+	// MARK: - Measure-range tint (F17)
+
+	// Content-space rects (px within `.score-container`) for the tinted bar
+	// range in Measures mode — one per system row the range crosses. Read
+	// straight off OSMD's graphical measure boxes
+	// (`GraphicSheet.MeasureList[measureIndex][staffIndex]`), whose
+	// `AbsolutePosition` / `Size` are in the same sheet units as the click
+	// hit-testing (`* 10 * Zoom` -> px). Recomputed after every re-engrave /
+	// zoom / theme change and whenever `measureBand` moves.
+	type BoxLike = {
+		AbsolutePosition: { x: number; y: number };
+		Size: { width: number; height: number };
+	};
+	type GraphicalMeasureLike = {
+		ParentStaff?: { ParentInstrument?: { IdString?: string } };
+		PositionAndShape?: BoxLike;
+		ParentStaffLine?: { StaffHeight?: number; PositionAndShape?: BoxLike };
+	};
+	let measureBandRects = $state<
+		{ key: string; top: number; left: number; width: number; height: number }[]
+	>([]);
+
+	function computeMeasureBand(): void {
+		const list = (osmd?.GraphicSheet as { MeasureList?: GraphicalMeasureLike[][] } | undefined)
+			?.MeasureList;
+		if (!osmd || !renderedOnce || !container || !measureBand || !list) {
+			measureBandRects = [];
+			return;
+		}
+		const unit = 10 * osmd.Zoom;
+		const { partId, staff } = measureBand;
+		const lo = Math.min(measureBand.fromMeasure, measureBand.toMeasure);
+		const hi = Math.max(measureBand.fromMeasure, measureBand.toMeasure);
+		const pad = 0.7 * unit; // frame the staff with a little margin
+		// One rect per system row the range crosses: union the x-range of the
+		// in-range bars on that row, take the y/height from the staff itself
+		// (`ParentStaffLine.StaffHeight` — a bar's own bbox height collapses to
+		// almost nothing for a rest-only measure). Highlight only the staff the
+		// clef edit targets (`staff`), so what's tinted is exactly what changes.
+		const rows = new Map<number, { top: number; height: number; left: number; right: number }>();
+		for (let mi = lo; mi <= hi; mi++) {
+			const row = list[mi];
+			if (!row) continue;
+			const inPart = row.filter((g) => (g?.ParentStaff?.ParentInstrument?.IdString ?? '') === partId);
+			const gm = inPart[Math.min(Math.max(0, staff - 1), inPart.length - 1)] ?? inPart[0];
+			const box = gm?.PositionAndShape;
+			if (!box) continue;
+			const x = box.AbsolutePosition.x * unit;
+			const w = box.Size.width * unit;
+			const staffTop =
+				(gm.ParentStaffLine?.PositionAndShape?.AbsolutePosition?.y ?? box.AbsolutePosition.y) * unit;
+			const staffH = (gm.ParentStaffLine?.StaffHeight ?? 4) * unit;
+			const rowKey = Math.round(staffTop);
+			const cur = rows.get(rowKey);
+			if (!cur) rows.set(rowKey, { top: staffTop, height: staffH, left: x, right: x + w });
+			else {
+				cur.left = Math.min(cur.left, x);
+				cur.right = Math.max(cur.right, x + w);
+			}
+		}
+		measureBandRects = [...rows.entries()].map(([rowKey, r]) => ({
+			key: `${partId}:${staff}:${lo}-${hi}:${rowKey}`,
+			top: r.top - pad,
+			left: r.left - pad,
+			width: r.right - r.left + pad * 2,
+			height: r.height + pad * 2
+		}));
+	}
+
+	$effect(() => {
+		void measureBand;
+		if (!osmd || !renderedOnce) return;
+		// `untrack` for the same reason as the seam / zoom effects — keep this
+		// reacting only to `measureBand`, not transitively to playback state.
+		untrack(() => computeMeasureBand());
+	});
+
+	// MARK: - Page-range tint (F19)
+
+	// Like `measureBandRects`, but spanning every part of the system (the top of
+	// the topmost staff to the bottom of the lowest) for the focused page's bar
+	// range — one rect per wrapped row. Same `GraphicSheet.MeasureList` geometry
+	// and recompute triggers as the F17 measure band.
+	let pageBandRects = $state<
+		{ key: string; top: number; left: number; width: number; height: number }[]
+	>([]);
+
+	function computePageBand(): void {
+		const list = (osmd?.GraphicSheet as { MeasureList?: GraphicalMeasureLike[][] } | undefined)
+			?.MeasureList;
+		if (!osmd || !renderedOnce || !container || !pageBand || !list) {
+			pageBandRects = [];
+			return;
+		}
+		const unit = 10 * osmd.Zoom;
+		const pad = 0.5 * unit;
+		const lo = Math.max(0, Math.min(pageBand.fromMeasure, pageBand.toMeasure));
+		const hi = Math.min(list.length - 1, Math.max(pageBand.fromMeasure, pageBand.toMeasure));
+		// One rect per system row: for each bar in range, union the x-range and
+		// the full vertical extent across every staff of every part on that bar.
+		// Rows are keyed by the rounded top of that bar's highest staff, which is
+		// stable across the bars sharing a system.
+		const rows = new Map<number, { top: number; bottom: number; left: number; right: number }>();
+		for (let mi = lo; mi <= hi; mi++) {
+			const row = list[mi];
+			if (!row) continue;
+			let barTop = Infinity;
+			let barBottom = -Infinity;
+			let barLeft = Infinity;
+			let barRight = -Infinity;
+			for (const gm of row) {
+				const box = gm?.PositionAndShape;
+				if (!box) continue;
+				const x = box.AbsolutePosition.x * unit;
+				const w = box.Size.width * unit;
+				const staffTop =
+					(gm.ParentStaffLine?.PositionAndShape?.AbsolutePosition?.y ?? box.AbsolutePosition.y) *
+					unit;
+				const staffH = (gm.ParentStaffLine?.StaffHeight ?? 4) * unit;
+				barLeft = Math.min(barLeft, x);
+				barRight = Math.max(barRight, x + w);
+				barTop = Math.min(barTop, staffTop);
+				barBottom = Math.max(barBottom, staffTop + staffH);
+			}
+			if (!Number.isFinite(barTop)) continue;
+			const rowKey = Math.round(barTop);
+			const cur = rows.get(rowKey);
+			if (!cur) rows.set(rowKey, { top: barTop, bottom: barBottom, left: barLeft, right: barRight });
+			else {
+				cur.left = Math.min(cur.left, barLeft);
+				cur.right = Math.max(cur.right, barRight);
+				cur.bottom = Math.max(cur.bottom, barBottom);
+			}
+		}
+		pageBandRects = [...rows.entries()].map(([rowKey, r]) => ({
+			key: `page:${lo}-${hi}:${rowKey}`,
+			top: r.top - pad,
+			left: r.left - pad,
+			width: r.right - r.left + pad * 2,
+			height: r.bottom - r.top + pad * 2
+		}));
+	}
+
+	$effect(() => {
+		void pageBand;
+		if (!osmd || !renderedOnce) return;
+		untrack(() => computePageBand());
+	});
+
 	function zoomBy(delta: number): void {
 		zoom = clampZoom(zoom + delta);
 	}
@@ -731,6 +968,24 @@
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
 	<div class="score-container" bind:this={container}>
+		{#each pageBandRects as band (band.key)}
+			<div
+				class="page-band"
+				style:top="{band.top}px"
+				style:left="{band.left}px"
+				style:width="{band.width}px"
+				style:height="{band.height}px"
+			></div>
+		{/each}
+		{#each measureBandRects as band (band.key)}
+			<div
+				class="measure-band"
+				style:top="{band.top}px"
+				style:left="{band.left}px"
+				style:width="{band.width}px"
+				style:height="{band.height}px"
+			></div>
+		{/each}
 		{#each seamMarks as mark (mark.key)}
 			<div
 				class="seam-mark"
@@ -836,6 +1091,35 @@
 		display: block;
 		min-width: 100%;
 		background: var(--score-page);
+	}
+
+	/* F17: the tinted bar range in Measures mode. `pointer-events: none` so a
+	   click still reaches the notehead / staff underneath (the page then
+	   resolves it to the bar). Sits below the seam rules (z-index 2). */
+	.measure-band {
+		position: absolute;
+		background: color-mix(in srgb, var(--accent) 22%, transparent);
+		border: 2px solid var(--accent);
+		border-radius: var(--radius-sm);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+		pointer-events: none;
+		z-index: 1;
+	}
+
+	/* F19: the focused source page's bar range in the Pages review step —
+	   spans the full system, sits under the F17 measure band and the seam
+	   rules. A quiet wash plus firm left/right edges so the page's start and
+	   end read clearly without fighting the notation. */
+	.page-band {
+		position: absolute;
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		border-left: 3px solid var(--accent);
+		border-right: 3px solid var(--accent);
+		border-radius: 2px;
+		pointer-events: none;
+		/* Same layer as the F17 measure band; drawn earlier in the DOM so the
+		   measure band paints on top when both are present. */
+		z-index: 1;
 	}
 
 	/* F15: a labelled rule at each unresolved page join from a paged OMR

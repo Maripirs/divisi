@@ -431,7 +431,7 @@
 					: track.has_music || track.has_pdf
 						? lh(`/piece/${track.piece_id}${tempoQuery}`)
 						: null}
-				<section class="card track-card">
+				<section class="card track-card" id={`track-${track.piece_id}`}>
 					<div class="track-info">
 						{#if mode === 'admin' && editingDetailsPieceId === track.piece_id}
 							<form
@@ -1634,6 +1634,23 @@
 	   in shell.css; only the corner-delete positioning stays local. */
 	.track-card {
 		position: relative;
+		/* The header OMR alert deep-links to `#track-<pieceId>`; keep the
+		   scrolled-to card off the very top edge, and flash it briefly so
+		   it's obvious which track the alert meant. */
+		scroll-margin-top: 1.5rem;
+	}
+
+	.track-card:target {
+		animation: track-card-flash 1.6s ease-out;
+	}
+
+	@keyframes track-card-flash {
+		from {
+			box-shadow: 0 0 0 2px var(--accent);
+		}
+		to {
+			box-shadow: 0 0 0 2px transparent;
+		}
 	}
 
 	.track-delete-corner {

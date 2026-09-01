@@ -128,6 +128,32 @@ const TWO_STAVES = `<?xml version="1.0" encoding="UTF-8"?>
   </part>
 </score-partwise>`;
 
+/** A 2-staff part whose `<clef>`s carry NO `number` attribute (some OMR output
+ * does this) — they must be read positionally: 1st -> staff 1 (treble),
+ * 2nd -> staff 2 (bass). */
+const TWO_STAVES_UNNUMBERED = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <staves>2</staves>
+        <clef><sign>G</sign><line>2</line></clef>
+        <clef><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>4</duration><type>whole</type><staff>1</staff></note>
+      <backup><duration>4</duration></backup>
+      <note><pitch><step>C</step><octave>3</octave></pitch><duration>4</duration><type>whole</type><staff>2</staff></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><type>whole</type><staff>1</staff></note>
+      <backup><duration>4</duration></backup>
+      <note><pitch><step>D</step><octave>3</octave></pitch><duration>4</duration><type>whole</type><staff>2</staff></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
 /** Measure 0 has an `<attributes>` with no `<key>` at all. */
 const NO_KEY = `<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0">
@@ -137,6 +163,28 @@ const NO_KEY = `<?xml version="1.0" encoding="UTF-8"?>
       <attributes><divisions>1</divisions><clef><sign>G</sign><line>2</line></clef></attributes>
       <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
     </measure>
+  </part>
+</score-partwise>`;
+
+/** 1 part, 5 one-bar measures, treble at m0 — room for a clef range with bars
+ * on both sides of it. Note index N sits in measure N. */
+const FIVE_BARS = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Voice</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note>
+    </measure>
+    <measure number="2"><note><pitch><step>D</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note></measure>
+    <measure number="3"><note><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note></measure>
+    <measure number="4"><note><pitch><step>F</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note></measure>
+    <measure number="5"><note><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type></note></measure>
   </part>
 </score-partwise>`;
 
@@ -289,6 +337,121 @@ describe('EditableScore.setClef', () => {
 		const multi = new EditableScore(TWO_STAVES);
 		expect(multi.setClef(0, { sign: 'G', line: 2 })).toBe(false); // staff 1 already G/2
 		expect(multi.setClef(1, { sign: 'F', line: 4 })).toBe(false); // staff 2 already F/4
+	});
+});
+
+describe('EditableScore.setClefRange', () => {
+	const signAt = (m: Element): string | null =>
+		m.querySelector(':scope > attributes > clef > sign')?.textContent ?? null;
+
+	it('sets the clef at the range start and restores the prior clef after the end', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClefRange('P1', 1, 1, 3, { sign: 'F', line: 4 })).toBe(true);
+
+		const ms = measures(roundTrip(score));
+		expect(signAt(ms[1])).toBe('F'); // range start -> bass
+		expect(ms[2].querySelector(':scope > attributes > clef')).toBeNull(); // rides through
+		expect(signAt(ms[4])).toBe('G'); // end + 1 -> restored to treble
+		expect(score.clefAtMeasure('P1', 1, 2)).toEqual({ sign: 'F', line: 4 });
+		expect(score.clefAtMeasure('P1', 1, 4)).toEqual({ sign: 'G', line: 2 });
+		expect(score.clefAtMeasure('P1', 1, 0)).toEqual({ sign: 'G', line: 2 });
+	});
+
+	it('normalizes a start > end range', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClefRange('P1', 1, 3, 1, { sign: 'F', line: 4 })).toBe(true);
+		const ms = measures(roundTrip(score));
+		expect(signAt(ms[1])).toBe('F');
+		expect(signAt(ms[4])).toBe('G');
+	});
+
+	it('adds no restoring clef when the range reaches the last measure', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClefRange('P1', 1, 2, 4, { sign: 'C', line: 3 })).toBe(true);
+		const ms = measures(roundTrip(score));
+		expect(signAt(ms[2])).toBe('C');
+		expect(ms[3].querySelector(':scope > attributes > clef')).toBeNull();
+		expect(ms[4].querySelector(':scope > attributes > clef')).toBeNull();
+	});
+
+	it('rewrites the initial clef in place for a range starting at measure 0', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClefRange('P1', 1, 0, 1, { sign: 'F', line: 4 })).toBe(true);
+		const ms = measures(roundTrip(score));
+		const m0clefs = ms[0].querySelectorAll(':scope > attributes > clef');
+		expect(m0clefs.length).toBe(1);
+		expect(m0clefs[0].querySelector('sign')!.textContent).toBe('F');
+		expect(signAt(ms[2])).toBe('G'); // restored after the range
+	});
+
+	it('writes and matches the number attribute on a multi-staff part, leaving the other staff alone', () => {
+		const score = new EditableScore(TWO_STAVES);
+		expect(score.setClefRange('P1', 2, 0, 0, { sign: 'C', line: 3 })).toBe(true);
+
+		const mm = roundTrip(score).querySelectorAll('part > measure');
+		expect(mm[0].querySelector(':scope > attributes > clef[number="2"] > sign')!.textContent).toBe(
+			'C'
+		);
+		// staff 1 untouched at m0
+		expect(mm[0].querySelector(':scope > attributes > clef[number="1"] > sign')!.textContent).toBe(
+			'G'
+		);
+		// m1 restores staff 2 to F/4, still numbered
+		const m1clef2 = mm[1].querySelector(':scope > attributes > clef[number="2"]')!;
+		expect(m1clef2.querySelector('sign')!.textContent).toBe('F');
+		expect(m1clef2.getAttribute('number')).toBe('2');
+		// staff 1 gets no restoring clef
+		expect(mm[1].querySelector(':scope > attributes > clef[number="1"]')).toBeNull();
+	});
+
+	it('removes a stray mid-range clef change for that staff and preserves what rendered after', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClef(2, { sign: 'F', line: 4 })).toBe(true); // stray bass at m2
+		expect(score.setClefRange('P1', 1, 1, 3, { sign: 'C', line: 3 })).toBe(true);
+
+		const ms = measures(roundTrip(score));
+		expect(signAt(ms[1])).toBe('C'); // range start
+		expect(ms[2].querySelector(':scope > attributes > clef')).toBeNull(); // stray gone
+		expect(signAt(ms[4])).toBe('F'); // bar 4 still renders as the stray had it
+	});
+
+	it('refuses a no-op range without mutating', () => {
+		const score = new EditableScore(FIVE_BARS);
+		const before = score.serialize();
+		expect(score.setClefRange('P1', 1, 1, 3, { sign: 'G', line: 2 })).toBe(false);
+		expect(score.setClefRange('P1', 1, 0, 4, { sign: 'G', line: 2 })).toBe(false);
+		expect(score.serialize()).toBe(before);
+	});
+
+	it('refuses an unknown part or an out-of-range / non-integer index', () => {
+		const score = new EditableScore(FIVE_BARS);
+		expect(score.setClefRange('P9', 1, 0, 1, { sign: 'F', line: 4 })).toBe(false);
+		expect(score.setClefRange('P1', 1, -1, 2, { sign: 'F', line: 4 })).toBe(false);
+		expect(score.setClefRange('P1', 1, 2, 99, { sign: 'F', line: 4 })).toBe(false);
+		expect(score.setClefRange('P1', 1, 1.5, 3, { sign: 'F', line: 4 })).toBe(false);
+	});
+
+	it('measureCount reports the longest part', () => {
+		expect(new EditableScore(FIVE_BARS).measureCount()).toBe(5);
+		expect(new EditableScore(TWO_STAVES).measureCount()).toBe(2);
+	});
+
+	it('resolves and edits per staff when the clefs carry no number attribute', () => {
+		const score = new EditableScore(TWO_STAVES_UNNUMBERED);
+		// positional: 1st clef -> staff 1 (treble), 2nd -> staff 2 (bass)
+		expect(score.clefAtMeasure('P1', 1, 0)).toEqual({ sign: 'G', line: 2 });
+		expect(score.clefAtMeasure('P1', 2, 0)).toEqual({ sign: 'F', line: 4 });
+
+		// editing staff 2 rewrites the 2nd clef in place — no third clef added
+		expect(score.setClefRange('P1', 2, 0, 0, { sign: 'C', line: 3 })).toBe(true);
+		const attrs = measures(roundTrip(score))[0].querySelector(':scope > attributes')!;
+		const clefs = attrs.querySelectorAll(':scope > clef');
+		expect(clefs.length).toBe(2);
+		expect(clefs[0].querySelector('sign')!.textContent).toBe('G'); // staff 1 untouched
+		expect(clefs[1].querySelector('sign')!.textContent).toBe('C'); // staff 2 -> alto
+		expect(score.clefAtMeasure('P1', 1, 0)).toEqual({ sign: 'G', line: 2 });
+		// restore of the prior staff-2 clef lands in measure 2
+		expect(score.clefAtMeasure('P1', 2, 1)).toEqual({ sign: 'F', line: 4 });
 	});
 });
 

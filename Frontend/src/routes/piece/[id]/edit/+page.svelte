@@ -10,8 +10,11 @@
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { parseMusicXmlFile } from '$lib/musicxml/parser';
 	import type { MixPart, ParsedMIDI } from '$lib/midi/types';
-	import type { EditableScore, EditableNote, DurationType } from '$lib/musicxml/editableScore';
+	import { EditableScore } from '$lib/musicxml/editableScore';
+	import type { EditableNote, DurationType } from '$lib/musicxml/editableScore';
+	import { EditHistory } from '$lib/musicxml/editHistory';
 	import { loadEditableScore, UnsupportedMusicFileError } from '$lib/musicxml/loadEditableScore';
+	import { mapReport, pageStatus, seamPages, type ReviewPageRaw } from '$lib/musicxml/reviewPages';
 	import type { OmrPageRerunOut, PagedReport } from '$lib/server/backendTypes';
 	import type { PageData } from './$types';
 
@@ -94,6 +97,23 @@
 	let selectedIndex = $state<number | null>(null);
 	let selectedNote = $state<EditableNote | undefined>(undefined);
 	let dirty = $state(false);
+	// F18: undo / redo. Every edit re-serializes the model into `workingXml`, so
+	// the history is just a bounded stack of those strings (see `EditHistory`);
+	// undo rebuilds the `EditableScore` from the previous one. `canUndo` /
+	// `canRedo` mirror the stack into `$state` so the toolbar buttons react.
+	// `savedXml` is the serialized state as of the last load or save, so undoing
+	// back to it clears `dirty` (and the unsaved-nav guard) instead of leaving
+	// the editor falsely marked dirty.
+	// Named `editHistory`, not `history` — the latter is `window.history`, which
+	// `leaveEditor()` below still uses.
+	const editHistory = new EditHistory();
+	let canUndo = $state(false);
+	let canRedo = $state(false);
+	let savedXml = $state('');
+	function syncHistoryFlags(): void {
+		canUndo = editHistory.canUndo;
+		canRedo = editHistory.canRedo;
+	}
 	// Task 5: save-in-flight + last save failure (a friendly message from the
 	// `edit/save` endpoint's `error()`, or a generic fallback). Task 6: the
 	// unsaved-changes guard below reads `dirty`.
@@ -116,6 +136,116 @@
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
 	let scoreView: EditorScoreView | undefined = $state();
 	let pdfView: PdfView | undefined = $state();
+
+	// F17: Measures mode. A distinct editing mode where the selection is a
+	// contiguous span of bars (one part + staff), not a single note, so a clef
+	// can be set across all of them at once. The note-level toolbars and the
+	// arrow-key pitch map are hidden while it's active. `anchor` is the bar the
+	// range grows from on a Shift-click / Shift-arrow.
+	let editMode = $state<'note' | 'measures'>('note');
+	let measureSel = $state<{
+		partId: string;
+		staff: number;
+		anchor: number;
+		start: number;
+		end: number;
+	} | null>(null);
+
+	function setEditMode(mode: 'note' | 'measures'): void {
+		if (mode === editMode) return;
+		editMode = mode;
+		editNotice = null;
+		if (mode === 'measures') selectByIndex(null);
+		else measureSel = null;
+	}
+
+	// Measures mode: a bar click starts a fresh single-bar selection; a
+	// Shift-click stretches the range from the anchor. Extend keeps the anchor's
+	// part + staff (that's what a clef edit targets), so Shift-clicking a
+	// different staff line just sets the far end of the bar range.
+	function pickMeasure(partId: string, staff: number, mi: number, extend: boolean): void {
+		if (extend && measureSel) {
+			measureSel = {
+				...measureSel,
+				start: Math.min(measureSel.anchor, mi),
+				end: Math.max(measureSel.anchor, mi)
+			};
+		} else {
+			measureSel = { partId, staff, anchor: mi, start: mi, end: mi };
+		}
+		editNotice = null;
+	}
+
+	// What the view tints in Measures mode: the selected part + inclusive bar
+	// span, or nothing.
+	const measureBand = $derived(
+		editMode === 'measures' && measureSel
+			? {
+					partId: measureSel.partId,
+					staff: measureSel.staff,
+					fromMeasure: measureSel.start,
+					toMeasure: measureSel.end
+				}
+			: null
+	);
+	// The clef in effect at the range's first bar, for the clef row's active
+	// state while in Measures mode.
+	const selectedMeasureClef = $derived.by(() =>
+		score && measureSel
+			? score.clefAtMeasure(measureSel.partId, measureSel.staff, measureSel.start)
+			: null
+	);
+	const clefControlsDisabled = $derived(
+		reRendering || (editMode === 'measures' ? measureSel === null : selectedIndex === null)
+	);
+
+	function measureStatusLabel(): string {
+		if (!measureSel) return m.piece_editor_measures_none();
+		let part = (score?.partName(measureSel.partId) || measureSel.partId || '?').trim();
+		// A multi-staff part (piano): say which staff the clef edit targets.
+		if (measureSel.staff > 1) part = `${part} · ${m.piece_editor_staff_n({ n: measureSel.staff })}`;
+		return measureSel.start === measureSel.end
+			? m.piece_editor_measure_selected({ n: measureSel.start + 1, part })
+			: m.piece_editor_measures_selected({
+					from: measureSel.start + 1,
+					to: measureSel.end + 1,
+					part
+				});
+	}
+
+	// The clef row is shared by both modes: note mode sets the selected note's
+	// measure, Measures mode sets the whole selected bar range.
+	function onClefPreset(preset: { sign: string; line: number }): void {
+		if (editMode === 'measures') applyClefRange(preset);
+		else applyClef(preset);
+	}
+	function clefPresetActive(preset: { sign: string; line: number }): boolean {
+		const c = editMode === 'measures' ? selectedMeasureClef : selectedClef;
+		return c?.sign === preset.sign && c?.line === preset.line;
+	}
+
+	// Measures mode: set the clef across the selected bar range for its part +
+	// staff. Re-serialize + mark dirty like `applyStructuralEdit`, but keep the
+	// bar selection so several clefs can be tried in a row.
+	function applyClefRange(preset: { sign: string; line: number }): void {
+		if (!score || !measureSel || reRendering) return;
+		const { partId, staff, start, end } = measureSel;
+		const before = workingXml;
+		const applied = score.setClefRange(partId, staff, start, end, {
+			sign: preset.sign,
+			line: preset.line
+		});
+		if (applied) {
+			editHistory.record(before);
+			syncHistoryFlags();
+			workingXml = score.serialize();
+			dirty = workingXml !== savedXml;
+			// `score` is mutated in place, so re-read `selectedMeasureClef` /
+			// `measureBand` by giving `measureSel` a fresh identity.
+			measureSel = { ...measureSel };
+		}
+		editNotice = applied ? null : m.piece_editor_clef_range_refused();
+	}
 
 	// F15: seam review. When this track's music came from a B16 paged OMR run
 	// that couldn't merge every page join cleanly (`data.pagedReportJobId`),
@@ -193,56 +323,299 @@
 		seams.length === 0 || seams.every((s) => resolvedSeams.has(seamKey(s.page)))
 	);
 
-	// F16: "insert N bars" at the current failed-page seam onset, and
-	// "Re-run this page". Both act on `seams[seamAt]`.
-	let fillBars = $state(1);
-	let rerunning = $state(false);
-
-	function currentSeam(): (SeamBoundary & { onsetWholeNotes: number }) | undefined {
-		return seamAt >= 0 && seamAt < seams.length ? seams[seamAt] : undefined;
-	}
-
-	/** The 0-based measure index the seam onset sits at, so a structural
-	 * edit lands its new bars *before* that measure (= after the one
-	 * before it). */
-	function seamMeasureIndex(onsetWholeNotes: number): number | null {
-		const near = score?.findByOnset(onsetWholeNotes, {}) ?? score?.list().find((n) => n.onsetWholeNotes >= onsetWholeNotes);
-		return near ? near.measureIndex : null;
-	}
-
 	// A measure-level structural edit (insert / splice bars): re-serialize and
 	// mark dirty like `applyEdit`, but there is no "selected note" to keep —
 	// indices shift when bars are added — so the selection is cleared.
 	function applyStructuralEdit(mutate: () => boolean): boolean {
 		if (!score || reRendering) return false;
+		const before = workingXml;
 		if (!mutate()) return false;
+		editHistory.record(before);
+		syncHistoryFlags();
 		workingXml = score.serialize();
-		dirty = true;
+		dirty = workingXml !== savedXml;
 		selectByIndex(null);
 		return true;
 	}
 
-	function insertFillBars(): void {
-		const seam = currentSeam();
-		if (!score || !seam || fillBars < 1) return;
-		const at = seamMeasureIndex(seam.onsetWholeNotes);
-		if (at == null) return;
-		const applied = applyStructuralEdit(() => score!.insertMeasures(at - 1, fillBars));
-		editNotice = applied ? null : m.piece_editor_duration_refused();
+	async function loadReviewData(): Promise<void> {
+		seamBoundaries = [];
+		seamAt = -1;
+		reviewPagesRaw = [];
+		seamStartPages = new Set();
+		reviewSegments = [];
+		loadResolvedSeams();
+		loadPagesReviewed();
+		if (!data.pagedReportJobId) return;
+		try {
+			const res = await fetch(`/omr/jobs/${data.pagedReportJobId}/paged-report`);
+			if (!res.ok) return; // review hints are a bonus, never block the editor
+			const report = (await res.json()) as PagedReport;
+			seamBoundaries = report.unresolved_boundaries
+				.filter((b) => b.merged_measure != null)
+				.map((b) => {
+					const reason = b.reason ?? '';
+					const failed = reason.match(/^page (\d+) failed/);
+					return {
+						measure: b.merged_measure as number,
+						reason,
+						page: b.before_page,
+						failedPageNo: failed ? Number(failed[1]) : null
+					};
+				});
+			reviewPagesRaw = mapReport(report.pages);
+			seamStartPages = seamPages(report);
+			reviewSegments = report.segments.map((s) => ({ pages: s.pages }));
+			reviewStep = 'pages';
+			selectedReviewPage =
+				(reviewPagesRaw.find((p) => pageState(p.page) == null) ?? reviewPagesRaw[0])?.page ?? null;
+		} catch {
+			// No overlay; the editor is still fully usable.
+		}
 	}
 
-	async function rerunSeamPage(): Promise<void> {
-		const seam = currentSeam();
-		if (!score || !seam || seam.failedPageNo == null || !data.pagedReportJobId || rerunning) return;
+	// Jump the view to the next seam, cycling. Selecting the nearest note to
+	// the seam onset parks the selection cursor there and follow-scroll
+	// centres it (same machinery the "scroll to cursor" button uses).
+	function goToNextSeam(): void {
+		if (seams.length === 0 || !score) return;
+		seamAt = (seamAt + 1) % seams.length;
+		const target = seams[seamAt];
+		const near = score.findByOnset(target.onsetWholeNotes, {});
+		if (near) {
+			selectByIndex(near.index);
+			previewSelected();
+		}
+		scoreView?.scrollCursorIntoView();
+	}
+
+	// A double rAF so `PdfView` has mounted (and, if the pane was just
+	// opened, laid out) before we ask it to scroll.
+	function tick2(fn: () => void): void {
+		requestAnimationFrame(() => requestAnimationFrame(fn));
+	}
+
+	// Keep the readout index valid if the seam set shrinks (an edit dropped a
+	// boundary's measure, say).
+	$effect(() => {
+		if (seamAt >= seams.length) seamAt = -1;
+	});
+
+	// MARK: - F19: page-by-page review
+
+	// `reviewPagesRaw` is the paged report's page list mapped through B18's
+	// `start_measure` / `measure_count` (see `reviewPages.ts`); `reviewPages`
+	// re-resolves each page's *live* 0-based measure range + onset off the
+	// current model, keyed on `workingXml` exactly like `seams` above, so an
+	// insert/splice earlier in the score keeps later pages' highlights
+	// correct.
+	let reviewPagesRaw = $state<ReviewPageRaw[]>([]);
+	let reviewSegments = $state<{ pages: number[] }[]>([]);
+	let seamStartPages = $state<Set<number>>(new Set());
+
+	const reviewPages = $derived.by(() => {
+		void workingXml;
+		if (!score || reviewPagesRaw.length === 0) return [];
+		const lastIndex = Math.max(0, score.measureCount() - 1);
+		return reviewPagesRaw.map((p) => {
+			const startIndex = Math.min(Math.max(0, p.startMeasure - 1), lastIndex);
+			const endIndex = Math.min(
+				Math.max(startIndex, startIndex + Math.max(p.measureCount, 1) - 1),
+				lastIndex
+			);
+			return { ...p, startIndex, endIndex, onsetWholeNotes: score!.measureOnset(p.startMeasure) };
+		});
+	});
+
+	// Client-only "I looked" state, same philosophy as F16's `resolvedSeams`
+	// but a three-way map (a page can be approved *or* skipped) rather than a
+	// set. Missing = untouched.
+	const PAGES_REVIEWED_KEY = 'divisi:pagesReviewed';
+	let pagesReviewed = $state<Record<string, 'approved' | 'skipped'>>({});
+	function pageKey(page: number): string {
+		return `${data.pagedReportJobId ?? ''}:${page}`;
+	}
+	function loadPagesReviewed(): void {
+		try {
+			const raw = localStorage.getItem(PAGES_REVIEWED_KEY);
+			const obj: unknown = raw ? JSON.parse(raw) : {};
+			pagesReviewed =
+				obj && typeof obj === 'object' && !Array.isArray(obj)
+					? Object.fromEntries(
+							Object.entries(obj as Record<string, unknown>).filter(
+								(e): e is [string, 'approved' | 'skipped'] =>
+									e[1] === 'approved' || e[1] === 'skipped'
+							)
+						)
+					: {};
+		} catch {
+			pagesReviewed = {};
+		}
+	}
+	function persistPagesReviewed(): void {
+		try {
+			localStorage.setItem(PAGES_REVIEWED_KEY, JSON.stringify(pagesReviewed));
+		} catch {
+			// Private mode / quota — the gate just won't persist across reloads.
+		}
+	}
+	function pageState(page: number): 'approved' | 'skipped' | undefined {
+		return pagesReviewed[pageKey(page)];
+	}
+	function setPageState(page: number, state: 'approved' | 'skipped' | null): void {
+		const next = { ...pagesReviewed };
+		if (state) next[pageKey(page)] = state;
+		else delete next[pageKey(page)];
+		pagesReviewed = next;
+		persistPagesReviewed();
+	}
+
+	// Pared to what the Pages step's rail + controls need: live range, review
+	// state, and the derived glyph status.
+	const reviewPagesView = $derived(
+		reviewPages.map((p) => {
+			const state = pageState(p.page);
+			return {
+				...p,
+				state,
+				status: pageStatus(p, { approved: state === 'approved', atSeam: seamStartPages.has(p.page) })
+			};
+		})
+	);
+
+	// Every page approved or (deliberately) skipped unlocks the Seams step;
+	// every page *approved* (skips don't count) is half of the Publish gate.
+	const allPagesCleared = $derived(
+		reviewPagesView.length === 0 || reviewPagesView.every((p) => p.state != null)
+	);
+	const allPagesApproved = $derived(
+		reviewPagesView.length === 0 || reviewPagesView.every((p) => p.state === 'approved')
+	);
+	const reviewEnabled = $derived(
+		phase === 'ready' && !!data.pagedReportJobId && (reviewPages.length > 0 || seams.length > 0)
+	);
+
+	// The Pages -> Seams -> Publish stepper. Snaps back to Pages if the Seams
+	// tab goes stale (a re-run cleared a page's approval after the admin had
+	// already moved on).
+	let reviewStep = $state<'pages' | 'seams' | 'publish'>('pages');
+	let selectedReviewPage = $state<number | null>(null);
+	$effect(() => {
+		if (reviewStep === 'seams' && !allPagesCleared) reviewStep = 'pages';
+	});
+
+	// The page focused in the Pages step, as the full-system tint
+	// `EditorScoreView` draws (F19's `pageBand`, sibling of F17's `measureBand`).
+	const pageBand = $derived.by(() => {
+		if (reviewStep !== 'pages' || selectedReviewPage == null) return null;
+		const p = reviewPagesView.find((x) => x.page === selectedReviewPage);
+		return p ? { fromMeasure: p.startIndex, toMeasure: p.endIndex } : null;
+	});
+
+	/** Select a page in the rail: scroll + highlight its bar range in the
+	 * score, and (when there's a reference PDF) scroll that pane to the same
+	 * page. Mirrors `goToNextSeam`'s scroll/select machinery. */
+	function selectReviewPage(page: number): void {
+		selectedReviewPage = page;
+		fillBars = 1;
+		editNotice = null;
+		const target = reviewPagesView.find((p) => p.page === page);
+		if (score && target && target.onsetWholeNotes != null) {
+			const near = score.findByOnset(target.onsetWholeNotes, {});
+			if (near) {
+				selectByIndex(near.index);
+				previewSelected();
+			}
+		}
+		scoreView?.scrollCursorIntoView();
+		if (data.hasPdf) {
+			pdfPaneOpen = true;
+			tick2(() => pdfView?.scrollToPage(page));
+		}
+	}
+
+	/** Advance to the next page with no review state yet, after approving or
+	 * skipping `afterPage`. */
+	function advanceReviewPage(afterPage: number): void {
+		const idx = reviewPagesView.findIndex((p) => p.page === afterPage);
+		const next = reviewPagesView.slice(idx + 1).find((p) => p.state == null);
+		if (next) selectReviewPage(next.page);
+	}
+
+	function approvePage(page: number): void {
+		const p = reviewPagesView.find((x) => x.page === page);
+		if (!p) return;
+		if (p.status === 'failed') {
+			editNotice = m.piece_editor_review_approve_failed_refused();
+			return;
+		}
+		setPageState(page, 'approved');
+		advanceReviewPage(page);
+	}
+
+	function skipPage(page: number): void {
+		setPageState(page, 'skipped');
+		advanceReviewPage(page);
+	}
+
+	/** Bulk-approve every page of a clean (seam-free) segment in one write. */
+	function approveSegment(pages: number[]): void {
+		const next = { ...pagesReviewed };
+		for (const page of pages) next[pageKey(page)] = 'approved';
+		pagesReviewed = next;
+		persistPagesReviewed();
+	}
+
+	/** Re-running or hand-filling a page invalidates its own approval and any
+	 * seam that touches it (the boundary right before it or right after it —
+	 * "the content moved"), same as F16's re-run used to reopen the current
+	 * seam. */
+	function clearPageAndTouchingSeams(page: number): void {
+		setPageState(page, null);
+		const next = new Set(resolvedSeams);
+		let changed = false;
+		for (const s of seams) {
+			if ((s.page === page || s.page === page + 1) && next.delete(seamKey(s.page))) changed = true;
+		}
+		if (changed) {
+			resolvedSeams = next;
+			try {
+				localStorage.setItem(RESOLVED_SEAMS_KEY, JSON.stringify([...next]));
+			} catch {
+				// Private mode / quota — the gate just won't persist across reloads.
+			}
+		}
+	}
+
+	function insertPageBars(): void {
+		const page =
+			selectedReviewPage != null
+				? reviewPagesView.find((p) => p.page === selectedReviewPage)
+				: undefined;
+		if (!score || !page || fillBars < 1) return;
+		const applied = applyStructuralEdit(() => score!.insertMeasures(page.startIndex - 1, fillBars));
+		if (applied) {
+			clearPageAndTouchingSeams(page.page);
+			editNotice = null;
+		} else {
+			editNotice = m.piece_editor_duration_refused();
+		}
+	}
+
+	async function rerunReviewPage(): Promise<void> {
+		const page =
+			selectedReviewPage != null
+				? reviewPagesView.find((p) => p.page === selectedReviewPage)
+				: undefined;
+		if (!score || !page || !data.pagedReportJobId || rerunning) return;
 		rerunning = true;
 		editNotice = null;
 		try {
 			let res: Response;
 			try {
-				res = await fetch(
-					`/omr/jobs/${data.pagedReportJobId}/pages/${seam.failedPageNo}/rerun`,
-					{ method: 'POST' }
-				);
+				res = await fetch(`/omr/jobs/${data.pagedReportJobId}/pages/${page.page}/rerun`, {
+					method: 'POST'
+				});
 			} catch {
 				editNotice = m.piece_editor_seam_rerun_failed();
 				return;
@@ -253,7 +626,7 @@
 			}
 			const result = (await res.json()) as OmrPageRerunOut;
 			if (result.still_failed || !result.page_musicxml_url) {
-				editNotice = m.piece_editor_seam_rerun_still_failed({ page: seam.failedPageNo });
+				editNotice = m.piece_editor_seam_rerun_still_failed({ page: page.page });
 				return;
 			}
 			let pageXml: string;
@@ -268,17 +641,18 @@
 				editNotice = m.piece_editor_seam_rerun_failed();
 				return;
 			}
-			const at = seamMeasureIndex(seam.onsetWholeNotes);
-			if (at == null) {
-				editNotice = m.piece_editor_seam_rerun_failed();
-				return;
-			}
-			const applied = applyStructuralEdit(() => score!.spliceMeasuresFromXml(at - 1, pageXml));
+			const applied = applyStructuralEdit(() =>
+				score!.spliceMeasuresFromXml(page.startIndex - 1, pageXml)
+			);
 			if (applied) {
-				editNotice = m.piece_editor_seam_rerun_ok({
-					page: seam.failedPageNo,
-					count: result.measure_count
-				});
+				// The report's `ok` for this page is stale until the next report
+				// fetch — flip it locally so the rail + approve gate see the fix
+				// right away.
+				reviewPagesRaw = reviewPagesRaw.map((p) =>
+					p.page === page.page ? { ...p, ok: true } : p
+				);
+				clearPageAndTouchingSeams(page.page);
+				editNotice = m.piece_editor_seam_rerun_ok({ page: page.page, count: result.measure_count });
 			} else {
 				editNotice = m.piece_editor_seam_rerun_failed();
 			}
@@ -287,66 +661,10 @@
 		}
 	}
 
-	async function loadSeams(): Promise<void> {
-		seamBoundaries = [];
-		seamAt = -1;
-		loadResolvedSeams();
-		if (!data.pagedReportJobId) return;
-		try {
-			const res = await fetch(`/omr/jobs/${data.pagedReportJobId}/paged-report`);
-			if (!res.ok) return; // seam hints are a bonus, never block the editor
-			const report = (await res.json()) as PagedReport;
-			seamBoundaries = report.unresolved_boundaries
-				.filter((b) => b.merged_measure != null)
-				.map((b) => {
-					const reason = b.reason ?? '';
-					const failed = reason.match(/^page (\d+) failed/);
-					return {
-						measure: b.merged_measure as number,
-						reason,
-						page: b.before_page,
-						failedPageNo: failed ? Number(failed[1]) : null
-					};
-				});
-		} catch {
-			// No overlay; the editor is still fully usable.
-		}
-	}
-
-	// Jump the view to the next seam, cycling. Selecting the nearest note to
-	// the seam onset parks the selection cursor there and follow-scroll
-	// centres it (same machinery the "scroll to cursor" button uses).
-	function goToNextSeam(): void {
-		if (seams.length === 0 || !score) return;
-		seamAt = (seamAt + 1) % seams.length;
-		fillBars = 1;
-		const target = seams[seamAt];
-		const near = score.findByOnset(target.onsetWholeNotes, {});
-		if (near) {
-			selectByIndex(near.index);
-			previewSelected();
-		}
-		scoreView?.scrollCursorIntoView();
-		// F16: a failed-page seam has nothing but empty space where the page
-		// should be — open the reference PDF at that page so the missing bars
-		// can be filled from the scan.
-		if (target.failedPageNo != null && data.hasPdf) {
-			pdfPaneOpen = true;
-			tick2(() => pdfView?.scrollToPage(target.failedPageNo as number));
-		}
-	}
-
-	// A double rAF so `PdfView` has mounted (and, if the pane was just
-	// opened, laid out) before we ask it to scroll.
-	function tick2(fn: () => void): void {
-		requestAnimationFrame(() => requestAnimationFrame(fn));
-	}
-
-	// Keep the readout index valid if the seam set shrinks (an edit dropped a
-	// boundary's measure, say).
-	$effect(() => {
-		if (seamAt >= seams.length) seamAt = -1;
-	});
+	// F16: "insert N bars" and "Re-run this page" share the selected review
+	// page above.
+	let fillBars = $state(1);
+	let rerunning = $state(false);
 
 	// F14 reopened: in-editor playback. The audio path is the same one the
 	// player route uses, fed from the working model rather than a file:
@@ -735,25 +1053,40 @@
 		selectedNote = index === null ? undefined : score?.get(index);
 	}
 
-	// Resolve a notehead click (reported by `EditorScoreView`) back to a
-	// `<note>` in the model. OSMD numbers staves globally, so the hit carries
-	// the in-instrument staff index plus the part id for `findByOnset`.
+	// Resolve a click reported by `EditorScoreView`. Note mode maps it back to a
+	// `<note>` via `findByOnset`; Measures mode takes the bar straight from
+	// OSMD's `measureNumber` (see the hit type) — `findByOnset` can't place a
+	// click in a bar where the clicked part has no note (a tacet opening).
 	function handlePickNote(hit: {
 		onsetWholeNotes: number;
 		partId: string;
 		staff: number;
 		octave: number | undefined;
+		measureNumber: number | null;
+		extend: boolean;
 	}): void {
 		if (!score) return;
+
+		if (editMode === 'measures') {
+			const mi = hit.measureNumber != null ? hit.measureNumber - 1 : null;
+			if (mi == null || mi < 0 || mi >= score.measureCount()) return;
+			// A clef is per staff, but only a multi-staff part (piano) has more
+			// than one. Pin single-staff parts (every SATB voice) to staff 1 so a
+			// stray OSMD staff index can't misdirect the edit.
+			const staves = score.staffCount(hit.partId);
+			const staff = staves <= 1 ? 1 : Math.min(Math.max(1, hit.staff), staves);
+			pickMeasure(hit.partId, staff, mi, hit.extend);
+			return;
+		}
+
 		const note = score.findByOnset(hit.onsetWholeNotes, {
 			partId: hit.partId,
 			staff: hit.staff,
 			octave: hit.octave
 		});
-		if (note) {
-			selectByIndex(note.index);
-			previewSelected();
-		}
+		if (!note) return;
+		selectByIndex(note.index);
+		previewSelected();
 	}
 
 	// Apply one in-place mutation, re-serialize for the re-engrave, and keep
@@ -762,11 +1095,48 @@
 	// must not flag the score dirty or re-render. Returns whether it applied.
 	function applyEdit(mutate: (s: EditableScore, index: number) => boolean | void): boolean {
 		if (!score || selectedIndex === null || reRendering) return false;
+		const before = workingXml;
 		if (mutate(score, selectedIndex) === false) return false;
+		editHistory.record(before);
+		syncHistoryFlags();
 		workingXml = score.serialize();
-		dirty = true;
+		dirty = workingXml !== savedXml;
 		selectByIndex(selectedIndex);
 		return true;
+	}
+
+	// F18: rebuild the model from a history snapshot. The snapshots are
+	// `serialize()` output of a model that parsed cleanly, so `new EditableScore`
+	// here won't throw in practice; the guard is belt-and-braces. Selection
+	// indices don't survive a structural undo, so the selection is cleared (same
+	// as `applyStructuralEdit`).
+	function restoreSnapshot(xml: string): void {
+		let rebuilt: EditableScore;
+		try {
+			rebuilt = new EditableScore(xml);
+		} catch {
+			return;
+		}
+		score = rebuilt;
+		workingXml = xml;
+		dirty = workingXml !== savedXml;
+		selectByIndex(null);
+		if (editMode === 'measures') measureSel = null;
+		editNotice = null;
+	}
+
+	function undoEdit(): void {
+		if (reRendering || saving || publishing || !editHistory.canUndo) return;
+		const previous = editHistory.undo(workingXml);
+		syncHistoryFlags();
+		if (previous !== undefined) restoreSnapshot(previous);
+	}
+
+	function redoEdit(): void {
+		if (reRendering || saving || publishing || !editHistory.canRedo) return;
+		const next = editHistory.redo(workingXml);
+		syncHistoryFlags();
+		if (next !== undefined) restoreSnapshot(next);
 	}
 
 	function transposeSelected(semitones: number): void {
@@ -846,6 +1216,29 @@
 		const el = event.target as HTMLElement | null;
 		if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
 
+		// F18: undo / redo, live in both modes. Cmd/Ctrl+Z undoes, Cmd/Ctrl+Shift+Z
+		// or Ctrl+Y redoes. Checked before the mode split so it works while the
+		// Measures toolbar is up too.
+		const mod = event.metaKey || event.ctrlKey;
+		if (mod && !event.altKey && (event.key === 'z' || event.key === 'Z')) {
+			event.preventDefault();
+			if (event.shiftKey) redoEdit();
+			else undoEdit();
+			return;
+		}
+		if (event.ctrlKey && !event.metaKey && (event.key === 'y' || event.key === 'Y')) {
+			event.preventDefault();
+			redoEdit();
+			return;
+		}
+
+		// Measures mode has its own, smaller map (bar nav + exit); the note-level
+		// keys below never fire while it's active.
+		if (editMode === 'measures') {
+			handleMeasureKeydown(event);
+			return;
+		}
+
 		switch (event.key) {
 			case 'ArrowUp':
 				event.preventDefault();
@@ -882,6 +1275,44 @@
 				event.preventDefault();
 				cycleDots();
 				break;
+		}
+	}
+
+	// Measures-mode keyboard: left / right move a single-bar selection,
+	// Shift + left / right stretch the range from the anchor, Escape returns to
+	// note editing. Seeds a selection on the first arrow press if there is none.
+	function handleMeasureKeydown(event: KeyboardEvent): void {
+		if (!score) return;
+		if (event.key === 'Escape') {
+			event.preventDefault();
+			setEditMode('note');
+			return;
+		}
+		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+		event.preventDefault();
+		const max = score.measureCount() - 1;
+		if (max < 0) return;
+		const delta = event.key === 'ArrowRight' ? 1 : -1;
+		const clamp = (n: number) => Math.min(max, Math.max(0, n));
+
+		if (!measureSel) {
+			const first = score.list().find((n) => !n.isRest && n.pitch != null);
+			if (!first) return;
+			const mi = delta === 1 ? 0 : max;
+			measureSel = { partId: first.partId, staff: first.staff, anchor: mi, start: mi, end: mi };
+			return;
+		}
+		if (event.shiftKey) {
+			const focus = measureSel.start === measureSel.anchor ? measureSel.end : measureSel.start;
+			const moved = clamp(focus + delta);
+			measureSel = {
+				...measureSel,
+				start: Math.min(measureSel.anchor, moved),
+				end: Math.max(measureSel.anchor, moved)
+			};
+		} else {
+			const mi = clamp(measureSel.anchor + delta);
+			measureSel = { ...measureSel, anchor: mi, start: mi, end: mi };
 		}
 	}
 
@@ -945,13 +1376,16 @@
 			const loaded = loadEditableScore(bytes);
 			score = loaded.score;
 			workingXml = loaded.score.serialize();
+			savedXml = workingXml;
+			editHistory.reset();
+			syncHistoryFlags();
 			selectByIndex(null);
 			dirty = false;
 			phase = 'ready';
-			// F15: if this music came from a paged OMR run with seams, pull the
-			// report and map its boundaries onto the model. Fire-and-forget —
-			// the editor is usable with or without the overlay.
-			void loadSeams();
+			// F19: if this music came from a paged OMR run, pull the report and
+			// map its pages + boundaries onto the model. Fire-and-forget — the
+			// editor is usable with or without the review overlay.
+			void loadReviewData();
 		} catch (err) {
 			if (err instanceof UnsupportedMusicFileError) {
 				phase = 'error';
@@ -1002,6 +1436,7 @@
 				return;
 			}
 			dirty = false;
+			savedXml = workingXml;
 			everEdited = true;
 			editNotice = m.piece_editor_saved();
 		} finally {
@@ -1026,7 +1461,9 @@
 	// a fresh copy-on-edit.
 	let publishing = $state(false);
 	async function publish(): Promise<void> {
-		if (!data.workingDraftId || publishing || saving || !allSeamsResolved) return;
+		if (!data.workingDraftId || publishing || saving || !allPagesApproved || !allSeamsResolved) {
+			return;
+		}
 		if (dirty) {
 			await save();
 			if (dirty || saveError) return; // save failed — don't publish a stale version
@@ -1051,6 +1488,7 @@
 				return;
 			}
 			dirty = false;
+			savedXml = workingXml;
 			await goto(backToPieceHref, { replaceState: true, invalidateAll: true });
 		} finally {
 			publishing = false;
@@ -1101,7 +1539,31 @@
 			baseTempoBpm,
 			msPerWholeNote,
 			playheadWholeNotes: playheadWholeNotes ?? null,
-			playheadOnset: scoreView?.playheadOnset() ?? null
+			playheadOnset: scoreView?.playheadOnset() ?? null,
+			editMode,
+			measureSel,
+			canUndo,
+			canRedo,
+			dirty,
+			measureCount: score?.measureCount() ?? null,
+			selMeasureClef:
+				score && measureSel
+					? score.clefAtMeasure(measureSel.partId, measureSel.staff, measureSel.start)
+					: null,
+			clefAfterRange:
+				score && measureSel
+					? score.clefAtMeasure(measureSel.partId, measureSel.staff, measureSel.end + 1)
+					: null,
+			measureBand: scoreView?.debugMeasureBand?.() ?? null,
+			reviewEnabled,
+			reviewStep,
+			selectedReviewPage,
+			reviewPages: reviewPagesView.map((p) => ({ page: p.page, status: p.status, state: p.state ?? null })),
+			allPagesCleared,
+			allPagesApproved,
+			allSeamsResolved,
+			pageBand,
+			pageBandDebug: scoreView?.debugPageBand?.() ?? null
 		});
 	}
 </script>
@@ -1176,10 +1638,12 @@
 				<button
 					class="btn btn-primary publish-btn"
 					onclick={publish}
-					disabled={publishing || saving || reRendering || !allSeamsResolved}
-					title={allSeamsResolved
+					disabled={publishing || saving || reRendering || !allPagesApproved || !allSeamsResolved}
+					title={allPagesApproved && allSeamsResolved
 						? m.piece_editor_publish_ready_hint()
-						: m.piece_editor_publish_blocked_hint()}
+						: !allPagesApproved
+							? m.piece_editor_publish_blocked_pages()
+							: m.piece_editor_publish_blocked_hint()}
 				>
 					{publishing ? m.piece_editor_publishing() : m.piece_editor_publish()}
 				</button>
@@ -1219,107 +1683,166 @@
 				onkeydown={handleKeydown}
 			>
 				<div class="editor-toolbars">
-					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_editing_region()}>
+					<div
+						class="editor-toolbar editor-modes"
+						role="group"
+						aria-label={m.piece_editor_mode_label()}
+					>
 						<button
 							class="btn"
-							onclick={() => transposeSelected(1)}
-							disabled={!canPitchEdit || reRendering}
-						>
-							{m.piece_editor_pitch_up()}
-						</button>
-						<button
-							class="btn"
-							onclick={() => transposeSelected(-1)}
-							disabled={!canPitchEdit || reRendering}
-						>
-							{m.piece_editor_pitch_down()}
-						</button>
-						<button
-							class="btn"
-							onclick={() => transposeSelected(12)}
-							disabled={!canPitchEdit || reRendering}
-						>
-							{m.piece_editor_octave_up()}
-						</button>
-						<button
-							class="btn"
-							onclick={() => transposeSelected(-12)}
-							disabled={!canPitchEdit || reRendering}
-						>
-							{m.piece_editor_octave_down()}
-						</button>
-						<button
-							class="btn"
-							onclick={deleteSelected}
-							disabled={selectedIndex === null || reRendering}
-						>
-							{m.piece_editor_delete_note()}
-						</button>
-					</div>
-
-					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_duration_label()}>
-						{#each durationTypes as t (t)}
-							<button
-								class="btn"
-								class:dur-active={selectedDuration?.type === t}
-								aria-pressed={selectedDuration?.type === t}
-								onclick={() => applyDuration(t)}
-								disabled={!canDurationEdit || reRendering}
-							>
-								{durationLabel(t)}
-							</button>
-						{/each}
-						<button
-							class="btn"
-							aria-label={m.piece_editor_dots_toggle()}
-							onclick={cycleDots}
+							class:dur-active={editMode === 'note'}
+							aria-pressed={editMode === 'note'}
+							onclick={() => setEditMode('note')}
 							disabled={reRendering}
 						>
-							{m.piece_editor_dots({ count: durationDots })}
+							{m.piece_editor_mode_notes()}
+						</button>
+						<button
+							class="btn"
+							class:dur-active={editMode === 'measures'}
+							aria-pressed={editMode === 'measures'}
+							onclick={() => setEditMode('measures')}
+							disabled={reRendering}
+						>
+							{m.piece_editor_mode_measures()}
 						</button>
 					</div>
 
-					<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_accidental_label()}>
-						{#each accidentalPresets as a (a.alter)}
+					<div
+						class="editor-toolbar editor-history"
+						role="group"
+						aria-label={m.piece_editor_history_label()}
+					>
+						<button
+							class="btn"
+							onclick={undoEdit}
+							disabled={!canUndo || reRendering || saving || publishing}
+						>
+							{m.piece_editor_undo()}
+						</button>
+						<button
+							class="btn"
+							onclick={redoEdit}
+							disabled={!canRedo || reRendering || saving || publishing}
+						>
+							{m.piece_editor_redo()}
+						</button>
+					</div>
+
+					{#if editMode === 'note'}
+						<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_editing_region()}>
 							<button
 								class="btn"
-								class:dur-active={selectedAlter === a.alter}
-								aria-pressed={selectedAlter === a.alter}
-								aria-label={a.label()}
-								onclick={() => applyAccidental(a.alter)}
+								onclick={() => transposeSelected(1)}
 								disabled={!canPitchEdit || reRendering}
 							>
-								{a.glyph}
+								{m.piece_editor_pitch_up()}
 							</button>
-						{/each}
+							<button
+								class="btn"
+								onclick={() => transposeSelected(-1)}
+								disabled={!canPitchEdit || reRendering}
+							>
+								{m.piece_editor_pitch_down()}
+							</button>
+							<button
+								class="btn"
+								onclick={() => transposeSelected(12)}
+								disabled={!canPitchEdit || reRendering}
+							>
+								{m.piece_editor_octave_up()}
+							</button>
+							<button
+								class="btn"
+								onclick={() => transposeSelected(-12)}
+								disabled={!canPitchEdit || reRendering}
+							>
+								{m.piece_editor_octave_down()}
+							</button>
+							<button
+								class="btn"
+								onclick={deleteSelected}
+								disabled={selectedIndex === null || reRendering}
+							>
+								{m.piece_editor_delete_note()}
+							</button>
+						</div>
 
-						<span class="editor-stepper" role="group" aria-label={m.piece_editor_key_label()}>
+						<div class="editor-toolbar" role="toolbar" aria-label={m.piece_editor_duration_label()}>
+							{#each durationTypes as t (t)}
+								<button
+									class="btn"
+									class:dur-active={selectedDuration?.type === t}
+									aria-pressed={selectedDuration?.type === t}
+									onclick={() => applyDuration(t)}
+									disabled={!canDurationEdit || reRendering}
+								>
+									{durationLabel(t)}
+								</button>
+							{/each}
 							<button
 								class="btn"
-								aria-label={m.piece_editor_key_down()}
-								onclick={() => stepKey(-1)}
-								disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) <= -7}
+								aria-label={m.piece_editor_dots_toggle()}
+								onclick={cycleDots}
+								disabled={reRendering}
 							>
-								−
+								{m.piece_editor_dots({ count: durationDots })}
 							</button>
-							<span class="editor-readout" aria-live="polite">{keyReadout(selectedKey)}</span>
-							<button
-								class="btn"
-								aria-label={m.piece_editor_key_up()}
-								onclick={() => stepKey(1)}
-								disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) >= 7}
-							>
-								+
-							</button>
+						</div>
+
+						<div
+							class="editor-toolbar"
+							role="toolbar"
+							aria-label={m.piece_editor_accidental_label()}
+						>
+							{#each accidentalPresets as a (a.alter)}
+								<button
+									class="btn"
+									class:dur-active={selectedAlter === a.alter}
+									aria-pressed={selectedAlter === a.alter}
+									aria-label={a.label()}
+									onclick={() => applyAccidental(a.alter)}
+									disabled={!canPitchEdit || reRendering}
+								>
+									{a.glyph}
+								</button>
+							{/each}
+
+							<span class="editor-stepper" role="group" aria-label={m.piece_editor_key_label()}>
+								<button
+									class="btn"
+									aria-label={m.piece_editor_key_down()}
+									onclick={() => stepKey(-1)}
+									disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) <= -7}
+								>
+									−
+								</button>
+								<span class="editor-readout" aria-live="polite">{keyReadout(selectedKey)}</span>
+								<button
+									class="btn"
+									aria-label={m.piece_editor_key_up()}
+									onclick={() => stepKey(1)}
+									disabled={selectedIndex === null || reRendering || (selectedKey ?? 0) >= 7}
+								>
+									+
+								</button>
+							</span>
+						</div>
+					{/if}
+
+					<div class="editor-toolbar editor-clef-row" role="toolbar" aria-label={m.piece_editor_clef_label()}>
+						<span class="editor-row-label">
+							{editMode === 'measures'
+								? m.piece_editor_clef_for_selection()
+								: m.piece_editor_clef_for_note()}
 						</span>
-
 						{#each clefPresets as c (c.id)}
 							<button
 								class="btn"
-								class:dur-active={selectedClef?.sign === c.sign && selectedClef?.line === c.line}
-								aria-pressed={selectedClef?.sign === c.sign && selectedClef?.line === c.line}
-								onclick={() => applyClef(c)}
-								disabled={selectedIndex === null || reRendering}
+								class:dur-active={clefPresetActive(c)}
+								aria-pressed={clefPresetActive(c)}
+								onclick={() => onClefPreset(c)}
+								disabled={clefControlsDisabled}
 							>
 								{clefLabel(c.id)}
 							</button>
@@ -1327,7 +1850,9 @@
 					</div>
 
 					<p class="editor-status" role="status" aria-live="polite">
-						{#if selectedNote}
+						{#if editMode === 'measures'}
+							{measureStatusLabel()}
+						{:else if selectedNote}
 							{m.piece_editor_selected({ label: selectionLabel() })}
 						{:else}
 							{m.piece_editor_selection_none()}
@@ -1351,6 +1876,9 @@
 						{playheadWholeNotes}
 						{isPlaying}
 						seams={seamMarkers}
+						measureMode={editMode === 'measures'}
+						{measureBand}
+						{pageBand}
 						onPickNote={handlePickNote}
 						onSeekTo={handleSeekTo}
 						bind:rendering={reRendering}
@@ -1360,7 +1888,11 @@
 
 				<footer class="editor-footer">
 					<span class="editor-count">{m.piece_editor_notes_loaded({ count: noteCount })}</span>
-					<span class="editor-hint">{m.piece_editor_keyboard_hint()}</span>
+					<span class="editor-hint">
+						{editMode === 'measures'
+							? m.piece_editor_measures_hint()
+							: m.piece_editor_keyboard_hint()}
+					</span>
 				</footer>
 			</div>
 
@@ -1375,67 +1907,185 @@
 			     practice player's bottom bar. Fed from the working model (see
 			     `syncAudioToModel`), not a file. -->
 			<footer class="transport-bar">
-				{#if seams.length > 0}
-					{@const cur = seamAt >= 0 && seamAt < seams.length ? seams[seamAt] : undefined}
-					<div class="seam-bar" role="group" aria-label={m.piece_editor_seam_group()}>
-						<button class="seam-next" onclick={goToNextSeam}>
-							{m.piece_editor_seam_next()}
-						</button>
-						<span class="seam-readout" role="status" aria-live="polite">
-							{#if cur}
-								{m.piece_editor_seam_counter({
-									n: seamAt + 1,
-									total: seams.length,
-									reason: cur.reason
-								})}
-							{:else if allSeamsResolved}
-								{m.piece_editor_seam_all_resolved()}
-							{:else}
-								{m.piece_editor_seam_hint({ count: seams.length })}
-							{/if}
-						</span>
-
-						{#if cur}
-							{#if cur.failedPageNo != null}
-								<span class="seam-fill">
-									<label class="seam-fill-label">
-										{m.piece_editor_seam_fill_label()}
-										<input
-											type="number"
-											min="1"
-											max="64"
-											bind:value={fillBars}
-											disabled={reRendering}
-										/>
-									</label>
-									<button
-										class="btn"
-										onclick={insertFillBars}
-										disabled={reRendering || fillBars < 1}
-									>
-										{m.piece_editor_seam_fill_button({ count: fillBars })}
-									</button>
-									<button
-										class="btn"
-										onclick={rerunSeamPage}
-										disabled={rerunning || reRendering}
-									>
-										{rerunning ? m.piece_editor_seam_rerunning() : m.piece_editor_seam_rerun()}
-									</button>
-								</span>
-							{/if}
+				{#if reviewEnabled}
+					<section class="review-panel" aria-label={m.piece_editor_review_panel()}>
+						<div class="review-steps" role="tablist" aria-label={m.piece_editor_review_panel()}>
 							<button
-								class="seam-resolve"
-								class:seam-resolve--done={isSeamResolved(cur.page)}
-								aria-pressed={isSeamResolved(cur.page)}
-								onclick={() => toggleSeamResolved(cur.page)}
+								class="review-step"
+								class:review-step--active={reviewStep === 'pages'}
+								role="tab"
+								aria-selected={reviewStep === 'pages'}
+								onclick={() => (reviewStep = 'pages')}
 							>
-								{isSeamResolved(cur.page)
-									? m.piece_editor_seam_reopen()
-									: m.piece_editor_seam_mark_resolved()}
+								{m.piece_editor_review_step_pages()}
 							</button>
+							<button
+								class="review-step"
+								class:review-step--active={reviewStep === 'seams'}
+								role="tab"
+								aria-selected={reviewStep === 'seams'}
+								disabled={!allPagesCleared}
+								title={allPagesCleared
+									? undefined
+									: m.piece_editor_review_seams_locked({
+											count: reviewPagesView.filter((p) => p.state == null).length
+										})}
+								onclick={() => (reviewStep = 'seams')}
+							>
+								{m.piece_editor_review_step_seams()}
+							</button>
+							<button
+								class="review-step"
+								class:review-step--active={reviewStep === 'publish'}
+								role="tab"
+								aria-selected={reviewStep === 'publish'}
+								onclick={() => (reviewStep = 'publish')}
+							>
+								{m.piece_editor_review_step_publish()}
+							</button>
+						</div>
+
+						{#if reviewStep === 'pages'}
+							{@const cur =
+								selectedReviewPage != null
+									? reviewPagesView.find((p) => p.page === selectedReviewPage)
+									: undefined}
+							<div class="page-rail" role="group" aria-label={m.piece_editor_review_step_pages()}>
+								{#each reviewPagesView as p (p.page)}
+									<button
+										class="page-chip"
+										class:page-chip--active={p.page === selectedReviewPage}
+										data-status={p.status}
+										aria-pressed={p.page === selectedReviewPage}
+										aria-label={m.piece_editor_review_page_status({
+											n: p.page,
+											status:
+												p.status === 'approved'
+													? m.piece_editor_review_status_approved()
+													: p.status === 'failed'
+														? m.piece_editor_review_status_failed()
+														: p.status === 'review'
+															? m.piece_editor_review_status_review()
+															: p.state === 'skipped'
+																? m.piece_editor_review_status_skipped()
+																: m.piece_editor_review_status_untouched()
+										})}
+										onclick={() => selectReviewPage(p.page)}
+									>
+										{p.page}
+									</button>
+								{/each}
+							</div>
+							<div class="review-controls">
+								{#if cur}
+									{#each reviewSegments as seg (seg.pages.join(','))}
+										{#if seg.pages.length > 1 && seg.pages.includes(cur.page) && seg.pages.every((pg) => reviewPagesView.find((x) => x.page === pg)?.status !== 'failed')}
+											<button class="btn" onclick={() => approveSegment(seg.pages)}>
+												{m.piece_editor_review_approve_segment({
+													from: seg.pages[0],
+													to: seg.pages[seg.pages.length - 1]
+												})}
+											</button>
+										{/if}
+									{/each}
+									{#if cur.status === 'failed'}
+										<span class="seam-fill">
+											<label class="seam-fill-label">
+												{m.piece_editor_seam_fill_label()}
+												<input
+													type="number"
+													min="1"
+													max="64"
+													bind:value={fillBars}
+													disabled={reRendering}
+												/>
+											</label>
+											<button
+												class="btn"
+												onclick={insertPageBars}
+												disabled={reRendering || fillBars < 1}
+											>
+												{m.piece_editor_seam_fill_button({ count: fillBars })}
+											</button>
+											<button
+												class="btn"
+												onclick={rerunReviewPage}
+												disabled={rerunning || reRendering}
+											>
+												{rerunning ? m.piece_editor_seam_rerunning() : m.piece_editor_seam_rerun()}
+											</button>
+										</span>
+									{:else}
+										<button
+											class="seam-resolve"
+											class:seam-resolve--done={cur.state === 'approved'}
+											aria-pressed={cur.state === 'approved'}
+											onclick={() => approvePage(cur.page)}
+										>
+											{m.piece_editor_review_approve_page()}
+										</button>
+									{/if}
+									<button
+										class="btn"
+										onclick={() => skipPage(cur.page)}
+										disabled={cur.state === 'skipped'}
+									>
+										{m.piece_editor_review_skip_page()}
+									</button>
+								{/if}
+							</div>
+						{:else if reviewStep === 'seams'}
+							{@const curSeam = seamAt >= 0 && seamAt < seams.length ? seams[seamAt] : undefined}
+							<div class="review-controls">
+								<button class="seam-next" onclick={goToNextSeam}>
+									{m.piece_editor_seam_next()}
+								</button>
+								<span class="seam-readout" role="status" aria-live="polite">
+									{#if curSeam}
+										{m.piece_editor_seam_counter({
+											n: seamAt + 1,
+											total: seams.length,
+											reason: curSeam.reason
+										})}
+									{:else if allSeamsResolved}
+										{m.piece_editor_seam_all_resolved()}
+									{:else}
+										{m.piece_editor_seam_hint({ count: seams.length })}
+									{/if}
+								</span>
+								{#if curSeam}
+									<button
+										class="seam-resolve"
+										class:seam-resolve--done={isSeamResolved(curSeam.page)}
+										aria-pressed={isSeamResolved(curSeam.page)}
+										onclick={() => toggleSeamResolved(curSeam.page)}
+									>
+										{isSeamResolved(curSeam.page)
+											? m.piece_editor_seam_reopen()
+											: m.piece_editor_seam_mark_resolved()}
+									</button>
+								{/if}
+							</div>
+						{:else}
+							<div class="review-controls">
+								<span class="seam-readout">
+									{m.piece_editor_review_publish_gate({
+										pagesDone: reviewPagesView.filter((p) => p.state === 'approved').length,
+										pagesTotal: reviewPagesView.length,
+										seamsDone: seams.filter((s) => isSeamResolved(s.page)).length,
+										seamsTotal: seams.length
+									})}
+								</span>
+								<button
+									class="btn btn-primary"
+									onclick={publish}
+									disabled={publishing || saving || reRendering || !allPagesApproved || !allSeamsResolved}
+								>
+									{publishing ? m.piece_editor_publishing() : m.piece_editor_publish()}
+								</button>
+							</div>
 						{/if}
-					</div>
+					</section>
 				{/if}
 				{#if audioUnavailable}
 					<p class="transport-msg" role="status">{m.piece_editor_transport_unavailable()}</p>
@@ -1908,6 +2558,38 @@
 		flex-wrap: wrap;
 		gap: 0.375rem;
 	}
+	/* F17: Notes / Measures segmented control — sits apart from the action
+	   rows below it with a hairline underneath. */
+	.editor-modes {
+		gap: 0;
+		padding-bottom: 0.375rem;
+		border-bottom: 1px solid var(--border);
+	}
+	.editor-modes .btn:first-child {
+		border-top-right-radius: 0;
+		border-bottom-right-radius: 0;
+	}
+	.editor-modes .btn:last-child {
+		border-top-left-radius: 0;
+		border-bottom-left-radius: 0;
+		border-left: none;
+	}
+	/* F18: Undo / Redo — grouped with a hairline under it, like the mode row. */
+	.editor-history {
+		padding-bottom: 0.375rem;
+		border-bottom: 1px solid var(--border);
+	}
+	/* F17: leading label on the shared clef row, so it's clear what the
+	   Treble/Bass/… buttons act on in each mode. */
+	.editor-clef-row {
+		align-items: center;
+	}
+	.editor-row-label {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--text-muted);
+		margin-right: 0.125rem;
+	}
 	.editor-toolbar .btn {
 		padding: 0.35rem 0.65rem;
 		font-size: 0.8125rem;
@@ -2001,11 +2683,93 @@
 		color: var(--text-muted);
 	}
 
-	/* F15: the seam-review strip above the transport row. */
-	.seam-bar {
+	/* F19: the Pages / Seams / Publish stepper above the transport row —
+	   replaces F15/F16's flat seam-only strip (`.seam-next` / `.seam-readout`
+	   / `.seam-fill*` / `.seam-resolve*` below are kept, just relocated into
+	   the Pages and Seams steps here). */
+	.review-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.review-steps {
+		display: flex;
+		gap: 0.375rem;
+	}
+	.review-step {
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text-muted);
+		border-radius: var(--radius-full);
+		padding: 0.2rem 0.7rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.review-step:hover:not(:disabled) {
+		background: var(--surface-2);
+	}
+	.review-step--active {
+		border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+		background: var(--accent);
+		color: var(--accent-contrast);
+	}
+	.review-step:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+
+	/* F19: the page rail — one chip per source page, coloured by review
+	   status (untouched/skipped muted, needs-a-look accent, failed danger,
+	   approved a filled accent pip), same three-state colour convention as
+	   `CoverageMeter`. */
+	.page-rail {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+		max-height: 4.5rem;
+		overflow-y: auto;
+	}
+	.page-chip {
+		flex-shrink: 0;
+		min-width: 1.75rem;
+		height: 1.75rem;
+		padding: 0 0.35rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		cursor: pointer;
+	}
+	.page-chip:hover {
+		background: var(--surface-2);
+	}
+	.page-chip--active {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+	}
+	.page-chip[data-status='review'] {
+		border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+		color: color-mix(in srgb, var(--accent) 80%, var(--text));
+	}
+	.page-chip[data-status='failed'] {
+		border-color: var(--danger);
+		color: var(--danger);
+	}
+	.page-chip[data-status='approved'] {
+		border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+		background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+		color: color-mix(in srgb, var(--accent) 85%, var(--text));
+	}
+
+	.review-controls {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
+		flex-wrap: wrap;
+		gap: 0.5rem;
 	}
 	.seam-next {
 		flex-shrink: 0;

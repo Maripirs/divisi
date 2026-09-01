@@ -22,7 +22,10 @@
 		!many && primary?.status === 'done' && primary.piece_id
 			? lh(`/piece/${primary.piece_id}/edit`)
 			: primary?.group_id
-				? lh(`/groups/${primary.group_id}?view=admin&tab=tracks`)
+				? lh(
+						`/groups/${primary.group_id}?view=admin&tab=tracks` +
+							(primary.piece_id ? `#track-${primary.piece_id}` : '')
+					)
 				: lh('/')
 	);
 

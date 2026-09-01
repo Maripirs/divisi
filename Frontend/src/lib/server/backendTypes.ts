@@ -248,5 +248,17 @@ export interface PagedReport {
 		merged_measure: number | null;
 		reason: string | null;
 	}[];
-	pages: { page: number; ok: boolean; error: string | null }[];
+	/** B18: `start_measure` (1-based) / `measure_count` place each source
+	 * page in the provisional whole-score merge, so F19's page-by-page
+	 * review can scroll + highlight a page's bar range without fetching
+	 * every page XML. A failed page has `measure_count === 0` and
+	 * `start_measure` pointing at where it *would* begin (the "insert N
+	 * bars" anchor). Both null on a report from before B18. */
+	pages: {
+		page: number;
+		ok: boolean;
+		error: string | null;
+		start_measure: number | null;
+		measure_count: number | null;
+	}[];
 }

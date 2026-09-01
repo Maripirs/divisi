@@ -701,17 +701,114 @@ export class EditableScore {
 		const current = this.clefAt(index);
 		if (current && current.sign === spec.sign && current.line === spec.line) return false;
 
+		this.applyClefToMeasure(measure, part, note.staff, spec);
+		this.reindex();
+		return true;
+	}
+
+	/** Set the clef for one `part` + `staff` across the inclusive 0-based measure
+	 * range `startMeasureIndex..endMeasureIndex` (the editor's Measures mode).
+	 * Like `setClef` this touches a single part + staff — a clef is a per-staff
+	 * choice.
+	 *
+	 * The clef is written at the range start; any *other* explicit `<clef>` for
+	 * this staff inside the range is removed so the whole span reads as one clef;
+	 * and, so bars *after* the range keep the clef they had, whatever clef was in
+	 * effect just past the range is re-asserted at `endMeasureIndex + 1` — unless
+	 * that measure already carries its own clef change, the restored clef equals
+	 * `spec`, or the range runs to the end of the part.
+	 *
+	 * Returns `false` without mutating on an unknown `partId`, a non-integer or
+	 * out-of-range `start`/`end`, or a no-op (the range already starts on this
+	 * clef and carries no other clef change inside it). */
+	setClefRange(
+		partId: string,
+		staff: number,
+		startMeasureIndex: number,
+		endMeasureIndex: number,
+		spec: ClefSpec
+	): boolean {
+		if (!Number.isInteger(startMeasureIndex) || !Number.isInteger(endMeasureIndex)) return false;
+		const part = this.partById(partId);
+		if (!part) return false;
+		const measures = Array.from(part.querySelectorAll(':scope > measure'));
+		const start = Math.min(startMeasureIndex, endMeasureIndex);
+		const end = Math.max(startMeasureIndex, endMeasureIndex);
+		if (start < 0 || end >= measures.length) return false;
+
+		const sameSpec = (c: ClefSpec | null): boolean =>
+			c != null && c.sign === spec.sign && c.line === spec.line;
+
+		// The clef bars after the range currently render with — captured before
+		// any mutation so it can be re-asserted past the range end.
+		const tail = this.clefInEffectAt(part, staff, end + 1);
+
+		// No-op: the range already starts on this clef and carries no other
+		// explicit clef change inside it (one *at* the start equal to `spec` is
+		// what we would write anyway).
+		if (
+			sameSpec(this.clefInEffectAt(part, staff, start)) &&
+			this.explicitClefsForStaff(measures, start + 1, end, staff).length === 0
+		) {
+			return false;
+		}
+
+		this.applyClefToMeasure(measures[start], part, staff, spec);
+
+		// Drop any other explicit clef for this staff inside the range so the
+		// span is unambiguously `spec`.
+		for (const clef of this.explicitClefsForStaff(measures, start + 1, end, staff)) {
+			const attributes = clef.parentElement;
+			clef.remove();
+			if (attributes && attributes.children.length === 0) attributes.remove();
+		}
+
+		// Keep everything past the range visually unchanged.
+		if (
+			end + 1 < measures.length &&
+			tail &&
+			!sameSpec(tail) &&
+			this.explicitClefsForStaff(measures, end + 1, end + 1, staff).length === 0
+		) {
+			this.applyClefToMeasure(measures[end + 1], part, staff, tail);
+		}
+
+		this.reindex();
+		return true;
+	}
+
+	/** Every explicit `<clef>` element governing `staff` in an `<attributes>` of
+	 * measures `from..to` (inclusive, 0-based) of `measures` — the same
+	 * numbered-then-positional rule the clef readers use (`clefForStaffIn`). */
+	private explicitClefsForStaff(
+		measures: Element[],
+		from: number,
+		to: number,
+		staff: number
+	): Element[] {
+		const found: Element[] = [];
+		for (let i = Math.max(0, from); i <= to && i < measures.length; i++) {
+			for (const attr of Array.from(measures[i].querySelectorAll(':scope > attributes'))) {
+				const clef = this.clefForStaffIn(attr, staff);
+				if (clef) found.push(clef);
+			}
+		}
+		return found;
+	}
+
+	/** The shared body of `setClef` / `setClefRange`: find-or-create the
+	 * `<attributes>` and the `<clef>` for `staff` in `measure`, then write
+	 * `<sign>`/`<line>` in DTD order and drop any `<clef-octave-change>`. */
+	private applyClefToMeasure(measure: Element, part: Element, staff: number, spec: ClefSpec): void {
 		const multiStaff = this.stavesCount(part) > 1;
 		const attributes = this.findOrCreateAttributes(measure);
-
-		let clef = Array.from(attributes.querySelectorAll(':scope > clef')).find((c) => {
-			const num = c.getAttribute('number');
-			if (multiStaff) return num != null && num !== '' && Number(num) === note.staff;
-			return num == null || num === '';
-		});
+		// Reuse the clef that already governs this staff (numbered or positional
+		// unnumbered — same rule the readers use) so we never leave a stale
+		// second clef for the staff behind.
+		let clef = this.clefForStaffIn(attributes, staff);
 		if (!clef) {
 			clef = this.doc.createElement('clef');
-			if (multiStaff) clef.setAttribute('number', String(note.staff));
+			if (multiStaff) clef.setAttribute('number', String(staff));
 			// <attributes> order: ... instruments?, clef*, staff-details*, ...
 			this.insertInAttributes(attributes, clef, ['staff-details', 'transpose']);
 		}
@@ -720,9 +817,6 @@ export class EditableScore {
 		this.setChild(clef, 'sign', spec.sign, 'line');
 		this.setChild(clef, 'line', String(spec.line), 'clef-octave-change');
 		clef.querySelector(':scope > clef-octave-change')?.remove();
-
-		this.reindex();
-		return true;
 	}
 
 	/** The `<fifths>` in effect for the selected note: scan its part's measures
@@ -758,26 +852,90 @@ export class EditableScore {
 		if (!note) return null;
 		const part = this.partById(note.partId);
 		if (!part) return null;
-		const multiStaff = this.stavesCount(part) > 1;
+		return this.clefInEffectAt(part, note.staff, note.measureIndex);
+	}
+
+	/** The clef in effect for `staff` of `part` at (and including) the measure at
+	 * `uptoMeasureIndex`: a top-down scan of every `<attributes><clef>` at or
+	 * before it. A `<clef>` with a `number` is matched to `staff`. Unnumbered
+	 * `<clef>`s are matched positionally *within their `<attributes>`* (1st ->
+	 * staff 1, 2nd -> staff 2, ...) — the convention when a multi-staff part
+	 * omits `number` (some OMR output does), and still correct for the common
+	 * one-clef single-staff case. `null` when no clef is found. Shared by
+	 * `clefAt`, `clefAtMeasure`, and `setClefRange`. */
+	private clefInEffectAt(part: Element, staff: number, uptoMeasureIndex: number): ClefSpec | null {
 		const measures = Array.from(part.querySelectorAll(':scope > measure'));
 		let result: ClefSpec | null = null;
-		for (let i = 0; i <= note.measureIndex && i < measures.length; i++) {
+		for (let i = 0; i <= uptoMeasureIndex && i < measures.length; i++) {
 			for (const attr of Array.from(measures[i].querySelectorAll(':scope > attributes'))) {
-				for (const clef of Array.from(attr.querySelectorAll(':scope > clef'))) {
-					const num = clef.getAttribute('number');
-					if (num != null && num !== '') {
-						if (Number(num) !== note.staff) continue;
-					} else if (multiStaff && note.staff !== 1) {
-						continue;
-					}
-					const sign = text(clef.querySelector(':scope > sign'));
-					if (!sign) continue;
-					const lineText = text(clef.querySelector(':scope > line'));
-					result = { sign, line: lineText === '' ? 0 : Number(lineText) };
-				}
+				const clef = this.clefForStaffIn(attr, staff);
+				if (!clef) continue;
+				const sign = text(clef.querySelector(':scope > sign'));
+				if (!sign) continue;
+				const lineText = text(clef.querySelector(':scope > line'));
+				result = { sign, line: lineText === '' ? 0 : Number(lineText) };
 			}
 		}
 		return result;
+	}
+
+	/** The `<clef>` inside one `<attributes>` that governs `staff`, or null.
+	 * A numbered `<clef>` wins by matching `number`; failing that, unnumbered
+	 * `<clef>`s are taken positionally (1st -> staff 1, 2nd -> staff 2, ...),
+	 * which also covers the ordinary single unnumbered clef of a one-staff
+	 * part. Shared by the clef readers and `applyClefToMeasure`. */
+	private clefForStaffIn(attr: Element, staff: number): Element | null {
+		const clefs = Array.from(attr.querySelectorAll(':scope > clef'));
+		const numbered = clefs.find((c) => {
+			const n = c.getAttribute('number');
+			return n != null && n !== '' && Number(n) === staff;
+		});
+		if (numbered) return numbered;
+		const unnumbered = clefs.filter((c) => {
+			const n = c.getAttribute('number');
+			return n == null || n === '';
+		});
+		return unnumbered[staff - 1] ?? null;
+	}
+
+	/** The clef in effect for a part + staff at a 0-based measure index, keyed by
+	 * part id rather than by a selected note (`clefAt` needs one; the editor's
+	 * Measures mode has a bar range instead). `null` on an unknown part or when
+	 * no clef is found. Feeds the Measures-mode toolbar's active-clef state. */
+	clefAtMeasure(partId: string, staff: number, measureIndex: number): ClefSpec | null {
+		const part = this.partById(partId);
+		if (!part) return null;
+		return this.clefInEffectAt(part, staff, measureIndex);
+	}
+
+	/** The number of measures in the longest part — the measure count of a
+	 * B16-merged score, where every part shares it. Lets the editor's Measures
+	 * mode clamp a bar-range selection. */
+	measureCount(): number {
+		const parts = Array.from(this.doc.querySelectorAll('score-partwise > part'));
+		if (parts.length === 0) return 0;
+		return Math.max(...parts.map((p) => p.querySelectorAll(':scope > measure').length));
+	}
+
+	/** The display name of a part (`<score-part><part-name>`), or `''` if none —
+	 * for the Measures-mode status line, since a clef edit is per part + staff. */
+	partName(partId: string): string {
+		for (const sp of Array.from(
+			this.doc.querySelectorAll('score-partwise > part-list > score-part')
+		)) {
+			if ((sp.getAttribute('id') ?? '') === partId) {
+				return text(sp.querySelector(':scope > part-name'));
+			}
+		}
+		return '';
+	}
+
+	/** How many staves a part declares — exposed so the editor's Measures mode
+	 * can tell a single-staff part (any click targets its one staff) from a
+	 * multi-staff one (the clicked staff matters). */
+	staffCount(partId: string): number {
+		const part = this.partById(partId);
+		return part ? this.stavesCount(part) : 1;
 	}
 
 	serialize(): string {
