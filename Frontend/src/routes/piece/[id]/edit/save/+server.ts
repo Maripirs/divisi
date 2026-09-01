@@ -3,33 +3,33 @@ import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import type { RequestHandler } from './$types';
 
 /**
- * F14 task 5: takes the MusicXML the in-app editor exported and creates a
- * new `draft` version on the piece via the Backend's existing
- * `POST /library/pieces/{id}/versions` (music-file slot) — the same
- * endpoint the group Tracks edit panel and B8's OMR auto-import already
- * use. It carries the PDF slot forward on its own, and stamps the version
- * `source: modification`.
+ * F16: an editor save writes the MusicXML the editor exported back into the
+ * piece's *working draft* in place, via the Backend's B17
+ * `PUT /library/versions/{id}/file` — no new version row per save, and the
+ * draft stays `draft` for "Publish as live version" to promote later.
  *
- * This route exists (rather than a `+page.server.ts` form action) because
- * the payload is an in-memory string the client turns into a `File`, and a
- * plain `fetch` for a JSON reply is far less fiddly to consume from the
- * `ssr: false` editor than an action envelope. The session token is
- * httpOnly, so the multipart POST to the Backend has to happen here, not
- * in the browser.
+ * (F14 originally POSTed `/library/pieces/{id}/versions`, stacking a fresh
+ * draft on every save; B17's single working-draft slot replaces that.)
  *
- * Deliberately does *not* chain submit/approve/distribute — per the F14
- * plan the new draft then flows through the normal review workflow
- * unchanged. The Backend re-checks edit authority (`_require_piece_access`)
- * on this POST, so a user who somehow reached the editor without rights
- * still can't save.
+ * The working-draft version id comes in the multipart body as `versionId`
+ * (the client holds it from `+page.server.ts`'s `load`). This route exists
+ * rather than a form action because the payload is an in-memory string the
+ * client turns into a `File`, and the session token is httpOnly so the
+ * multipart PUT to the Backend has to happen server-side. The Backend
+ * re-checks authority (creator or review authority) and that the target is
+ * still a draft.
  */
-export const POST: RequestHandler = async ({ params, request, locals, fetch }) => {
+export const POST: RequestHandler = async ({ request, locals, fetch }) => {
 	if (!locals.token) throw error(401, 'Not signed in');
 
 	const incoming = await request.formData();
 	const file = incoming.get('file');
+	const versionId = incoming.get('versionId');
 	if (!(file instanceof File) || file.size === 0) {
 		throw error(400, 'No edited music file was provided');
+	}
+	if (typeof versionId !== 'string' || !versionId) {
+		throw error(400, 'No working-draft version id was provided');
 	}
 
 	const body = new FormData();
@@ -37,8 +37,8 @@ export const POST: RequestHandler = async ({ params, request, locals, fetch }) =
 
 	let res: Response;
 	try {
-		res = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces/${params.id}/versions`, {
-			method: 'POST',
+		res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${encodeURIComponent(versionId)}/file`, {
+			method: 'PUT',
 			headers: { Authorization: `Bearer ${locals.token}` },
 			body
 		});

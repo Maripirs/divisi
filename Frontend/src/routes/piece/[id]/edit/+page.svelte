@@ -706,11 +706,21 @@
 		errorKind = null;
 		errorDetail = null;
 
+		// F16: the editor loads (and saves back to) the piece's *working
+		// draft* — resolved server-side in `+page.server.ts` by B17's
+		// create-or-get. Without an id there is nothing to edit.
+		if (!data.workingDraftId) {
+			phase = 'error';
+			errorKind = 'unreachable';
+			return;
+		}
+
 		let res: Response;
 		try {
-			// The existing proxy resolves the piece's current version and
-			// streams its file, attaching the session server-side.
-			res = await fetch(`/piece/${data.id}/file`);
+			// Streams the working-draft version's music file (not the piece's
+			// live version, which `/piece/[id]/file` would give), session
+			// attached server-side.
+			res = await fetch(`/piece/${data.id}/edit/file?v=${encodeURIComponent(data.workingDraftId)}`);
 		} catch {
 			// A genuine network failure reaching our own proxy — same class of
 			// problem as the proxy's own synthetic 503.
@@ -768,14 +778,16 @@
 		}
 	}
 
-	// Task 4 + 5: export the edited model to a complete MusicXML document and
-	// POST it to `edit/save/+server.ts`, which creates a new `draft` version
-	// on this piece (PDF slot carried forward, `source: modification`) and
-	// leaves it for the normal submit/approve/distribute review flow. On
-	// success, drop the dirty flag (so the guard below doesn't fire on our
-	// own redirect) and return to the piece page.
+	// F16: export the edited model to a complete MusicXML document and PUT it
+	// into the piece's working draft *in place* (`edit/save/+server.ts` ->
+	// B17 `PUT /library/versions/{id}/file`) — no new version row per save,
+	// and it stays a `draft`. The editor stays open (iterative editing); the
+	// draft only becomes the live version via "Publish as live version".
+	// `everEdited` latches so the header badge stops saying "Live version"
+	// once anything has been saved this session.
+	let everEdited = $state(false);
 	async function save(): Promise<void> {
-		if (!score || saving || !dirty) return;
+		if (!score || saving || !dirty || !data.workingDraftId) return;
 		saving = true;
 		saveError = null;
 		try {
@@ -786,6 +798,7 @@
 				'file',
 				new File([xml], `${base}.musicxml`, { type: 'application/vnd.recordare.musicxml+xml' })
 			);
+			fd.set('versionId', data.workingDraftId);
 			let res: Response;
 			try {
 				res = await fetch(`/piece/${data.id}/edit/save`, { method: 'POST', body: fd });
@@ -799,10 +812,8 @@
 				return;
 			}
 			dirty = false;
-			// Replace the editor entry (don't push): the stack should read
-			// [origin, piece], never [origin, editor, piece]. `invalidateAll`
-			// so the piece page re-runs its load and shows the new draft.
-			await goto(backToPieceHref, { replaceState: true, invalidateAll: true });
+			everEdited = true;
+			editNotice = m.piece_editor_saved();
 		} finally {
 			saving = false;
 		}

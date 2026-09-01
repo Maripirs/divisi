@@ -2,7 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { subjectFromToken } from '$lib/server/jwt';
 import { lh } from '$lib/i18n';
-import type { GroupOut, LibraryEntryOut } from '$lib/server/backendTypes';
+import type { GroupOut, LibraryEntryOut, WorkingDraftOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
 /** Whether the caller may edit this track's music, plus its title (when
@@ -23,7 +23,19 @@ type EditAccess = {
 	 * `/paged-report` and overlays a marker at each unresolved page join.
 	 * Null when the music wasn't OMR'd, or the paged run merged cleanly. */
 	pagedReportJobId: string | null;
+	/** B17/F16: the piece's single open working draft — the version the
+	 * editor loads and saves back to. Resolved by `POST
+	 * /library/pieces/{id}/working-draft` (create-or-get, copy-on-edit from
+	 * the live version). Null only for a non-`granted` state or if that
+	 * call failed; the editor then shows its load-error card. */
+	workingDraftId: string | null;
+	/** True when the working-draft call just created it by copying the live
+	 * version — F16's header badge starts at "Live version" until the first
+	 * edit in that case, "Working draft — not yet live" otherwise. */
+	forkedFromLive: boolean;
 };
+
+const NO_ACCESS = { hasPdf: false, pagedReportJobId: null, workingDraftId: null, forkedFromLive: false };
 
 /** The OMR job id to pull a paged report from for this track, or null. */
 function pagedReportJobId(entry: LibraryEntryOut): string | null {
@@ -54,35 +66,43 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 		// either way, same as the player's `resolve/+server.ts`.
 		const entries = await backendJson<LibraryEntryOut[]>(token, '/library/pieces', undefined, fetchFn);
 		const entry = entries.find((e) => e.piece_id === pieceId);
-		if (!entry) return { access: 'notFound', pieceTitle: null, hasPdf: false, pagedReportJobId: null };
+		if (!entry) return { access: 'notFound', pieceTitle: null, ...NO_ACCESS };
 
+		let granted: boolean;
 		if (entry.owner_type === 'user') {
 			// Personal piece: only its owner may edit. The caller's own id is
 			// the JWT `sub` claim (`+layout.server.ts` uses the same
 			// unverified decode on its cold-start path), so no extra
 			// `/auth/me` round trip is needed just for an id compare.
 			const userId = subjectFromToken(token);
-			const granted = userId !== null && entry.owner_id === userId;
-			return {
-				access: granted ? 'granted' : 'denied',
-				pieceTitle: entry.title,
-				hasPdf: entry.has_pdf,
-				pagedReportJobId: granted ? pagedReportJobId(entry) : null
-			};
+			granted = userId !== null && entry.owner_id === userId;
+		} else {
+			// Group piece: edit authority is the owning group's `admin` role,
+			// read the same way `groups/[id]/+page.server.ts` reads it.
+			// `/groups` only lists the caller's own groups, so a group this
+			// user isn't in simply won't be found, which is a denial.
+			const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
+			granted = groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
 		}
 
-		// Group piece: edit authority is the owning group's `admin` role,
-		// read the same way `groups/[id]/+page.server.ts` reads it. `/groups`
-		// only lists the caller's own groups, so a group this user isn't in
-		// simply won't be found, which is a denial, not an error.
-		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
-		const group = groups.find((g) => g.id === entry.owner_id);
-		const granted = group?.role === 'admin';
+		if (!granted) return { access: 'denied', pieceTitle: entry.title, ...NO_ACCESS };
+
+		// B17/F16: get (or create by copy-on-edit) the working draft this
+		// editor session edits. Review authority is required for this call,
+		// which `granted` above already established.
+		const wd = await backendJson<WorkingDraftOut>(
+			token,
+			`/library/pieces/${pieceId}/working-draft`,
+			{ method: 'POST' },
+			fetchFn
+		);
 		return {
-			access: granted ? 'granted' : 'denied',
+			access: 'granted',
 			pieceTitle: entry.title,
 			hasPdf: entry.has_pdf,
-			pagedReportJobId: granted ? pagedReportJobId(entry) : null
+			pagedReportJobId: pagedReportJobId(entry),
+			workingDraftId: wd.version.id,
+			forkedFromLive: wd.forked_from_live
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) {
@@ -94,8 +114,7 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 			return {
 				access: err.status === 503 ? 'unreachable' : 'denied',
 				pieceTitle: null,
-				hasPdf: false,
-				pagedReportJobId: null
+				...NO_ACCESS
 			};
 		}
 		throw err;

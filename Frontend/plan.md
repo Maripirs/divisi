@@ -93,6 +93,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31** for in-editor playback — full transport (play/stop, seek, tempo, per-part mix), playback cursor + follow-scroll, note-preview-on-select, full-screen player-style shell: **all Claude tasks done 2026-08-31**, pending the human real-browser pass + acceptance-criteria sign-off. |
 | F15 | Review a segmented OMR result in the editor | ⏳ Built, `check`/`build`-clean, vitest 58 green; seam-marker pixel placement + the whole flow need a real-browser pass (also needs Backend B16 deployed) |
+| F16 | Working-draft slot: labelled editing, seam-fill, per-page OMR progress & re-run | 📝 Designed 2026-08-31 (with `Backend/plan.md` B17), not started |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -980,6 +981,124 @@ with the existing correction tools instead of round-tripping through MuseScore.
       PDF, open the review, confirm the seam markers land where the joins
       actually are, fix one, save, and confirm the draft is clean and plays.
 
+### F16 — Working-draft slot: labelled editing, seam-fill, per-page progress & re-run [ ]
+
+Builds on F14 (the editor) and F15 (seam markers). Designing the
+generate → edit → publish loop with the human (2026-08-31) surfaced three gaps:
+
+1. The editor always loads the piece's *live* version (`/piece/[id]/file`) and
+   every save spawns a fresh `draft` row, so generate-from-PDF and hand edits
+   don't chain and there's no single "work in progress" to point at.
+2. A failed OMR page leaves only a zero-width seam — nowhere to type the missing
+   bars.
+3. Nothing tells the editor which version it's showing (live vs draft), and
+   nothing gates promoting a rough draft to live.
+
+Pairs with Backend **B17** (working-draft slot endpoints, per-page progress
+counters, per-page re-run).
+
+**Model (agreed with the human 2026-08-31):**
+- **One working-draft slot per track** = at most one open `draft` /
+  `source: modification` `PieceVersion` per piece (B17 formalizes
+  `pending_generated_version_id` into this). The **live** version (a group's
+  `distributed`, a personal library's latest) is never edited in place.
+- "Edit music" opens the working draft if one exists, else clones the live
+  version into a fresh one (copy-on-edit, server-side —
+  `POST /library/pieces/{id}/working-draft`). Generate-from-PDF writes into the
+  same slot, replacing (rejecting) any unpublished working draft that's there.
+- Save updates the working draft's file in place
+  (`PUT /library/versions/{id}/file`), no new row per save; it stays `draft`.
+- **Publish** ("Publish as live version") lives in the editor, runs
+  submit → approve → distribute in one B17 call, and is disabled until every
+  seam is marked resolved.
+
+**Decisions:**
+- Per-seam "resolved" state is client-only, `localStorage` keyed on
+  `jobId + before_page`, same overlay-only philosophy as F15's markers — nothing
+  new persisted server-side just for review bookkeeping. The publish call carries
+  a single `seams_resolved: true` acknowledgement the Backend records but can't
+  itself verify.
+- Failed-page seams (reason starts "page N failed") get the fill affordance;
+  part-count-change seams keep F15's review-and-clear only (no missing bars
+  there).
+- Inserted fill bars are real `<measure>`s of full-measure rests across every
+  part, not a marker — the user overwrites the rests. New `EditableScore`
+  measure-level ops (`insertMeasures` / `deleteMeasure`), the first structural
+  edits in that model.
+- Generation stays one job / one click. Per-page *progress* is display-only
+  (B17's `pages_done`/`pages_total`); per-page *re-run* is an editor action on a
+  failed-page seam that splices the re-run page's MusicXML into the working model
+  client-side so the user's other edits survive.
+- Auto-handoff into the editor is the existing `OmrJobAlerts` completion alert
+  gaining a "Review generated draft" link — not a forced navigation.
+
+**Acceptance criteria:**
+- [ ] Opening "Edit music" on a track with no working draft clones the live
+      version; the header badges "Working draft — not yet live". A second open
+      reuses the same draft (no stacking).
+- [ ] Editing, leaving, then re-opening shows the same in-progress draft, not the
+      live version; the live player is unchanged until Publish.
+- [ ] Generate-from-PDF into a track that already has a working draft replaces it
+      (with a confirm), doesn't stack a second one.
+- [ ] A failed-page seam: "Next seam" opens the PDF pane at that page; an "insert
+      N bars" control adds N aligned full-measure-rest bars at the seam onset
+      across every part; measures renumber; a saved draft's MusicXML has only
+      real bars, no marker markup.
+- [ ] "Re-run this page" on a failed-page seam splices the re-run result into the
+      working model at the seam onset without discarding other edits; the seam
+      clears if the page now transcribes.
+- [ ] "Publish as live version" is disabled until every seam shows resolved;
+      publishing makes the working draft the live version (distributed for a
+      group piece) and the editor's next load starts a fresh copy-on-edit.
+- [ ] Tracks tab shows "page X of Y" while a generate job runs; on completion the
+      header alert offers "Review generated draft" linking to the editor.
+- [ ] `npm run check` (0 errors) / `npm run build` clean; vitest green (new
+      `insertMeasures` / `deleteMeasure` tests).
+
+**Tasks — Claude:**
+- [ ] `backendTypes.ts`: working-draft version shape, `pages_done`/`pages_total`
+      on the OMR job types, publish + rerun response types.
+- [ ] `piece/[id]/edit/+page.server.ts`: resolve the working draft via B17's
+      create-or-get; return its version id + whether it was just forked from live
+      (for the badge), alongside the existing access / `pagedReportJobId` fields.
+- [ ] `piece/[id]/edit/save/+server.ts`: `PUT /library/versions/{id}/file` on the
+      working draft instead of `POST .../versions`.
+- [ ] New `piece/[id]/edit/publish/+server.ts` proxy → B17
+      `POST /library/versions/{id}/publish` with `{ seams_resolved: true }`.
+- [ ] New `omr/jobs/[id]/pages/[n]/rerun/+server.ts` proxy → B17 rerun endpoint.
+- [ ] `editableScore.ts`: `insertMeasures(afterMeasureIndex, count)` +
+      `deleteMeasure(measureIndex)` — every `score-partwise > part` gets `count`
+      `<measure>`s of one full-measure `<rest>` inserted after the given index
+      (prevailing `<divisions>`/`<time>` carried from the preceding measure), all
+      parts kept the same length, `<measure number>` re-sequenced 1..N. Refuse
+      out-of-range / a delete that would empty a part. Unit tests.
+- [ ] `piece/[id]/edit/+page.svelte`: load the working-draft file; header badge
+      ("Working draft — not yet live" / pre-first-edit "Live version"); "Publish
+      as live version" gated on all-seams-resolved; per-seam "mark resolved"
+      toggle (localStorage keyed on job + `before_page`) wired into the seam
+      readout; failed-page seam → auto-open PDF pane + `scrollToPage`, an "insert
+      N bars" input calling `insertMeasures`, a "Re-run this page" button that
+      POSTs the rerun proxy and splices the returned MusicXML at the seam onset.
+- [ ] `PdfView.svelte`: a `scrollToPage(n)` export (scroll `canvasRefs[n-1]` into
+      view) or a `targetPage` prop.
+- [ ] `EditorScoreView.svelte`: no structural change expected — seam onsets
+      already re-derive from `workingXml`; verify markers track after an
+      insert / delete / splice.
+- [ ] `groups/[id]/+page.svelte`: "Use it / Discard" → "Open working draft in
+      editor" (link to `/piece/[id]/edit`) / "Discard working draft" (reject the
+      draft version); "page X of Y" readout while `omrJob.status === 'running'`
+      and `pages_total` is set.
+- [ ] `OmrJobAlerts.svelte` / `omrJobs.svelte.ts`: a finished generate job the
+      caller started shows "Review generated draft" → `/piece/[id]/edit`.
+- [ ] en + es i18n keys.
+
+**Tasks — Human:**
+- [ ] Full real-browser pass: generate from a multi-page PDF (watch the page
+      counter), land in the editor on the working draft, fill a failed page from
+      the side-by-side PDF, re-run another page, mark all seams resolved, Publish,
+      confirm the live track now plays the corrected music and re-opening the
+      editor starts a clean copy.
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -1027,6 +1146,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-31: Designed F16 (+ Backend B17) with the human — turning generate-from-PDF → in-app edit → publish into one loop. Agreed model: **one working-draft slot per track** (the single open `draft` / `source: modification` version), live version never edited in place, editor opens the working draft (copy-on-edit from live if none), saves update it in place, and an editor "Publish as live version" button (gated on all seams resolved) runs submit→approve→distribute. Failed-page seams get a side-by-side PDF at that page + an "insert N bars" control (new `EditableScore.insertMeasures`/`deleteMeasure`) and a "re-run this page" action (splices the re-run MusicXML into the working model). Generation stays one click with a per-page progress readout + a "review generated draft" completion alert. Per-seam "resolved" is localStorage-only, like F15's markers. Nothing built yet — full task list in the F16 section.
 
 - 2026-08-31: F14 editor — fixed a back-navigation trap surfaced in live testing. The editor's back arrow (and the error-card "back to this track" links, and the post-save nav) were plain `<a href>`/`goto` pushes to `/piece/[id]`, so entering from the piece page left the history stack as [piece, editor, piece] and "back, back" bounced piece <-> editor. Now `+page.svelte` tracks whether it was reached from inside the app (`afterNavigate`, `type !== 'enter'`) and the back control does a real `history.back()` for an in-app arrival (returning you to wherever you came from, the group Tracks tab included), falling back to a *replacing* navigation for a cold/direct load. Post-save uses `goto(piece, { replaceState: true, invalidateAll: true })` so the editor entry is replaced, not stacked, and the piece page reloads showing the new draft. `beforeNavigate` unsaved-guard still fires on the popstate path. `check` 0 errors, `build` clean, vitest 58 green.
 
