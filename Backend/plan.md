@@ -75,6 +75,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
 | B16 | Paged OMR pipeline (per-page transcribe + merge) | ⏳ Claude tasks done (full suite 181 green); human hasn't run a real multi-page scan through it. Migration `d2f8a6c4e1b9` not yet on production — reaches prod only via merge to `main` (its parent `c1f7a4d2e8b6` is already on prod + `main` as of 2026-08-31, see Log) |
+| B17 | Working-draft slot + per-page OMR progress & re-run | ⏳ Claude tasks done (202 green); human hasn't run a real multi-page scan + re-run through it. Migration `e7b1c9d3a2f4` not on production — reaches prod only via merge to `main` |
 
 ### B1 — Backend scaffold [x]
 
@@ -494,6 +495,102 @@ boundary so an admin fixes the seams there instead of in MuseScore.
       why that breaks `main`'s deploy. `c1f7a4d2e8b6` (its parent) is already on
       both prod and `main` as of 2026-08-31.
 
+### B17 — Working-draft slot + per-page OMR progress & re-run [~]
+
+Pairs with `Frontend/plan.md`'s **F16**. Designed with the human 2026-08-31 to
+make generate-from-PDF → in-app edit → publish one coherent loop instead of a
+pile of unrelated `draft` rows.
+
+**Model:**
+- **Working draft** = the single open `draft` / `source: modification`
+  `PieceVersion` on a piece (today's `pending_generated_version_id` is almost
+  this — B17 makes it *the* concept and enforces "at most one open").
+- The **live** version is unchanged: a group piece's latest `distributed`, a
+  personal piece's latest. Never mutated in place.
+
+**Decisions:**
+- Copy-on-edit clones the live version's `file_path` + `pdf_file_path` by
+  content-copy (`save_file(load_file(...))`, as `_import_draft_version` already
+  does for the MIDI) so the draft's files outlive anything the live version does.
+- Generate-from-PDF replaces an existing open working draft: the old one is
+  `reject`ed (status → `rejected`, history kept) before the new import.
+- `POST /library/versions/{id}/publish` is a convenience wrapper over the
+  existing submit → approve → (distribute) endpoints, same authority checks — no
+  new state machine. Personal piece = submit + approve, no distribute. Takes
+  `{ seams_resolved: bool }`; `false` → 409. The Backend can't inspect the
+  editor's seam state — it records the ack on the version and trusts F16's gate.
+- Per-page progress is best-effort: `pages_done` bumped + committed after each
+  page in `run_omr_paged`. No new status value.
+- Per-page re-run reuses the split PDF still on disk under
+  `omr_jobs/{id}/pages/page-NN.pdf`: re-run the one page, re-run `_segment_pages`
+  + the merges, rewrite `score.musicxml` / `score.mid` / `paged-report.json` and
+  `OmrJob.needs_review`, and return the re-run page's own normalized MusicXML
+  (+ measure count, + whether it still failed) for F16 to splice. It does **not**
+  re-import the draft — the editor owns the working model at that point.
+
+**Acceptance criteria:**
+- [x] `POST /library/pieces/{id}/working-draft` returns the existing open working
+      draft, or creates one cloning the live version's music + PDF; review
+      authority required; idempotent (second call returns the same version).
+- [x] `PUT /library/versions/{id}/file` replaces a `draft` version's music file
+      in place (creator or review authority); refuses a non-draft.
+- [x] `POST /library/versions/{id}/publish` with `seams_resolved: true` takes a
+      working draft to `approved` and (group piece) distributes it; `false` or a
+      non-working-draft → 409; not review authority → 403.
+- [x] Generate-from-PDF on a piece that already has an open working draft rejects
+      the old one and imports the new — never two open at once.
+- [x] `OmrJobOut` + the list item carry `pages_done` / `pages_total`; they climb
+      while a paged job runs. (TestClient runs the bg task synchronously so the
+      suite only sees the final `pages_done == pages_total`; the per-page commit
+      is covered by `test_on_page_done_fires_once_per_page`.)
+- [x] `POST /omr/jobs/{id}/pages/{n}/rerun` re-transcribes page n, rewrites the
+      report + provisional merge + `needs_review`, and returns
+      `{ ok, still_failed, measure_count, page_musicxml_url }`; 404 for a
+      non-paged job or an out-of-range page; traversal-safe.
+- [x] `pytest` green (202 passed — new working-draft, publish, rerun, progress
+      tests).
+
+**Tasks — Claude:**
+- [x] `services/pieces.py`: `working_draft(piece_id, db)` (the lookup, renamed /
+      widened from `pending_generated_version_id`),
+      `get_or_create_working_draft(piece, user, db)` (clone live files),
+      `publish_version(version, user, db)` (wraps submit / approve / distribute).
+      Also `live_version` + `replace_version_file`. `pending_generated_version_id`
+      kept as a thin wrapper over `working_draft`.
+- [x] `_import_draft_version` (`app/jobs/omr_jobs.py`): reject an existing open
+      working draft before adding the new one.
+- [x] `app/api/routes/library.py`: `POST /library/pieces/{id}/working-draft`,
+      `PUT /library/versions/{id}/file`, `POST /library/versions/{id}/publish`
+      (`{ seams_resolved }`). Schemas `WorkingDraftOut` / `VersionPublishRequest`
+      in `app/api/schemas/library.py`.
+- [x] `OmrJob.pages_done` / `pages_total` (nullable ints) + migration
+      `e7b1c9d3a2f4` (chained off `d2f8a6c4e1b9`; also adds
+      `piece_versions.seams_resolved_ack`). `run_omr_paged` takes an optional
+      `on_page_done(done, total)` callback; `run_omr_job` passes one that bumps +
+      commits the job row per page.
+- [x] `app/omr/paged.py`: factored the per-page loop (`_transcribe_page` +
+      `_finalize_paged_run`) so `rerun_page(output_dir, page_no, engine)` re-runs
+      one page from the on-disk split PDF and rebuilds segments + merges +
+      `paged-report.json`. Each page's normalized XML lands at a deterministic
+      `pages/pNN/page.musicxml` so a re-run can reload the others.
+- [x] `app/api/routes/omr.py`: `POST /omr/jobs/{id}/pages/{n}/rerun` (job owner;
+      calls `rerun_page`, updates `OmrJob.needs_review`, returns the F16 shape) +
+      `GET /omr/jobs/{id}/pages/{n}/musicxml` (serves the re-run page's XML,
+      traversal-guarded like `.../segments/{n}/{kind}`).
+- [x] Schemas: `pages_done` / `pages_total` on `OmrJobOut` +
+      `LibraryEntryOmrJobOut` + `OmrJobListItemOut`; `OmrPageRerunOut`.
+- [x] Tests: `test_library_working_draft.py` (get-or-create idempotency, clone
+      contents, publish happy / 409 / 403, generate replaces),
+      `test_omr_paged.py` / `test_omr_api.py` additions (progress counters,
+      rerun recovers / still-fails / out-of-range, route wiring + page-XML serve).
+
+**Tasks — Human:**
+- [ ] After F16: run a real multi-page scan, re-run a page via the API, confirm
+      `paged-report.json` + `score.musicxml` are rewritten and `needs_review`
+      flips when the last bad page is recovered.
+- [ ] Migration reaches prod only by merge to `main` (same rule as
+      `d2f8a6c4e1b9` — see the 2026-08-31 outage Log entry).
+
 ## Backlog
 
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
@@ -513,6 +610,10 @@ boundary so an admin fixes the seams there instead of in MuseScore.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-08-31: **B17 built — Claude tasks.** Working-draft slot: `services/pieces.py` gains `working_draft` (the open `draft`/`modification` version — B8's `pending_generated_version_id` is now a thin wrapper), `live_version` (a group piece's latest `distributed`, else newest non-rejected), `get_or_create_working_draft` (content-copies the live version's music + PDF via `save_file(load_file(...))`, idempotent), `replace_version_file` (in-place, drops the render cache), `publish_version` (draft → `approved` + reviewed_by/at + `seams_resolved_ack`, then a `Distribution` row for a group piece — walks the same statuses as submit/approve/distribute without the per-endpoint "creator only" submit check). Routes in `library.py`: `POST /pieces/{id}/working-draft` (review authority, returns `WorkingDraftOut{version, forked_from_live}`), `PUT /versions/{id}/file` (creator or review authority, 409 on a non-draft), `POST /versions/{id}/publish` (`{seams_resolved}`; `false` → 409, non-working-draft → 409, not review authority → 403). `_import_draft_version` now rejects an existing open working draft before importing the new one (never two open). Per-page OMR: `OmrJob.pages_done`/`pages_total` + `run_omr_paged(on_page_done=…)` callback bumping+committing the job row per page; `app/omr/paged.py` refactored into `_transcribe_page` + `_finalize_paged_run` so `rerun_page(output_dir, page_no)` re-runs one page from the on-disk split PDF (`pages/page-NN.pdf`) and rebuilds segments/merges/`paged-report.json`; each page's normalized XML now lands at a deterministic `pages/pNN/page.musicxml`. `needs_review` now also true whenever any page failed (was only `len(segments) > 1`). Routes: `POST /omr/jobs/{id}/pages/{n}/rerun` → `OmrPageRerunOut{ok, still_failed, measure_count, page_musicxml_url}` + `GET /omr/jobs/{id}/pages/{n}/musicxml`. New migration `e7b1c9d3a2f4` (chains off `d2f8a6c4e1b9`; `omr_jobs.pages_done`/`pages_total` + `piece_versions.seams_resolved_ack`) — **not run against prod from this branch** (2026-08-31 outage rule; reaches prod only by merge to `main`). `pytest` 202/202 (+21). Feeds Frontend F16.
+
+- 2026-08-31: Designed B17 (+ Frontend F16) with the human — the API for a proper generate → edit → publish loop. **Working-draft slot**: the single open `draft` / `source: modification` version per piece becomes *the* concept (`working_draft` / `get_or_create_working_draft` — copy-on-edit clones the live version's music + PDF); `PUT /library/versions/{id}/file` updates it in place; `POST /library/versions/{id}/publish` (`{ seams_resolved }`) wraps submit→approve→distribute; generate-from-PDF rejects any existing open working draft before importing. **Per-page OMR**: `OmrJob.pages_done`/`pages_total` bumped per page for a progress readout; `POST /omr/jobs/{id}/pages/{n}/rerun` re-transcribes one page (reusing the on-disk split PDF), rewrites the report + provisional merge + `needs_review`, returns the page's MusicXML for the editor to splice (no re-import). Nothing built yet — full task list in the B17 section.
 
 - 2026-08-31: **Production outage — backend crash-loop from a stray migration on prod.** `divisi.onrender.com` was fully unresponsive (all requests timing out, 0 bytes). Render logs showed the web container failing its boot command `alembic upgrade head` every restart with `Can't locate revision identified by 'c1f7a4d2e8b6'`, so `uvicorn` never started. Cause: the OMR branch's migration `c1f7a4d2e8b6_add_omr_job_piece_id.py` (parent of B16's `d2f8a6c4e1b9`) had been applied to the **production** Neon DB by a local run against the prod `.env` while the file existed only on `feat/generate-track-from-pdf`. `alembic_version` was stamped `c1f7a4d2e8b6`; the deploy runs from `main`, which had no such file. Verified prod schema was exactly at `c1f7a4d2e8b6` (the `omr_jobs.piece_id` column + FK were present; `d2f8a6c4e1b9`'s columns were not). Fix: cherry-picked just `c1f7a4d2e8b6_add_omr_job_piece_id.py` onto `main` (commit `55cf46a`) so `alembic upgrade head` finds the revision and no-ops (DB head == code head, no schema drift; `main`'s ORM just doesn't map the extra nullable column). Deploy went live, `/health` 200. Prevention now documented in `README.md` ("Never run `alembic ...` against production from a feature branch" + recovery steps), `.env` / `.env.example` (danger comment on `DATABASE_URL`). Standing rule: migrations reach prod only by merge to `main`; do local schema work against a disposable DB or `docker compose up`.
 

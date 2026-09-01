@@ -240,6 +240,12 @@ class PieceVersion(Base):
     pdf_file_name: Mapped[str | None] = mapped_column(String, nullable=True)
     reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # B17: the editor's "Publish as live version" gate is client-side (every
+    # OMR seam marked resolved in localStorage). The Backend can't verify
+    # that, so it just records the single acknowledgement the publish call
+    # carried — `None` until the working draft has been published at least
+    # once through that flow. Audit trail, nothing reads it back.
+    seams_resolved_ack: Mapped[bool | None] = mapped_column(nullable=True)
 
 
 class Distribution(Base):
@@ -486,5 +492,12 @@ class OmrJob(Base):
     paged: Mapped[bool] = mapped_column(default=False, server_default="false")
     needs_review: Mapped[bool | None] = mapped_column(nullable=True)
     paged_report_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # B17: best-effort per-page progress for the Tracks-tab "page X of Y"
+    # readout while a paged job runs. `run_omr_paged`'s `on_page_done`
+    # callback bumps `pages_done` (and sets `pages_total` on the first
+    # page) and commits after each page. Both null for a single-run job or
+    # one that hasn't reached the paged loop yet.
+    pages_done: Mapped[int | None] = mapped_column(nullable=True)
+    pages_total: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

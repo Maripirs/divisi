@@ -62,6 +62,25 @@ class PieceUploadOut(BaseModel):
     version: PieceVersionOut
 
 
+class WorkingDraftOut(BaseModel):
+    """B17: the piece's single open working draft, as returned by
+    `POST /library/pieces/{id}/working-draft`. `forked_from_live` is true
+    when this call just created it by copying the live version (the editor
+    badges it "Working draft — not yet live" either way, but F16 uses this
+    to know it's a fresh copy)."""
+
+    version: PieceVersionOut
+    forked_from_live: bool
+
+
+class VersionPublishRequest(BaseModel):
+    """B17: body of `POST /library/versions/{id}/publish`. `seams_resolved`
+    is F16's editor gate (every OMR seam marked resolved client-side); the
+    Backend can't verify it, only record it and refuse a `false`."""
+
+    seams_resolved: bool
+
+
 class DistributionOut(BaseModel):
     id: str
     piece_version_id: str
@@ -81,6 +100,9 @@ class LibraryEntryOmrJobOut(BaseModel):
     error_message: str | None = None
     paged: bool = False
     needs_review: bool | None = None
+    # B17: best-effort "page X of Y" while a paged run is in progress.
+    pages_done: int | None = None
+    pages_total: int | None = None
 
     model_config = {"from_attributes": True}
 

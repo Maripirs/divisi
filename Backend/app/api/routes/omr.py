@@ -12,11 +12,19 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.api.schemas import OmrImportOut, OmrImportRequest, OmrJobListItemOut, OmrJobOut
+from app.api.schemas import (
+    OmrImportOut,
+    OmrImportRequest,
+    OmrJobListItemOut,
+    OmrJobOut,
+    OmrPageRerunOut,
+)
 from app.core.config import get_settings
 from app.db.models import OmrJob, OmrJobStatus, OwnerType, Piece, User, VersionSource
 from app.db.session import get_db
 from app.jobs.omr_jobs import _job_output_dir, run_omr_job
+from app.omr.paged import _PAGE_XML_NAME, _page_len, rerun_page
+from app.omr.pipeline import OmrEngineUnavailable
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
@@ -54,6 +62,8 @@ def _job_out(job: OmrJob) -> OmrJobOut:
         paged=job.paged,
         needs_review=job.needs_review,
         report_url=f"/omr/jobs/{job.id}/paged-report" if job.paged_report_path else None,
+        pages_done=job.pages_done,
+        pages_total=job.pages_total,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -142,6 +152,8 @@ def list_jobs(
                     pending_generated_version_id(job.piece_id, db) if job.piece_id is not None else None
                 ),
                 needs_review=job.needs_review,
+                pages_done=job.pages_done,
+                pages_total=job.pages_total,
                 created_at=job.created_at,
                 updated_at=job.updated_at,
             )
@@ -299,4 +311,81 @@ def get_segment_file(
     target = (job_dir / rel).resolve()
     if not target.is_relative_to(job_dir) or not target.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Segment file not available")
+    return FileResponse(target)
+
+
+def _require_paged_job(job_id: str, current_user: User, db: Session) -> OmrJob:
+    job = _get_own_job_or_404(job_id, current_user, db)
+    if not job.paged or job.paged_report_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not a paged job")
+    return job
+
+
+@router.post("/jobs/{job_id}/pages/{page_no}/rerun", response_model=OmrPageRerunOut)
+def rerun_job_page(
+    job_id: str,
+    page_no: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OmrPageRerunOut:
+    """B17 / F16: re-transcribe one page of a finished paged run, reusing
+    the one-page PDF still on disk, then rebuild the paged report,
+    provisional merge, and `needs_review`. Returns the re-run page's own
+    normalized MusicXML (via `page_musicxml_url`) for the editor to splice
+    into the working model — this does NOT touch the imported draft.
+
+    404 for a non-paged job or a page outside the run's range."""
+    job = _require_paged_job(job_id, current_user, db)
+    report_data = _load_paged_report(job)
+    total = report_data.get("total") or 0
+    if page_no < 1 or page_no > total:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page out of range")
+
+    try:
+        new_pr, report = rerun_page(_job_output_dir(job_id), page_no)
+    except OmrEngineUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The OMR engine is not available on this server",
+        ) from exc
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This page's source is no longer on disk — re-run the whole generation",
+        ) from exc
+
+    job.needs_review = report.needs_review
+    db.commit()
+
+    measure_count = 0
+    if new_pr.ok and new_pr.musicxml_path is not None:
+        try:
+            measure_count = _page_len(new_pr.musicxml_path)
+        except Exception:  # noqa: BLE001 - a measure count is a nicety, not worth 500ing over
+            measure_count = 0
+
+    return OmrPageRerunOut(
+        ok=new_pr.ok,
+        still_failed=not new_pr.ok,
+        measure_count=measure_count,
+        page_musicxml_url=(
+            f"/omr/jobs/{job_id}/pages/{page_no}/musicxml" if new_pr.ok else None
+        ),
+    )
+
+
+@router.get("/jobs/{job_id}/pages/{page_no}/musicxml")
+def get_page_musicxml(
+    job_id: str,
+    page_no: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """B17: one page's own normalized MusicXML from a paged run — what
+    `rerun_job_page` points `page_musicxml_url` at, for F16 to splice."""
+    job = _require_paged_job(job_id, current_user, db)
+    job_dir = _job_output_dir(job_id).resolve()
+    target = (job_dir / "pages" / f"p{page_no:02d}" / _PAGE_XML_NAME).resolve()
+    if not target.is_relative_to(job_dir) or not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page MusicXML not available")
     return FileResponse(target)

@@ -16,12 +16,14 @@ from pathlib import Path
 
 import pymupdf
 
+from datetime import datetime, timezone
+
 from app.core.config import get_settings
 from app.db import session as db_session
-from app.db.models import OmrJob, OmrJobStatus, PieceVersion, VersionSource
+from app.db.models import OmrJob, OmrJobStatus, PieceVersion, VersionSource, VersionStatus
 from app.omr.paged import run_omr_paged
 from app.omr.pipeline import OmrEngineUnavailable, run_omr
-from app.services.pieces import add_version, get_piece_or_404
+from app.services.pieces import add_version, get_piece_or_404, working_draft
 from app.storage.files import load_file, save_file
 
 
@@ -59,10 +61,24 @@ def run_omr_job(job_id: str) -> None:
         # all-or-nothing default). A single page, or an Audiveris that
         # isn't installed, falls back to the B8 single-run pipeline.
         use_paged = settings.omr_paged_multipage and _page_count(source_path) > 1
+
+        def _on_page_done(done: int, total: int) -> None:
+            """Best-effort progress for the Tracks-tab "page X of Y"
+            readout. Its own commit so a poll mid-run sees it; a failure
+            here must never sink the job, so swallow."""
+            try:
+                job.pages_done = done
+                job.pages_total = total
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+
         try:
             if use_paged:
                 try:
-                    musicxml_path, midi_path, report = run_omr_paged(source_path, output_dir)
+                    musicxml_path, midi_path, report = run_omr_paged(
+                        source_path, output_dir, on_page_done=_on_page_done
+                    )
                 except OmrEngineUnavailable:
                     musicxml_path, midi_path = run_omr(source_path, output_dir)
                     report = None
@@ -109,6 +125,16 @@ def _import_draft_version(job: OmrJob, db) -> None:
     PDF forward, so an OMR'd draft would lose its readable score. Here the
     latest version's PDF is passed through so the draft has both."""
     piece = get_piece_or_404(job.piece_id, db)
+
+    # One working-draft slot per track: a new generate run replaces whatever
+    # unpublished draft is sitting there (B17). History is kept — the old one
+    # goes to `rejected`, not deleted.
+    stale = working_draft(piece.id, db)
+    if stale is not None:
+        stale.status = VersionStatus.rejected
+        stale.reviewed_by = job.user_id
+        stale.reviewed_at = datetime.now(timezone.utc)
+        db.flush()
 
     # Own copy of the result MIDI, not a pointer at `result_midi_path` — a
     # version's file must outlive the job (same reasoning as `import_job_result`).

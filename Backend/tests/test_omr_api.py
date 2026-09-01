@@ -443,7 +443,10 @@ def _fake_run_omr_paged(monkeypatch, *, needs_review=True, seg_paths=None):
         "segments/segment-02.musicxml",
     )
 
-    def fake(source_path, output_dir, engine=None):
+    def fake(source_path, output_dir, engine=None, on_page_done=None):
+        if on_page_done is not None:
+            for n in (1, 2, 3):
+                on_page_done(n, 3)
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "segments").mkdir(parents=True, exist_ok=True)
         for name in ("segment-01.musicxml", "segment-02.musicxml"):
@@ -568,3 +571,97 @@ def test_paged_report_404s_for_a_non_paged_job(client, monkeypatch):
     )
     job_id = created.json()["id"]
     assert client.get(f"/omr/jobs/{job_id}/paged-report", headers=headers).status_code == 404
+
+
+# --- B17: per-page progress readout + per-page re-run --------------------
+
+
+def test_paged_job_reports_page_progress(client, monkeypatch):
+    headers = _register_and_login(client, "pagedprogress@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job = _start_paged_job(client, headers)
+
+    polled = client.get(f"/omr/jobs/{job['id']}", headers=headers).json()
+    assert polled["pages_total"] == 3
+    assert polled["pages_done"] == 3
+
+
+def test_rerun_page_404s_for_a_non_paged_job(client, monkeypatch):
+    headers = _register_and_login(client, "rerun-nonpaged@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=headers,
+    )
+    job_id = created.json()["id"]
+    assert client.post(f"/omr/jobs/{job_id}/pages/1/rerun", headers=headers).status_code == 404
+
+
+def test_rerun_page_404s_for_an_out_of_range_page(client, monkeypatch):
+    headers = _register_and_login(client, "rerun-oor@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job_id = _start_paged_job(client, headers)["id"]
+    assert client.post(f"/omr/jobs/{job_id}/pages/99/rerun", headers=headers).status_code == 404
+
+
+def test_rerun_page_rewrites_needs_review_and_serves_the_page_xml(client, monkeypatch):
+    headers = _register_and_login(client, "rerun-ok@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job_id = _start_paged_job(client, headers)["id"]
+    assert client.get(f"/omr/jobs/{job_id}", headers=headers).json()["needs_review"] is True
+
+    from app.api.routes import omr as omr_routes
+    from app.omr.paged import PagedReport, PageResult
+
+    def fake_rerun_page(output_dir, page_no, engine=None):
+        page_dir = output_dir / "pages" / f"p{page_no:02d}"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        xml = page_dir / "page.musicxml"
+        xml.write_bytes(b"<score-partwise><rerun/></score-partwise>")
+        return (
+            PageResult(page=page_no, ok=True, musicxml_path=xml),
+            PagedReport(needs_review=False, output_dir=output_dir),
+        )
+
+    monkeypatch.setattr(omr_routes, "rerun_page", fake_rerun_page)
+    monkeypatch.setattr(omr_routes, "_page_len", lambda path: 4)
+
+    r = client.post(f"/omr/jobs/{job_id}/pages/3/rerun", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "ok": True,
+        "still_failed": False,
+        "measure_count": 4,
+        "page_musicxml_url": f"/omr/jobs/{job_id}/pages/3/musicxml",
+    }
+    assert client.get(f"/omr/jobs/{job_id}", headers=headers).json()["needs_review"] is False
+
+    served = client.get(body["page_musicxml_url"], headers=headers)
+    assert served.status_code == 200
+    assert b"<rerun/>" in served.content
+
+
+def test_rerun_page_reports_a_page_that_still_fails(client, monkeypatch):
+    headers = _register_and_login(client, "rerun-stillfail@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job_id = _start_paged_job(client, headers)["id"]
+
+    from app.api.routes import omr as omr_routes
+    from app.omr.paged import PagedReport, PageResult
+
+    monkeypatch.setattr(
+        omr_routes,
+        "rerun_page",
+        lambda output_dir, page_no, engine=None: (
+            PageResult(page=page_no, ok=False, error="still broken"),
+            PagedReport(needs_review=True, output_dir=output_dir),
+        ),
+    )
+
+    body = client.post(f"/omr/jobs/{job_id}/pages/3/rerun", headers=headers).json()
+    assert body["ok"] is False
+    assert body["still_failed"] is True
+    assert body["measure_count"] == 0
+    assert body["page_musicxml_url"] is None

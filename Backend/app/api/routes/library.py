@@ -24,6 +24,8 @@ from app.api.schemas import (
     PieceUploadOut,
     PieceVersionOut,
     RenderManifestOut,
+    VersionPublishRequest,
+    WorkingDraftOut,
 )
 from app.api.schemas.library import LibraryEntryOmrJobOut
 from app.db.models import (
@@ -46,11 +48,15 @@ from app.services.pieces import (
     add_version,
     create_piece_with_version,
     delete_piece,
+    get_or_create_working_draft,
     get_piece_or_404,
     group_role,
     pending_generated_version_id,
+    publish_version,
+    replace_version_file as svc_replace_version_file,
     require_piece_access,
     resolve_new_piece_owner_id,
+    working_draft,
 )
 from app.storage.files import save_file
 
@@ -364,6 +370,70 @@ def distribute_version(
     db.commit()
     db.refresh(distribution)
     return distribution
+
+
+@router.post("/pieces/{piece_id}/working-draft", response_model=WorkingDraftOut)
+def get_working_draft(
+    piece_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkingDraftOut:
+    """B17 / F16: the piece's single open working draft, created on first
+    call by content-copying the live version's music + PDF. Idempotent —
+    a second call returns the same draft. Review authority only (this is
+    the "start editing the track" gate)."""
+    piece = _get_piece_or_404(piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    forked = working_draft(piece_id, db) is None
+    version = get_or_create_working_draft(piece, current_user, db)
+    return WorkingDraftOut(version=PieceVersionOut.model_validate(version), forked_from_live=forked)
+
+
+@router.put("/versions/{version_id}/file", response_model=PieceVersionOut)
+async def replace_version_file(
+    version_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    """B17 / F16: overwrite a `draft` version's music file in place (an
+    editor save) — no new version row per save. Allowed for the draft's
+    creator or the piece's review authority; refuses a non-draft."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    if version.created_by != current_user.id:
+        _require_review_authority(piece, current_user, db)
+    if version.status != VersionStatus.draft:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Only a draft version's file can be replaced in place"
+        )
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    return svc_replace_version_file(version, data, file.filename, db)
+
+
+@router.post("/versions/{version_id}/publish", response_model=PieceVersionOut)
+def publish_version_route(
+    version_id: str,
+    payload: VersionPublishRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PieceVersionOut:
+    """B17 / F16: take a working draft live in one step — submit -> approve
+    -> (group piece) distribute. Review authority only. `seams_resolved`
+    must be true (F16's editor gates the button on every OMR seam being
+    marked resolved; the Backend records the ack and trusts it). A
+    non-working-draft, or an already-published one, is a 409."""
+    version = _get_version_or_404(version_id, db)
+    piece = _get_piece_or_404(version.piece_id, db)
+    _require_review_authority(piece, current_user, db)
+    if not payload.seams_resolved:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Every seam must be marked resolved before publishing",
+        )
+    return publish_version(version, current_user, db)
 
 
 def _omr_fields(piece_id: str, db: Session) -> dict:

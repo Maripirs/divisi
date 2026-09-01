@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,7 +49,12 @@ from music21 import converter, note, stream
 from app.omr.audiveris import OmrEngineError, OmrEngineUnavailable
 from app.omr.pipeline import _ENGINES, _musicxml_to_midi, _normalize_to_musicxml
 
-__all__ = ["PageResult", "Segment", "PagedReport", "run_omr_paged"]
+__all__ = ["PageResult", "Segment", "PagedReport", "run_omr_paged", "rerun_page"]
+
+# Deterministic filename every page's normalized MusicXML is copied to
+# inside its `pages/pNN/` dir, so a later re-run (B17 `rerun_page`) can
+# find the other pages' output without re-parsing the report for paths.
+_PAGE_XML_NAME = "page.musicxml"
 
 
 @dataclass
@@ -153,13 +160,34 @@ def split_pages(source_path: Path, work_dir: Path) -> list[Path]:
 
 def _run_engine_on_page(page_pdf: Path, page_dir: Path, engine: str) -> Path:
     """Run the chosen engine on one page and return its normalized
-    `.musicxml`. Raises `OmrEngineUnavailable` if the engine binary is
+    `.musicxml`, copied to a deterministic name (`_PAGE_XML_NAME`) in
+    `page_dir`. Raises `OmrEngineUnavailable` if the engine binary is
     missing (caller aborts), `OmrEngineError` if the page fails to parse
     (caller records and continues)."""
     if engine not in _ENGINES:
         raise ValueError(f"Unknown OMR engine '{engine}'")
     raw = _ENGINES[engine](page_pdf, page_dir)
-    return _normalize_to_musicxml(raw, page_dir)
+    xml = _normalize_to_musicxml(raw, page_dir)
+    final = page_dir / _PAGE_XML_NAME
+    if xml.resolve() != final.resolve():
+        final.write_bytes(xml.read_bytes())
+    return final
+
+
+def _transcribe_page(page: int, page_pdf: Path, page_dir: Path, engine: str) -> PageResult:
+    """One page through the engine, as a `PageResult`. `OmrEngineUnavailable`
+    propagates (the whole run can't proceed); any other failure is recorded
+    on the result so the rest of the book still produces output."""
+    page_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        xml = _run_engine_on_page(page_pdf, page_dir, engine)
+    except OmrEngineUnavailable:
+        raise
+    except OmrEngineError as exc:
+        return PageResult(page=page, ok=False, error=str(exc))
+    except Exception as exc:  # noqa: BLE001 - one page's failure must not sink the rest
+        return PageResult(page=page, ok=False, error=repr(exc))
+    return PageResult(page=page, ok=True, musicxml_path=xml)
 
 
 def _full_measure_rest(number: int) -> stream.Measure:
@@ -348,50 +376,26 @@ def _segment_pages(page_results: list[PageResult]) -> list[Segment]:
     return segments
 
 
-def run_omr_paged(
-    source_path: Path,
-    output_dir: Path,
-    engine: str | None = None,
-) -> tuple[Path, Path, PagedReport]:
-    """Split `source_path` per page, OMR each page, merge the obvious
-    runs, and leave the non-obvious boundaries as separate segments for a
-    human. Returns `(musicxml_path, midi_path, report)` inside
-    `output_dir`; `report.needs_review` is True when there is more than
-    one segment (so `score.musicxml` is only a provisional guess).
+def _page_dir(output_dir: Path, page: int) -> Path:
+    return output_dir / "pages" / f"p{page:02d}"
 
-    Paged mode is Audiveris-only. If the engine binary isn't installed,
-    `OmrEngineUnavailable` propagates so the caller can fall back to the
-    single-run pipeline.
-    """
-    chosen = engine or "audiveris"
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    page_pdfs = split_pages(source_path, output_dir / "pages")
-    report = PagedReport(output_dir=output_dir)
+def _split_page_pdf(output_dir: Path, page: int) -> Path:
+    """The one-page PDF `split_pages` wrote for `page`, still on disk from
+    the original run (`pages/page-NN.pdf`). B17 per-page re-run feeds this
+    back through the engine without re-splitting the source."""
+    return output_dir / "pages" / f"page-{page:02d}.pdf"
 
-    for i, page_pdf in enumerate(page_pdfs, start=1):
-        page_dir = output_dir / "pages" / f"p{i:02d}"
-        page_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            xml = _run_engine_on_page(page_pdf, page_dir, chosen)
-        except OmrEngineUnavailable:
-            raise  # engine missing: whole run can't proceed
-        except OmrEngineError as exc:
-            report.pages.append(PageResult(page=i, ok=False, error=str(exc)))
-            continue
-        except Exception as exc:  # noqa: BLE001 - one page's failure must not sink the rest
-            report.pages.append(PageResult(page=i, ok=False, error=repr(exc)))
-            continue
-        report.pages.append(PageResult(page=i, ok=True, musicxml_path=xml))
 
-    if not any(p.ok for p in report.pages):
-        raise OmrEngineError(
-            f"paged run: every page failed ({len(page_pdfs)} pages). "
-            f"See pages/*/audiveris.log or oemer.log."
-        )
-
-    # Merge the obvious runs; leave the rest as separate segments.
-    segments = _segment_pages(report.pages)
+def _finalize_paged_run(
+    report: PagedReport, output_dir: Path
+) -> tuple[Path | None, Path | None]:
+    """Given `report.pages` (every page's `PageResult`), (re)build
+    everything derived from them: the segment groupings + files, the
+    provisional whole-score `score.musicxml`/`score.mid`, `needs_review`,
+    and `paged-report.json`. Returns `(score_musicxml, score_midi)` — the
+    musicxml is None only when even the force-merge failed. Used by both
+    the initial run and `rerun_page`."""
     seg_dir = output_dir / "segments"
     good_pairs: list[tuple[int, Path]] = [
         (p.page, p.musicxml_path) for p in report.pages if p.ok and p.musicxml_path
@@ -415,6 +419,12 @@ def run_omr_paged(
             return mx, None, f"MIDI derivation failed: {exc}"
         return mx, md, None
 
+    # Old segment files from a prior run would mislead the report if this
+    # run produces fewer segments — clear and rewrite.
+    if seg_dir.exists():
+        shutil.rmtree(seg_dir)
+
+    segments = _segment_pages(report.pages)
     for seg in segments:
         seg_pairs = [(pg, page_xml[pg]) for pg in seg.pages]
         mx, md, err = _safe_merge(
@@ -427,11 +437,13 @@ def run_omr_paged(
             seg.start_reason = (seg.start_reason + "; " if seg.start_reason else "") + err
 
     report.segments = segments
-    report.needs_review = len(segments) > 1 or any(s.musicxml_path is None for s in segments)
+    report.needs_review = (
+        bool(report.failed_pages)
+        or len(segments) > 1
+        or any(s.musicxml_path is None for s in segments)
+    )
 
-    # One score file regardless, so downstream always has something. When
-    # there is more than one segment it is a provisional guess across the
-    # unresolved boundaries — `report.needs_review` is the signal.
+    report.combined_error = None
     musicxml_path, midi_path, combined_err = _safe_merge(
         good_pairs, output_dir / "score.musicxml", "score.mid"
     )
@@ -441,11 +453,111 @@ def run_omr_paged(
     (output_dir / "paged-report.json").write_text(
         json.dumps(report.as_dict(), indent=2), encoding="utf-8"
     )
+    return musicxml_path, midi_path
+
+
+def run_omr_paged(
+    source_path: Path,
+    output_dir: Path,
+    engine: str | None = None,
+    on_page_done: Callable[[int, int], None] | None = None,
+) -> tuple[Path, Path, PagedReport]:
+    """Split `source_path` per page, OMR each page, merge the obvious
+    runs, and leave the non-obvious boundaries as separate segments for a
+    human. Returns `(musicxml_path, midi_path, report)` inside
+    `output_dir`; `report.needs_review` is True when there is more than
+    one segment (so `score.musicxml` is only a provisional guess).
+
+    `on_page_done(done, total)` — if given — is called after each page is
+    transcribed (success or failure), for a best-effort progress readout
+    (B17). It must not raise.
+
+    Paged mode is Audiveris-only. If the engine binary isn't installed,
+    `OmrEngineUnavailable` propagates so the caller can fall back to the
+    single-run pipeline.
+    """
+    chosen = engine or "audiveris"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    page_pdfs = split_pages(source_path, output_dir / "pages")
+    total = len(page_pdfs)
+    report = PagedReport(output_dir=output_dir)
+
+    for i, page_pdf in enumerate(page_pdfs, start=1):
+        report.pages.append(_transcribe_page(i, page_pdf, _page_dir(output_dir, i), chosen))
+        if on_page_done is not None:
+            on_page_done(i, total)
+
+    if not any(p.ok for p in report.pages):
+        raise OmrEngineError(
+            f"paged run: every page failed ({total} pages). "
+            f"See pages/*/audiveris.log or oemer.log."
+        )
+
+    musicxml_path, midi_path = _finalize_paged_run(report, output_dir)
     if musicxml_path is None:
         # Nothing merged, but the per-page and per-segment files are on
         # disk — surface that rather than a bare traceback.
         raise OmrEngineError(
-            f"paged run: pages transcribed but no merge succeeded ({combined_err}). "
+            f"paged run: pages transcribed but no merge succeeded ({report.combined_error}). "
             f"Per-page MusicXML is in {output_dir / 'pages'}/."
         )
     return musicxml_path, midi_path, report
+
+
+def _reload_page_results(output_dir: Path) -> list[PageResult]:
+    """Reconstruct every page's `PageResult` from what the original run
+    left on disk: the stored `paged-report.json` for the page list + each
+    failed page's error text, and each `pages/pNN/page.musicxml` for the
+    ones that succeeded."""
+    report_path = output_dir / "paged-report.json"
+    if not report_path.is_file():
+        raise FileNotFoundError(report_path)
+    prior = json.loads(report_path.read_text(encoding="utf-8"))
+
+    results: list[PageResult] = []
+    for entry in prior.get("pages", []):
+        page = entry["page"]
+        xml = _page_dir(output_dir, page) / _PAGE_XML_NAME
+        if xml.is_file():
+            results.append(PageResult(page=page, ok=True, musicxml_path=xml))
+        else:
+            results.append(
+                PageResult(page=page, ok=False, error=entry.get("error") or "page failed to transcribe")
+            )
+    return results
+
+
+def rerun_page(
+    output_dir: Path, page_no: int, engine: str | None = None
+) -> tuple[PageResult, PagedReport]:
+    """Re-transcribe a single page of a finished paged run, reusing the
+    one-page PDF still on disk (`pages/page-NN.pdf`), then rebuild the
+    segments, the provisional whole-score merge, and `paged-report.json`
+    from the updated per-page set. Returns `(the page's new PageResult,
+    the rebuilt PagedReport)`.
+
+    Raises `FileNotFoundError` if the split PDF or the prior report is
+    gone, `ValueError` if `page_no` isn't a page of this run,
+    `OmrEngineUnavailable` if the engine binary is missing.
+    """
+    chosen = engine or "audiveris"
+    page_pdf = _split_page_pdf(output_dir, page_no)
+    if not page_pdf.is_file():
+        raise FileNotFoundError(page_pdf)
+
+    results = _reload_page_results(output_dir)
+    if not any(r.page == page_no for r in results):
+        raise ValueError(f"page {page_no} is not part of this run")
+
+    page_dir = _page_dir(output_dir, page_no)
+    if page_dir.exists():
+        shutil.rmtree(page_dir)
+    new_pr = _transcribe_page(page_no, page_pdf, page_dir, chosen)
+
+    results = sorted(
+        [r for r in results if r.page != page_no] + [new_pr], key=lambda r: r.page
+    )
+    report = PagedReport(output_dir=output_dir, pages=results)
+    _finalize_paged_run(report, output_dir)
+    return new_pr, report

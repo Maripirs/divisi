@@ -5,8 +5,10 @@ install needed). Real `music21` throughout, not mocked.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import pytest
 from music21 import converter, note, stream
 
 from app.omr import paged
@@ -14,6 +16,7 @@ from app.omr.paged import (
     PageResult,
     _segment_pages,
     merge_musicxml,
+    rerun_page,
     run_omr_paged,
 )
 
@@ -114,7 +117,12 @@ def _stub_engine(monkeypatch, layout: dict[int, tuple[int, int]], total: int | N
 
     def fake_split_pages(source_path, work_dir):
         work_dir.mkdir(parents=True, exist_ok=True)
-        return [work_dir / f"page-{i:02d}.pdf" for i in range(1, page_total + 1)]
+        pdfs = []
+        for i in range(1, page_total + 1):
+            p = work_dir / f"page-{i:02d}.pdf"
+            p.write_bytes(b"%PDF-1.4 fake page")
+            pdfs.append(p)
+        return pdfs
 
     def fake_run_engine_on_page(page_pdf, page_dir, engine):
         n = int(Path(page_dir).name.lstrip("p"))
@@ -172,3 +180,60 @@ def test_one_failed_page_still_yields_the_rest(tmp_path, monkeypatch):
     assert report.failed_pages == [2]
     assert report.needs_review is True
     assert [s.pages for s in report.segments] == [[1], [3]]
+
+
+# --- B17: per-page progress + per-page re-run --------------------------
+
+
+def test_on_page_done_fires_once_per_page(tmp_path, monkeypatch):
+    _stub_engine(monkeypatch, {1: (4, 3), 2: (4, 3), 3: (4, 3)})
+    calls: list[tuple[int, int]] = []
+
+    run_omr_paged(
+        tmp_path / "src.pdf", tmp_path / "out", on_page_done=lambda d, t: calls.append((d, t))
+    )
+
+    assert calls == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_rerun_page_recovers_a_failed_page_and_rewrites_the_report(tmp_path, monkeypatch):
+    layout = {1: (4, 3), 2: (4, 3)}  # page 3 absent -> fails on the first run
+    _stub_engine(monkeypatch, layout, total=3)
+    out = tmp_path / "out"
+
+    _mx, _mid, report = run_omr_paged(tmp_path / "src.pdf", out)
+    assert report.failed_pages == [3]
+    assert report.needs_review is True
+
+    layout[3] = (4, 2)  # now it transcribes, matching part count
+    new_pr, rebuilt = rerun_page(out, 3)
+
+    assert new_pr.ok is True
+    assert rebuilt.failed_pages == []
+    assert rebuilt.needs_review is False
+    on_disk = json.loads((out / "paged-report.json").read_text())
+    assert on_disk["failed_pages"] == []
+    assert on_disk["ok"] == 3
+    assert len(on_disk["segments"]) == 1
+
+
+def test_rerun_page_that_still_fails_keeps_needs_review(tmp_path, monkeypatch):
+    layout = {1: (4, 3), 2: (4, 3)}  # page 3 stays broken
+    _stub_engine(monkeypatch, layout, total=3)
+    out = tmp_path / "out"
+    run_omr_paged(tmp_path / "src.pdf", out)
+
+    new_pr, rebuilt = rerun_page(out, 3)
+
+    assert new_pr.ok is False
+    assert rebuilt.failed_pages == [3]
+    assert rebuilt.needs_review is True
+
+
+def test_rerun_page_out_of_range_raises(tmp_path, monkeypatch):
+    _stub_engine(monkeypatch, {1: (4, 3), 2: (4, 3)}, total=2)
+    out = tmp_path / "out"
+    run_omr_paged(tmp_path / "src.pdf", out)
+
+    with pytest.raises(FileNotFoundError):
+        rerun_page(out, 9)

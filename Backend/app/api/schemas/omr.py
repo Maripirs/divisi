@@ -27,6 +27,9 @@ class OmrJobOut(BaseModel):
     paged: bool = False
     needs_review: bool | None = None
     report_url: str | None = None
+    # B17: best-effort per-page progress for a paged run in flight.
+    pages_done: int | None = None
+    pages_total: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -50,8 +53,24 @@ class OmrJobListItemOut(BaseModel):
     group_id: str | None
     pending_generated_version_id: str | None
     needs_review: bool | None = None
+    pages_done: int | None = None
+    pages_total: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class OmrPageRerunOut(BaseModel):
+    """B17: result of `POST /omr/jobs/{id}/pages/{n}/rerun`. `ok` is
+    whether the page transcribed this time; `still_failed` is its
+    negation, named for the seam the editor is trying to clear.
+    `measure_count` is how many bars the re-run page produced (0 when it
+    failed), and `page_musicxml_url` serves that page's own normalized
+    MusicXML for F16 to splice into the working model."""
+
+    ok: bool
+    still_failed: bool
+    measure_count: int
+    page_musicxml_url: str | None = None
 
 
 class OmrImportRequest(BaseModel):
