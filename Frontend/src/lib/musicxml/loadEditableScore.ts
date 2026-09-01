@@ -12,14 +12,16 @@
  * lossy by nature (see the caveat on `convert` below), which is exactly why
  * this editor exists — the admin corrects the rough result and saves it.
  *
- * `.mxl` (zipped MusicXML, starts with the `PK` ZIP magic) is out of scope:
- * feeding ZIP bytes to `DOMParser` would just yield a confusing parse
- * error, so it's detected up front and surfaced as a clean
- * "unsupported format" instead.
+ * `.mxl` (zipped MusicXML, starts with the `PK` ZIP magic) is unpacked to
+ * its plain-text score document first (`extractMusicXmlText`), then follows
+ * the same path as an uncompressed `.musicxml` upload. The editor always
+ * saves back as plain `.musicxml`, so an `.mxl` source self-heals on the
+ * first save.
  */
 import { parseMidiFile } from '$lib/midi/parser';
 import { convertAllParts } from '$lib/midi/musicXmlConverter';
 import { EditableScore } from './editableScore';
+import { extractMusicXmlText, isMxl } from './mxl';
 
 export type EditableScoreSourceFormat = 'midi' | 'musicxml';
 
@@ -31,9 +33,11 @@ export interface LoadedEditableScore {
 	sourceFormat: EditableScoreSourceFormat;
 }
 
-/** Thrown for a music file this editor can't open — today only `.mxl`
- * (zipped MusicXML). Carries a stable `format` tag so the caller can show a
- * localized message rather than surfacing raw detail. */
+/** Thrown for a music file this editor can't open. Carries a stable
+ * `format` tag so the caller can show a localized message rather than
+ * surfacing raw detail. Not currently reachable — MIDI, MusicXML, and
+ * `.mxl` all load — but kept as the typed home for any format added to the
+ * upload allow-list ahead of editor support. */
 export class UnsupportedMusicFileError extends Error {
 	readonly format: string;
 	constructor(format: string) {
@@ -50,17 +54,11 @@ function magic(bytes: Uint8Array, length: number): string {
 }
 
 /**
- * @throws {UnsupportedMusicFileError} for a `.mxl` (ZIP) payload.
+ * @throws {Error} when a `.mxl` payload holds no readable score document.
  * @throws {MusicXmlParseError} when the (decoded) MusicXML doesn't parse.
  */
 export function loadEditableScore(bytes: ArrayBuffer): LoadedEditableScore {
 	const view = new Uint8Array(bytes);
-
-	// `.mxl` is a ZIP container ("PK\x03\x04"). Checked before the MusicXML
-	// text path so its bytes never reach `DOMParser`.
-	if (magic(view, 2) === 'PK') {
-		throw new UnsupportedMusicFileError('mxl');
-	}
 
 	if (magic(view, 4) === 'MThd') {
 		const parsed = parseMidiFile(view);
@@ -71,6 +69,8 @@ export function loadEditableScore(bytes: ArrayBuffer): LoadedEditableScore {
 		return { score: new EditableScore(xml), sourceFormat: 'midi' };
 	}
 
-	const xmlText = new TextDecoder().decode(bytes);
+	// `.mxl` is a ZIP container ("PK\x03\x04"): unpack it to the score
+	// document's text so it never reaches `DOMParser` as raw ZIP bytes.
+	const xmlText = isMxl(view) ? extractMusicXmlText(view) : new TextDecoder().decode(bytes);
 	return { score: new EditableScore(xmlText), sourceFormat: 'musicxml' };
 }

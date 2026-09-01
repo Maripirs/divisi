@@ -16,14 +16,16 @@
  *
  * Extends here: later editor tasks add duration edits (rewrite
  * `<type>`/`<dot>`/`<duration>`, re-fit the measure), key/clef changes
- * (rewrite `<attributes><key>`/`<clef>`), per-note accidentals (rewrite
+ * (rewrite `<attributes><key>`/`<clef>`, one measure or a whole bar range via
+ * `setClefRange`), per-note accidentals (rewrite
  * `<pitch><alter>` + `<note><accidental>`), and F16's measure-level edits
  * (`insertMeasures`/`deleteMeasure`/`spliceMeasuresFromXml` — the first
  * structural add/remove of `<measure>`s, for filling a failed-OMR-page
  * seam). All are further in-place DOM mutations on the same `doc` with a
  * `reindex()` afterward — no new model.
- * `.mxl` (zipped MusicXML) is deliberately not handled here; the loader
- * (`loadEditableScore.ts`) rejects it before it can reach this class.
+ * This class only ever sees plain MusicXML text; the loader
+ * (`loadEditableScore.ts`) converts MIDI and unpacks `.mxl` before
+ * constructing it.
  */
 
 const STEP_SEMITONE: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };

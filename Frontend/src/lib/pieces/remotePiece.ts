@@ -1,6 +1,7 @@
 import type { ParsedMIDI } from '../midi/types';
 import { parseMidiFile } from '../midi/parser';
 import { parseMusicXmlFile } from '../musicxml/parser';
+import { extractMusicXmlText, isMxl } from '../musicxml/mxl';
 import type { Piece } from './types';
 
 /** Metadata for one real Backend piece, as resolved server-side by
@@ -18,15 +19,16 @@ export interface RemotePieceMeta {
 }
 
 /** Sniffs which parser a fetched music file needs: MIDI files start with
- * the 4-byte `MThd` magic; anything else here is assumed to be MusicXML
- * (the only two formats `POST /library/pieces` accepts). */
+ * the 4-byte `MThd` magic; `.mxl` (compressed MusicXML) with the `PK` ZIP
+ * magic is unpacked to its score document first; anything else is treated
+ * as plain MusicXML text. */
 async function loadRemoteMusicFile(url: string): Promise<ParsedMIDI> {
 	const buffer = await fetch(url).then((r) => r.arrayBuffer());
 	const bytes = new Uint8Array(buffer);
 	let magic = '';
 	for (let i = 0; i < 4 && i < bytes.length; i++) magic += String.fromCharCode(bytes[i]);
-	const isMidi = magic === 'MThd';
-	if (isMidi) return parseMidiFile(bytes);
+	if (magic === 'MThd') return parseMidiFile(bytes);
+	if (isMxl(bytes)) return parseMusicXmlFile(extractMusicXmlText(bytes));
 	return parseMusicXmlFile(new TextDecoder().decode(bytes));
 }
 

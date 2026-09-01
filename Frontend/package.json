@@ -32,6 +32,7 @@
 	},
 	"dependencies": {
 		"@inlang/paraglide-js": "^2.25.0",
+		"fflate": "^0.8.3",
 		"js-synthesizer": "^1.13.0",
 		"midi-file": "^1.2.4",
 		"opensheetmusicdisplay": "^2.1.2",

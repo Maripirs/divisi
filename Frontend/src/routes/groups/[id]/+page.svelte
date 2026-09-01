@@ -474,7 +474,7 @@
 									emptyHint={m.groups_edit_music_hint()}
 									addLabel={m.groups_edit_add_music_file_button()}
 									inputName="file"
-									accept=".mid,.midi,.musicxml,.xml"
+									accept=".mid,.midi,.musicxml,.xml,.mxl"
 									removeInputName="remove_file"
 								/>
 
@@ -748,7 +748,7 @@
 							emptyHint={m.groups_edit_music_hint()}
 							addLabel={m.groups_edit_add_music_file_button()}
 							inputName="file"
-							accept=".mid,.midi,.musicxml,.xml"
+							accept=".mid,.midi,.musicxml,.xml,.mxl"
 							bind:files={uploadMusicFiles}
 						/>
 						<FileSlot
