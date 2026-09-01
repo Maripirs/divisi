@@ -89,21 +89,31 @@ async function resolveEditAccess(pieceId: string, token: string, fetchFn: typeof
 
 		// B17/F16: get (or create by copy-on-edit) the working draft this
 		// editor session edits. Review authority is required for this call,
-		// which `granted` above already established.
-		const wd = await backendJson<WorkingDraftOut>(
-			token,
-			`/library/pieces/${pieceId}/working-draft`,
-			{ method: 'POST' },
-			fetchFn
-		);
-		return {
-			access: 'granted',
-			pieceTitle: entry.title,
-			hasPdf: entry.has_pdf,
-			pagedReportJobId: pagedReportJobId(entry),
-			workingDraftId: wd.version.id,
-			forkedFromLive: wd.forked_from_live
-		};
+		// which `granted` above already established — so a failure here is an
+		// infrastructure problem (Backend without B17 yet, a transient 5xx),
+		// never an authorization one. Surface it as `unreachable` (retry
+		// card), not `denied` ("not allowed"), which would misdescribe it.
+		try {
+			const wd = await backendJson<WorkingDraftOut>(
+				token,
+				`/library/pieces/${pieceId}/working-draft`,
+				{ method: 'POST' },
+				fetchFn
+			);
+			return {
+				access: 'granted',
+				pieceTitle: entry.title,
+				hasPdf: entry.has_pdf,
+				pagedReportJobId: pagedReportJobId(entry),
+				workingDraftId: wd.version.id,
+				forkedFromLive: wd.forked_from_live
+			};
+		} catch (err) {
+			if (err instanceof BackendApiError && err.status === 401) {
+				throw redirect(303, lh(`/login?redirectTo=/piece/${pieceId}/edit`));
+			}
+			return { access: 'unreachable', pieceTitle: entry.title, ...NO_ACCESS };
+		}
 	} catch (err) {
 		if (err instanceof BackendApiError) {
 			// An expired or invalid token is worth a real login bounce (it
