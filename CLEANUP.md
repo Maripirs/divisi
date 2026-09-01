@@ -19,10 +19,11 @@ lines without a real reason, each module doing one thing.
 ## Repo shape (unchanged from round 1)
 
 - `Frontend/` — SvelteKit, Svelte 5 runes. Bulk of this work.
-  - Checks: `npm run check` (svelte-check) + `npm run build` (vite).
-    **No test runner** — no `test` script, no vitest. Safety = types +
-    build + manual smoke. Browser not always available on the work machine
-    (standing blocker, see `Frontend/plan.md`).
+  - Checks: `npm run check` (svelte-check) + `npm run build` (vite) +
+    `npm test` (vitest — pure helper modules, added after this doc was
+    written) + `npm run test:e2e` (Playwright, added 2026-09-01, gated on
+    `E2E_PIECE_ID`; see `Frontend/e2e/`). Browser still not always
+    available on the work machine (standing blocker, see `Frontend/plan.md`).
   - `.svelte.ts` rune-composable convention already exists:
     `src/lib/stores/settingsDrawer.svelte.ts`.
 - `Backend/` — FastAPI + SQLAlchemy, well-layered

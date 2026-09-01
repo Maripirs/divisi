@@ -393,13 +393,39 @@
 	// the next (re)load in `syncAudioToModel`.
 	const audioStale = $derived(audioLoadedXml !== undefined && audioLoadedXml !== workingXml);
 	const seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
-	// Musical position in whole notes, for the playback cursor. `parseMusicXmlFile`
+	// Musical position in whole notes, for the playhead cursor. `parseMusicXmlFile`
 	// reports position in ms of musical time at the original tempo; a whole
 	// note is `4 * 60000 / baseTempoBpm` ms of that.
 	const msPerWholeNote = $derived(baseTempoBpm > 0 ? (4 * 60_000) / baseTempoBpm : 0);
-	const playbackWholeNotes = $derived(
-		isPlaying && msPerWholeNote > 0 ? positionMs / msPerWholeNote : undefined
+	// The playhead follows the transport whenever the score is up — playing
+	// or paused — so the accent bar is always on screen to drag. Before the
+	// first audio load `positionMs` is 0 and `msPerWholeNote` uses the
+	// default tempo: a good-enough estimate that snaps exact once
+	// `syncAudioToModel` adopts the file's real base tempo.
+	const playheadWholeNotes = $derived(
+		phase === 'ready' && msPerWholeNote > 0 ? positionMs / msPerWholeNote : undefined
 	);
+
+	// F14 reopened: the score view asks to move the playhead — from a drag of
+	// the bar (`play: false`, just reposition) or a click on empty staff
+	// space (`play: true`, start playback from there). Onset (whole notes) ->
+	// ms via the same factor the cursor uses, then reuse the transport seek.
+	async function handleSeekTo(onsetWholeNotes: number, opts: { play: boolean }): Promise<void> {
+		// Before the first load `msPerWholeNote` is only an estimate (default
+		// 120 BPM). When this seek is about to start playback, bring the synth
+		// up and load the model first so the conversion uses the file's real
+		// base tempo; a bare reposition can live with the estimate.
+		if (opts.play) {
+			const p = await ensurePlayer();
+			if (p && audioLoadedXml !== workingXml) {
+				if (!(await syncAudioToModel(p, positionMs))) return;
+			}
+		}
+		if (msPerWholeNote <= 0) return;
+		const ms = Math.max(0, onsetWholeNotes * msPerWholeNote);
+		await seekAudio(ms);
+		if (opts.play && !isPlaying) await togglePlay();
+	}
 
 	function describeTempo(bpm: number): string {
 		return `${bpm} BPM (${Math.round((bpm / baseTempoBpm) * 100)}%)`;
@@ -1053,7 +1079,31 @@
 	onMount(() => {
 		if (data.access === 'granted') void loadScore();
 		rafHandle = requestAnimationFrame(tick);
+		installEditorProbe();
 	});
+
+	// Test seam for the e2e playhead-sync spec (see `e2e/`): expose the
+	// transport position, the derived musical position, and the rendered
+	// playhead's onset so the spec can assert audio<->visual coordination
+	// without pixel math. Only wired under `vite dev` (`import.meta.env.DEV`)
+	// or when the page is opened with `?e2e` — never in a production build.
+	function installEditorProbe(): void {
+		const enabled =
+			import.meta.env.DEV ||
+			(typeof location !== 'undefined' && new URLSearchParams(location.search).has('e2e'));
+		if (!enabled || typeof window === 'undefined') return;
+		(window as unknown as { __divisiEditorProbe?: () => unknown }).__divisiEditorProbe = () => ({
+			phase,
+			positionMs,
+			durationMs,
+			isPlaying,
+			audioStale,
+			baseTempoBpm,
+			msPerWholeNote,
+			playheadWholeNotes: playheadWholeNotes ?? null,
+			playheadOnset: scoreView?.playheadOnset() ?? null
+		});
+	}
 </script>
 
 <!-- F14: a focused, full-screen editing surface — same "own chrome, no
@@ -1298,9 +1348,11 @@
 						xml={workingXml}
 						scoreTheme={$resolvedTheme}
 						{selectedOnset}
-						{playbackWholeNotes}
+						{playheadWholeNotes}
+						{isPlaying}
 						seams={seamMarkers}
 						onPickNote={handlePickNote}
+						onSeekTo={handleSeekTo}
 						bind:rendering={reRendering}
 						fill
 					/>

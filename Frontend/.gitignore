@@ -22,6 +22,14 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
+# Playwright (e2e). The saved login session and all run artifacts stay local;
+# the config + specs + helpers are committed.
+/e2e/.auth
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+
 # pdfjs runtime assets — copied out of node_modules/pdfjs-dist by an inline
 # plugin in vite.config.ts on every dev/build (see PdfView.svelte)
 /static/pdfjs

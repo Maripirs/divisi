@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { THEME_PALETTES, type ResolvedTheme } from '$lib/theme';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
@@ -36,9 +36,11 @@
 		scoreTheme = 'light',
 		rendering = $bindable(false),
 		selectedOnset = undefined,
-		playbackWholeNotes = undefined,
+		playheadWholeNotes = undefined,
+		isPlaying = false,
 		seams = [],
 		onPickNote = undefined,
+		onSeekTo = undefined,
 		fill = false
 	}: {
 		xml: string;
@@ -57,18 +59,21 @@
 		rendering?: boolean;
 		// Absolute whole-note onset of the selected note, or undefined for no
 		// selection. The page resolves a click/keyboard selection to a model
-		// note and passes its onset back down; the view parks OSMD's playback
-		// cursor there as the on-screen selection marker (see
-		// `parkSelectionCursor`). A plain number, not the note object, keeps
-		// this component ignorant of the editable model.
+		// note and passes its onset back down; the view parks the selection
+		// cursor (`osmd.cursor`, index 0) there as the on-screen marker (see
+		// `placeSelection`). A plain number, not the note object, keeps this
+		// component ignorant of the editable model.
 		selectedOnset?: number | undefined;
-		// F14 reopened: while the editor is playing back, the page drives this
-		// with the audio position (whole notes from the start). The single
-		// OSMD cursor is shared — when this is set it tracks playback and the
-		// selection marker is suppressed; back to `undefined` on stop restores
-		// the selection marker. Follow-scroll keeps it in view; the page's
-		// "scroll to cursor" button calls `scrollCursorIntoView()`.
-		playbackWholeNotes?: number | undefined;
+		// F14 reopened: the transport position, in whole notes from the start,
+		// whenever audio exists — playing *or* paused, not just during
+		// playback. Drives a dedicated playhead cursor (`osmd.cursors[1]`), the
+		// accent bar the user can drag or click a spot in the score to move.
+		// `undefined` only before audio is first loaded, when no playhead shows.
+		playheadWholeNotes?: number | undefined;
+		// True while the transport is actually playing — gates follow-scroll so
+		// a paused playhead (e.g. right after a click-to-seek) doesn't yank the
+		// score around.
+		isPlaying?: boolean;
 		// Called when the user clicks a notehead. The page resolves the hit
 		// to a `<note>` via `EditableScore.findByOnset` and updates selection.
 		onPickNote?: (hit: {
@@ -77,6 +82,10 @@
 			staff: number;
 			octave: number | undefined;
 		}) => void;
+		// Called when the user drags the playhead bar or clicks an empty spot
+		// in the score. The page converts the onset to ms, seeks the audio,
+		// and (when `play`) starts playback from there.
+		onSeekTo?: (onsetWholeNotes: number, opts: { play: boolean }) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -96,6 +105,44 @@
 	// guard `ScoreView.svelte` gets from its `cursorReady`.
 	let renderedOnce = $state(false);
 
+	// Two OSMD cursors, styled off the accent token instead of OSMD's stock
+	// green highlight. Index 0 is the selection marker (a translucent accent
+	// band on the selected note); index 1 is the playhead (a solid accent
+	// bar the user drags / clicks to). Literal `CursorType` values — OSMD
+	// ships the enum but importing it here would pull the CJS bundle into
+	// SSR (same reason as the type-only OSMD import above). 0 = Standard
+	// (highlight rectangle), 1 = ThinLeft (a left-aligned vertical line).
+	const SELECTION_CURSOR = 0;
+	const PLAYHEAD_CURSOR = 1;
+
+	// The slice of OSMD's `Cursor` this component drives. Kept minimal so the
+	// type-only OSMD import doesn't have to name `Cursor` (its CJS bundle
+	// can't be imported for values under SSR).
+	type CursorLike = {
+		show(): void;
+		hide(): void;
+		reset(): void;
+		next(): void;
+		previous(): void;
+		iterator: { currentTimeStamp: { RealValue: number }; EndReached: boolean };
+		cursorElement?: HTMLImageElement & { dataset: DOMStringMap };
+	};
+
+	// True while a pointer is dragging the playhead bar — `placePlayhead`
+	// yields the cursor to the drag handler, and a synthetic `click` right
+	// after the drag is swallowed via `justDragged`.
+	let draggingPlayhead = false;
+	let justDragged = false;
+	let dragSeekOnset: number | null = null;
+
+	function cursorsOptions(theme: ResolvedTheme) {
+		const accent = THEME_PALETTES[theme].accent;
+		return [
+			{ type: 0, color: accent, alpha: theme === 'dark' ? 0.4 : 0.28, follow: false },
+			{ type: 1, color: accent, alpha: 1, follow: false }
+		];
+	}
+
 	function osmdOptions(theme: ResolvedTheme) {
 		const palette = THEME_PALETTES[theme];
 		return {
@@ -110,7 +157,8 @@
 			defaultColorStem: palette.ink,
 			defaultColorRest: palette.muted,
 			defaultColorLabel: palette.muted,
-			pageBackgroundColor: palette.surface
+			pageBackgroundColor: palette.surface,
+			cursorsOptions: cursorsOptions(theme)
 		};
 	}
 
@@ -118,6 +166,16 @@
 		const osmdModule = await import('opensheetmusicdisplay');
 		pointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(scoreTheme));
+		// The playhead is driven by `parseMusicXmlFile(workingXml)` audio, which
+		// walks the score linearly and never expands repeats. OSMD's cursor
+		// iterator follows repeat barlines by default (back-jumps at the end
+		// repeat), so on a piece with repeats the cursor loops the repeated
+		// bars while the audio plays straight through — `walkCursorTo` then
+		// spins its guard loop every frame and the playhead never tracks the
+		// sound. Make the cursor walk linearly too. (`EngravingRules` lives on
+		// the OSMD instance and survives `setOptions`/`render`, so once is
+		// enough.)
+		osmd.EngravingRules.CursorIgnoreRepetitions = true;
 		container.addEventListener('click', handlePick);
 		// A manual scroll/zoom means "let me read where I want" — stop
 		// yanking the view back to the cursor until "scroll to cursor" is
@@ -133,37 +191,57 @@
 		osmd = undefined;
 	});
 
-	// Click -> nearest notehead -> report its identity to the page. Ported
-	// from the F14 spike: OSMD's `GetNearestNote` takes sheet-space
-	// coordinates (SVG units, 10 * Zoom px each), and OSMD numbers staves
-	// globally, so we hand the page the in-instrument staff index plus the
-	// MusicXML part id and let it resolve the actual `<note>`.
-	function handlePick(event: MouseEvent): void {
+	// Screen point -> OSMD sheet-space coords (SVG units, 10 * Zoom px each).
+	// `scrollLeft`/`scrollTop`: the container scrolls, and `rect` is only the
+	// visible box, so add the hidden offset to get true sheet space.
+	function sheetPoint(clientX: number, clientY: number): PointF2DType | null {
 		const osmdRef = osmd;
-		if (!osmdRef || !pointF2D || !onPickNote || !renderedOnce) return;
+		if (!osmdRef || !pointF2D || !renderedOnce) return null;
 		const rect = container.getBoundingClientRect();
 		const perPixel = 1 / (10 * osmdRef.Zoom);
-		// `scrollLeft`/`scrollTop`: the container scrolls, and `rect` is only
-		// the visible box, so add the hidden offset to get true sheet space.
-		const x = (event.clientX - rect.left + container.scrollLeft) * perPixel;
-		const y = (event.clientY - rect.top + container.scrollTop) * perPixel;
-		const nearest = osmdRef.GraphicSheet.GetNearestNote(
-			new pointF2D(x, y),
-			new pointF2D(1, 1)
+		return new pointF2D(
+			(clientX - rect.left + container.scrollLeft) * perPixel,
+			(clientY - rect.top + container.scrollTop) * perPixel
 		);
-		// OSMD's deep source model isn't fully surfaced in its types, hence
-		// the cast — same shape the spike relied on.
-		const src = nearest?.sourceNote as
-			| {
-					getAbsoluteTimestamp(): { RealValue: number };
-					ParentStaffEntry?: {
-						ParentStaff?: { Id?: number; ParentInstrument?: { IdString?: string } };
-					};
-					Pitch?: { Octave?: number };
-			  }
-			| undefined;
+	}
+
+	// The `sourceNote` nearest a screen point. OSMD's deep source model isn't
+	// fully surfaced in its types, hence the cast — the shape the F14 spike
+	// relied on.
+	type NearestSource = {
+		getAbsoluteTimestamp(): { RealValue: number };
+		ParentStaffEntry?: {
+			ParentStaff?: { Id?: number; ParentInstrument?: { IdString?: string } };
+		};
+		Pitch?: { Octave?: number };
+	};
+	function nearestSourceAt(clientX: number, clientY: number): NearestSource | null {
+		const p = sheetPoint(clientX, clientY);
+		if (!p || !osmd || !pointF2D) return null;
+		const nearest = osmd.GraphicSheet.GetNearestNote(p, new pointF2D(1, 1));
+		return (nearest?.sourceNote as NearestSource | undefined) ?? null;
+	}
+
+	// A click in the score is either "select this notehead" (an edit gesture,
+	// unchanged from F14) or "move the playhead here and play" (a click on
+	// empty staff space). VexFlow renders each notehead as a `g.vf-notehead`;
+	// a click whose target sits inside a note glyph is a selection, anything
+	// else (staff line, gap between notes, barline) is a seek.
+	function handlePick(event: MouseEvent): void {
+		if (!osmd || !pointF2D || !renderedOnce) return;
+		// The pointerup that ends a playhead drag is followed by a synthetic
+		// `click` — ignore it so a drag never also seeks/selects.
+		if (justDragged) return;
+		const src = nearestSourceAt(event.clientX, event.clientY);
 		if (!src) return;
 		const onsetWholeNotes = src.getAbsoluteTimestamp().RealValue;
+		const target = event.target as Element | null;
+		const onNote = !!target?.closest?.('.vf-notehead, .vf-stavenote, .vf-rest');
+		if (!onNote) {
+			onSeekTo?.(onsetWholeNotes, { play: true });
+			return;
+		}
+		if (!onPickNote) return;
 		const staff = src.ParentStaffEntry?.ParentStaff?.Id ?? 1;
 		const partId = src.ParentStaffEntry?.ParentStaff?.ParentInstrument?.IdString ?? '';
 		// OSMD's `Pitch.Octave` is scientific octave minus 3.
@@ -171,29 +249,11 @@
 		onPickNote({ onsetWholeNotes, partId, staff, octave });
 	}
 
-	// The selection marker. F14's spike found that coloring a
-	// `GraphicalNote` doesn't survive OSMD rebuilding its graphical sheet on
-	// every re-engrave, whereas the playback cursor is re-derived from
-	// timestamps on each render, so it is the reliable marker here. Walk the
-	// cursor forward to the last entry at or before `selectedOnset`.
-	function parkSelectionCursor(): void {
-		const cursor = osmd?.cursor;
-		if (!cursor) return;
-		if (selectedOnset === undefined) {
-			cursor.hide();
-			return;
-		}
-		cursor.show();
-		cursor.reset();
-		walkCursorTo(selectedOnset);
-	}
-
-	// Step the shared cursor forward to the last entry at or before `target`
-	// (whole notes). Assumes the caller has positioned it at or before
-	// `target` already (both callers `reset()` first when needed). OSMD's
-	// cursor only moves via next()/previous(), no direct jump.
-	function walkCursorTo(target: number): void {
-		const cursor = osmd?.cursor;
+	// Step `cursor` forward to the last entry at or before `target` (whole
+	// notes). Assumes it is at or before `target` already (callers `reset()`
+	// first when seeking backward). An OSMD cursor only moves via
+	// next()/previous(), no direct jump.
+	function walkCursorTo(cursor: CursorLike | undefined, target: number): void {
 		if (!cursor) return;
 		let guard = 0;
 		while (
@@ -209,33 +269,213 @@
 		}
 	}
 
-	// Playback cursor: drive the shared cursor from the audio position. Only
-	// `reset()`s when seeking backward — this runs every animation frame while
-	// playing, so re-walking from 0 each call would be needlessly expensive
-	// for the common case of just advancing. Same shape as `ScoreView`'s
-	// `setCursorTimestamp`.
-	function drivePlaybackCursor(target: number): void {
+	// The selection marker (`osmd.cursors[0]`). F14's spike found that
+	// coloring a `GraphicalNote` doesn't survive OSMD rebuilding its
+	// graphical sheet on every re-engrave, whereas a cursor is re-derived
+	// from timestamps on each render, so a cursor is the reliable marker.
+	//
+	// `placeCursor` runs every animation frame while the playhead moves, so
+	// this must not re-walk from bar 0 each time: `selectionPlacedAt` tracks
+	// where cursor 0 actually sits, and `selectionStale` forces a re-walk
+	// after a re-engrave (OSMD rebuilt the element) or after `measureSeams`
+	// borrowed cursor 0 to probe seam positions.
+	let selectionPlacedAt: number | undefined = undefined;
+	let selectionStale = true;
+	// Visibility transitions only: OSMD's `cursor.show()` runs a full
+	// `update()` (re-walks the graphical sheet to recompute cursor geometry),
+	// so calling it every animation frame — as the old unconditional
+	// `show()`/`hide()` here did — cost two sheet walks per frame during
+	// playback for cursors that mostly weren't moving. Track shown state and
+	// only toggle on the edge. Reset to `false` after every `render()` (OSMD
+	// rebuilds and re-hides the cursor elements).
+	let selectionShown = false;
+	let playheadShown = false;
+	// True once the current cursor elements have had their accent styling /
+	// drag wiring applied. Cleared on every `render()` (fresh elements), then
+	// re-applied on the next visibility/position change.
+	let cursorsStyled = false;
+	// Returns true when it changed the cursor (shown / hidden / re-walked), so
+	// `placeCursor` knows to re-run `styleCursors`.
+	function placeSelection(): boolean {
 		const cursor = osmd?.cursor;
-		if (!cursor) return;
-		cursor.show();
-		const current = () => cursor.iterator.currentTimeStamp.RealValue;
-		if (Math.abs(current() - target) < 1e-6) return;
-		if (target < current()) cursor.reset();
-		walkCursorTo(target);
+		if (!cursor) return false;
+		if (selectedOnset === undefined) {
+			selectionPlacedAt = undefined;
+			if (!selectionShown) return false;
+			cursor.hide();
+			selectionShown = false;
+			return true;
+		}
+		let changed = false;
+		if (!selectionShown) {
+			cursor.show();
+			selectionShown = true;
+			changed = true;
+		}
+		if (!selectionStale && selectionPlacedAt === selectedOnset) return changed;
+		cursor.reset();
+		walkCursorTo(cursor, selectedOnset);
+		selectionPlacedAt = selectedOnset;
+		selectionStale = false;
+		return true;
 	}
 
-	// Places the shared cursor for whichever mode is active — playback while
-	// `playbackWholeNotes` is set, otherwise the selection marker. Called
-	// after every re-engrave/zoom/theme change (OSMD rebuilds the cursor with
-	// the sheet) and whenever either input moves.
+	// The playhead (`osmd.cursors[1]`) — driven by the transport position
+	// every animation frame while playing, so it only `reset()`s when seeking
+	// backward (re-walking from 0 each frame would be needless work for the
+	// common case of just advancing). Skipped while a drag owns the playhead.
+	// Returns true when the playhead was shown/hidden or actually stepped to a
+	// new onset — `placeCursor` gates `styleCursors` and follow-scroll on that,
+	// so a frame where the transport only advanced a sub-note fraction (most
+	// frames at 60fps) does no OSMD or layout work, matching `ScoreView`'s
+	// timestamp early-out.
+	function placePlayhead(): boolean {
+		const cursor = osmd?.cursors?.[PLAYHEAD_CURSOR];
+		if (!cursor) return false;
+		if (playheadWholeNotes === undefined) {
+			if (!playheadShown) return false;
+			cursor.hide();
+			playheadShown = false;
+			return true;
+		}
+		// A drag owns the cursor while it lasts (see `wirePlayheadDrag`).
+		if (draggingPlayhead) return false;
+		let changed = false;
+		if (!playheadShown) {
+			cursor.show();
+			playheadShown = true;
+			changed = true;
+		}
+		const current = cursor.iterator.currentTimeStamp.RealValue;
+		if (Math.abs(current - playheadWholeNotes) < 1e-6) return changed;
+		if (playheadWholeNotes < current) cursor.reset();
+		walkCursorTo(cursor, playheadWholeNotes);
+		return true;
+	}
+
+	// Places both cursors and (re)applies their accent styling. Called after
+	// every re-engrave/zoom/theme change (OSMD rebuilds cursor elements with
+	// the sheet) and whenever `selectedOnset` / `playheadWholeNotes` move.
+	// OSMD cursors default to `SkipInvisibleNotes = true`, so `next()` jumps
+	// over any note with `print-object="no"`. The editor renders the raw
+	// working model, which keeps hidden notes (unselected voices, page-fill
+	// padding from a paged OMR run) in the timeline — with the default the
+	// playhead skips from visible note to visible note and reads as "moving
+	// per measure, not per note". Force it off on every cursor so
+	// `walkCursorTo` stops on every entry; the setter also propagates to the
+	// cursor's iterator. Re-asserted here (not once at mount) because OSMD
+	// rebuilds the cursors on every `render()`.
+	function keepCursorsOnEveryNote(): void {
+		for (const cursor of osmd?.cursors ?? []) {
+			if (cursor.SkipInvisibleNotes !== false) cursor.SkipInvisibleNotes = false;
+		}
+	}
+
 	function placeCursor(): void {
 		if (!osmd || !renderedOnce) return;
-		if (playbackWholeNotes !== undefined) {
-			drivePlaybackCursor(playbackWholeNotes);
-			followCursorIfNeeded();
-		} else {
-			parkSelectionCursor();
+		keepCursorsOnEveryNote();
+		const selChanged = placeSelection();
+		const headMoved = placePlayhead();
+		if (selChanged || headMoved || !cursorsStyled) {
+			styleCursors();
+			cursorsStyled = true;
 		}
+		// `followCursorIfNeeded` reads `getBoundingClientRect` (forces a
+		// reflow); only worth doing on frames where the playhead actually
+		// reached a new note.
+		if (isPlaying && headMoved) followCursorIfNeeded();
+	}
+
+	// OSMD's `CursorOptions.color` tints the cursor image but leaves it the
+	// stock width; the playhead wants a crisp bar and a grab affordance, and
+	// both elements are rebuilt on every render() so this re-runs each time.
+	function styleCursors(): void {
+		const sel = osmd?.cursors?.[SELECTION_CURSOR]?.cursorElement;
+		if (sel) {
+			sel.style.pointerEvents = 'none';
+			sel.style.zIndex = '3';
+			// Stable hook for the e2e playhead-sync spec (see `e2e/`), which
+			// can't rely on OSMD's `cursorImg-N` id ordering.
+			sel.dataset.role = 'selection';
+		}
+		const play = osmd?.cursors?.[PLAYHEAD_CURSOR]?.cursorElement;
+		if (play) {
+			play.dataset.role = 'playhead';
+			play.style.width = '3px';
+			play.style.borderRadius = '999px';
+			play.style.zIndex = '5';
+			play.style.pointerEvents = 'auto';
+			play.style.cursor = draggingPlayhead ? 'grabbing' : 'grab';
+			play.style.touchAction = 'none';
+			if (play.dataset.dragWired !== '1') wirePlayheadDrag(play);
+		}
+	}
+
+	// Nearest note onset (whole notes) to a screen point, for click-to-seek
+	// and the drag below — the playhead snaps to note onsets rather than
+	// free-scrubbing between them, which is what "play from here" wants.
+	function nearestOnsetAt(clientX: number, clientY: number): number | null {
+		const src = nearestSourceAt(clientX, clientY);
+		return src ? src.getAbsoluteTimestamp().RealValue : null;
+	}
+
+	// Make the playhead bar draggable. OSMD rebuilds `cursorElement` on every
+	// render(), so `styleCursors` re-invokes this on a fresh element (guarded
+	// by the `dragWired` marker). Pointer capture keeps the drag alive even
+	// when the pointer outruns the 3px bar; each move snaps the playhead to
+	// the nearest note, and the release reports that onset to the page.
+	function wirePlayheadDrag(el: HTMLImageElement & { dataset: DOMStringMap }): void {
+		el.dataset.dragWired = '1';
+		const playCursor = () => osmd?.cursors?.[PLAYHEAD_CURSOR] as CursorLike | undefined;
+
+		el.addEventListener('pointerdown', (event: PointerEvent) => {
+			if (!renderedOnce) return;
+			event.preventDefault();
+			event.stopPropagation();
+			draggingPlayhead = true;
+			dragSeekOnset = null;
+			following = false;
+			el.style.cursor = 'grabbing';
+			// Pointer capture routes every subsequent move/up to this element
+			// even when the pointer outruns the 3px bar.
+			try {
+				el.setPointerCapture(event.pointerId);
+			} catch {
+				// Ignore — the pointerup/pointercancel listeners still end it.
+			}
+		});
+
+		el.addEventListener('pointermove', (event: PointerEvent) => {
+			if (!draggingPlayhead) return;
+			const onset = nearestOnsetAt(event.clientX, event.clientY);
+			if (onset == null) return;
+			dragSeekOnset = onset;
+			const cursor = playCursor();
+			if (!cursor) return;
+			cursor.show();
+			if (onset < cursor.iterator.currentTimeStamp.RealValue) cursor.reset();
+			walkCursorTo(cursor, onset);
+		});
+
+		const endDrag = (event: PointerEvent) => {
+			if (!draggingPlayhead) return;
+			draggingPlayhead = false;
+			el.style.cursor = 'grab';
+			try {
+				el.releasePointerCapture(event.pointerId);
+			} catch {
+				// no-op — capture may never have been taken (see above).
+			}
+			// Swallow the synthetic click that follows this pointerup.
+			justDragged = true;
+			setTimeout(() => (justDragged = false), 0);
+			if (dragSeekOnset != null) {
+				onSeekTo?.(dragSeekOnset, { play: false });
+				dragSeekOnset = null;
+			}
+		};
+		el.addEventListener('pointerup', endDrag);
+		el.addEventListener('pointercancel', endDrag);
 	}
 
 	// MARK: - Follow-scroll (ported from ScoreView, simplified — here the
@@ -252,15 +492,24 @@
 	// load and when playback toggles.
 	let lastCursorSystemTop: number | undefined;
 
+	// Follow-scroll tracks whichever cursor is "live": the playhead while
+	// there is a transport position, otherwise the selection marker (so the
+	// "scroll to cursor" button still works when nothing is playing).
+	function activeCursorElement(): HTMLElement | undefined {
+		const cursor =
+			playheadWholeNotes !== undefined ? osmd?.cursors?.[PLAYHEAD_CURSOR] : osmd?.cursor;
+		return cursor?.cursorElement;
+	}
+
 	function currentCursorSystemTop(): number | undefined {
-		const raw = osmd?.cursor.cursorElement?.style.top;
+		const raw = activeCursorElement()?.style.top;
 		if (!raw) return undefined;
 		const parsed = parseFloat(raw);
 		return Number.isNaN(parsed) ? undefined : parsed;
 	}
 
 	function jumpToCursor(): void {
-		const element = osmd?.cursor.cursorElement;
+		const element = activeCursorElement();
 		if (!element || !container) return;
 		const el = element.getBoundingClientRect();
 		const box = container.getBoundingClientRect();
@@ -270,7 +519,7 @@
 
 	function followCursorIfNeeded(): void {
 		if (!following) return;
-		const element = osmd?.cursor.cursorElement;
+		const element = activeCursorElement();
 		if (!element || !container) return;
 		const top = currentCursorSystemTop();
 		if (top !== undefined && top !== lastCursorSystemTop) {
@@ -296,6 +545,16 @@
 		following = false;
 	}
 
+	/** Test seam (e2e playhead-sync spec): the playhead cursor's current
+	 * musical position in whole notes from the start, or `null` before it's
+	 * been placed. Lets the spec compare the rendered playhead against the
+	 * audio transport position directly, without pixel math off the cursor
+	 * element. Not used by the app itself. */
+	export function playheadOnset(): number | null {
+		const t = osmd?.cursors?.[PLAYHEAD_CURSOR]?.iterator?.currentTimeStamp?.RealValue;
+		return typeof t === 'number' ? t : null;
+	}
+
 	// Re-engrave whenever `xml` changes — the editor hands a freshly
 	// serialized model after every edit, and OSMD has no partial update, so
 	// each change is a full `load()` + `render()`. `loadedXml` guards against
@@ -314,8 +573,15 @@
 			.then(() => {
 				osmdRef.render();
 				renderedOnce = true;
-				// A fresh sheet: the first system counts as "changed" again.
+				// A fresh sheet: the first system counts as "changed" again,
+				// and OSMD rebuilt cursor 0 at bar 0 — force a re-walk.
 				lastCursorSystemTop = undefined;
+				selectionStale = true;
+				// `render()` rebuilt and re-hid both cursor elements — drop the
+				// shown/styled flags so `placeCursor` re-shows and re-styles.
+				selectionShown = false;
+				playheadShown = false;
+				cursorsStyled = false;
 				// Measure seam positions before parking the cursor — both walk
 				// the shared cursor, so seams first, then `placeCursor()` puts
 				// it back on the selection/playback position.
@@ -340,33 +606,49 @@
 		const level = zoom;
 		const theme = scoreTheme;
 		if (!osmd || !renderedOnce) return;
-		osmd.setOptions(osmdOptions(theme));
-		osmd.Zoom = level;
-		osmd.render();
-		lastCursorSystemTop = undefined;
-		measureSeams();
-		placeCursor();
+		// `untrack`: `placeCursor()` (below, via `measureSeams`/`placeCursor`)
+		// synchronously reads `playheadWholeNotes` / `isPlaying` /
+		// `selectedOnset`, and `$effect` tracks reads transitively through
+		// calls. Without this, a full `osmd.render()` here re-subscribes to the
+		// playback position and re-engraves the entire sheet on every
+		// animation frame during playback (~1.7s main-thread stalls on a long
+		// score). Only `zoom` / `scoreTheme` should retrigger this effect; the
+		// per-frame cursor move has its own effect below.
+		untrack(() => {
+			osmd!.setOptions(osmdOptions(theme));
+			osmd!.Zoom = level;
+			osmd!.render();
+			lastCursorSystemTop = undefined;
+			selectionStale = true;
+			// Fresh cursor elements after render() — see the load effect above.
+			selectionShown = false;
+			playheadShown = false;
+			cursorsStyled = false;
+			measureSeams();
+			placeCursor();
+		});
 	});
 
-	// Re-place the cursor when the selection or the playback position moves
+	// Re-place the cursors when the selection or the playhead position moves
 	// without an edit — keyboard nav changes `selectedOnset`, and the RAF
-	// loop changes `playbackWholeNotes`, neither of which touches `xml`, so
+	// loop changes `playheadWholeNotes`, neither of which touches `xml`, so
 	// the re-engrave effect above doesn't run.
 	let wasPlaying = false;
 	$effect(() => {
 		const onset = selectedOnset;
-		const pb = playbackWholeNotes;
+		const head = playheadWholeNotes;
+		const playing = isPlaying;
 		void onset;
+		void head;
 		if (!osmd || !renderedOnce) return;
 		// Entering playback re-engages follow (a pre-playback manual scroll
 		// shouldn't leave the cursor un-followed once playback starts) and
 		// re-arms the "new system" tracking so the first jump lands.
-		const playingNow = pb !== undefined;
-		if (playingNow && !wasPlaying) {
+		if (playing && !wasPlaying) {
 			following = true;
 			lastCursorSystemTop = undefined;
 		}
-		wasPlaying = playingNow;
+		wasPlaying = playing;
 		placeCursor();
 	});
 
@@ -387,12 +669,23 @@
 			seamMarks = [];
 			return;
 		}
+		// This runs before `placeCursor()` after a re-render, so assert the
+		// no-skip cursor config here too (see `keepCursorsOnEveryNote`).
+		keepCursorsOnEveryNote();
+		// This borrows cursor 0 (the selection marker) to probe each seam's
+		// screen position, leaving it parked on the last seam — the following
+		// `placeSelection()` must re-walk it, not trust its tracked spot. It
+		// also `show()`s cursor 0, so keep `selectionShown` in sync or a later
+		// `placeSelection()` with nothing selected would skip the `hide()` and
+		// leave a stray marker on the last seam.
+		selectionStale = true;
+		selectionShown = true;
 		const box = container.getBoundingClientRect();
 		const marks: typeof seamMarks = [];
 		for (const seam of seams) {
 			cursor.show();
 			cursor.reset();
-			walkCursorTo(seam.onsetWholeNotes);
+			walkCursorTo(cursor, seam.onsetWholeNotes);
 			const el = cursor.cursorElement;
 			if (!el) continue;
 			const r = el.getBoundingClientRect();
@@ -413,8 +706,13 @@
 	$effect(() => {
 		void seams;
 		if (!osmd || !renderedOnce) return;
-		measureSeams();
-		placeCursor();
+		// `untrack` for the same reason as the zoom/theme effect: `placeCursor()`
+		// transitively reads the playback position, and this effect must only
+		// react to `seams`.
+		untrack(() => {
+			measureSeams();
+			placeCursor();
+		});
 	});
 
 	function zoomBy(delta: number): void {

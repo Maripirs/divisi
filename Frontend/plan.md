@@ -91,7 +91,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
-| F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31** for in-editor playback — full transport (play/stop, seek, tempo, per-part mix), playback cursor + follow-scroll, note-preview-on-select, full-screen player-style shell: **all Claude tasks done 2026-08-31**, pending the human real-browser pass + acceptance-criteria sign-off. |
+| F14 | In-app notation editor for a track's music | 🚧 In progress — edit/save/export loop done 2026-08-31 (route, editable model, editing surface, MusicXML export, save-as-draft, unsaved guard, entry points, i18n). **Reopened 2026-08-31** for in-editor playback — full transport (play/stop, seek, tempo, per-part mix), playback cursor + follow-scroll, note-preview-on-select, full-screen player-style shell: **all Claude tasks done 2026-08-31**, pending the human real-browser pass + acceptance-criteria sign-off. Playhead reworked + desync fixed 2026-09-01 (see Log), now with a Playwright e2e regression test (`Frontend/e2e/`) — that pass caught and fixed a per-frame `osmd.render()` stall. |
 | F15 | Review a segmented OMR result in the editor | ⏳ Built, `check`/`build`-clean, vitest 58 green; seam-marker pixel placement + the whole flow need a real-browser pass (also needs Backend B16 deployed) |
 | F16 | Working-draft slot: labelled editing, seam-fill, per-page OMR progress & re-run | ⏳ Claude tasks done, `check`/`build`-clean, vitest 67 green; needs the full real-browser pass (generate → edit → fill a failed page → re-run → publish) + Backend B17 deployed |
 
@@ -884,6 +884,21 @@ FluidSynth engine the player route uses).
       `cursorElement.style.top`, nudges horizontally otherwise; a
       wheel/touchmove disengages it; `scrollCursorIntoView()` (exported)
       re-engages. "Scroll to cursor" button in the transport row.
+- [x] **Playhead desync fixed + reworked.** (2026-09-01) The 2026-08-31
+      cursor above lagged / moved "per measure" / drifted on a repeat-heavy
+      PDF-sourced piece. `playbackWholeNotes` → `playheadWholeNotes` + new
+      `isPlaying` prop; the playhead is now its own cursor (index 1), shown
+      whenever audio exists (playing *or* paused) so it's always draggable;
+      selection marker is cursor 0. Three OSMD fixes: `SkipInvisibleNotes =
+      false` on both cursors re-asserted per render (stop on every note);
+      `EngravingRules.CursorIgnoreRepetitions = true` (walk linearly like
+      `parseMusicXmlFile`, no back-jump at end-repeats); show/hide/style/
+      follow-scroll gated to edges, not every frame. New `onSeekTo` prop +
+      `handleSeekTo` in `edit/+page.svelte`: drag the bar to reposition,
+      click empty staff space to seek + play. A per-frame `osmd.render()`
+      stall found by the new e2e test (`$effect` transitive dep tracking
+      re-subscribing the zoom/theme + seam effects to `playheadWholeNotes`)
+      fixed with `untrack()`. See the 2026-09-01 Log entry + `Frontend/e2e/`.
 - [x] **Edit-during-playback.** (2026-08-31) Covered by the audio-pipeline
       commit: an edit only re-serializes `workingXml` (the synth keeps
       playing untouched), `audioStale` derives true, the transport shows the
@@ -916,7 +931,10 @@ FluidSynth engine the player route uses).
 - [ ] In a real browser (desktop): play the working score inside the
       editor — transport, seek, tempo, per-part mix, follow cursor — make
       an edit mid-playback, and confirm note-preview-on-select sounds
-      right
+      right. *(Playhead-vs-audio sync + drag-to-seek now have an automated
+      Playwright test — `Frontend/e2e/editor-playhead.spec.ts`, run with
+      `E2E_PIECE_ID=<id> npm run test:e2e`; this human pass still covers
+      tempo / mix / note-preview / edit-mid-playback.)*
 
 ### F15 — Review a segmented OMR result in the editor [~]
 
@@ -1112,6 +1130,8 @@ counters, per-page re-run).
 - Admin's Assignments/Tracks tabs have no edit/delete UI yet (Backend supports `DELETE /homework/{id}`; no equivalent for tracks)
 - `/groups/new`'s form only asks for a name — the Backend's `GroupCreate` schema has no fields yet for a description or default-sections checklist
 - Preserve fully independent polyphonic notation in the player-generated MusicXML — same-onset notes render as chords now, but truly independent overlapping rhythms on one staff still need a multi-voice representation
+- **Mid-piece tempo changes drift the editor playhead.** `parseMusicXmlFile` (drives the editor's audio) bakes each `<sound tempo>` into note `startMs` but returns a single `tempoBPM`, and the editor converts the transport position to a musical onset with that one factor (`msPerWholeNote`). On a piece with tempo changes the playhead cursor gradually leads/lags the sound. The 2026-09-01 e2e test tolerates up to one whole note and does not assert this. Fix is either a piecewise ms→onset map from the parser or a tempo-map the editor can walk.
+- **Shared OSMD-view code between `ScoreView` and `EditorScoreView`.** `stepCursorTo`/`walkCursorTo` (identical pure cursor-stepping algo), the `osmdOptions()` builder, the follow-scroll block, the zoom controls (identical markup + ~45 lines of CSS), and the theme CSS-custom-prop block are duplicated. Extraction candidate (`$lib/components/score/osmdCursor.ts` + a shared `<ScoreZoomControls bind:zoom />`) with a unit test — deferred, needs a click-through of both the practice player and the editor right after.
 - Live tempo control for F5's stem-backed pieces — a real time-stretching problem, not a rate multiplier like the MIDI-synth player has
 - Guest-side wiring for genuinely-new real pieces via join code (see F5's "Expanded" note) — closed via the fix logged 2026-08-29 below; kept here only if a similar gap resurfaces for a future upload path
 - **Fix the live production Backend URL if it ever regresses**: the deployed Worker was once built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in — always deploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy`, never a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold
@@ -1149,6 +1169,10 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-01: **Editor playhead desync fixed + a Playwright e2e harness for it.** *(uncommitted at time of writing — on `feat/generate-track-from-pdf` on top of the F16 work.)* Live-testing F16 showed the editor's playback cursor lagging / desyncing / moving "per measure" against the audio, unlike the practice player's `ScoreView`. Root cause: `EditorScoreView` engraves the **raw** working model (`EditableScore.serialize()`), which keeps hidden notes and repeat structure the practice player's `convertVisualParts()` output strips. Three OSMD cursor fixes in `EditorScoreView.svelte`: (1) `SkipInvisibleNotes = false` on both cursors (re-asserted every render — OSMD rebuilds cursors on `render()`) so `next()` stops on every note, not just visible ones; (2) `EngravingRules.CursorIgnoreRepetitions = true` so the cursor walks linearly like `parseMusicXmlFile` (which never expands repeats) instead of back-jumping at end-repeats and spinning `walkCursorTo`'s guard loop every frame; (3) visibility/position-change gating so `show()`/`hide()`/re-style/follow-scroll (a forced reflow) only fire on an actual edge, not every frame. Playhead reworked alongside: `playbackWholeNotes` → `playheadWholeNotes` + a new `isPlaying` prop; the playhead is its own cursor (index 1, accent bar) shown whenever audio exists — playing **or** paused — so it's always draggable; new `onSeekTo` prop + `handleSeekTo` in `edit/+page.svelte` wire a drag of the bar (reposition) and a click on empty staff space (seek + play) back to the transport. Selection marker moved to cursor 0.
+  New **`Frontend/e2e/`** (Playwright): `playwright.config.ts` (reuses the HTTPS dev server; FluidSynth's AudioWorklet does run under headless Chromium), `auth.setup.ts` (logs into the Backend, saves a `storageState`), `editor-playhead.spec.ts` (playhead vs transport: monotonic onset, note-level granularity, main-thread responsiveness, position tracking, drag-to-seek), `helpers/playback.ts`, `_diagnose`/`_profile` opt-in tools (`@tools` tag). Test seams: `window.__divisiEditorProbe()` (DEV / `?e2e` only), `data-role` on the cursor elements, `EditorScoreView.playheadOnset()`. Gated on `E2E_PIECE_ID` (used "Les djinns, Op. 12" locally); `npm run test:e2e`.
+  **The harness immediately caught a separate bug**: `osmd.render()` was firing on essentially every animation frame during editor playback (~1.7s main-thread stalls on a ~4-min score; rAF ~3 ticks/4s). Cause: `$effect` tracks reactive reads transitively through synchronous calls, and the zoom/theme + seam effects both call `placeCursor()`, which reads `playheadWholeNotes` — so they re-subscribed to the transport position and full-re-engraved every frame. Fixed by wrapping those imperative bodies in `untrack()`. After: rAF ~228 ticks/4s, longest task 1680ms → 88ms. `check` 0 errors, vitest 67, e2e 3 pass. Still open (unchanged): `parseMusicXmlFile` bakes mid-piece `<sound tempo>` into note `startMs` but reports a single `tempoBPM`, so a tempo-change piece can still drift — the e2e position tolerance is one whole note and does not assert this.
 
 - 2026-08-31: **F16 built — Claude tasks** (4 commits on `feat/generate-track-from-pdf`, on top of Backend B17). The editor now opens the piece's **working draft** (B17 create-or-get, copy-on-edit from the live version), resolved in `edit/+page.server.ts`; `loadScore` streams it via a new `edit/file?v=` proxy. Save is `PUT /library/versions/{id}/file` in place (new `edit/save` shape) and stays in the editor with a "Saved" notice — no more a fresh draft per save, no nav. Header badge: "Live version" for a pristine forked copy, "Working draft — not yet live" once edited. New "Publish as live version" button → `edit/publish` proxy (B17 submit→approve→distribute), disabled until every seam is marked resolved (per-seam toggle, `localStorage` keyed on job + `before_page`); it flushes unsaved edits first, then leaves so the next visit starts a fresh copy. Failed-page seams ("page N failed …") get: "Next seam" auto-opens the PDF pane at that page (new `PdfView.scrollToPage`), an "insert N bars" control (`EditableScore.insertMeasures`), and "Re-run this page" (`omr/jobs/[id]/pages/[n]/rerun` + `.../musicxml` proxies → `EditableScore.spliceMeasuresFromXml` at the seam onset). New structural ops on `EditableScore` (`insertMeasures`/`deleteMeasure`/`spliceMeasuresFromXml` — full-measure-rest bars, prevailing divisions/time, parts kept equal length, renumbered; +14 vitest). Tracks tab: draft-ready block → "Open working draft in editor" + "Discard working draft", "page X of Y" while a paged job runs; `OmrJobAlerts` links a finished single job to the editor. en+es keys. `check` 0 errors, `build` clean, vitest 67. Needs the real-browser pass + B17 on prod.
 
