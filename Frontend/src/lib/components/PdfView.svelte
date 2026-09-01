@@ -684,6 +684,15 @@
 		await renderAllPages(pdf);
 	}
 
+	/** F16: scroll a 1-based page into view within the pane — the editor
+	 * calls this when "Next seam" lands on a failed-OMR-page seam so the
+	 * reference scan for that page is right there beside the empty bars.
+	 * No-op until that page's canvas has mounted. */
+	export function scrollToPage(pageNumber: number): void {
+		const canvas = canvasRefs[pageNumber - 1];
+		if (canvas) canvas.scrollIntoView({ block: 'start', behavior: 'smooth' });
+	}
+
 	// Load/resize/zoom/the `active` transition can all independently decide
 	// a render pass is needed, and on a fast (e.g. cache-served) reload
 	// several of those can fire within the same tick. The `token` check

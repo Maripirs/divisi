@@ -12,7 +12,7 @@
 	import type { MixPart, ParsedMIDI } from '$lib/midi/types';
 	import type { EditableScore, EditableNote, DurationType } from '$lib/musicxml/editableScore';
 	import { loadEditableScore, UnsupportedMusicFileError } from '$lib/musicxml/loadEditableScore';
-	import type { PagedReport } from '$lib/server/backendTypes';
+	import type { OmrPageRerunOut, PagedReport } from '$lib/server/backendTypes';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -115,6 +115,7 @@
 	let reRendering = $state(false);
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
 	let scoreView: EditorScoreView | undefined = $state();
+	let pdfView: PdfView | undefined = $state();
 
 	// F15: seam review. When this track's music came from a B16 paged OMR run
 	// that couldn't merge every page join cleanly (`data.pagedReportJobId`),
@@ -123,29 +124,173 @@
 	// marker there, and offer a "next seam" jump. Onsets can shift as the
 	// admin edits, so the mapping is derived from the live model, keyed on
 	// `workingXml`, not resolved once.
-	let seamBoundaries = $state<{ measure: number; reason: string; page: number }[]>([]);
+	type SeamBoundary = {
+		measure: number;
+		reason: string;
+		page: number;
+		/** F16: a "page N failed to transcribe" seam — the `reason` names
+		 * the page that produced nothing, so the editor can offer "insert N
+		 * bars" + "Re-run this page" there. Null for a part-count-change
+		 * seam (F15's review-and-clear only, no missing bars). */
+		failedPageNo: number | null;
+	};
+	let seamBoundaries = $state<SeamBoundary[]>([]);
 	let seamAt = $state(-1); // index of the seam "Next seam" last jumped to
 	const seams = $derived.by(() => {
 		void workingXml; // re-resolve onsets after every edit
 		if (!score || seamBoundaries.length === 0) return [];
 		return seamBoundaries
 			.map((b) => ({ ...b, onsetWholeNotes: score!.measureOnset(b.measure) }))
-			.filter((s): s is { measure: number; reason: string; page: number; onsetWholeNotes: number } =>
-				s.onsetWholeNotes != null
-			)
+			.filter((s): s is SeamBoundary & { onsetWholeNotes: number } => s.onsetWholeNotes != null)
 			.sort((a, b) => a.onsetWholeNotes - b.onsetWholeNotes);
 	});
 	// Pared to what `EditorScoreView` needs: onset + a short label.
 	const seamMarkers = $derived(
 		seams.map((s) => ({
 			onsetWholeNotes: s.onsetWholeNotes,
-			reason: m.piece_editor_seam_flag({ page: s.page })
+			reason:
+				s.failedPageNo != null
+					? m.piece_editor_seam_failed_flag({ page: s.failedPageNo })
+					: m.piece_editor_seam_flag({ page: s.page })
 		}))
 	);
+
+	// F16: per-seam "resolved" is client-only, keyed on the job + the
+	// boundary's `before_page` (same overlay-only philosophy as F15's
+	// markers). "Publish as live version" is gated on every seam resolved.
+	const RESOLVED_SEAMS_KEY = 'divisi:seamsResolved';
+	let resolvedSeams = $state<Set<string>>(new Set());
+	function seamKey(page: number): string {
+		return `${data.pagedReportJobId ?? ''}:${page}`;
+	}
+	function loadResolvedSeams(): void {
+		try {
+			const raw = localStorage.getItem(RESOLVED_SEAMS_KEY);
+			const arr = raw ? (JSON.parse(raw) as unknown) : [];
+			resolvedSeams = new Set(
+				Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : []
+			);
+		} catch {
+			resolvedSeams = new Set();
+		}
+	}
+	function isSeamResolved(page: number): boolean {
+		return resolvedSeams.has(seamKey(page));
+	}
+	function toggleSeamResolved(page: number): void {
+		const key = seamKey(page);
+		const next = new Set(resolvedSeams);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		resolvedSeams = next;
+		try {
+			localStorage.setItem(RESOLVED_SEAMS_KEY, JSON.stringify([...next]));
+		} catch {
+			// Private mode / quota — the gate just won't persist across reloads.
+		}
+	}
+	const allSeamsResolved = $derived(
+		seams.length === 0 || seams.every((s) => resolvedSeams.has(seamKey(s.page)))
+	);
+
+	// F16: "insert N bars" at the current failed-page seam onset, and
+	// "Re-run this page". Both act on `seams[seamAt]`.
+	let fillBars = $state(1);
+	let rerunning = $state(false);
+
+	function currentSeam(): (SeamBoundary & { onsetWholeNotes: number }) | undefined {
+		return seamAt >= 0 && seamAt < seams.length ? seams[seamAt] : undefined;
+	}
+
+	/** The 0-based measure index the seam onset sits at, so a structural
+	 * edit lands its new bars *before* that measure (= after the one
+	 * before it). */
+	function seamMeasureIndex(onsetWholeNotes: number): number | null {
+		const near = score?.findByOnset(onsetWholeNotes, {}) ?? score?.list().find((n) => n.onsetWholeNotes >= onsetWholeNotes);
+		return near ? near.measureIndex : null;
+	}
+
+	// A measure-level structural edit (insert / splice bars): re-serialize and
+	// mark dirty like `applyEdit`, but there is no "selected note" to keep —
+	// indices shift when bars are added — so the selection is cleared.
+	function applyStructuralEdit(mutate: () => boolean): boolean {
+		if (!score || reRendering) return false;
+		if (!mutate()) return false;
+		workingXml = score.serialize();
+		dirty = true;
+		selectByIndex(null);
+		return true;
+	}
+
+	function insertFillBars(): void {
+		const seam = currentSeam();
+		if (!score || !seam || fillBars < 1) return;
+		const at = seamMeasureIndex(seam.onsetWholeNotes);
+		if (at == null) return;
+		const applied = applyStructuralEdit(() => score!.insertMeasures(at - 1, fillBars));
+		editNotice = applied ? null : m.piece_editor_duration_refused();
+	}
+
+	async function rerunSeamPage(): Promise<void> {
+		const seam = currentSeam();
+		if (!score || !seam || seam.failedPageNo == null || !data.pagedReportJobId || rerunning) return;
+		rerunning = true;
+		editNotice = null;
+		try {
+			let res: Response;
+			try {
+				res = await fetch(
+					`/omr/jobs/${data.pagedReportJobId}/pages/${seam.failedPageNo}/rerun`,
+					{ method: 'POST' }
+				);
+			} catch {
+				editNotice = m.piece_editor_seam_rerun_failed();
+				return;
+			}
+			if (!res.ok) {
+				editNotice = m.piece_editor_seam_rerun_failed();
+				return;
+			}
+			const result = (await res.json()) as OmrPageRerunOut;
+			if (result.still_failed || !result.page_musicxml_url) {
+				editNotice = m.piece_editor_seam_rerun_still_failed({ page: seam.failedPageNo });
+				return;
+			}
+			let pageXml: string;
+			try {
+				const xmlRes = await fetch(result.page_musicxml_url);
+				if (!xmlRes.ok) {
+					editNotice = m.piece_editor_seam_rerun_failed();
+					return;
+				}
+				pageXml = await xmlRes.text();
+			} catch {
+				editNotice = m.piece_editor_seam_rerun_failed();
+				return;
+			}
+			const at = seamMeasureIndex(seam.onsetWholeNotes);
+			if (at == null) {
+				editNotice = m.piece_editor_seam_rerun_failed();
+				return;
+			}
+			const applied = applyStructuralEdit(() => score!.spliceMeasuresFromXml(at - 1, pageXml));
+			if (applied) {
+				editNotice = m.piece_editor_seam_rerun_ok({
+					page: seam.failedPageNo,
+					count: result.measure_count
+				});
+			} else {
+				editNotice = m.piece_editor_seam_rerun_failed();
+			}
+		} finally {
+			rerunning = false;
+		}
+	}
 
 	async function loadSeams(): Promise<void> {
 		seamBoundaries = [];
 		seamAt = -1;
+		loadResolvedSeams();
 		if (!data.pagedReportJobId) return;
 		try {
 			const res = await fetch(`/omr/jobs/${data.pagedReportJobId}/paged-report`);
@@ -153,11 +298,16 @@
 			const report = (await res.json()) as PagedReport;
 			seamBoundaries = report.unresolved_boundaries
 				.filter((b) => b.merged_measure != null)
-				.map((b) => ({
-					measure: b.merged_measure as number,
-					reason: b.reason ?? '',
-					page: b.before_page
-				}));
+				.map((b) => {
+					const reason = b.reason ?? '';
+					const failed = reason.match(/^page (\d+) failed/);
+					return {
+						measure: b.merged_measure as number,
+						reason,
+						page: b.before_page,
+						failedPageNo: failed ? Number(failed[1]) : null
+					};
+				});
 		} catch {
 			// No overlay; the editor is still fully usable.
 		}
@@ -169,6 +319,7 @@
 	function goToNextSeam(): void {
 		if (seams.length === 0 || !score) return;
 		seamAt = (seamAt + 1) % seams.length;
+		fillBars = 1;
 		const target = seams[seamAt];
 		const near = score.findByOnset(target.onsetWholeNotes, {});
 		if (near) {
@@ -176,6 +327,19 @@
 			previewSelected();
 		}
 		scoreView?.scrollCursorIntoView();
+		// F16: a failed-page seam has nothing but empty space where the page
+		// should be — open the reference PDF at that page so the missing bars
+		// can be filled from the scan.
+		if (target.failedPageNo != null && data.hasPdf) {
+			pdfPaneOpen = true;
+			tick2(() => pdfView?.scrollToPage(target.failedPageNo as number));
+		}
+	}
+
+	// A double rAF so `PdfView` has mounted (and, if the pane was just
+	// opened, laid out) before we ask it to scroll.
+	function tick2(fn: () => void): void {
+		requestAnimationFrame(() => requestAnimationFrame(fn));
 	}
 
 	// Keep the readout index valid if the seam set shrinks (an edit dropped a
@@ -819,6 +983,54 @@
 		}
 	}
 
+	// F16: the header badge. A freshly-forked working draft is byte-identical
+	// to the live version until the first edit, so it reads "Live version"
+	// then; anything else (edited this session, or a reused existing draft)
+	// reads "Working draft — not yet live".
+	const headerBadge = $derived(
+		data.forkedFromLive && !everEdited && !dirty
+			? m.piece_editor_badge_live()
+			: m.piece_editor_badge_working_draft()
+	);
+
+	// F16: "Publish as live version" — one B17 call (submit -> approve ->
+	// distribute). Gated on every seam resolved. Any unsaved edits are
+	// flushed first so the published version is what's on screen. On success
+	// the draft becomes live; leaving the editor means the next visit starts
+	// a fresh copy-on-edit.
+	let publishing = $state(false);
+	async function publish(): Promise<void> {
+		if (!data.workingDraftId || publishing || saving || !allSeamsResolved) return;
+		if (dirty) {
+			await save();
+			if (dirty || saveError) return; // save failed — don't publish a stale version
+		}
+		publishing = true;
+		saveError = null;
+		try {
+			let res: Response;
+			try {
+				res = await fetch(`/piece/${data.id}/edit/publish`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ versionId: data.workingDraftId })
+				});
+			} catch {
+				saveError = m.errors_could_not_reach_server();
+				return;
+			}
+			if (!res.ok) {
+				const body = (await res.json().catch(() => ({}))) as { detail?: string };
+				saveError = body.detail ?? m.piece_editor_publish_failed();
+				return;
+			}
+			dirty = false;
+			await goto(backToPieceHref, { replaceState: true, invalidateAll: true });
+		} finally {
+			publishing = false;
+		}
+	}
+
 	// Task 6: warn before leaving with unsaved edits. `beforeNavigate` covers
 	// in-app navigation (the "Back to this track" link, the header brand
 	// link, the browser back button); the `beforeunload` listener covers a
@@ -865,7 +1077,13 @@
 
 		<div class="top-bar-title">
 			<h1>{data.pieceTitle ?? 'Divisi'}</h1>
-			<p>{m.piece_editor_title()}</p>
+			{#if data.access === 'granted' && phase === 'ready'}
+				<p class="editor-badge" class:editor-badge--draft={headerBadge !== m.piece_editor_badge_live()}>
+					{headerBadge}
+				</p>
+			{:else}
+				<p>{m.piece_editor_title()}</p>
+			{/if}
 		</div>
 
 		{#if data.access === 'granted' && phase === 'ready'}
@@ -899,11 +1117,21 @@
 					</svg>
 				</button>
 				<button
-					class="btn btn-primary save-btn"
+					class="btn save-btn"
 					onclick={save}
 					disabled={!dirty || saving || reRendering}
 				>
 					{saving ? m.piece_editor_saving() : m.piece_editor_save()}
+				</button>
+				<button
+					class="btn btn-primary publish-btn"
+					onclick={publish}
+					disabled={publishing || saving || reRendering || !allSeamsResolved}
+					title={allSeamsResolved
+						? m.piece_editor_publish_ready_hint()
+						: m.piece_editor_publish_blocked_hint()}
+				>
+					{publishing ? m.piece_editor_publishing() : m.piece_editor_publish()}
 				</button>
 			</div>
 		{:else}
@@ -1086,7 +1314,7 @@
 
 			{#if pdfPaneOpen && data.hasPdf}
 				<aside class="pdf-pane" aria-label={m.piece_editor_pdf_pane()}>
-					<PdfView pdfUrl={pdfHref} bind:zoom={pdfZoom} active={pdfPaneOpen} />
+					<PdfView bind:this={pdfView} pdfUrl={pdfHref} bind:zoom={pdfZoom} active={pdfPaneOpen} />
 				</aside>
 			{/if}
 			</div>
@@ -1096,21 +1324,65 @@
 			     `syncAudioToModel`), not a file. -->
 			<footer class="transport-bar">
 				{#if seams.length > 0}
+					{@const cur = seamAt >= 0 && seamAt < seams.length ? seams[seamAt] : undefined}
 					<div class="seam-bar" role="group" aria-label={m.piece_editor_seam_group()}>
 						<button class="seam-next" onclick={goToNextSeam}>
 							{m.piece_editor_seam_next()}
 						</button>
 						<span class="seam-readout" role="status" aria-live="polite">
-							{#if seamAt >= 0 && seamAt < seams.length}
+							{#if cur}
 								{m.piece_editor_seam_counter({
 									n: seamAt + 1,
 									total: seams.length,
-									reason: seams[seamAt].reason
+									reason: cur.reason
 								})}
+							{:else if allSeamsResolved}
+								{m.piece_editor_seam_all_resolved()}
 							{:else}
 								{m.piece_editor_seam_hint({ count: seams.length })}
 							{/if}
 						</span>
+
+						{#if cur}
+							{#if cur.failedPageNo != null}
+								<span class="seam-fill">
+									<label class="seam-fill-label">
+										{m.piece_editor_seam_fill_label()}
+										<input
+											type="number"
+											min="1"
+											max="64"
+											bind:value={fillBars}
+											disabled={reRendering}
+										/>
+									</label>
+									<button
+										class="btn"
+										onclick={insertFillBars}
+										disabled={reRendering || fillBars < 1}
+									>
+										{m.piece_editor_seam_fill_button({ count: fillBars })}
+									</button>
+									<button
+										class="btn"
+										onclick={rerunSeamPage}
+										disabled={rerunning || reRendering}
+									>
+										{rerunning ? m.piece_editor_seam_rerunning() : m.piece_editor_seam_rerun()}
+									</button>
+								</span>
+							{/if}
+							<button
+								class="seam-resolve"
+								class:seam-resolve--done={isSeamResolved(cur.page)}
+								aria-pressed={isSeamResolved(cur.page)}
+								onclick={() => toggleSeamResolved(cur.page)}
+							>
+								{isSeamResolved(cur.page)
+									? m.piece_editor_seam_reopen()
+									: m.piece_editor_seam_mark_resolved()}
+							</button>
+						{/if}
 					</div>
 				{/if}
 				{#if audioUnavailable}
@@ -1395,14 +1667,33 @@
 		stroke-linejoin: round;
 	}
 
-	/* Save takes the slot the player gives Practice Setup. A label reads
-	   clearer than an icon for a destructive-ish "make a new draft", so
-	   it's a compact pill rather than an `.icon-btn`. */
-	.save-btn {
+	/* Save + Publish take the slot the player gives Practice Setup. Compact
+	   pills rather than `.icon-btn`s — a label reads clearer for "write the
+	   draft" / "make it live". */
+	.save-btn,
+	.publish-btn {
 		flex-shrink: 0;
 		min-height: 2rem;
 		padding: 0 0.75rem;
 		font-size: 0.75rem;
+	}
+
+	/* F16: which version the editor is holding. "Live version" (a pristine
+	   copy) is quiet; "Working draft — not yet live" gets the accent tint. */
+	.editor-badge {
+		margin: 0.125rem 0 0;
+		display: inline-block;
+		max-width: 100%;
+		overflow: hidden;
+		font-size: 0.7rem;
+		font-weight: 700;
+		line-height: 1.2;
+		color: var(--text-muted);
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.editor-badge--draft {
+		color: color-mix(in srgb, var(--accent) 78%, var(--text) 22%);
 	}
 	/* Keeps the title centered when there's no Save button yet. */
 	.top-bar-slot {
@@ -1682,9 +1973,60 @@
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		min-width: 0;
+		flex: 1 1 auto;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* F16: the fill / re-run controls for a failed-page seam, and the
+	   per-seam "mark resolved" toggle that gates Publish. */
+	.seam-fill {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.seam-fill-label {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+	.seam-fill-label input {
+		width: 3.25rem;
+		padding: 0.2rem 0.35rem;
+		font-size: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		background: var(--surface);
+		color: var(--text);
+	}
+	.seam-fill .btn {
+		min-height: 1.9rem;
+		padding: 0 0.6rem;
+		font-size: 0.7rem;
+	}
+	.seam-resolve {
+		flex-shrink: 0;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-full);
+		padding: 0.25rem 0.7rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.seam-resolve:hover {
+		background: var(--surface-2);
+	}
+	.seam-resolve--done {
+		border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+		color: color-mix(in srgb, var(--accent) 80%, var(--text));
 	}
 
 	.play-btn {
