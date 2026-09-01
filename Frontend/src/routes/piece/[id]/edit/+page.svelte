@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { beforeNavigate, goto } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import EditorScoreView from '$lib/components/EditorScoreView.svelte';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import '$lib/styles/shell.css';
@@ -30,6 +30,33 @@
 	// a navigation between two `/piece/[id]/edit` ids (no remount), so these
 	// have to track `data` rather than freeze its first value.
 	const backToPieceHref = $derived(lh(`/piece/${data.id}`));
+
+	// Leaving the editor: if we got here by navigating inside the app (from
+	// the piece page or the group Tracks tab), a plain `<a href>` to the
+	// piece page would *push* a third entry, so the history stack reads
+	// [origin, editor, piece] and "back, back" bounces piece <-> editor.
+	// Track how we arrived; `leaveEditor()` then does a genuine `history.back()`
+	// for an in-app arrival and only falls back to a (replacing) navigation
+	// for a cold / direct load, where there's nothing to go back to.
+	let cameFromApp = false;
+	afterNavigate((nav) => {
+		if (nav.type !== 'enter' && nav.from) cameFromApp = true;
+	});
+
+	function leaveEditor(): void {
+		if (cameFromApp) history.back();
+		else void goto(backToPieceHref, { replaceState: true });
+	}
+
+	// Anchor click -> `leaveEditor()`, but let the browser handle
+	// modifier / middle clicks (open in new tab) via the real `href`.
+	function onLeaveClick(event: MouseEvent): void {
+		if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+			return;
+		}
+		event.preventDefault();
+		leaveEditor();
+	}
 
 	// Side-by-side reference PDF. `data.hasPdf` (resolved server-side) gates
 	// the toggle so there's no probe request; the pane fetches the piece's
@@ -772,7 +799,10 @@
 				return;
 			}
 			dirty = false;
-			await goto(backToPieceHref);
+			// Replace the editor entry (don't push): the stack should read
+			// [origin, piece], never [origin, editor, piece]. `invalidateAll`
+			// so the piece page re-runs its load and shows the new draft.
+			await goto(backToPieceHref, { replaceState: true, invalidateAll: true });
 		} finally {
 			saving = false;
 		}
@@ -811,7 +841,12 @@
      under the bar and the score takes the rest of the viewport. -->
 <div class="editor-shell">
 	<header class="top-bar">
-		<a class="icon-btn" href={backToPieceHref} aria-label={m.piece_editor_back_to_piece()}>
+		<a
+			class="icon-btn"
+			href={backToPieceHref}
+			onclick={onLeaveClick}
+			aria-label={m.piece_editor_back_to_piece()}
+		>
 			<svg viewBox="0 0 24 24" aria-hidden="true">
 				<path d="M15 18l-6-6 6-6" />
 			</svg>
@@ -1198,7 +1233,9 @@
 			<div class="editor-fill editor-fill--center">
 				<div class="status-card">
 					<p>{m.piece_editor_no_music_file()}</p>
-					<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+					<a class="text-link" href={backToPieceHref} onclick={onLeaveClick}>
+						{m.piece_editor_back_to_piece()}
+					</a>
 				</div>
 			</div>
 		{:else if errorKind === 'unreachable'}
@@ -1212,7 +1249,9 @@
 			<div class="editor-fill editor-fill--center">
 				<div class="status-card">
 					<p>{m.piece_editor_unsupported_format()}</p>
-					<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+					<a class="text-link" href={backToPieceHref} onclick={onLeaveClick}>
+						{m.piece_editor_back_to_piece()}
+					</a>
 				</div>
 			</div>
 		{:else}
@@ -1222,7 +1261,9 @@
 					{#if errorDetail}<p class="status-detail">{errorDetail}</p>{/if}
 					<div class="status-actions">
 						<button class="text-link" onclick={() => loadScore()}>{m.piece_retry()}</button>
-						<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+						<a class="text-link" href={backToPieceHref} onclick={onLeaveClick}>
+							{m.piece_editor_back_to_piece()}
+						</a>
 					</div>
 				</div>
 			</div>
@@ -1231,7 +1272,9 @@
 		<div class="editor-fill editor-fill--center">
 			<div class="status-card status-card--error">
 				<p>{m.piece_not_found()}</p>
-				<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+				<a class="text-link" href={backToPieceHref} onclick={onLeaveClick}>
+					{m.piece_editor_back_to_piece()}
+				</a>
 			</div>
 		</div>
 	{:else if data.access === 'unreachable'}
@@ -1250,7 +1293,9 @@
 			<div class="status-card status-card--error">
 				<p class="status-eyebrow">{m.error_403_title()}</p>
 				<p>{m.piece_editor_no_edit_access()}</p>
-				<a class="text-link" href={backToPieceHref}>{m.piece_editor_back_to_piece()}</a>
+				<a class="text-link" href={backToPieceHref} onclick={onLeaveClick}>
+					{m.piece_editor_back_to_piece()}
+				</a>
 			</div>
 		</div>
 	{/if}
