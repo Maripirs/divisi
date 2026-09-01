@@ -46,3 +46,53 @@ export interface ResponsibilityDateCardItem {
 	canceled: boolean;
 	roles: ResponsibilityRole[];
 }
+
+/** Whole-date coverage rolled up from a date's per-role counts — drives the
+ * Responsibilities tab's upcoming-date strip (the `x/y filled` line + meter)
+ * and the selected-date badge.
+ *
+ *   * `empty`       — nothing signed up anywhere on the date
+ *   * `underfilled` — at least one role still needs people
+ *   * `covered`     — every role has exactly its needed count
+ *   * `overfilled`  — no role is short and at least one has extras
+ *
+ * `openSlots` only counts roles that are still short (an overfilled role
+ * doesn't lend its extra to a short one). */
+export type ResponsibilityDateStatus = 'empty' | 'underfilled' | 'covered' | 'overfilled';
+
+export interface ResponsibilityCoverageTotals {
+	active: number;
+	needed: number;
+	openSlots: number;
+	filledFraction: number;
+	status: ResponsibilityDateStatus;
+}
+
+export function coverageTotals(
+	roles: readonly Pick<ResponsibilityRole, 'neededCount' | 'activeCount'>[]
+): ResponsibilityCoverageTotals {
+	let active = 0;
+	let needed = 0;
+	let openSlots = 0;
+	let anyShort = false;
+	let anyOver = false;
+	for (const role of roles) {
+		active += role.activeCount;
+		needed += role.neededCount;
+		if (role.activeCount < role.neededCount) {
+			anyShort = true;
+			openSlots += role.neededCount - role.activeCount;
+		} else if (role.activeCount > role.neededCount) {
+			anyOver = true;
+		}
+	}
+	const filledFraction = needed === 0 ? 1 : Math.min(1, active / needed);
+	const status: ResponsibilityDateStatus = anyShort
+		? active === 0
+			? 'empty'
+			: 'underfilled'
+		: anyOver
+			? 'overfilled'
+			: 'covered';
+	return { active, needed, openSlots, filledFraction, status };
+}

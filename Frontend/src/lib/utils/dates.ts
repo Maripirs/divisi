@@ -46,6 +46,17 @@ export function formatDateTime(iso: string): string {
 	});
 }
 
+/** Weekday + time-of-day of a real timestamp ("Wed, 7:00 PM"), local — the
+ * second line of the Responsibilities tab's upcoming-date strip, where the
+ * date itself ("Sep 2") is already shown by `formatEventDate`. */
+export function formatWeekdayTime(iso: string): string {
+	return new Date(iso).toLocaleString(undefined, {
+		weekday: 'short',
+		hour: 'numeric',
+		minute: '2-digit'
+	});
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /**
