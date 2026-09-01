@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     omr_engine: str = "audiveris"
     audiveris_bin: str = "audiveris"
     oemer_bin: str = "oemer"
+    # B16: a PDF with more than one page is transcribed page-by-page and
+    # re-merged (see app/omr/paged.py) so one bad page doesn't sink the
+    # whole book export, which is Audiveris's all-or-nothing default.
+    # A single-page input, or the case where Audiveris isn't installed,
+    # falls back to the B8 single-run pipeline.
+    omr_paged_multipage: bool = True
+    # DPI when rasterizing a page for oemer (which only takes images).
+    oemer_dpi: int = 300
     # Audiveris's own per-step timeout (its `sheetStepTimeOut` constant)
     # defaults to 120s, which real (non-trivial) scores routinely exceed —
     # e.g. HEADERS (OCR-based clef/key/time recognition) and HEADS took

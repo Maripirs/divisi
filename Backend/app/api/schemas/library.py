@@ -73,11 +73,14 @@ class DistributionOut(BaseModel):
 
 class LibraryEntryOmrJobOut(BaseModel):
     """Just enough of the most recent "Generate music from PDF" job for
-    the Tracks tab's edit panel to show generating / failed / done."""
+    the Tracks tab's edit panel to show generating / failed / done, and
+    (B16) whether a paged run left seams for a human to review."""
 
     id: str
     status: OmrJobStatus
     error_message: str | None = None
+    paged: bool = False
+    needs_review: bool | None = None
 
     model_config = {"from_attributes": True}
 

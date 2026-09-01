@@ -478,5 +478,13 @@ class OmrJob(Base):
     result_musicxml_path: Mapped[str | None] = mapped_column(String, nullable=True)
     result_midi_path: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    # B16: a multi-page PDF is transcribed page-by-page and re-merged
+    # (`app/omr/paged.py`). `needs_review` is set when the pages didn't
+    # all merge into one segment, so `result_musicxml_path` is only a
+    # provisional guess across the unresolved page joins.
+    # `paged_report_path` points at the stored `paged-report.json`.
+    paged: Mapped[bool] = mapped_column(default=False, server_default="false")
+    needs_review: Mapped[bool | None] = mapped_column(nullable=True)
+    paged_report_path: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

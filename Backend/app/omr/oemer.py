@@ -25,20 +25,22 @@ scores.
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
 import pymupdf
 
 from app.core.config import get_settings
+from app.omr._subprocess import log_tail, run_logged
 from app.omr.audiveris import OmrEngineError, OmrEngineUnavailable
 
 __all__ = ["OmrEngineError", "OmrEngineUnavailable", "run_oemer"]
 
 
-def _rasterize_first_page(source_path: Path, output_dir: Path, dpi: int = 300) -> Path:
+def _rasterize_first_page(source_path: Path, output_dir: Path, dpi: int | None = None) -> Path:
     """PyMuPDF opens PDFs and common raster image formats alike, so this
     works whether `source_path` is a scanned PDF or a plain image."""
+    if dpi is None:
+        dpi = get_settings().oemer_dpi
     doc = pymupdf.open(source_path)
     try:
         if doc.page_count == 0:
@@ -61,13 +63,15 @@ def run_oemer(source_path: Path, output_dir: Path) -> Path:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     image_path = _rasterize_first_page(source_path, output_dir)
-    result = subprocess.run(
-        [bin_name, str(image_path), "-o", str(output_dir)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise OmrEngineError(f"oemer failed ({result.returncode}): {result.stderr.strip()}")
+    # oemer logs its stages (staffline extraction, symbol prediction,
+    # note/rest grouping, MusicXML build) as it runs — the only progress
+    # signal on a multi-minute CPU inference. `run_logged` tees it to the
+    # console and to `oemer.log` in the output dir.
+    log_path = output_dir / "oemer.log"
+    code = run_logged([bin_name, str(image_path), "-o", str(output_dir)], log_path)
+    if code != 0:
+        tail = log_tail(log_path)
+        raise OmrEngineError(f"oemer failed ({code}); see {log_path}\n{tail}".rstrip())
 
     exported = sorted(output_dir.glob("*.musicxml"))
     if not exported:

@@ -97,12 +97,53 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+> **The committed `.env` points `DATABASE_URL` at the live production Neon
+> database** (see the comment at the top of `.env`), so a bare
+> `alembic upgrade head` here runs against production. Before any local
+> `alembic` command, either use `docker compose up` (it ignores `.env` and
+> hard-codes a local `postgres` container) or point `.env`'s `DATABASE_URL`
+> at a throwaway DB. See "Migrations" below for why this specifically
+> breaks deploys.
+
 ## Migrations
 
 ```bash
 alembic revision --autogenerate -m "message"
 alembic upgrade head
 ```
+
+### Never run `alembic upgrade` / `downgrade` / `stamp` against production from a feature branch
+
+The Render deploy's start command is `alembic upgrade head` against the
+production DB, run from **`main`'s** migration files. Alembic reads the
+current revision id out of the DB's `alembic_version` table and looks for a
+matching file in the checked-out code. If production is stamped at a
+revision whose file exists only on an unmerged branch, `main`'s deploy
+aborts with `Can't locate revision identified by '<id>'`, `uvicorn` never
+starts, and Render crash-loops the container — the whole backend goes
+down (this happened 2026-08-31, see `plan.md` Log).
+
+Rules:
+- Do local schema work against a local / disposable DB, never the
+  production connection string. `docker compose up` is always safe.
+- A new migration file reaches production **only by merging to `main`**,
+  never by running `alembic upgrade` locally while `.env` points at prod.
+- Keep the migration graph linear and forward-only: don't `downgrade`
+  production to "un-apply" a branch's migration — that leaves the schema
+  changed while `alembic_version` says otherwise, and the branch's own
+  deploy will then fail re-applying it.
+
+**Recovery if it happens again** (backend crash-looping, logs show
+`Can't locate revision identified by '<id>'`):
+1. `render logs --resources <service-id>` to confirm the offending id.
+2. Find that revision's file on whatever branch it lives on and read its
+   `down_revision`.
+3. Either cherry-pick the migration file(s) onto `main` and let it deploy
+   (preferred — no schema drift, the DB already matches), **or** if the
+   migration's DDL was never actually applied, stamp the DB back:
+   `UPDATE alembic_version SET version_num = '<down_revision>';`
+4. Check `\d <changed_table>` against the migration body to know which of
+   those two you're in.
 
 ## Tests
 
@@ -117,9 +158,14 @@ locally.
 Live at **https://divisi.onrender.com** (Render free web service, deploys
 `Dockerfile` via the repo-root `render.yaml`; Postgres is Neon, set
 `DATABASE_URL` manually). The Docker `CMD` runs `alembic upgrade head` before
-`uvicorn`, so migrations apply on deploy. Render's free plan has no persistent
-disk — durable uploads must go to Neon Object Storage via the `AWS_*` env vars
-(see `render.yaml` and `app/storage/files.py`).
+`uvicorn`, so migrations apply on deploy — which also means a migration graph
+mismatch between `main` and the production DB takes the whole service down
+(see "Never run `alembic ...` against production from a feature branch" under
+Migrations). Render's free plan has no persistent disk — durable uploads must
+go to Neon Object Storage via the `AWS_*` env vars (see `render.yaml` and
+`app/storage/files.py`). Free tier also has no pre-deploy step, so the
+migration runs inside the web container: a failed migration is a failed boot,
+not a blocked deploy.
 
 ## Local test accounts
 

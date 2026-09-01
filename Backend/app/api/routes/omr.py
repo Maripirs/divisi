@@ -4,6 +4,7 @@ poll it for MusicXML/MIDI output. See B8 in Backend/plan.md.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
@@ -15,7 +16,7 @@ from app.api.schemas import OmrImportOut, OmrImportRequest, OmrJobListItemOut, O
 from app.core.config import get_settings
 from app.db.models import OmrJob, OmrJobStatus, OwnerType, Piece, User, VersionSource
 from app.db.session import get_db
-from app.jobs.omr_jobs import run_omr_job
+from app.jobs.omr_jobs import _job_output_dir, run_omr_job
 from app.services.pieces import (
     add_version,
     create_piece_with_version,
@@ -50,6 +51,9 @@ def _job_out(job: OmrJob) -> OmrJobOut:
         error_message=job.error_message,
         musicxml_url=f"{base}/musicxml" if job.result_musicxml_path else None,
         midi_url=f"{base}/midi" if job.result_midi_path else None,
+        paged=job.paged,
+        needs_review=job.needs_review,
+        report_url=f"/omr/jobs/{job.id}/paged-report" if job.paged_report_path else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -137,6 +141,7 @@ def list_jobs(
                 pending_generated_version_id=(
                     pending_generated_version_id(job.piece_id, db) if job.piece_id is not None else None
                 ),
+                needs_review=job.needs_review,
                 created_at=job.created_at,
                 updated_at=job.updated_at,
             )
@@ -234,3 +239,64 @@ def get_job_result(
     if not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result file is missing from storage")
     return FileResponse(path)
+
+
+def _load_paged_report(job: OmrJob) -> dict:
+    """The stored `paged-report.json` for a paged job, or 404."""
+    if job.paged_report_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job has no paged report")
+    path = Path(get_settings().storage_dir) / job.paged_report_path
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file is missing from storage")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.get("/jobs/{job_id}/paged-report")
+def get_paged_report(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """B16: the segment / unresolved-boundary / per-page breakdown of a
+    paged run. Each segment's on-disk `musicxml`/`midi` path is rewritten
+    to a `…/segments/{index}/{kind}` download URL so the caller never
+    sees a storage path."""
+    job = _get_own_job_or_404(job_id, current_user, db)
+    report = _load_paged_report(job)
+    for seg in report.get("segments", []):
+        idx = seg.get("index")
+        seg["musicxml_url"] = f"/omr/jobs/{job_id}/segments/{idx}/musicxml" if seg.get("musicxml") else None
+        seg["midi_url"] = f"/omr/jobs/{job_id}/segments/{idx}/midi" if seg.get("midi") else None
+        seg.pop("musicxml", None)
+        seg.pop("midi", None)
+    return report
+
+
+@router.get("/jobs/{job_id}/segments/{index}/{kind}")
+def get_segment_file(
+    job_id: str,
+    index: int,
+    kind: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """B16: download one segment's MusicXML or MIDI from a paged run."""
+    if kind not in ("musicxml", "midi"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown result kind")
+    job = _get_own_job_or_404(job_id, current_user, db)
+    report = _load_paged_report(job)
+
+    rel = next(
+        (seg.get(kind) for seg in report.get("segments", []) if seg.get("index") == index),
+        None,
+    )
+    if not rel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Segment result not available")
+
+    # Report paths are relative to the job's output dir. Resolve and make
+    # sure a crafted `..` can't walk out of it.
+    job_dir = _job_output_dir(job_id).resolve()
+    target = (job_dir / rel).resolve()
+    if not target.is_relative_to(job_dir) or not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Segment file not available")
+    return FileResponse(target)

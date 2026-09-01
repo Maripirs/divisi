@@ -10,7 +10,13 @@ from app.db.models import OmrJobStatus, OwnerType
 
 class OmrJobOut(BaseModel):
     """B8: status/result of one OMR job. `musicxml_url`/`midi_url` are
-    only populated once `status == done`."""
+    only populated once `status == done`.
+
+    B16: `paged` is set when a multi-page PDF was transcribed
+    page-by-page and re-merged. `needs_review` is then true if the pages
+    didn't all merge into one segment — `musicxml_url` is a provisional
+    guess across the unresolved joins, and `report_url` has the segment /
+    boundary / per-page breakdown."""
 
     id: str
     piece_id: str | None
@@ -18,6 +24,9 @@ class OmrJobOut(BaseModel):
     error_message: str | None
     musicxml_url: str | None
     midi_url: str | None
+    paged: bool = False
+    needs_review: bool | None = None
+    report_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -40,6 +49,7 @@ class OmrJobListItemOut(BaseModel):
     piece_title: str | None
     group_id: str | None
     pending_generated_version_id: str | None
+    needs_review: bool | None = None
     created_at: datetime
     updated_at: datetime
 

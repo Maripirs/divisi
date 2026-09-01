@@ -11,6 +11,7 @@ producing logic in isolation with mocked engine calls.
 """
 
 import io
+import json
 
 
 def _register_and_login(client, email, name="Name", password="hunter22"):
@@ -422,3 +423,148 @@ def test_deleting_a_track_that_has_an_omr_job_succeeds(client, monkeypatch):
     deleted = client.delete(f"/library/pieces/{piece_id}", headers=headers)
     assert deleted.status_code == 204
     assert all(e["piece_id"] != piece_id for e in client.get("/library/pieces", headers=headers).json())
+
+
+# --- B16: paged (per-page) OMR --------------------------------------------
+
+
+def _fake_run_omr_paged(monkeypatch, *, needs_review=True, seg_paths=None):
+    """Stub `run_omr_paged`: write a provisional merge, two segment files,
+    and a `paged-report.json` into the job dir; report `needs_review`.
+    `seg_paths` overrides the report's segment file paths (for the
+    path-traversal guard test)."""
+    from app.jobs import omr_jobs
+    from app.omr.paged import PagedReport
+
+    monkeypatch.setattr(omr_jobs, "_page_count", lambda path: 3)
+
+    seg1_xml, seg2_xml = seg_paths or (
+        "segments/segment-01.musicxml",
+        "segments/segment-02.musicxml",
+    )
+
+    def fake(source_path, output_dir, engine=None):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "segments").mkdir(parents=True, exist_ok=True)
+        for name in ("segment-01.musicxml", "segment-02.musicxml"):
+            (output_dir / "segments" / name).write_bytes(b"<score-partwise/>")
+        for name in ("segment-01.mid", "segment-02.mid"):
+            (output_dir / "segments" / name).write_bytes(b"MThd\x00\x00\x00\x06")
+        mx = output_dir / "score.musicxml"
+        mx.write_bytes(b"<score-partwise/>")
+        mid = output_dir / "score.mid"
+        mid.write_bytes(b"fake midi bytes")
+
+        report_dict = {
+            "total": 3,
+            "ok": 3,
+            "failed_pages": [],
+            "needs_review": needs_review,
+            "combined_error": None,
+            "segments": [
+                {
+                    "index": 1,
+                    "pages": [1, 2],
+                    "parts": 4,
+                    "start_reason": None,
+                    "boundary_measure": None,
+                    "musicxml": seg1_xml,
+                    "midi": "segments/segment-01.mid",
+                },
+                {
+                    "index": 2,
+                    "pages": [3],
+                    "parts": 5,
+                    "start_reason": "page 3 has 5 part(s), the run before it had 4",
+                    "boundary_measure": 7,
+                    "musicxml": seg2_xml,
+                    "midi": "segments/segment-02.mid",
+                },
+            ],
+            "unresolved_boundaries": [
+                {
+                    "before_page": 3,
+                    "merged_measure": 7,
+                    "reason": "page 3 has 5 part(s), the run before it had 4",
+                }
+            ],
+            "pages": [{"page": p, "ok": True, "error": None} for p in (1, 2, 3)],
+        }
+        (output_dir / "paged-report.json").write_text(json.dumps(report_dict), encoding="utf-8")
+        return mx, mid, PagedReport(needs_review=needs_review, output_dir=output_dir)
+
+    monkeypatch.setattr(omr_jobs, "run_omr_paged", fake)
+
+
+def _start_paged_job(client, headers):
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("book.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    return created.json()
+
+
+def test_multipage_job_runs_paged_and_flags_needs_review(client, monkeypatch):
+    headers = _register_and_login(client, "paged@example.com")
+    _fake_run_omr_paged(monkeypatch)
+
+    job = _start_paged_job(client, headers)
+
+    polled = client.get(f"/omr/jobs/{job['id']}", headers=headers).json()
+    assert polled["status"] == "done"
+    assert polled["paged"] is True
+    assert polled["needs_review"] is True
+    assert polled["report_url"] == f"/omr/jobs/{job['id']}/paged-report"
+    # The provisional whole-score merge is still what's served as the result.
+    assert client.get(polled["musicxml_url"], headers=headers).status_code == 200
+
+
+def test_paged_report_route_rewrites_segment_paths_to_urls(client, monkeypatch):
+    headers = _register_and_login(client, "pagedreport@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job_id = _start_paged_job(client, headers)["id"]
+
+    report = client.get(f"/omr/jobs/{job_id}/paged-report", headers=headers).json()
+    assert [s["pages"] for s in report["segments"]] == [[1, 2], [3]]
+    assert report["segments"][0]["musicxml_url"] == f"/omr/jobs/{job_id}/segments/1/musicxml"
+    assert report["segments"][1]["midi_url"] == f"/omr/jobs/{job_id}/segments/2/midi"
+    assert "musicxml" not in report["segments"][0]  # storage path never leaves the server
+    assert report["unresolved_boundaries"][0]["merged_measure"] == 7
+
+
+def test_segment_download_serves_the_file(client, monkeypatch):
+    headers = _register_and_login(client, "pagedseg@example.com")
+    _fake_run_omr_paged(monkeypatch)
+    job_id = _start_paged_job(client, headers)["id"]
+
+    got = client.get(f"/omr/jobs/{job_id}/segments/1/musicxml", headers=headers)
+    assert got.status_code == 200
+    assert got.content == b"<score-partwise/>"
+    assert client.get(f"/omr/jobs/{job_id}/segments/2/midi", headers=headers).status_code == 200
+    # Unknown kind / index -> 404, not a stray file.
+    assert client.get(f"/omr/jobs/{job_id}/segments/1/wav", headers=headers).status_code == 404
+    assert client.get(f"/omr/jobs/{job_id}/segments/9/musicxml", headers=headers).status_code == 404
+
+
+def test_segment_route_rejects_path_traversal(client, monkeypatch):
+    headers = _register_and_login(client, "pagedtrav@example.com")
+    _fake_run_omr_paged(
+        monkeypatch, seg_paths=("../../../../../../etc/passwd", "segments/segment-02.musicxml")
+    )
+    job_id = _start_paged_job(client, headers)["id"]
+
+    assert client.get(f"/omr/jobs/{job_id}/segments/1/musicxml", headers=headers).status_code == 404
+
+
+def test_paged_report_404s_for_a_non_paged_job(client, monkeypatch):
+    headers = _register_and_login(client, "nonpaged@example.com")
+    _fake_run_omr_ok(monkeypatch)
+    created = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        headers=headers,
+    )
+    job_id = created.json()["id"]
+    assert client.get(f"/omr/jobs/{job_id}/paged-report", headers=headers).status_code == 404
