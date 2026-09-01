@@ -16,9 +16,12 @@
  *
  * Extends here: later editor tasks add duration edits (rewrite
  * `<type>`/`<dot>`/`<duration>`, re-fit the measure), key/clef changes
- * (rewrite `<attributes><key>`/`<clef>`), and per-note accidentals (rewrite
- * `<pitch><alter>` + `<note><accidental>`). All are further in-place DOM
- * mutations on the same `doc` with a `reindex()` afterward — no new model.
+ * (rewrite `<attributes><key>`/`<clef>`), per-note accidentals (rewrite
+ * `<pitch><alter>` + `<note><accidental>`), and F16's measure-level edits
+ * (`insertMeasures`/`deleteMeasure`/`spliceMeasuresFromXml` — the first
+ * structural add/remove of `<measure>`s, for filling a failed-OMR-page
+ * seam). All are further in-place DOM mutations on the same `doc` with a
+ * `reindex()` afterward — no new model.
  * `.mxl` (zipped MusicXML) is deliberately not handled here; the loader
  * (`loadEditableScore.ts`) rejects it before it can reach this class.
  */
@@ -348,6 +351,116 @@ export class EditableScore {
 			el.insertBefore(this.doc.createElement('rest'), el.firstChild);
 		}
 		this.reindex();
+	}
+
+	/** Insert `count` empty measures (one full-measure rest per staff) into
+	 * every part immediately after the 0-based `afterMeasureIndex` — pass
+	 * `-1` to insert before the first measure. Each new bar's rest length is
+	 * the prevailing `<divisions>` × `<time>` at that point in the part;
+	 * `<measure number>` is re-sequenced 1..N across every part afterward.
+	 * These are real `<measure>`s the user then overwrites (F16 uses them to
+	 * open room at a failed-OMR-page seam) — nothing marker-ish in the saved
+	 * MusicXML.
+	 *
+	 * Returns `false` without mutating on `count < 1` or an
+	 * `afterMeasureIndex` outside `[-1, maxMeasures - 1]`. */
+	insertMeasures(afterMeasureIndex: number, count: number): boolean {
+		if (!Number.isInteger(count) || count < 1) return false;
+		if (!Number.isInteger(afterMeasureIndex)) return false;
+		const parts = Array.from(this.doc.querySelectorAll('score-partwise > part'));
+		if (parts.length === 0) return false;
+		const maxMeasures = Math.max(
+			...parts.map((p) => p.querySelectorAll(':scope > measure').length)
+		);
+		if (afterMeasureIndex < -1 || afterMeasureIndex > maxMeasures - 1) return false;
+
+		for (const part of parts) {
+			const measures = Array.from(part.querySelectorAll(':scope > measure'));
+			const refIndex = Math.min(afterMeasureIndex, measures.length - 1);
+			const meter = this.prevailingMeterAt(part, refIndex);
+			const staffCount = this.stavesCount(part);
+			let anchor: Element | null = refIndex >= 0 ? measures[refIndex] : null;
+			for (let i = 0; i < count; i++) {
+				const measure = this.buildEmptyMeasure(meter, staffCount);
+				if (anchor) anchor.after(measure);
+				else part.insertBefore(measure, measures[0] ?? null);
+				anchor = measure;
+			}
+		}
+		this.renumberMeasures();
+		this.reindex();
+		return true;
+	}
+
+	/** Remove the 0-based `measureIndex` measure from every part, then
+	 * re-sequence `<measure number>`. Returns `false` without mutating when
+	 * `measureIndex` is out of range for any part, or the delete would
+	 * leave a part with no measures at all. */
+	deleteMeasure(measureIndex: number): boolean {
+		if (!Number.isInteger(measureIndex) || measureIndex < 0) return false;
+		const parts = Array.from(this.doc.querySelectorAll('score-partwise > part'));
+		if (parts.length === 0) return false;
+		for (const part of parts) {
+			const count = part.querySelectorAll(':scope > measure').length;
+			if (measureIndex >= count || count <= 1) return false;
+		}
+		for (const part of parts) {
+			Array.from(part.querySelectorAll(':scope > measure'))[measureIndex]?.remove();
+		}
+		this.renumberMeasures();
+		this.reindex();
+		return true;
+	}
+
+	/** Splice a re-transcribed OMR page's measures into the working model at
+	 * a seam (F16's "Re-run this page"). `xml` is that page's own MusicXML;
+	 * its parts are matched to this score's by position (same rule the
+	 * Backend's paged merge uses). Each existing part gets the matching
+	 * incoming part's `<measure>`s inserted after `afterMeasureIndex`;
+	 * parts with no counterpart in the incoming page get the same number of
+	 * empty bars so every part stays the same length. `<measure number>` is
+	 * re-sequenced afterward.
+	 *
+	 * Returns `false` without mutating on unparseable `xml`, an `xml` with
+	 * no measures, or an `afterMeasureIndex` outside `[-1, maxMeasures - 1]`. */
+	spliceMeasuresFromXml(afterMeasureIndex: number, xml: string): boolean {
+		if (!Number.isInteger(afterMeasureIndex)) return false;
+		const incoming = new DOMParser().parseFromString(xml, 'application/xml');
+		if (incoming.querySelector('parsererror')) return false;
+		const incomingParts = Array.from(incoming.querySelectorAll('score-partwise > part'));
+		const incomingMeasures = incomingParts.map((p) =>
+			Array.from(p.querySelectorAll(':scope > measure'))
+		);
+		const spanLength = Math.max(0, ...incomingMeasures.map((m) => m.length));
+		if (spanLength === 0) return false;
+
+		const parts = Array.from(this.doc.querySelectorAll('score-partwise > part'));
+		if (parts.length === 0) return false;
+		const maxMeasures = Math.max(
+			...parts.map((p) => p.querySelectorAll(':scope > measure').length)
+		);
+		if (afterMeasureIndex < -1 || afterMeasureIndex > maxMeasures - 1) return false;
+
+		parts.forEach((part, partIndex) => {
+			const measures = Array.from(part.querySelectorAll(':scope > measure'));
+			const refIndex = Math.min(afterMeasureIndex, measures.length - 1);
+			const meter = this.prevailingMeterAt(part, refIndex);
+			const staffCount = this.stavesCount(part);
+			const source = incomingMeasures[partIndex] ?? [];
+			let anchor: Element | null = refIndex >= 0 ? measures[refIndex] : null;
+			for (let i = 0; i < spanLength; i++) {
+				const src = source[i];
+				const measure = src
+					? (this.doc.importNode(src, true) as Element)
+					: this.buildEmptyMeasure(meter, staffCount);
+				if (anchor) anchor.after(measure);
+				else part.insertBefore(measure, measures[0] ?? null);
+				anchor = measure;
+			}
+		});
+		this.renumberMeasures();
+		this.reindex();
+		return true;
 	}
 
 	/** Change the selected note's written duration: rewrite `<type>`, replace
@@ -906,6 +1019,92 @@ export class EditableScore {
 			}
 		}
 		return 1;
+	}
+
+	/** `{ divisions, beats, beatType }` in effect at the part's measure at
+	 * `measureIndex`: the last `<divisions>` and `<time>` declared in an
+	 * `<attributes>` at or before it. Reads measure 0 when `measureIndex`
+	 * is negative (an insert-at-start bar takes the piece's initial meter).
+	 * Defaults 1 / 4 / 4 when nothing is declared. */
+	private prevailingMeterAt(
+		part: Element,
+		measureIndex: number
+	): { divisions: number; beats: number; beatType: number } {
+		let divisions = 1;
+		let beats = 4;
+		let beatType = 4;
+		const measures = Array.from(part.querySelectorAll(':scope > measure'));
+		if (measures.length === 0) return { divisions, beats, beatType };
+		const upto = Math.max(0, Math.min(measureIndex, measures.length - 1));
+		for (let i = 0; i <= upto; i++) {
+			for (const attr of Array.from(measures[i].querySelectorAll(':scope > attributes'))) {
+				const d = text(attr.querySelector(':scope > divisions'));
+				if (d) divisions = Number(d);
+				const time = attr.querySelector(':scope > time');
+				if (time) {
+					const b = text(time.querySelector(':scope > beats'));
+					const bt = text(time.querySelector(':scope > beat-type'));
+					if (b) beats = Number(b);
+					if (bt) beatType = Number(bt);
+				}
+			}
+		}
+		return { divisions, beats, beatType };
+	}
+
+	/** A `<measure>` holding one full-measure rest per staff (a `<backup>`
+	 * separates staves), each rest's `<duration>` a whole bar at `meter`.
+	 * `number` is a placeholder — `renumberMeasures` fixes it. */
+	private buildEmptyMeasure(
+		meter: { divisions: number; beats: number; beatType: number },
+		staffCount: number
+	): Element {
+		const measure = this.doc.createElement('measure');
+		measure.setAttribute('number', '0');
+		const barDuration = Math.max(
+			1,
+			Math.round((meter.divisions * 4 * meter.beats) / meter.beatType)
+		);
+		const staves = Math.max(1, staffCount);
+		for (let staff = 1; staff <= staves; staff++) {
+			if (staff > 1) {
+				const backup = this.doc.createElement('backup');
+				const d = this.doc.createElement('duration');
+				d.textContent = String(barDuration);
+				backup.appendChild(d);
+				measure.appendChild(backup);
+			}
+			const note = this.doc.createElement('note');
+			const rest = this.doc.createElement('rest');
+			rest.setAttribute('measure', 'yes');
+			note.appendChild(rest);
+			const dur = this.doc.createElement('duration');
+			dur.textContent = String(barDuration);
+			note.appendChild(dur);
+			const voice = this.doc.createElement('voice');
+			voice.textContent = String(staff);
+			note.appendChild(voice);
+			if (staves > 1) {
+				const s = this.doc.createElement('staff');
+				s.textContent = String(staff);
+				note.appendChild(s);
+			}
+			measure.appendChild(note);
+		}
+		return measure;
+	}
+
+	/** Re-sequence `<measure number>` to 1..N in each part after a
+	 * structural edit. Numbers are per-part, but a B16-merged score shares
+	 * the count across parts so they line up. */
+	private renumberMeasures(): void {
+		for (const part of Array.from(this.doc.querySelectorAll('score-partwise > part'))) {
+			let n = 1;
+			for (const measure of Array.from(part.querySelectorAll(':scope > measure'))) {
+				measure.setAttribute('number', String(n));
+				n++;
+			}
+		}
 	}
 
 	private setChild(parent: Element, tag: string, value: string, insertBeforeTag?: string): void {

@@ -367,3 +367,110 @@ describe('EditableScore.measureOnset', () => {
 		expect(score.measureOnset(0)).toBeNull();
 	});
 });
+
+// F16: measure-level structural edits — filling a failed-OMR-page seam.
+const p2measures = (doc: Document): Element[] =>
+	Array.from(doc.querySelectorAll('part[id="P2"] > measure'));
+
+describe('EditableScore.insertMeasures', () => {
+	it('adds full-measure-rest bars after the index and renumbers 1..N', () => {
+		const score = new EditableScore(ONE_PART); // 1 part, 2 bars, 4/4, divisions 1
+		expect(score.insertMeasures(0, 2)).toBe(true);
+
+		const doc = roundTrip(score);
+		const bars = measures(doc);
+		expect(bars.map((m) => m.getAttribute('number'))).toEqual(['1', '2', '3', '4']);
+		// The two inserted bars each hold one whole-measure rest of a full bar.
+		for (const idx of [1, 2]) {
+			const rest = bars[idx].querySelector('note > rest');
+			expect(rest?.getAttribute('measure')).toBe('yes');
+			expect(bars[idx].querySelector('note > duration')?.textContent).toBe('4');
+		}
+		// The original second bar is now the fourth, three whole notes in.
+		expect(score.measureOnset(4)).toBe(3);
+	});
+
+	it('inserts before the first bar when afterMeasureIndex is -1', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.insertMeasures(-1, 1)).toBe(true);
+		expect(measures(roundTrip(score))).toHaveLength(3);
+		expect(score.measureOnset(2)).toBe(1); // the original first bar moved out one bar
+	});
+
+	it('reaches every part, keeping them the same length', () => {
+		const score = new EditableScore(TWO_PARTS);
+		expect(score.insertMeasures(0, 1)).toBe(true);
+		const doc = roundTrip(score);
+		expect(measures(doc)).toHaveLength(3);
+		expect(p2measures(doc)).toHaveLength(3);
+	});
+
+	it('refuses count < 1 or an out-of-range index, without mutating', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.insertMeasures(0, 0)).toBe(false);
+		expect(score.insertMeasures(5, 1)).toBe(false);
+		expect(score.insertMeasures(-2, 1)).toBe(false);
+		expect(measures(roundTrip(score))).toHaveLength(2);
+	});
+});
+
+describe('EditableScore.deleteMeasure', () => {
+	it('removes the bar from every part and renumbers', () => {
+		const score = new EditableScore(TWO_PARTS);
+		expect(score.deleteMeasure(0)).toBe(true);
+		const doc = roundTrip(score);
+		expect(measures(doc)).toHaveLength(1);
+		expect(p2measures(doc)).toHaveLength(1);
+		expect(measures(doc)[0].getAttribute('number')).toBe('1');
+	});
+
+	it('refuses out-of-range and a delete that would empty a part', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.deleteMeasure(9)).toBe(false);
+		expect(score.deleteMeasure(0)).toBe(true); // 2 -> 1
+		expect(score.deleteMeasure(0)).toBe(false); // would empty the part
+		expect(measures(roundTrip(score))).toHaveLength(1);
+	});
+});
+
+describe('EditableScore.spliceMeasuresFromXml', () => {
+	const INCOMING_ONE_BAR = `<?xml version="1.0"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="X1"><part-name>Re-run</part-name></score-part></part-list>
+  <part id="X1">
+    <measure number="1">
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type></note>
+    </measure>
+  </part>
+</score-partwise>`;
+
+	it('inserts the re-run page bars at the seam, matched by part position', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.spliceMeasuresFromXml(0, INCOMING_ONE_BAR)).toBe(true);
+		const doc = roundTrip(score);
+		const bars = measures(doc);
+		expect(bars).toHaveLength(3);
+		// The spliced bar carries the re-run note, not a rest.
+		expect(bars[1].querySelector('note > pitch > step')?.textContent).toBe('A');
+		expect(bars.map((m) => m.getAttribute('number'))).toEqual(['1', '2', '3']);
+	});
+
+	it('rest-pads a part the incoming page has no counterpart for', () => {
+		const score = new EditableScore(TWO_PARTS); // 2 parts; incoming has 1
+		expect(score.spliceMeasuresFromXml(0, INCOMING_ONE_BAR)).toBe(true);
+		const doc = roundTrip(score);
+		expect(measures(doc)).toHaveLength(3);
+		expect(p2measures(doc)).toHaveLength(3);
+		expect(p2measures(doc)[1].querySelector('note > rest')).not.toBeNull();
+	});
+
+	it('refuses unparseable xml, an empty page, and an out-of-range index', () => {
+		const score = new EditableScore(ONE_PART);
+		expect(score.spliceMeasuresFromXml(0, '<not xml')).toBe(false);
+		expect(score.spliceMeasuresFromXml(0, '<score-partwise><part id="X1"/></score-partwise>')).toBe(
+			false
+		);
+		expect(score.spliceMeasuresFromXml(9, INCOMING_ONE_BAR)).toBe(false);
+		expect(measures(roundTrip(score))).toHaveLength(2);
+	});
+});

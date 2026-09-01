@@ -155,8 +155,44 @@ export interface LibraryEntryOut {
 		 * the editor. */
 		paged: boolean;
 		needs_review: boolean | null;
+		/** B17: best-effort "page X of Y" while a paged run is in flight;
+		 * both null for a single-run job or before the paged loop starts. */
+		pages_done: number | null;
+		pages_total: number | null;
 	} | null;
 	pending_generated_version_id: string | null;
+}
+
+/** A `PieceVersion` row — mirrors `Backend/app/api/schemas/library.py`'s
+ * `PieceVersionOut`. Returned by the B17 working-draft / publish endpoints. */
+export interface PieceVersionOut {
+	id: string;
+	piece_id: string;
+	created_by: string | null;
+	created_at: string;
+	source: VersionSource;
+	status: VersionStatus;
+	reviewed_by: string | null;
+	reviewed_at: string | null;
+}
+
+/** `POST /library/pieces/{id}/working-draft` — the piece's single open
+ * working draft. `forked_from_live` is true when this call just created it
+ * by content-copying the live version (F16 badges it either way, but uses
+ * this to know it's a pristine copy). Mirrors `WorkingDraftOut`. */
+export interface WorkingDraftOut {
+	version: PieceVersionOut;
+	forked_from_live: boolean;
+}
+
+/** `POST /omr/jobs/{id}/pages/{n}/rerun` — result of re-transcribing one
+ * page of a paged run. Mirrors `Backend/app/api/schemas/omr.py`'s
+ * `OmrPageRerunOut`. */
+export interface OmrPageRerunOut {
+	ok: boolean;
+	still_failed: boolean;
+	measure_count: number;
+	page_musicxml_url: string | null;
 }
 
 /** One row of `GET /omr/jobs` — the caller's own "Generate music from PDF"
@@ -178,6 +214,9 @@ export interface OmrJobListItem {
 	/** B16: true when a paged run left more than one segment, i.e. the
 	 * auto-imported draft has page joins a human should review. */
 	needs_review: boolean | null;
+	/** B17: best-effort per-page progress for a paged run in flight. */
+	pages_done: number | null;
+	pages_total: number | null;
 	created_at: string;
 	updated_at: string;
 }
