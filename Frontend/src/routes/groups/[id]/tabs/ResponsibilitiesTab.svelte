@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import EditableCard from '$lib/components/EditableCard.svelte';
@@ -47,14 +48,21 @@
 	let showNewSchedule = $state(false);
 	let showAddDate = $state(false);
 	// "Duplicate next week" (selected-date panel): prefill the Add-date form
-	// with the picked schedule + that date bumped seven days, then open it.
-	function duplicateDateNextWeek() {
+	// with the picked schedule + that date bumped seven days, open it, and
+	// scroll it into view — the form renders at the top of the tab, well
+	// above the panel this button lives in, so without the scroll it looks
+	// like nothing happened.
+	async function duplicateDateNextWeek() {
 		if (!selectedDate) return;
 		const next = new Date(selectedDate.date);
 		next.setDate(next.getDate() + 7);
 		addDateDraft = toDatetimeLocalValue(next.toISOString());
 		addDateScheduleIds = selectedDate.schedules.map((s) => s.schedule_id);
 		showAddDate = true;
+		await tick();
+		document
+			.getElementById('add-date-form')
+			?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 	// Bound to the Add-date form's role-set checkboxes so "Duplicate next
 	// week" and the quick-add panel can preselect them.
@@ -82,14 +90,6 @@
 		d.setDate(d.getDate() + quickAddWeekOffset * 7);
 		return toDatetimeLocalValue(d.toISOString());
 	});
-	// Label for the whole-date coverage badge above the selected-date roster —
-	// mirrors `coverageTotals(...).status` from groupCards.ts.
-	function dateStatusLabel(status: string): string {
-		if (status === 'empty') return m.responsibilities_badge_empty();
-		if (status === 'underfilled') return m.responsibilities_badge_needs_people();
-		if (status === 'overfilled') return m.join_coverage_overfilled();
-		return m.responsibilities_badge_covered();
-	}
 	// The date forms submit a tz-naive `datetime-local` string; the form
 	// action runs on Cloudflare (UTC clock), so it has to be resolved to a
 	// UTC instant here on the client instead. Rewrites the field in place
@@ -166,7 +166,7 @@
 	{/if}
 
 	{#if showAddDate && data.schedules.length > 0}
-		<section class="card">
+		<section class="card" id="add-date-form">
 			<p class="card-eyebrow">{m.groups_add_date()}</p>
 			<p class="card-note">{m.groups_add_date_note()}</p>
 			<form
@@ -260,18 +260,9 @@
 				</button>
 			{/each}
 		</div>
-	</section>
 
 	{#if selectedDate}
 		{@const d = selectedDate}
-		{@const totals = coverageTotals(
-			d.schedules
-				.flatMap((s) => s.roles)
-				.map((role) => ({
-					neededCount: role.needed_count,
-					activeCount: role.active_count
-				}))
-		)}
 		{@const dateItem = {
 			id: d.id,
 			date: d.date,
@@ -292,12 +283,9 @@
 			}))
 		}}
 		<div class="resp-selected">
-			<div class="resp-selected__head">
-				<p class="card-eyebrow">{m.responsibilities_selected_heading()}</p>
-				<span class="resp-badge resp-badge--{totals.status}">{dateStatusLabel(totals.status)}</span>
-			</div>
 			<ResponsibilityDateCard
 				item={dateItem}
+				flush
 				editing={mode === 'admin' && editingDateId === d.id}
 			>
 				{#snippet edit()}
@@ -395,37 +383,15 @@
 					</button>
 					<form method="POST" action="?/updateResponsibilityDate" use:enhance>
 						<input type="hidden" name="dateId" value={d.id} />
-						<input type="hidden" name="locked" value={d.locked ? 'false' : 'true'} />
-						<button type="submit" class="btn btn-outline">{d.locked ? m.groups_unlock() : m.groups_lock()}</button>
-					</form>
-					<form method="POST" action="?/updateResponsibilityDate" use:enhance>
-						<input type="hidden" name="dateId" value={d.id} />
 						<input type="hidden" name="canceled" value={d.canceled ? 'false' : 'true'} />
-						<button type="submit" class="btn btn-outline">{d.canceled ? m.groups_reinstate() : m.action_cancel()}</button>
+						<button type="submit" class="btn btn-outline">{d.canceled ? m.groups_reinstate() : m.groups_cancel_date()}</button>
 					</form>
 					<button type="button" class="text-link" onclick={duplicateDateNextWeek}>
 						{m.responsibilities_duplicate_next_week()}
 					</button>
-					<ConfirmButton>
-						{#snippet trigger(start)}
-							<button type="button" class="text-link text-link--danger" onclick={start}>
-								{m.groups_delete_date()}
-							</button>
-						{/snippet}
-						{#snippet confirm(cancel)}
-							<p class="card-note">{m.groups_delete_date_confirm()}</p>
-							<div class="btn-row">
-								<button type="button" class="btn btn-outline" onclick={cancel}>
-									{m.action_cancel()}
-								</button>
-								<form method="POST" action="?/deleteResponsibilityDate" use:enhance>
-									<input type="hidden" name="dateId" value={d.id} />
-									<button type="submit" class="btn btn-danger">{m.groups_delete_date()}</button>
-								</form>
-							</div>
-						{/snippet}
-					</ConfirmButton>
 				</div>
+				<!-- Delete lives inside the Edit panel (EditableCard's built-in
+				     confirm-then-delete), not in this action row. -->
 				{#if data.schedules.length > 0}
 					<div class="date-role-sets">
 						<p class="card-eyebrow">{m.responsibilities_role_sets_on_date()}</p>
@@ -459,6 +425,7 @@
 			</ResponsibilityDateCard>
 		</div>
 	{/if}
+	</section>
 {/if}
 
 {#if mode === 'admin' && data.schedules.length > 0 && nextRehearsalLocal}
@@ -770,13 +737,24 @@
 		font-weight: 400;
 	}
 
+	/* Upcoming dates scroll sideways rather than wrapping, so the strip
+	   stays one row tall however many dates a group has. `padding-bottom`
+	   leaves room for the active chip's caret (below) and the scrollbar;
+	   `overflow-y: hidden` keeps that caret from forcing a vertical scroll. */
 	.date-strip {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+		display: flex;
 		gap: 0.5rem;
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding-bottom: 0.6rem;
+		scroll-snap-type: x proximity;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.date-chip {
+		position: relative;
+		flex: 0 0 10rem;
+		scroll-snap-align: start;
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
@@ -797,7 +775,23 @@
 
 	.date-chip[aria-pressed='true'] {
 		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+		box-shadow: inset 0 0 0 1px var(--accent);
+		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+	}
+
+	/* Solid caret from the active chip down to the accent-outlined roster
+	   box below, so the chip and the box read as one connected shape. */
+	.date-chip[aria-pressed='true']::after {
+		content: '';
+		position: absolute;
+		left: 50%;
+		bottom: -0.5rem;
+		width: 0;
+		height: 0;
+		transform: translateX(-50%);
+		border-left: 0.45rem solid transparent;
+		border-right: 0.45rem solid transparent;
+		border-top: 0.5rem solid var(--accent);
 	}
 
 	.date-chip__date {
@@ -818,41 +812,18 @@
 		color: var(--text-muted);
 	}
 
+	/* The selected date's roster lives in the same card as the date strip,
+	   inside its own accent-outlined box that the active chip's caret
+	   points into, so the chip and the roster read as one connected shape. */
 	.resp-selected {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-	}
-
-	.resp-selected__head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-	}
-
-	.resp-badge {
-		flex: 0 0 auto;
-		font-size: 0.6875rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 0.15rem 0.5rem;
-		border-radius: var(--radius-full);
-		white-space: nowrap;
-		background: var(--surface-2);
-		color: var(--text-muted);
-	}
-
-	.resp-badge--empty,
-	.resp-badge--underfilled {
-		background: color-mix(in srgb, var(--danger) 15%, transparent);
-		color: var(--danger);
-	}
-
-	.resp-badge--overfilled {
-		background: color-mix(in srgb, var(--accent) 15%, transparent);
-		color: var(--accent);
+		margin-top: 0.1rem;
+		padding: 0.8rem;
+		border: 1.5px solid var(--accent);
+		border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--accent) 4%, var(--surface));
 	}
 
 	.assign-group {

@@ -22,12 +22,16 @@
 	let {
 		item,
 		editing = false,
+		flush = false,
 		edit,
 		roleExtra,
 		children
 	}: {
 		item: ResponsibilityDateCardItem;
 		editing?: boolean;
+		/** Drop the card chrome (border/shadow/padding) and render as a
+		 *  plain flex column, for embedding inside an existing card. */
+		flush?: boolean;
 		edit?: Snippet;
 		roleExtra?: Snippet<[ResponsibilityRole]>;
 		children?: Snippet;
@@ -40,7 +44,7 @@
 	}
 </script>
 
-<section class="card">
+<section class={flush ? 'rdc-flush' : 'card'}>
 	{#if editing && edit}
 		{@render edit()}
 	{:else}
@@ -69,6 +73,13 @@
 </section>
 
 <style>
+	/* `flush`: same internal layout as `.card` (shell.css), no chrome. */
+	.rdc-flush {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
 	.schedule-group-heading {
 		margin-top: 0.75rem;
 	}
