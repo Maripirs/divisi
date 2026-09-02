@@ -204,7 +204,41 @@ in the same pass.
       pinchZoom.test.ts (3 tests on clampZoom; the action stays build+manual
       per the jsdom-no-TouchEvent caveat). check 0 errors, build ok, 38 tests
       green.
-- [ ] Step 4 — player annotations.svelte.ts
+- [x] Step 4 (player annotations.svelte.ts). Created
+      `src/lib/player/annotations.svelte.ts` (266 lines), the repo's first
+      *stateful* `.svelte.ts` composable (steps 1-2 moved only pure fns;
+      `settingsDrawer.svelte.ts` is a bare `$state` object). Moved: the 7
+      annotation `$state` decls (annotations, annotateMode, annotationSheet,
+      saving, error, shares, sharesLoading), all 12 functions (loadAnnotations,
+      annotationErrorMessage, measureLabel, toggleAnnotateMode,
+      openCreateAnnotation now `openCreate`, openAnnotation now `openMarker`,
+      loadShares, closeAnnotationSheet now `closeSheet`, saveAnnotation now
+      `save`, deleteCurrentAnnotation now `deleteCurrent`, share/unshare), the 3
+      `$derived.by` label/content/isOwner computations, and the whole
+      `$lib/api/annotations` import block. `canAnnotate` stayed in the component
+      (it also gates the PDF markup UI, so it is not annotation-specific).
+      Interface decision: a **factory** (`createAnnotationController(deps)`)
+      returning getters for the reactive state and `$derived` values plus the
+      action methods, not a class. The factory reads closer to the existing
+      module style, and it keeps the "snapshot annotationSheet into a local
+      const so TS narrows it" pattern verbatim in every method. Three deps are
+      threaded as **getters** (same param-not-closure choice as steps 1-2):
+      `pieceId: () => remoteMeta?.pieceId`,
+      `currentUser: () => page.data.user ?? undefined`,
+      `timeSignature: () => parsed?.timeSignature`. `remoteMeta` and `parsed`
+      are assigned imperatively (not `$state`) and declared lower in the file,
+      but the arrow getters are not called until the controller acts, so there
+      is no TDZ at instantiation. The component builds
+      `const ann = createAnnotationController({...})` next to the other state
+      decls; template refs were rewired to `ann.*` (ScoreView
+      `annotations`/`annotateMode`/`onAnnotationPlace`/`onAnnotationMarkerClick`,
+      the annotate toggle button, all 14 `AnnotationSheet` props). piece/[id]
+      2100 to 1928 (minus 172). No unit test added: instantiating the factory
+      pulls in `$state`/`$derived.by`, the awkward-outside-a-component case
+      steps 1-2 deliberately stayed clear of, and the pure-ish
+      `measureLabel`/`annotationErrorMessage` are now private to the module.
+      check 0 errors (14 warnings, all pre-existing, byte-identical to
+      baseline), build ok, 54 tests green.
 - [ ] Step 5 — PdfMarkupLayer.svelte
 - [ ] Step 6 — groups/[id] tabs/*.svelte
 - [ ] Step 7 — groups/[id] actions/*.ts

@@ -39,18 +39,7 @@
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
-	import {
-		AnnotationApiError,
-		createAnnotation,
-		deleteAnnotation,
-		listAnnotations,
-		listAnnotationShares,
-		shareAnnotation,
-		unshareAnnotation,
-		updateAnnotation,
-		type Annotation,
-		type AnnotationShare
-	} from '$lib/api/annotations';
+	import { createAnnotationController } from '$lib/player/annotations.svelte';
 	import type { MarkupScope } from '$lib/api/pieceMarkup';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -247,18 +236,20 @@
 	// `Annotation.piece_id` has to be a real `Piece`), and only for a
 	// logged-in user (the Backend's endpoints all require `get_current_user`
 	// — there's no guest annotation path at all, unlike homework/tracks).
+	// `canAnnotate` stays here (not in the controller) because it also gates
+	// the PDF markup UI, which is not annotation-specific.
 	const canAnnotate = $derived(!!remoteMeta && !!page.data.user);
-	let annotations = $state<Annotation[]>([]);
-	let annotateMode = $state(false);
-	// `null` closed; otherwise either a brand-new marker's position (create)
-	// or an existing annotation being viewed/edited.
-	let annotationSheet = $state<{ mode: 'create'; positionWholeNotes: number } | { mode: 'view'; annotation: Annotation } | null>(
-		null
-	);
-	let annotationSaving = $state(false);
-	let annotationError = $state<string | null>(null);
-	let annotationShares = $state<AnnotationShare[]>([]);
-	let annotationSharesLoading = $state(false);
+	// F4: the whole annotation feature (list/sheet/shares state + CRUD/share
+	// calls) lives in this composable now (round-2 cleanup step 4). The three
+	// external reads it needs are threaded in as getters: `remoteMeta`/`parsed`
+	// are assigned imperatively later in this file (not `$state`), and the
+	// arrow-fn getters aren't invoked until the controller acts, so referring
+	// to them here is safe.
+	const ann = createAnnotationController({
+		pieceId: () => remoteMeta?.pieceId,
+		currentUser: () => page.data.user ?? undefined,
+		timeSignature: () => parsed?.timeSignature
+	});
 
 	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
 	// `parsed` isn't `$state` (it's set once, imperatively, in `bootstrap()`
@@ -366,7 +357,7 @@
 
 	async function bootstrap() {
 		if (!piece) return;
-		if (canAnnotate) void loadAnnotations();
+		if (canAnnotate) void ann.loadAnnotations();
 		const stored = loadPersistedSettings(piece.id);
 		if (stored.voicePart) voicePart = stored.voicePart;
 		if (stored.subPart !== undefined) subPart = stored.subPart;
@@ -831,169 +822,6 @@
 		if (guestJoinCode) goto(lh(`/join/${encodeURIComponent(guestJoinCode)}`));
 		else goto(lh(page.data.user ? '/' : '/?guest=1'));
 	}
-
-	// F4: annotations — private-by-default notes pinned to a score position
-	// (e.g. "breathe here"), rendered as markers by `ScoreView` and managed
-	// through this sheet. See `$lib/api/annotations.ts` for the Backend
-	// shape (B5) this all round-trips through.
-
-	async function loadAnnotations() {
-		if (!remoteMeta) return;
-		try {
-			// F20: personal "piece notes" are stored as position-less annotations
-			// (position -1) and shown in the Piece Notes panel, not as score
-			// markers — keep only real, score-positioned annotations here.
-			annotations = (await listAnnotations(remoteMeta.pieceId)).filter(
-				(a) => a.positionWholeNotes >= 0
-			);
-		} catch {
-			// A failed load just means no markers show yet — not worth a
-			// blocking error state layered on top of the player's own; the
-			// "add annotation" control still works and will surface its own
-			// error if the Backend is genuinely unreachable.
-		}
-	}
-
-	function annotationErrorMessage(err: unknown): string {
-		return err instanceof AnnotationApiError ? err.message : m.errors_could_not_reach_server();
-	}
-
-	/** "Measure N" rather than a raw beat/whole-note count — matches how a
-	 * singer actually talks about a spot in the music (and the fixture-era
-	 * `AnnotationModal`'s own framing). Tempo-independent: `positionWholeNotes`
-	 * (and thus the stored position) never changes when tempo is adjusted. */
-	function measureLabel(wholeNotes: number): string {
-		if (!parsed) return m.piece_annotation_position_generic();
-		const { numerator, denominator } = parsed.timeSignature;
-		const measureLenWholeNotes = numerator / denominator;
-		const measureNumber = measureLenWholeNotes > 0 ? Math.floor(wholeNotes / measureLenWholeNotes) + 1 : 1;
-		return m.piece_annotation_measure({ number: measureNumber });
-	}
-
-	function toggleAnnotateMode() {
-		annotateMode = !annotateMode;
-	}
-
-	function openCreateAnnotation(wholeNotes: number) {
-		annotationError = null;
-		annotationSheet = { mode: 'create', positionWholeNotes: wholeNotes };
-		// One tap places one marker — mode stays off afterward rather than
-		// lingering, so closing the sheet doesn't leave the score armed to
-		// place a second one from a stray tap.
-		annotateMode = false;
-	}
-
-	function openAnnotation(id: string) {
-		const found = annotations.find((a) => a.id === id);
-		if (!found) return;
-		annotationError = null;
-		annotationShares = [];
-		annotationSheet = { mode: 'view', annotation: found };
-		if (page.data.user && found.userId === page.data.user.id) void loadShares(found.id);
-	}
-
-	async function loadShares(annotationId: string) {
-		if (!remoteMeta) return;
-		annotationSharesLoading = true;
-		try {
-			annotationShares = await listAnnotationShares(remoteMeta.pieceId, annotationId);
-		} catch (err) {
-			annotationError = annotationErrorMessage(err);
-		} finally {
-			annotationSharesLoading = false;
-		}
-	}
-
-	function closeAnnotationSheet() {
-		annotationSheet = null;
-		annotationError = null;
-		annotationShares = [];
-	}
-
-	async function saveAnnotation(content: string) {
-		const sheet = annotationSheet;
-		if (!remoteMeta || sheet === null) return;
-		annotationSaving = true;
-		annotationError = null;
-		try {
-			if (sheet.mode === 'create') {
-				const created = await createAnnotation(remoteMeta.pieceId, sheet.positionWholeNotes, content);
-				annotations = [...annotations, created];
-			} else {
-				const updated = await updateAnnotation(remoteMeta.pieceId, sheet.annotation.id, { content });
-				annotations = annotations.map((a) => (a.id === updated.id ? updated : a));
-			}
-			closeAnnotationSheet();
-		} catch (err) {
-			annotationError = annotationErrorMessage(err);
-		} finally {
-			annotationSaving = false;
-		}
-	}
-
-	async function deleteCurrentAnnotation() {
-		// Snapshotted into a local rather than narrowed via repeated
-		// `annotationSheet.mode` reads — `annotationSheet` is reactive
-		// (`$state`), so a plain `const` capture is what TypeScript can
-		// actually narrow reliably across the statements below.
-		const sheet = annotationSheet;
-		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
-		const id = sheet.annotation.id;
-		annotationSaving = true;
-		annotationError = null;
-		try {
-			await deleteAnnotation(remoteMeta.pieceId, id);
-			annotations = annotations.filter((a) => a.id !== id);
-			closeAnnotationSheet();
-		} catch (err) {
-			annotationError = annotationErrorMessage(err);
-		} finally {
-			annotationSaving = false;
-		}
-	}
-
-	async function shareCurrentAnnotation(email: string) {
-		const sheet = annotationSheet;
-		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
-		annotationError = null;
-		try {
-			const share = await shareAnnotation(remoteMeta.pieceId, sheet.annotation.id, email);
-			annotationShares = [...annotationShares, share];
-		} catch (err) {
-			annotationError = annotationErrorMessage(err);
-		}
-	}
-
-	async function unshareCurrentAnnotation(userId: string) {
-		const sheet = annotationSheet;
-		if (!remoteMeta || sheet === null || sheet.mode !== 'view') return;
-		annotationError = null;
-		try {
-			await unshareAnnotation(remoteMeta.pieceId, sheet.annotation.id, userId);
-			annotationShares = annotationShares.filter((s) => s.sharedWithUserId !== userId);
-		} catch (err) {
-			annotationError = annotationErrorMessage(err);
-		}
-	}
-
-	// Local, non-`?.`-narrowed derivations for `AnnotationSheet`'s props —
-	// same reasoning as the snapshot-to-`const` pattern above, applied to
-	// `$derived` instead: reading `annotationSheet` once into `sheet` per
-	// derivation is what lets TypeScript actually narrow it.
-	let annotationPositionLabel = $derived.by(() => {
-		const sheet = annotationSheet;
-		if (sheet === null) return '';
-		return measureLabel(sheet.mode === 'create' ? sheet.positionWholeNotes : sheet.annotation.positionWholeNotes);
-	});
-	let annotationContent = $derived.by(() => {
-		const sheet = annotationSheet;
-		return sheet !== null && sheet.mode === 'view' ? sheet.annotation.content : '';
-	});
-	let annotationIsOwner = $derived.by(() => {
-		const sheet = annotationSheet;
-		if (sheet === null || sheet.mode === 'create') return true;
-		return page.data.user?.id === sheet.annotation.userId;
-	});
 </script>
 
 <svelte:window onkeydown={handleGlobalKeydown} />
@@ -1113,10 +941,10 @@
 							scoreTheme={$resolvedTheme}
 							positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
 							onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
-							{annotations}
-							{annotateMode}
-							onAnnotationPlace={openCreateAnnotation}
-							onAnnotationMarkerClick={openAnnotation}
+							annotations={ann.annotations}
+							annotateMode={ann.annotateMode}
+							onAnnotationPlace={ann.openCreate}
+							onAnnotationMarkerClick={ann.openMarker}
 						/>
 					</div>
 				{/if}
@@ -1189,10 +1017,10 @@
 						     reaches the Backend's annotation endpoints at all. -->
 						<button
 							class="icon-btn"
-							class:icon-btn--active={annotateMode}
-							onclick={toggleAnnotateMode}
-							aria-label={annotateMode ? m.piece_cancel_add_annotation() : m.piece_add_annotation()}
-							aria-pressed={annotateMode}
+							class:icon-btn--active={ann.annotateMode}
+							onclick={ann.toggleAnnotateMode}
+							aria-label={ann.annotateMode ? m.piece_cancel_add_annotation() : m.piece_add_annotation()}
+							aria-pressed={ann.annotateMode}
 						>
 							<svg viewBox="0 0 24 24" aria-hidden="true">
 								<path d="M12 5v14M5 12h14" />
@@ -1459,20 +1287,20 @@
 		{/if}
 
 		<AnnotationSheet
-			open={annotationSheet !== null}
-			mode={annotationSheet?.mode ?? 'create'}
-			positionLabel={annotationPositionLabel}
-			content={annotationContent}
-			isOwner={annotationIsOwner}
-			shares={annotationShares}
-			sharesLoading={annotationSharesLoading}
-			saving={annotationSaving}
-			error={annotationError}
-			onClose={closeAnnotationSheet}
-			onSave={saveAnnotation}
-			onDelete={deleteCurrentAnnotation}
-			onShare={shareCurrentAnnotation}
-			onUnshare={unshareCurrentAnnotation}
+			open={ann.sheet !== null}
+			mode={ann.sheet?.mode ?? 'create'}
+			positionLabel={ann.positionLabel}
+			content={ann.content}
+			isOwner={ann.isOwner}
+			shares={ann.shares}
+			sharesLoading={ann.sharesLoading}
+			saving={ann.saving}
+			error={ann.error}
+			onClose={ann.closeSheet}
+			onSave={ann.save}
+			onDelete={ann.deleteCurrent}
+			onShare={ann.share}
+			onUnshare={ann.unshare}
 		/>
 	</div>
 {/key}
