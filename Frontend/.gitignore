@@ -22,6 +22,11 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
+# Playwright: run artifacts + saved auth/session state (never commit the
+# latter, it holds a real login token). Real e2e specs still track fine.
+/test-results
+/e2e/.auth
+
 # pdfjs runtime assets — copied out of node_modules/pdfjs-dist by an inline
 # plugin in vite.config.ts on every dev/build (see PdfView.svelte)
 /static/pdfjs
