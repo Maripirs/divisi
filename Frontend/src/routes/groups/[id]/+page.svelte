@@ -784,7 +784,13 @@
 					</div>
 					<!-- F20: expand a track to read/manage this piece's notes without
 					     opening the player. -->
-					<Disclosure variant="inline" bind:open={notesExpanded[track.piece_id]}>
+					<Disclosure
+						variant="inline"
+						bind:open={
+							() => notesExpanded[track.piece_id] ?? false,
+							(v) => (notesExpanded[track.piece_id] = v)
+						}
+					>
 						{#snippet summary()}{m.piece_notes_title()}{/snippet}
 						{#snippet children()}
 							{#if notesExpanded[track.piece_id]}
