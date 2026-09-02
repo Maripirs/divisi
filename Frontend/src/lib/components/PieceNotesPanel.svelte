@@ -337,6 +337,12 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		text-align: left;
+		/* Query container for the auto-expand rule below: when the panel is
+		   wide enough to give a long note a full row without stranding
+		   whitespace, we drop the 4-line clamp so the reader never has to
+		   click "Show more". */
+		container-type: inline-size;
+		container-name: pn-panel;
 	}
 
 	/* On the piece player the panel shares the screen with the score/PDF:
@@ -451,6 +457,28 @@
 
 	.pn-more {
 		align-self: flex-start;
+	}
+
+	/* Enough width for a long note to take a full row and still read at a
+	   sane line length: unclamp it in place and retire the toggle. Short
+	   notes keep tiling in their grid cells. `:has()` targets exactly the
+	   notes that are still clamped (long, not manually expanded). */
+	@container pn-panel (min-width: 30rem) {
+		.pn-note:has(.pn-md--clamp) {
+			grid-column: 1 / -1;
+			max-width: 42rem;
+		}
+
+		.pn-md--clamp {
+			display: block;
+			-webkit-line-clamp: unset;
+			line-clamp: unset;
+			overflow: visible;
+		}
+
+		.pn-note:has(.pn-md--clamp) .pn-more {
+			display: none;
+		}
 	}
 
 	.pn-md :global(p) {
