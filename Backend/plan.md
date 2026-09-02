@@ -515,7 +515,7 @@ No `source_weekly_note_id` column yet — it only earns its place once
 
 ## Log
 
-*Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+*Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
 - 2026-09-01: Scoped Backend B16 (piece rehearsal notes) off the Codex "Weekly Notes Backend Proposal". Took only `piece_rehearsal_notes` (durable per-piece reminders); pushed the proposal's `weekly_note_sections`/`_items` tree and `group_resources` to Backlog. Not built yet.
 

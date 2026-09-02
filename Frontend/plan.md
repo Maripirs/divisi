@@ -827,7 +827,7 @@ fetching or required accounts.
 
 ## Log
 
-*Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+*Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
 - 2026-09-02: Responsibilities dates: resolve the `datetime-local` field to a UTC ISO string on the client (`datetimeLocalToIso` in `dates.ts`, applied in `use:enhance` via a new `EditableCard` `beforeSubmit` hook) instead of in the form action, which runs on Cloudflare's UTC clock and shifted a 7 PM rehearsal to 12:00 for viewers behind UTC (caught live). Also added a ‹ / › week stepper to the quick-add panel (walks the group's weekly slot forward/back, floored at the next occurrence) and an inline delete on the selected date. en+es `responsibilities_quick_add_{prev,next}_week`.
 
