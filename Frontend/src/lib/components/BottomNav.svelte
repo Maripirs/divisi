@@ -11,15 +11,13 @@
 	// of its own — "My groups" lives on Home, and a group's own page is
 	// reached from there.
 	//
-	// Library's href carries `?guest=1` when logged out, so a guest browsing
-	// the demo library can move around via this tab without bouncing back to
-	// `/welcome` (root `+page.server.ts` otherwise redirects any logged-out,
-	// non-guest hit on `/` there). No query param needed once logged in — a
-	// bare `/` always reaches the library directly.
+	// Library's href always carries `?lib=1`: root `+page.server.ts` redirects
+	// a bare `/` to `/welcome` (logged out) or `/home` (logged in), so the tab
+	// needs the explicit opt-in to actually land on the library either way.
 	const items = $derived([
 		{ href: lh('/home'), rawHref: '/home', label: m.bottom_nav_home(), icon: 'home' },
 		{
-			href: lh(page.data.user ? '/' : '/?guest=1'),
+			href: lh('/?lib=1'),
 			rawHref: '/',
 			label: m.bottom_nav_library(),
 			icon: 'library'

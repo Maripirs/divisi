@@ -9,12 +9,12 @@ export interface GroupSection {
 	pieces: LibraryEntryOut[];
 }
 
-/** Logged-out visitors land on `/welcome` (onboarding), not straight into
- * the library — a bare `/` used to show the guest-accessible demo library
- * directly, which meant a first-time/logged-out visit skipped the welcome
- * screen entirely. `?guest=1` (set by `/welcome`'s "Explore demo" link and
- * `BottomNav`'s Library tab) opts back into the library without a login,
- * so guest browsing still works once someone's chosen to be here.
+/** The bare root is not the library for either audience:
+ *  - logged out → `/welcome` (onboarding), so a first-time visit can't skip it
+ *  - logged in  → `/home`, the real landing page (bottom-nav Home)
+ * The library still lives at `/`, reached explicitly with `?lib=1` — set by
+ * `BottomNav`'s Library tab and the player's back-to-library fallback.
+ * `?guest=1` is accepted as a legacy alias for the same intent.
  *
  * The redirect gate keys off the session cookie, not the resolved `user`
  * from `parent()`: the root layout may hand back an optimistic user on a
@@ -24,10 +24,15 @@ export interface GroupSection {
  * paint immediately instead of the whole document blocking on these two
  * Backend calls. */
 export const load: PageServerLoad = ({ locals, fetch, url }) => {
+	const wantsLibrary =
+		url.searchParams.get('lib') === '1' || url.searchParams.get('guest') === '1';
+
 	if (!locals.token) {
-		if (url.searchParams.get('guest') !== '1') throw redirect(303, lh('/welcome'));
+		if (!wantsLibrary) throw redirect(303, lh('/welcome'));
 		return { groupSections: Promise.resolve<GroupSection[]>([]) };
 	}
+
+	if (!wantsLibrary) throw redirect(303, lh('/home'));
 
 	return { groupSections: loadGroupSections(locals.token, fetch) };
 };

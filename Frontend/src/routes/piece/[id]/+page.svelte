@@ -809,18 +809,18 @@
 	 * Falls back to the old destination-guessing logic only when there's
 	 * nothing to go back to at all (opened directly/a fresh tab/a deep
 	 * link) — `history.back()` there would leave the app entirely instead of
-	 * landing anywhere useful. Root `+page.server.ts` redirects a logged-out,
-	 * non-guest hit on `/` to `/welcome` — a bare `goto('/')` would bounce a
-	 * guest who opened the player straight there. A guest who arrived via a
-	 * specific group's join code (`guestJoinCode` set) goes back to that
-	 * group's page, not the unrelated demo library. */
+	 * landing anywhere useful. Root `+page.server.ts` redirects a bare `/` to
+	 * `/welcome` (logged out) or `/home` (logged in), so the library needs the
+	 * explicit `?lib=1` opt-in. A guest who arrived via a specific group's join
+	 * code (`guestJoinCode` set) goes back to that group's page, not the
+	 * unrelated demo library. */
 	function backToLibrary() {
 		if (window.history.length > 1) {
 			history.back();
 			return;
 		}
 		if (guestJoinCode) goto(lh(`/join/${encodeURIComponent(guestJoinCode)}`));
-		else goto(lh(page.data.user ? '/' : '/?guest=1'));
+		else goto(lh('/?lib=1'));
 	}
 </script>
 
