@@ -74,15 +74,21 @@ export interface ResponsibilityRoleCoverageOut {
 	signups: ResponsibilitySignupOut[];
 }
 
-export interface ResponsibilityDateOut {
-	id: string;
+/** B13 (multi-role-set dates): one role set attached to a date, with that
+ * role set's coverage rows. A date can now carry several of these. */
+export interface ResponsibilityDateScheduleGroupOut {
 	schedule_id: string;
 	schedule_name: string;
+	roles: ResponsibilityRoleCoverageOut[];
+}
+
+export interface ResponsibilityDateOut {
+	id: string;
 	date: string;
 	notes: string;
 	locked: boolean;
 	canceled: boolean;
-	roles: ResponsibilityRoleCoverageOut[];
+	schedules: ResponsibilityDateScheduleGroupOut[];
 }
 
 export interface GroupMemberOut {

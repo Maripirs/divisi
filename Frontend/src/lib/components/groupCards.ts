@@ -37,14 +37,21 @@ export interface ResponsibilityRole {
 	signups?: ResponsibilityRoleSignup[];
 }
 
+/** One role set attached to a date, with that role set's coverage rows.
+ * A date renders one heading + role block per entry. */
+export interface ResponsibilityDateScheduleGroup {
+	scheduleId: string;
+	scheduleName: string;
+	roles: ResponsibilityRole[];
+}
+
 export interface ResponsibilityDateCardItem {
 	id: string;
-	scheduleName: string;
 	date: string;
 	notes: string;
 	locked: boolean;
 	canceled: boolean;
-	roles: ResponsibilityRole[];
+	scheduleGroups: ResponsibilityDateScheduleGroup[];
 }
 
 /** Whole-date coverage rolled up from a date's per-role counts — drives the

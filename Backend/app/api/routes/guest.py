@@ -22,6 +22,7 @@ from app.api.schemas import (
     RenderManifestOut,
     ResponsibilityGuestDateOut,
     ResponsibilityGuestRoleCoverageOut,
+    ResponsibilityGuestScheduleGroupOut,
     WeeklyNoteOut,
 )
 from app.core.rate_limit import rate_limit_guest
@@ -34,6 +35,7 @@ from app.db.models import (
     Piece,
     PieceVersion,
     ResponsibilityDate,
+    ResponsibilityDateSchedule,
     ResponsibilityRole,
     ResponsibilitySchedule,
     WeeklyNote,
@@ -175,49 +177,70 @@ def list_guest_responsibility_dates(
 ) -> list[ResponsibilityGuestDateOut]:
     """Read-only, same no-auth stance as the rest of this router. Unlike the
     member-facing `GET /groups/{id}/responsibilities/dates`, this never
-    returns *who* signed up (see `ResponsibilityGuestRoleCoverageOut`) —
+    returns *who* signed up (see `ResponsibilityGuestRoleCoverageOut`):
     member names/emails aren't something a join-code link should hand out,
-    only whether a role still needs people. Gated by B12's `responsibilities`
-    page settings, same mechanism as homework."""
+    only whether a role still needs people. A date can carry several role
+    sets at once (`schedules`), each its own group of roles, with coverage
+    rolled up across all of them. Gated by B12's `responsibilities` page
+    settings, same mechanism as homework."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _check_guest_password(group, password)
     require_guest_page_access(group.id, GroupPage.responsibilities, db)
-    rows = (
-        db.query(ResponsibilityDate, ResponsibilitySchedule)
-        .join(ResponsibilitySchedule, ResponsibilityDate.schedule_id == ResponsibilitySchedule.id)
+    dates = (
+        db.query(ResponsibilityDate)
+        .join(ResponsibilityDateSchedule, ResponsibilityDateSchedule.date_id == ResponsibilityDate.id)
+        .join(
+            ResponsibilitySchedule,
+            ResponsibilityDateSchedule.schedule_id == ResponsibilitySchedule.id,
+        )
         .filter(ResponsibilitySchedule.group_id == group.id)
         .order_by(ResponsibilityDate.date.asc())
+        .distinct()
         .all()
     )
     out: list[ResponsibilityGuestDateOut] = []
-    for date, schedule in rows:
-        roles = (
-            db.query(ResponsibilityRole)
-            .filter(ResponsibilityRole.schedule_id == schedule.id)
-            .order_by(ResponsibilityRole.created_at.asc())
+    for date in dates:
+        schedules = (
+            db.query(ResponsibilitySchedule)
+            .join(
+                ResponsibilityDateSchedule,
+                ResponsibilityDateSchedule.schedule_id == ResponsibilitySchedule.id,
+            )
+            .filter(ResponsibilityDateSchedule.date_id == date.id)
+            .order_by(ResponsibilityDateSchedule.created_at.asc())
             .all()
         )
-        role_outs = []
-        for role in roles:
-            active_count, coverage_status, _signups = role_coverage(date.id, role, db)
-            role_outs.append(
-                ResponsibilityGuestRoleCoverageOut(
-                    role_id=role.id,
-                    role_name=role.name,
-                    needed_count=role.needed_count,
-                    active_count=active_count,
-                    status=coverage_status,
+        schedule_groups: list[ResponsibilityGuestScheduleGroupOut] = []
+        for schedule in schedules:
+            roles = (
+                db.query(ResponsibilityRole)
+                .filter(ResponsibilityRole.schedule_id == schedule.id)
+                .order_by(ResponsibilityRole.created_at.asc())
+                .all()
+            )
+            role_outs = []
+            for role in roles:
+                active_count, coverage_status, _signups = role_coverage(date.id, role, db)
+                role_outs.append(
+                    ResponsibilityGuestRoleCoverageOut(
+                        role_id=role.id,
+                        role_name=role.name,
+                        needed_count=role.needed_count,
+                        active_count=active_count,
+                        status=coverage_status,
+                    )
                 )
+            schedule_groups.append(
+                ResponsibilityGuestScheduleGroupOut(schedule_name=schedule.name, roles=role_outs)
             )
         out.append(
             ResponsibilityGuestDateOut(
                 id=date.id,
-                schedule_name=schedule.name,
                 date=date.date,
                 notes=date.notes,
                 locked=date.locked,
                 canceled=date.canceled,
-                roles=role_outs,
+                schedules=schedule_groups,
             )
         )
     return out

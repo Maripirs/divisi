@@ -119,7 +119,20 @@
 				<p class="empty">{m.join_no_responsibilities()}</p>
 			{:else}
 				{#each data.responsibilities as d (d.id)}
-					<ResponsibilityDateCard item={d} />
+					<ResponsibilityDateCard
+						item={{
+							id: d.id,
+							date: d.date,
+							notes: d.notes,
+							locked: d.locked,
+							canceled: d.canceled,
+							scheduleGroups: d.schedules.map((s) => ({
+								scheduleId: s.scheduleName,
+								scheduleName: s.scheduleName,
+								roles: s.roles
+							}))
+						}}
+					/>
 				{/each}
 			{/if}
 		{:else}

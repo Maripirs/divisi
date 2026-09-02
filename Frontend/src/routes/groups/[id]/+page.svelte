@@ -181,12 +181,12 @@
 		const next = new Date(selectedDate.date);
 		next.setDate(next.getDate() + 7);
 		addDateDraft = toDatetimeLocalValue(next.toISOString());
-		addDateScheduleId = selectedDate.schedule_id;
+		addDateScheduleIds = selectedDate.schedules.map((s) => s.schedule_id);
 		showAddDate = true;
 	}
-	// Bound to the Add-date form's schedule select so "Duplicate next week"
-	// and the quick-add panel can preselect one.
-	let addDateScheduleId = $state(data.schedules[0]?.id ?? '');
+	// Bound to the Add-date form's role-set checkboxes so "Duplicate next
+	// week" and the quick-add panel can preselect them.
+	let addDateScheduleIds = $state<string[]>(data.schedules[0] ? [data.schedules[0].id] : []);
 	// Quick-add "Next rehearsal" panel: the concrete next occurrence of the
 	// group's weekly rehearsal slot, as a `datetime-local` value. Filled by
 	// an effect so it's computed client-side only — every other
@@ -1130,12 +1130,20 @@
 							};
 						}}
 					>
-						<label class="field">
-							<span>{m.responsibilities_singular()}</span>
-							<select name="scheduleId" bind:value={addDateScheduleId}>
-								{#each data.schedules as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-							</select>
-						</label>
+						<div class="field">
+							<span>{m.responsibilities_pick_role_sets()}</span>
+							{#each data.schedules as s (s.id)}
+								<label class="checkline">
+									<input
+										type="checkbox"
+										name="scheduleId"
+										value={s.id}
+										bind:group={addDateScheduleIds}
+									/>
+									<span>{s.name}</span>
+								</label>
+							{/each}
+						</div>
 						<label class="field">
 							<span>{m.groups_date_and_time()}</span>
 							<input type="datetime-local" name="date" bind:value={addDateDraft} required />
@@ -1166,86 +1174,6 @@
 					</form>
 				</section>
 			{/if}
-
-			{#if data.schedules.length > 0}
-				<section class="card">
-					<p class="card-eyebrow">{m.responsibilities_templates_heading()}</p>
-					{#each data.schedules as schedule (schedule.id)}
-						<div class="responsibility-template">
-							{#if editingScheduleId === schedule.id}
-								<form method="POST" action="?/updateResponsibilitySchedule" use:enhance class="inline-edit-row">
-									<input type="hidden" name="scheduleId" value={schedule.id} />
-									<input name="name" value={schedule.name} required />
-									<button type="submit" class="btn btn-outline">{m.action_save()}</button>
-								</form>
-
-								{#each schedule.roles as role (role.id)}
-									<form method="POST" action="?/updateResponsibilityRole" use:enhance class="inline-edit-row">
-										<input type="hidden" name="roleId" value={role.id} />
-										<input name="name" value={role.name} placeholder={m.groups_role()} required />
-										<input name="neededCount" type="number" min="1" value={role.needed_count} />
-										<button type="submit" class="btn btn-outline">{m.action_save()}</button>
-										<button type="submit" formaction="?/deleteResponsibilityRole" class="text-link text-link--danger">
-											{m.groups_remove()}
-										</button>
-									</form>
-								{/each}
-								<form method="POST" action="?/addResponsibilityRole" use:enhance class="inline-edit-row">
-									<input type="hidden" name="scheduleId" value={schedule.id} />
-									<input name="name" placeholder={m.groups_new_role()} />
-									<input name="neededCount" type="number" min="1" value="1" />
-									<button type="submit" class="btn btn-outline">{m.groups_add_role()}</button>
-								</form>
-
-								{#if form?.form === 'editSchedule' && form?.error}
-									<p class="error">{form.error}</p>
-								{/if}
-
-								<div class="btn-row">
-									<button type="button" class="text-link" onclick={() => (editingScheduleId = null)}>
-										{m.responsibilities_done()}
-									</button>
-									<ConfirmButton>
-										{#snippet trigger(start)}
-											<button type="button" class="text-link text-link--danger" onclick={start}>
-												{m.groups_delete_responsibility()}
-											</button>
-										{/snippet}
-										{#snippet confirm(cancel)}
-											<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
-											<div class="btn-row">
-												<button type="button" class="btn btn-outline" onclick={cancel}>
-													{m.action_cancel()}
-												</button>
-												<form method="POST" action="?/deleteResponsibilitySchedule" use:enhance>
-													<input type="hidden" name="scheduleId" value={schedule.id} />
-													<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
-												</form>
-											</div>
-										{/snippet}
-									</ConfirmButton>
-								</div>
-							{:else}
-								<div class="template-summary">
-									<div>
-										<p class="card-title">{schedule.name}</p>
-										<div class="resp-chips">
-											{#each schedule.roles as role (role.id)}
-												<span class="resp-chip">{role.name} ×{role.needed_count}</span>
-											{:else}
-												<span class="resp-chip resp-chip--empty">{m.responsibilities_no_roles()}</span>
-											{/each}
-										</div>
-									</div>
-									<button type="button" class="text-link" onclick={() => (editingScheduleId = schedule.id)}>
-										{m.drawer_edit()}
-									</button>
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</section>
-			{/if}
 		{/if}
 
 		{#if data.responsibilities.length === 0}
@@ -1256,10 +1184,12 @@
 				<div class="date-strip" role="group" aria-label={m.responsibilities_upcoming_heading()}>
 					{#each data.responsibilities as d (d.id)}
 						{@const totals = coverageTotals(
-							d.roles.map((role) => ({
-								neededCount: role.needed_count,
-								activeCount: role.active_count
-							}))
+							d.schedules
+								.flatMap((s) => s.roles)
+								.map((role) => ({
+									neededCount: role.needed_count,
+									activeCount: role.active_count
+								}))
 						)}
 						<button
 							type="button"
@@ -1283,25 +1213,30 @@
 			{#if selectedDate}
 				{@const d = selectedDate}
 				{@const totals = coverageTotals(
-					d.roles.map((role) => ({
-						neededCount: role.needed_count,
-						activeCount: role.active_count
-					}))
+					d.schedules
+						.flatMap((s) => s.roles)
+						.map((role) => ({
+							neededCount: role.needed_count,
+							activeCount: role.active_count
+						}))
 				)}
 				{@const dateItem = {
 					id: d.id,
-					scheduleName: d.schedule_name,
 					date: d.date,
 					notes: d.notes,
 					locked: d.locked,
 					canceled: d.canceled,
-					roles: d.roles.map((role) => ({
-						roleId: role.role_id,
-						roleName: role.role_name,
-						neededCount: role.needed_count,
-						activeCount: role.active_count,
-						status: role.status,
-						signups: role.signups.map((s) => ({ id: s.id, name: s.name, userId: s.user_id }))
+					scheduleGroups: d.schedules.map((s) => ({
+						scheduleId: s.schedule_id,
+						scheduleName: s.schedule_name,
+						roles: s.roles.map((role) => ({
+							roleId: role.role_id,
+							roleName: role.role_name,
+							neededCount: role.needed_count,
+							activeCount: role.active_count,
+							status: role.status,
+							signups: role.signups.map((x) => ({ id: x.id, name: x.name, userId: x.user_id }))
+						}))
 					}))
 				}}
 				<div class="resp-selected">
@@ -1419,6 +1354,35 @@
 								{m.responsibilities_duplicate_next_week()}
 							</button>
 						</div>
+						{#if data.schedules.length > 0}
+							<div class="date-role-sets">
+								<p class="card-eyebrow">{m.responsibilities_role_sets_on_date()}</p>
+								{#each data.schedules as schedule (schedule.id)}
+									{@const attached = d.schedules.some((s) => s.schedule_id === schedule.id)}
+									<form
+										method="POST"
+										action={attached
+											? '?/detachResponsibilityDateSchedule'
+											: '?/attachResponsibilityDateSchedule'}
+										use:enhance
+									>
+										<input type="hidden" name="dateId" value={d.id} />
+										<input type="hidden" name="scheduleId" value={schedule.id} />
+										<label class="checkline">
+											<input
+												type="checkbox"
+												checked={attached}
+												onchange={(e) => e.currentTarget.form?.requestSubmit()}
+											/>
+											<span>{schedule.name}</span>
+										</label>
+									</form>
+								{/each}
+								{#if form?.form === 'dateRoleSets' && form?.error}
+									<p class="error">{form.error}</p>
+								{/if}
+							</div>
+						{/if}
 					{/if}
 					</ResponsibilityDateCard>
 				</div>
@@ -1435,12 +1399,20 @@
 					use:enhance={withSubmitting((v) => (addingDate = v))}
 				>
 					{#if data.schedules.length > 1}
-						<label class="field">
-							<span>{m.responsibilities_singular()}</span>
-							<select name="scheduleId" bind:value={addDateScheduleId}>
-								{#each data.schedules as s (s.id)}<option value={s.id}>{s.name}</option>{/each}
-							</select>
-						</label>
+						<div class="field">
+							<span>{m.responsibilities_pick_role_sets()}</span>
+							{#each data.schedules as s (s.id)}
+								<label class="checkline">
+									<input
+										type="checkbox"
+										name="scheduleId"
+										value={s.id}
+										bind:group={addDateScheduleIds}
+									/>
+									<span>{s.name}</span>
+								</label>
+							{/each}
+						</div>
 					{:else}
 						<input type="hidden" name="scheduleId" value={data.schedules[0].id} />
 					{/if}
@@ -1453,6 +1425,89 @@
 						{addingDate ? m.groups_adding() : m.groups_add_date()}
 					</button>
 				</form>
+			</section>
+		{/if}
+
+		{#if mode === 'admin' && data.schedules.length > 0}
+			<!-- Role-set editor lives at the bottom of the tab: it's an
+			     admin-planning surface, below the upcoming dates members
+			     actually act on. -->
+			<section class="card">
+				<p class="card-eyebrow">{m.responsibilities_templates_heading()}</p>
+				{#each data.schedules as schedule (schedule.id)}
+					<div class="responsibility-template">
+						{#if editingScheduleId === schedule.id}
+							<form method="POST" action="?/updateResponsibilitySchedule" use:enhance class="inline-edit-row">
+								<input type="hidden" name="scheduleId" value={schedule.id} />
+								<input name="name" value={schedule.name} required />
+								<button type="submit" class="btn btn-outline">{m.action_save()}</button>
+							</form>
+
+							{#each schedule.roles as role (role.id)}
+								<form method="POST" action="?/updateResponsibilityRole" use:enhance class="inline-edit-row">
+									<input type="hidden" name="roleId" value={role.id} />
+									<input name="name" value={role.name} placeholder={m.groups_role()} required />
+									<input name="neededCount" type="number" min="1" value={role.needed_count} />
+									<button type="submit" class="btn btn-outline">{m.action_save()}</button>
+									<button type="submit" formaction="?/deleteResponsibilityRole" class="text-link text-link--danger">
+										{m.groups_remove()}
+									</button>
+								</form>
+							{/each}
+							<form method="POST" action="?/addResponsibilityRole" use:enhance class="inline-edit-row">
+								<input type="hidden" name="scheduleId" value={schedule.id} />
+								<input name="name" placeholder={m.groups_new_role()} />
+								<input name="neededCount" type="number" min="1" value="1" />
+								<button type="submit" class="btn btn-outline">{m.groups_add_role()}</button>
+							</form>
+
+							{#if form?.form === 'editSchedule' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+
+							<div class="btn-row">
+								<button type="button" class="text-link" onclick={() => (editingScheduleId = null)}>
+									{m.responsibilities_done()}
+								</button>
+								<ConfirmButton>
+									{#snippet trigger(start)}
+										<button type="button" class="text-link text-link--danger" onclick={start}>
+											{m.groups_delete_responsibility()}
+										</button>
+									{/snippet}
+									{#snippet confirm(cancel)}
+										<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
+										<div class="btn-row">
+											<button type="button" class="btn btn-outline" onclick={cancel}>
+												{m.action_cancel()}
+											</button>
+											<form method="POST" action="?/deleteResponsibilitySchedule" use:enhance>
+												<input type="hidden" name="scheduleId" value={schedule.id} />
+												<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
+											</form>
+										</div>
+									{/snippet}
+								</ConfirmButton>
+							</div>
+						{:else}
+							<div class="template-summary">
+								<div>
+									<p class="card-title">{schedule.name}</p>
+									<div class="resp-chips">
+										{#each schedule.roles as role (role.id)}
+											<span class="resp-chip">{role.name} ×{role.needed_count}</span>
+										{:else}
+											<span class="resp-chip resp-chip--empty">{m.responsibilities_no_roles()}</span>
+										{/each}
+									</div>
+								</div>
+								<button type="button" class="text-link" onclick={() => (editingScheduleId = schedule.id)}>
+									{m.drawer_edit()}
+								</button>
+							</div>
+						{/if}
+					</div>
+				{/each}
 			</section>
 		{/if}
 	{:else if mode === 'admin'}
@@ -1889,6 +1944,17 @@
 		gap: 0.5rem;
 	}
 
+	.role-row input {
+		font: inherit;
+		font-size: 0.875rem;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-md);
+		padding: 0.5rem 0.6rem;
+		min-width: 0;
+	}
+
 	.role-row input[name='roleName'] {
 		flex: 1 1 auto;
 	}
@@ -1901,6 +1967,24 @@
 	   ResponsibilityDateCard.svelte, which renders that wrapper. */
 
 	/* ---------- Responsibilities tab ---------- */
+
+	/* Role-set pickers (add-date + quick-add forms) reuse the global
+	   `.checkline` row inside a normal `.field`; this only keeps
+	   `.field input`'s text-input chrome off the checkboxes themselves. */
+	.field .checkline input {
+		border: none;
+		padding: 0;
+		background: none;
+	}
+
+	.date-role-sets {
+		border-top: 1px solid var(--border);
+		margin-top: 0.75rem;
+		padding-top: 0.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
 
 	.resp-head {
 		display: flex;

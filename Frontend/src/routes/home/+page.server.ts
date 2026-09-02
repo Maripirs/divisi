@@ -67,7 +67,7 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 	// or canceled date is never relevant either way. Earliest-first, same
 	// convention as homework above (the Backend already orders each
 	// group's own list that way). `ResponsibilityDateOut` carries no
-	// `group_id` of its own (only `schedule_id`/`schedule_name`), so the
+	// `group_id` of its own (a date can span several role sets), so the
 	// group is attached here from which per-group fetch produced it, not
 	// looked up afterward.
 	const now = new Date();
@@ -76,17 +76,26 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 		.filter((d) => !d.canceled && new Date(d.date) >= now)
 		.map((d) => ({
 			...d,
+			// Flat role list across every role set on the date — Home only
+			// needs "am I in it" / "does anything still need people".
+			roleSetNames: d.schedules.map((s) => s.schedule_name).join(', '),
 			// Why this date is relevant enough to surface at all — shown on
 			// Home so the reason isn't a mystery, and used there to decide
 			// whether the row is dismissible (a personal commitment isn't;
 			// an open call for volunteers is). Enrolled wins when both are
 			// true — "you're already covering this" matters more to the
 			// member than "it also still needs others".
-			reason: d.roles.some((r) => r.signups.some((s) => s.user_id === userId))
+			reason: d.schedules
+				.flatMap((s) => s.roles)
+				.some((r) => r.signups.some((s) => s.user_id === userId))
 				? ('enrolled' as const)
 				: ('needs_volunteers' as const)
 		}))
-		.filter((d) => d.reason === 'enrolled' || d.roles.some((r) => r.status === 'underfilled'))
+		.filter(
+			(d) =>
+				d.reason === 'enrolled' ||
+				d.schedules.flatMap((s) => s.roles).some((r) => r.status === 'underfilled')
+		)
 		.sort((a, b) => a.date.localeCompare(b.date))
 		// Capped to the soonest few — an admin planning ahead (dates months
 		// out) shouldn't turn this into a second homework list.

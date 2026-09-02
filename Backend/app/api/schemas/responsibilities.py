@@ -47,8 +47,13 @@ class ResponsibilityScheduleOut(BaseModel):
 
 
 class ResponsibilityDateCreate(BaseModel):
+    """A date is created against a group and attached to one or more role
+    sets at once. `schedule_ids` must be non-empty (enforced in the route)
+    and every id must name a role set in the same group."""
+
     date: datetime
     notes: str = ""
+    schedule_ids: list[str]
 
 
 class ResponsibilityDateUpdate(BaseModel):
@@ -93,15 +98,27 @@ class ResponsibilityRoleCoverageOut(BaseModel):
     signups: list[ResponsibilitySignupOut]
 
 
-class ResponsibilityDateOut(BaseModel):
-    id: str
+class ResponsibilityDateScheduleGroupOut(BaseModel):
+    """One role set's slice of a date: its roles with full per-role coverage
+    (including who's signed up), as seen by a member/admin. A date returns
+    one of these per attached role set, in attach order."""
+
     schedule_id: str
     schedule_name: str
+    roles: list[ResponsibilityRoleCoverageOut]
+
+
+class ResponsibilityDateOut(BaseModel):
+    id: str
     date: datetime
     notes: str
     locked: bool
     canceled: bool
-    roles: list[ResponsibilityRoleCoverageOut]
+    schedules: list[ResponsibilityDateScheduleGroupOut]
+
+
+class ResponsibilityDateScheduleAttach(BaseModel):
+    schedule_id: str
 
 
 class ResponsibilityGuestRoleCoverageOut(BaseModel):
@@ -115,11 +132,19 @@ class ResponsibilityGuestRoleCoverageOut(BaseModel):
     status: str
 
 
+class ResponsibilityGuestScheduleGroupOut(BaseModel):
+    """Guest-facing counterpart of `ResponsibilityDateScheduleGroupOut`: a
+    role set's name plus its per-role coverage numbers only, never who
+    signed up."""
+
+    schedule_name: str
+    roles: list[ResponsibilityGuestRoleCoverageOut]
+
+
 class ResponsibilityGuestDateOut(BaseModel):
     id: str
-    schedule_name: str
     date: datetime
     notes: str
     locked: bool
     canceled: bool
-    roles: list[ResponsibilityGuestRoleCoverageOut]
+    schedules: list[ResponsibilityGuestScheduleGroupOut]

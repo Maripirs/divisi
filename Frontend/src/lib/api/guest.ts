@@ -50,14 +50,20 @@ export interface GuestResponsibilityRoleCoverage {
 	status: string;
 }
 
+/** One role set attached to a guest-visible date. No `schedule_id` in the
+ * guest DTO (the guest never acts on a role set), just its name + roles. */
+export interface GuestResponsibilityDateScheduleGroup {
+	scheduleName: string;
+	roles: GuestResponsibilityRoleCoverage[];
+}
+
 export interface GuestResponsibilityDate {
 	id: string;
-	scheduleName: string;
 	date: string;
 	notes: string;
 	locked: boolean;
 	canceled: boolean;
-	roles: GuestResponsibilityRoleCoverage[];
+	schedules: GuestResponsibilityDateScheduleGroup[];
 }
 
 /** Mirrors the Backend's `WeeklyNoteOut`, as seen via the guest
@@ -132,14 +138,18 @@ interface GuestResponsibilityRoleCoverageResponse {
 	status: string;
 }
 
+interface GuestResponsibilityDateScheduleGroupResponse {
+	schedule_name: string;
+	roles: GuestResponsibilityRoleCoverageResponse[];
+}
+
 interface GuestResponsibilityDateResponse {
 	id: string;
-	schedule_name: string;
 	date: string;
 	notes: string;
 	locked: boolean;
 	canceled: boolean;
-	roles: GuestResponsibilityRoleCoverageResponse[];
+	schedules: GuestResponsibilityDateScheduleGroupResponse[];
 }
 
 interface GuestWeeklyNoteResponse {
@@ -240,17 +250,19 @@ export async function listGuestResponsibilityDates(
 	const body: GuestResponsibilityDateResponse[] = await res.json();
 	return body.map((d) => ({
 		id: d.id,
-		scheduleName: d.schedule_name,
 		date: d.date,
 		notes: d.notes,
 		locked: d.locked,
 		canceled: d.canceled,
-		roles: d.roles.map((r) => ({
-			roleId: r.role_id,
-			roleName: r.role_name,
-			neededCount: r.needed_count,
-			activeCount: r.active_count,
-			status: r.status
+		schedules: d.schedules.map((s) => ({
+			scheduleName: s.schedule_name,
+			roles: s.roles.map((r) => ({
+				roleId: r.role_id,
+				roleName: r.role_name,
+				neededCount: r.needed_count,
+				activeCount: r.active_count,
+				status: r.status
+			}))
 		}))
 	}));
 }

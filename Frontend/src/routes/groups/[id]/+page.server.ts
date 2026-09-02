@@ -655,21 +655,51 @@ export const actions: Actions = {
 		);
 	},
 
-	// B13, admin-only: one concrete occurrence of a schedule.
-	addResponsibilityDate: async ({ request, locals, fetch }) => {
+	// B13, admin-only: one concrete occurrence, attached to one or more role
+	// sets. The role-set checkboxes arrive as repeated `scheduleId` fields.
+	addResponsibilityDate: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
-		const scheduleId = String(form.get('scheduleId') ?? '');
+		const scheduleIds = form.getAll('scheduleId').map(String).filter(Boolean);
 		const dateInput = String(form.get('date') ?? '');
 		const notes = String(form.get('notes') ?? '').trim();
-		if (!scheduleId || !dateInput) return fail(400, { error: m.groups_choose_schedule_date(), form: 'addDate' });
+		if (scheduleIds.length === 0 || !dateInput) return fail(400, { error: m.groups_choose_schedule_date(), form: 'addDate' });
 
 		return runAction('addDate', () =>
 			backendFetch(
 				locals.token,
-				`/responsibilities/schedules/${scheduleId}/dates`,
-				{ method: 'POST', body: JSON.stringify({ date: new Date(dateInput).toISOString(), notes }) },
+				`/groups/${params.id}/responsibilities/dates`,
+				{ method: 'POST', body: JSON.stringify({ date: new Date(dateInput).toISOString(), notes, schedule_ids: scheduleIds }) },
 				fetch
 			)
+		);
+	},
+
+	// B13 (multi-role-set dates), admin-only: attach/detach a role set on an
+	// existing date. Both only need the two ids from the form.
+	attachResponsibilityDateSchedule: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const dateId = RESPONSIBILITY_DATE_ID(form);
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		if (!dateId || !scheduleId) return fail(400, { error: m.groups_missing_date_or_role(), form: 'dateRoleSets' });
+
+		return runAction('dateRoleSets', () =>
+			backendFetch(
+				locals.token,
+				`/responsibilities/dates/${dateId}/schedules`,
+				{ method: 'POST', body: JSON.stringify({ schedule_id: scheduleId }) },
+				fetch
+			)
+		);
+	},
+
+	detachResponsibilityDateSchedule: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const dateId = RESPONSIBILITY_DATE_ID(form);
+		const scheduleId = String(form.get('scheduleId') ?? '');
+		if (!dateId || !scheduleId) return fail(400, { error: m.groups_missing_date_or_role(), form: 'dateRoleSets' });
+
+		return runAction('dateRoleSets', () =>
+			backendFetch(locals.token, `/responsibilities/dates/${dateId}/schedules/${scheduleId}`, { method: 'DELETE' }, fetch)
 		);
 	},
 

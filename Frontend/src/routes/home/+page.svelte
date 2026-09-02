@@ -131,7 +131,7 @@
 				<div class="resp-row">
 					<a class="resp-link" href={lh(`/groups/${r.groupId}?tab=responsibilities`)}>
 						<span class="resp-info">
-							<span>{r.schedule_name} · {r.groupName}</span>
+							<span>{r.roleSetNames} · {r.groupName}</span>
 							<!-- The reason this showed up at all — see
 							     +page.server.ts's `reason` for why. -->
 							<span class="resp-reason" class:resp-reason--enrolled={r.reason === 'enrolled'}>

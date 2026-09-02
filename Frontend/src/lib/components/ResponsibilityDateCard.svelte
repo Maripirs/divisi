@@ -6,8 +6,9 @@
 
 	/** A1: one responsibility-date card, shared between the member group
 	 * page and the guest join page. Both render the same
-	 * date (+ canceled/locked) eyebrow, schedule-name title, optional
-	 * notes, and one coverage row per role.
+	 * date (+ canceled/locked) eyebrow and optional notes once at the top,
+	 * then for each attached role set its name as a heading followed by one
+	 * coverage row per role.
 	 *
 	 * The coverage indicator is standardized on the `badge--{status}` chip
 	 * both sides (the guest page previously used a plain dimmed label);
@@ -46,32 +47,47 @@
 		<p class="card-eyebrow">
 			{formatDateTime(item.date)}{#if item.canceled} · {m.responsibilities_canceled()}{:else if item.locked} · {m.responsibilities_locked()}{/if}
 		</p>
-		<p class="card-title">{item.scheduleName}</p>
 		{#if item.notes}
 			<p class="card-note">{item.notes}</p>
 		{/if}
 	{/if}
 
-	{#each item.roles as role (role.roleId)}
-		<div class="responsibility-role">
-			<div class="list-row">
-				<span>{role.roleName} · {role.activeCount}/{role.neededCount}</span>
-				<span class="badge badge--{role.status}">{coverageLabel(role.status)}</span>
+	{#each item.scheduleGroups as group (group.scheduleId)}
+		<p class="card-title schedule-group-heading">{group.scheduleName}</p>
+		{#each group.roles as role (role.roleId)}
+			<div class="responsibility-role">
+				<div class="list-row">
+					<span>{role.roleName} · {role.activeCount}/{role.neededCount}</span>
+					<span class="badge badge--{role.status}">{coverageLabel(role.status)}</span>
+				</div>
+				{@render roleExtra?.(role)}
 			</div>
-			{@render roleExtra?.(role)}
-		</div>
+		{/each}
 	{/each}
 
 	{@render children?.()}
 </section>
 
 <style>
+	.schedule-group-heading {
+		margin-top: 0.75rem;
+	}
+
+	.schedule-group-heading:first-of-type {
+		margin-top: 0;
+	}
+
 	.responsibility-role {
 		border-top: 1px solid var(--border);
 		padding-top: 0.5rem;
 	}
 
 	.responsibility-role:first-of-type {
+		border-top: none;
+		padding-top: 0;
+	}
+
+	.schedule-group-heading + .responsibility-role {
 		border-top: none;
 		padding-top: 0;
 	}

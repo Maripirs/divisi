@@ -441,20 +441,46 @@ class ResponsibilityRole(Base):
 
 
 class ResponsibilityDate(Base):
-    """One occurrence under a schedule. `locked` blocks member self-signup/
-    self-removal (admins bypass it either way); `canceled` marks a date
-    inactive without deleting its signup history."""
+    """One calendar date on a group's Responsibilities page. Belongs to one
+    or more schedules (shown in the UI as "role sets") via
+    `ResponsibilityDateSchedule`, so a single date can carry several role
+    sets at once, with coverage rolled up across all of them. `locked`
+    blocks member self-signup/self-removal (admins bypass it either way);
+    `canceled` marks a date inactive without deleting its signup history."""
 
     __tablename__ = "responsibility_dates"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    schedule_id: Mapped[str] = mapped_column(
-        String, ForeignKey("responsibility_schedules.id"), nullable=False
-    )
     date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     notes: Mapped[str] = mapped_column(String, nullable=False, default="")
     locked: Mapped[bool] = mapped_column(default=False, server_default="false")
     canceled: Mapped[bool] = mapped_column(default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ResponsibilityDateSchedule(Base):
+    """Join row binding one `ResponsibilityDate` to one
+    `ResponsibilitySchedule` (a "role set" in the UI). A date carries one
+    row per role set attached to it, and its coverage view is rolled up
+    across every attached role set's roles. `created_at` drives the display
+    order of the role-set groups shown under a date. No DB-level cascade
+    (same as the rest of this codebase), so detaching a role set, or
+    deleting a date/schedule, cleans these rows up by hand in the routes.
+    The unique constraint keeps the same role set from being attached to a
+    date twice."""
+
+    __tablename__ = "responsibility_date_schedules"
+    __table_args__ = (
+        UniqueConstraint("date_id", "schedule_id", name="uq_responsibility_date_schedule"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    date_id: Mapped[str] = mapped_column(
+        String, ForeignKey("responsibility_dates.id"), nullable=False
+    )
+    schedule_id: Mapped[str] = mapped_column(
+        String, ForeignKey("responsibility_schedules.id"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

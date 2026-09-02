@@ -25,10 +25,15 @@ def _make_schedule(client, admin_headers, group_id, roles=None, name="Sunday Ser
     ).json()
 
 
-def _make_date(client, admin_headers, schedule_id, date="2026-09-06T10:00:00Z", notes=""):
+def _make_date(client, admin_headers, schedule, date="2026-09-06T10:00:00Z", notes="", schedule_ids=None):
+    """`schedule` is a schedule dict (as returned by `_make_schedule`); its
+    `group_id` and `id` drive the new group-scoped, many-role-set create
+    route. Pass `schedule_ids` explicitly to attach several role sets."""
+    group_id = schedule["group_id"]
+    ids = schedule_ids if schedule_ids is not None else [schedule["id"]]
     return client.post(
-        "/responsibilities/schedules/" + schedule_id + "/dates",
-        json={"date": date, "notes": notes},
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": date, "notes": notes, "schedule_ids": ids},
         headers=admin_headers,
     ).json()
 
@@ -59,8 +64,8 @@ def test_member_cannot_create_schedule_or_date(client):
 
     schedule = _make_schedule(client, admin_headers, group_id)
     forbidden_date = client.post(
-        "/responsibilities/schedules/" + schedule["id"] + "/dates",
-        json={"date": "2026-09-06T10:00:00Z"},
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [schedule["id"]]},
         headers=member_headers,
     )
     assert forbidden_date.status_code == 403
@@ -106,7 +111,7 @@ def test_member_self_signup_and_remove(client):
     group_id = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group_id, "resp-member5@example.com")
     schedule = _make_schedule(client, admin_headers, group_id)
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
 
     signup = client.post(
@@ -118,7 +123,7 @@ def test_member_self_signup_and_remove(client):
     signup_id = signup.json()["id"]
 
     listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=member_headers).json()
-    role_out = listing[0]["roles"][0]
+    role_out = listing[0]["schedules"][0]["roles"][0]
     assert role_out["active_count"] == 1
     assert role_out["status"] == "covered"
     assert [s["email"] for s in role_out["signups"]] == ["resp-member5@example.com"]
@@ -127,8 +132,8 @@ def test_member_self_signup_and_remove(client):
     assert remove.status_code == 204
 
     listing_after = client.get("/groups/" + group_id + "/responsibilities/dates", headers=member_headers).json()
-    assert listing_after[0]["roles"][0]["active_count"] == 0
-    assert listing_after[0]["roles"][0]["status"] == "underfilled"
+    assert listing_after[0]["schedules"][0]["roles"][0]["active_count"] == 0
+    assert listing_after[0]["schedules"][0]["roles"][0]["status"] == "underfilled"
 
 
 def test_member_cannot_remove_someone_elses_signup(client):
@@ -139,7 +144,7 @@ def test_member_cannot_remove_someone_elses_signup(client):
     _add_member(client, admin_headers, group_id, "resp-a6@example.com")
     _add_member(client, admin_headers, group_id, "resp-b6@example.com")
     schedule = _make_schedule(client, admin_headers, group_id)
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
 
     signup = client.post(
@@ -156,7 +161,7 @@ def test_locked_date_blocks_member_signup_and_removal_but_not_admin(client):
     group_id = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group_id, "resp-member7@example.com")
     schedule = _make_schedule(client, admin_headers, group_id)
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
 
     signup = client.post(
@@ -205,7 +210,7 @@ def test_admin_can_assign_and_remove_any_members_signup(client):
     member_user_id = next(m["user_id"] for m in member_id if m["email"] == "resp-member8@example.com")
 
     schedule = _make_schedule(client, admin_headers, group_id)
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
 
     assign = client.post(
@@ -230,12 +235,12 @@ def test_coverage_status_underfilled_covered_overfilled(client):
     group_id = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group_id, "resp-member9@example.com")
     schedule = _make_schedule(client, admin_headers, group_id, roles=[{"name": "Lector", "needed_count": 1}])
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
 
     def status():
         listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
-        return listing[0]["roles"][0]["status"]
+        return listing[0]["schedules"][0]["roles"][0]["status"]
 
     assert status() == "underfilled"
 
@@ -257,16 +262,16 @@ def test_guest_sees_coverage_but_not_signup_names(client):
         headers=admin_headers,
     )
     schedule = _make_schedule(client, admin_headers, group["id"])
-    date = _make_date(client, admin_headers, schedule["id"])
+    date = _make_date(client, admin_headers, schedule)
     role_id = schedule["roles"][0]["id"]
     client.post("/responsibilities/dates/" + date["id"] + "/signups", json={"role_id": role_id}, headers=member_headers)
 
     response = client.get(f"/guest/{group['join_code']}/responsibilities/dates")
     assert response.status_code == 200
     body = response.json()
-    assert body[0]["roles"][0]["active_count"] == 1
-    assert body[0]["roles"][0]["status"] == "covered"
-    assert "signups" not in body[0]["roles"][0]
+    assert body[0]["schedules"][0]["roles"][0]["active_count"] == 1
+    assert body[0]["schedules"][0]["roles"][0]["status"] == "covered"
+    assert "signups" not in body[0]["schedules"][0]["roles"][0]
 
 
 def test_guest_responsibilities_hidden_by_default(client):
@@ -281,3 +286,192 @@ def test_guest_responsibilities_hidden_by_default(client):
 def test_guest_responsibilities_unknown_join_code_404s(client):
     response = client.get("/guest/NOTAREAL/responsibilities/dates")
     assert response.status_code == 404
+
+
+def test_date_with_two_role_sets_rolls_up_per_group(client):
+    admin_headers = _register_and_login(client, "resp-two1@example.com")
+    member_headers = _register_and_login(client, "resp-two1m@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "resp-two1m@example.com")
+    sched_a = _make_schedule(
+        client, admin_headers, group_id, name="Music", roles=[{"name": "Cantor", "needed_count": 1}]
+    )
+    sched_b = _make_schedule(
+        client, admin_headers, group_id, name="Hospitality", roles=[{"name": "Usher", "needed_count": 2}]
+    )
+
+    date = client.post(
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [sched_a["id"], sched_b["id"]]},
+        headers=admin_headers,
+    ).json()
+    assert len(date["schedules"]) == 2
+    by_name = {g["schedule_name"]: g for g in date["schedules"]}
+    assert [r["role_name"] for r in by_name["Music"]["roles"]] == ["Cantor"]
+    assert [r["role_name"] for r in by_name["Hospitality"]["roles"]] == ["Usher"]
+
+    cantor_id = by_name["Music"]["roles"][0]["role_id"]
+    usher_id = by_name["Hospitality"]["roles"][0]["role_id"]
+    assert (
+        client.post(
+            "/responsibilities/dates/" + date["id"] + "/signups",
+            json={"role_id": cantor_id},
+            headers=member_headers,
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/responsibilities/dates/" + date["id"] + "/signups",
+            json={"role_id": usher_id},
+            headers=admin_headers,
+        ).status_code
+        == 201
+    )
+
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    assert len(listing) == 1  # the date appears once despite two role sets
+    groups_out = {g["schedule_name"]: g for g in listing[0]["schedules"]}
+    assert groups_out["Music"]["roles"][0]["active_count"] == 1
+    assert groups_out["Music"]["roles"][0]["status"] == "covered"
+    assert groups_out["Hospitality"]["roles"][0]["active_count"] == 1
+    assert groups_out["Hospitality"]["roles"][0]["status"] == "underfilled"  # needs 2
+
+
+def test_create_date_rejects_empty_and_foreign_role_sets(client):
+    admin_headers = _register_and_login(client, "resp-cd1@example.com")
+    group_id = _make_group(client, admin_headers)
+    other_group_id = _make_group(client, admin_headers, name="Other")
+    sched = _make_schedule(client, admin_headers, group_id)
+    foreign = _make_schedule(client, admin_headers, other_group_id, name="Foreign")
+
+    empty = client.post(
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": []},
+        headers=admin_headers,
+    )
+    assert empty.status_code == 400
+
+    cross = client.post(
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [sched["id"], foreign["id"]]},
+        headers=admin_headers,
+    )
+    assert cross.status_code == 404
+
+
+def test_attach_and_detach_role_sets_on_date(client):
+    admin_headers = _register_and_login(client, "resp-att1@example.com")
+    member_headers = _register_and_login(client, "resp-att1m@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "resp-att1m@example.com")
+    sched_a = _make_schedule(client, admin_headers, group_id, name="A", roles=[{"name": "RoleA", "needed_count": 1}])
+    sched_b = _make_schedule(client, admin_headers, group_id, name="B", roles=[{"name": "RoleB", "needed_count": 1}])
+    sched_c = _make_schedule(client, admin_headers, group_id, name="C", roles=[{"name": "RoleC", "needed_count": 1}])
+
+    date = client.post(
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [sched_a["id"], sched_b["id"]]},
+        headers=admin_headers,
+    ).json()
+
+    attached = client.post(
+        "/responsibilities/dates/" + date["id"] + "/schedules",
+        json={"schedule_id": sched_c["id"]},
+        headers=admin_headers,
+    )
+    assert attached.status_code == 200
+    assert {g["schedule_name"] for g in attached.json()["schedules"]} == {"A", "B", "C"}
+
+    dup = client.post(
+        "/responsibilities/dates/" + date["id"] + "/schedules",
+        json={"schedule_id": sched_c["id"]},
+        headers=admin_headers,
+    )
+    assert dup.status_code == 409
+
+    role_a = sched_a["roles"][0]["id"]
+    role_b = sched_b["roles"][0]["id"]
+    client.post("/responsibilities/dates/" + date["id"] + "/signups", json={"role_id": role_a}, headers=member_headers)
+    client.post("/responsibilities/dates/" + date["id"] + "/signups", json={"role_id": role_b}, headers=member_headers)
+
+    detached = client.delete(
+        "/responsibilities/dates/" + date["id"] + "/schedules/" + sched_a["id"], headers=admin_headers
+    )
+    assert detached.status_code == 204
+
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    groups_out = {g["schedule_name"]: g for g in listing[0]["schedules"]}
+    assert "A" not in groups_out
+    assert groups_out["B"]["roles"][0]["active_count"] == 1  # B's signup untouched
+
+    # re-attaching A brings it back with no signups (A's were deleted on detach)
+    reattached = client.post(
+        "/responsibilities/dates/" + date["id"] + "/schedules",
+        json={"schedule_id": sched_a["id"]},
+        headers=admin_headers,
+    ).json()
+    a_group = {g["schedule_name"]: g for g in reattached["schedules"]}["A"]
+    assert a_group["roles"][0]["active_count"] == 0
+
+    # detaching down to the last remaining role set is a 409
+    client.delete("/responsibilities/dates/" + date["id"] + "/schedules/" + sched_a["id"], headers=admin_headers)
+    client.delete("/responsibilities/dates/" + date["id"] + "/schedules/" + sched_b["id"], headers=admin_headers)
+    last = client.delete(
+        "/responsibilities/dates/" + date["id"] + "/schedules/" + sched_c["id"], headers=admin_headers
+    )
+    assert last.status_code == 409
+
+
+def test_delete_role_set_keeps_shared_date(client):
+    admin_headers = _register_and_login(client, "resp-del1@example.com")
+    member_headers = _register_and_login(client, "resp-del1m@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "resp-del1m@example.com")
+    sched_a = _make_schedule(client, admin_headers, group_id, name="A", roles=[{"name": "RoleA", "needed_count": 1}])
+    sched_b = _make_schedule(client, admin_headers, group_id, name="B", roles=[{"name": "RoleB", "needed_count": 1}])
+    date = client.post(
+        "/groups/" + group_id + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [sched_a["id"], sched_b["id"]]},
+        headers=admin_headers,
+    ).json()
+    client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": sched_b["roles"][0]["id"]},
+        headers=member_headers,
+    )
+
+    assert client.delete("/responsibilities/schedules/" + sched_a["id"], headers=admin_headers).status_code == 204
+
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    assert len(listing) == 1  # the shared date survives
+    assert [g["schedule_name"] for g in listing[0]["schedules"]] == ["B"]
+    assert listing[0]["schedules"][0]["roles"][0]["active_count"] == 1  # B's signup intact
+
+
+def test_delete_only_role_set_removes_the_date(client):
+    admin_headers = _register_and_login(client, "resp-del2@example.com")
+    group_id = _make_group(client, admin_headers)
+    sched = _make_schedule(client, admin_headers, group_id, name="Solo")
+    _make_date(client, admin_headers, sched)
+
+    assert client.delete("/responsibilities/schedules/" + sched["id"], headers=admin_headers).status_code == 204
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    assert listing == []
+
+
+def test_signup_with_role_from_unattached_role_set_404s(client):
+    admin_headers = _register_and_login(client, "resp-un1@example.com")
+    member_headers = _register_and_login(client, "resp-un1m@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "resp-un1m@example.com")
+    sched_a = _make_schedule(client, admin_headers, group_id, name="A", roles=[{"name": "RoleA", "needed_count": 1}])
+    sched_b = _make_schedule(client, admin_headers, group_id, name="B", roles=[{"name": "RoleB", "needed_count": 1}])
+    date = _make_date(client, admin_headers, sched_a)  # only A attached
+
+    resp = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": sched_b["roles"][0]["id"]},
+        headers=member_headers,
+    )
+    assert resp.status_code == 404

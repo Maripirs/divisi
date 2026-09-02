@@ -57,4 +57,16 @@ describe('coverageTotals', () => {
 			status: 'covered'
 		});
 	});
+
+	it('rolls up across role sets when a date carries several', () => {
+		// One role set fully covered, another still short — the whole-date
+		// meter flat-maps every role set's roles and the date stays
+		// underfilled.
+		const scheduleGroups = [
+			{ scheduleId: 'a', scheduleName: 'Setup', roles: [{ neededCount: 2, activeCount: 2 }] },
+			{ scheduleId: 'b', scheduleName: 'Cleanup', roles: [{ neededCount: 3, activeCount: 1 }] }
+		];
+		const t = coverageTotals(scheduleGroups.flatMap((g) => g.roles));
+		expect(t).toMatchObject({ active: 3, needed: 5, openSlots: 2, status: 'underfilled' });
+	});
 });
