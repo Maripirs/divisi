@@ -31,6 +31,12 @@ interface RemoteResolution {
 	 * and for anyone without edit rights, so `+page.svelte` hides the entry
 	 * point. */
 	canEditMusic?: boolean;
+	/** F20: whether this caller is an `admin` of the piece's owning group —
+	 * the authority the Backend requires to create/edit/delete the group's
+	 * piece notes (B16). Members still see those notes read-only;
+	 * absent/`false` hides the authoring controls (and is always false for a
+	 * personal piece or a guest). */
+	canManagePieceNotes?: boolean;
 }
 
 /** Mirrors `edit/+page.server.ts`'s `resolveEditAccess`: personal piece →
@@ -47,6 +53,25 @@ async function resolveCanEditMusic(
 		const userId = subjectFromToken(token);
 		return userId !== null && entry.owner_id === userId;
 	}
+	try {
+		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
+		return groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
+	} catch {
+		return false;
+	}
+}
+
+/** F20: is the caller an `admin` of this piece's owning group? Same
+ * `/groups` role check as `resolveCanEditMusic`'s group branch, but
+ * independent of `has_music` — piece notes attach to any group piece.
+ * False for a personal piece; degrades to false on any Backend hiccup
+ * (it only gates showing the authoring controls). */
+async function resolveCanManagePieceNotes(
+	entry: LibraryEntryOut,
+	token: string,
+	fetchFn: typeof fetch
+): Promise<boolean> {
+	if (entry.owner_type !== 'group') return false;
 	try {
 		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
 		return groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
@@ -96,7 +121,10 @@ async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof
 			hasMusic: entry.has_music,
 			hasPdf: entry.has_pdf,
 			youtubeUrl: entry.youtube_url,
-			defaultTempoBpm: null
+			defaultTempoBpm: null,
+			// A guest resolution has no group context, and there's no guest
+			// path to piece notes anyway (the Backend requires a member).
+			groupId: null
 		},
 		unreachable: false
 	};
@@ -126,10 +154,19 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 			hasMusic: entry.has_music,
 			hasPdf: entry.has_pdf,
 			youtubeUrl: entry.youtube_url,
-			defaultTempoBpm: entry.default_tempo_bpm
+			defaultTempoBpm: entry.default_tempo_bpm,
+			groupId: entry.owner_type === 'group' ? entry.owner_id : null
 		};
-		const canEditMusic = await resolveCanEditMusic(entry, locals.token, fetch);
-		return json({ remote, unreachable: false, canEditMusic } satisfies RemoteResolution);
+		const [canEditMusic, canManagePieceNotes] = await Promise.all([
+			resolveCanEditMusic(entry, locals.token, fetch),
+			resolveCanManagePieceNotes(entry, locals.token, fetch)
+		]);
+		return json({
+			remote,
+			unreachable: false,
+			canEditMusic,
+			canManagePieceNotes
+		} satisfies RemoteResolution);
 	} catch (err) {
 		if (err instanceof BackendApiError) {
 			// `backendFetch` normalizes a genuine network failure into a

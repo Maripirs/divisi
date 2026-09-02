@@ -84,7 +84,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B13 | Responsibilities (+ regular rehearsal schedule) | ✅ Done |
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
-| B16 | Piece rehearsal notes (durable per-piece reminders) | ⏳ Planned |
+| B16 | Piece rehearsal notes (durable per-piece reminders) | ✅ Built (`f08c969`); migration `d7e3a9c1f6b4` not yet on production (unpushed with the rest of `main`) — frontend is `Frontend/plan.md`'s F20 |
 
 ### B1 — Backend scaffold [x]
 
@@ -408,7 +408,16 @@ fast-follow (see Backlog), deliberately not built this pass.
 **Tasks — Human:**
 - [ ] Deploy this to production — push to `backend/deploy`, and run the new migration against the real Neon Postgres DB. Nothing in the Frontend's F11 can actually save/load until this happens.
 
-### B16 — Piece rehearsal notes (durable per-piece reminders) [ ]
+### B16 — Piece rehearsal notes (durable per-piece reminders) [x]
+
+**Built 2026-09-01 (`f08c969`), 14 tests, full suite green (174).** Both
+build-time decisions below went as written: list gated on
+`GroupPage.weekly_notes`, `part_scope` free-text. Migration `d7e3a9c1f6b4`
+(`down_revision = c1f7a4d2e8b6`); during the `feat/generate-track-from-pdf`
+merge the OMR migration `d2f8a6c4e1b9` was rebased to chain *after* it, so
+the chain is linear with a single head. Not on production — reaches prod
+only when `main` is pushed (Render then runs it). Frontend counterpart:
+`Frontend/plan.md`'s **F20** (piece-page Rehearsal Notes panel).
 
 Scoped down from the Codex "Divisi Weekly Notes Backend Proposal"
 (`~/Documents/Codex/2026-08-30/on/outputs/divisi-weekly-notes-backend-proposal.md`).
@@ -440,45 +449,41 @@ No `source_weekly_note_id` column yet — it only earns its place once
 "promote a weekly note into a piece note" ships (Backlog).
 
 **Acceptance criteria:**
-- [ ] A group admin can create a rehearsal note against a piece that
+- [x] A group admin can create a rehearsal note against a piece that
   belongs to their group (kind, optional title, body, optional
   page_number / measure_label / part_scope)
-- [ ] Any member of the group can list a piece's rehearsal notes; a
+- [x] Any member of the group can list a piece's rehearsal notes; a
   non-member / guest cannot (403, no data leak)
-- [ ] Creating a note for a piece that isn't this group's piece is
+- [x] Creating a note for a piece that isn't this group's piece is
   rejected (400/404, not a cross-group write)
-- [ ] An admin can edit (full replace) and delete a note; a member cannot
-- [ ] Unknown group / piece / note id returns 404
-- [ ] Disabling the gating page hides the list for members but not admins
+- [x] An admin can edit (full replace) and delete a note; a member cannot
+- [x] Unknown group / piece / note id returns 404
+- [x] Disabling the gating page hides the list for members but not admins
   (same mechanism as homework)
 
 **Tasks — Claude:**
-- [ ] `PieceRehearsalNote` model + `PieceRehearsalNoteKind` enum in
-  `app/db/models.py` (after `WeeklyNote`), following the `Homework`
-  pattern — `_uuid` PK, `_now` default, nullable `created_by` with the
-  account-deletion comment. `kind` stored as plain `String` (validated by
-  the Pydantic enum at the API layer, like `GroupPageSettings.page`)
-- [ ] Alembic migration, `down_revision = 'c1f7a4d2e8b6'` (current head);
-  `op.create_table` with FKs to `groups.id` / `pieces.id` / `users.id`;
-  no `group_page_settings` seeding. Do **not** run `alembic upgrade`
-  locally against `Backend/.env` (prod Neon) — verify against a scratch
-  SQLite URL or a Neon branch
-- [ ] `app/api/schemas/piece_rehearsal_notes.py` (`...Create` / `...Update`
+- [x] `PieceRehearsalNote` model + `PieceRehearsalNoteKind` enum in
+  `app/db/models.py`, following the `Homework` pattern; `kind` stored as
+  plain `String`, validated by the Pydantic enum at the API layer
+- [x] Alembic migration `d7e3a9c1f6b4` (`down_revision = c1f7a4d2e8b6`);
+  `op.create_table` with FKs to `groups.id` / `pieces.id` / `users.id`, no
+  `group_page_settings` seeding
+- [x] `app/api/schemas/piece_rehearsal_notes.py` (`...Create` / `...Update`
   full-replace / `...Out`), re-exported from `schemas/__init__.py`
-- [ ] `app/api/routes/piece_rehearsal_notes.py`, two-prefix router cloned
-  from `weekly_notes.py` / `homework.py`:
+- [x] `app/api/routes/piece_rehearsal_notes.py`, two-prefix router:
   `POST/GET /groups/{group_id}/pieces/{piece_id}/rehearsal-notes`,
-  `PUT/DELETE /piece-rehearsal-notes/{note_id}`. Reuse `get_group_or_404`,
+  `PUT/DELETE /piece-rehearsal-notes/{note_id}`. Reuses `get_group_or_404`,
   `require_admin`, `require_member`, `get_piece_or_404`, `get_or_404`,
-  `require_member_page_access(..., GroupPage.weekly_notes, ...)`. Register
-  in `app/main.py`
-- [ ] `tests/test_piece_rehearsal_notes.py` — reuse `_upload_piece(...,
-  owner_type="group", group_id=...)` from `test_piece_markup.py`; cover
-  every acceptance criterion above
+  `require_member_page_access(..., GroupPage.weekly_notes, ...)`; a private
+  `_require_group_piece()` factors the group + piece + piece-in-group
+  check. Registered in `app/main.py`
+- [x] `tests/test_piece_rehearsal_notes.py` — 14 tests covering every
+  acceptance criterion above
 
 **Tasks — Human:**
-- [ ] Deploy: push to `backend/deploy`, run the new migration against the
-  real Neon Postgres DB
+- [ ] Deploy: push `main` (Render then runs migration `d7e3a9c1f6b4`).
+  Nothing in Frontend F20 can load until this lands or B16 is run against a
+  local Backend.
 
 ## Backlog
 

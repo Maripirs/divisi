@@ -5,6 +5,7 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import FileSlot from '$lib/components/FileSlot.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import EditableCard from '$lib/components/EditableCard.svelte';
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
 	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
@@ -119,6 +120,9 @@
 	// inline edit form — one panel for the whole track, same
 	// click-to-reveal pattern as the Members tab's title editor below.
 	let editingDetailsPieceId = $state<string | null>(null);
+	// F20: which track cards have their "Piece Notes" disclosure open, so the
+	// notes panel (and its list fetch) only mounts once a card is expanded.
+	let notesExpanded = $state<Record<string, boolean>>({});
 	let titleEditDraft = $state('');
 	let composerEditDraft = $state('');
 	let youtubeEditDraft = $state('');
@@ -489,6 +493,7 @@
 						? lh(`/piece/${track.piece_id}${tempoQuery}`)
 						: null}
 				<section class="card track-card" id={`track-${track.piece_id}`}>
+					<div class="track-card-row">
 					<div class="track-info">
 						{#if mode === 'admin' && editingDetailsPieceId === track.piece_id}
 							<form
@@ -775,6 +780,25 @@
 							</svg>
 						</a>
 					{/if}
+					</div>
+					<!-- F20: expand a track to read/manage this piece's notes without
+					     opening the player. -->
+					<details class="track-notes" bind:open={notesExpanded[track.piece_id]}>
+						<summary>
+							<svg class="track-notes-chevron" viewBox="0 0 24 24" aria-hidden="true"
+								><path d="M6 9l6 6 6-6" /></svg
+							>
+							{m.piece_notes_title()}
+						</summary>
+						{#if notesExpanded[track.piece_id]}
+							<PieceNotesPanel
+								pieceId={track.piece_id}
+								groupId={data.group.id}
+								canManage={mode === 'admin'}
+								chrome="bare"
+							/>
+						{/if}
+					</details>
 				</section>
 			{/each}
 		{/if}
@@ -1886,14 +1910,66 @@
 		color: var(--text);
 	}
 
-	/* Base `.track-card` layout + `.track-info` + `.piece-action*` now live
-	   in shell.css; only the corner-delete positioning stays local. */
+	/* Base `.track-card` layout + `.track-info` + `.piece-action*` live in
+	   shell.css as a flex row. F20 made the card a column — the original
+	   info+play row (`.track-card-row`), then an optional "Piece Notes"
+	   disclosure below it — so these override shell's row rules. */
 	.track-card {
 		position: relative;
+		flex-direction: column;
+		align-items: stretch;
 		/* The header OMR alert deep-links to `#track-<pieceId>`; keep the
 		   scrolled-to card off the very top edge, and flash it briefly so
 		   it's obvious which track the alert meant. */
 		scroll-margin-top: 1.5rem;
+	}
+
+	.track-card-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.track-notes {
+		border-top: 1px solid var(--border);
+		padding-top: 0.5rem;
+	}
+
+	.track-notes > summary {
+		cursor: pointer;
+		list-style: none;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--accent);
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.track-notes > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.track-notes-chevron {
+		width: 0.9rem;
+		height: 0.9rem;
+		flex: 0 0 auto;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.4;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		transition: transform 0.15s ease;
+	}
+
+	.track-notes[open] .track-notes-chevron {
+		transform: rotate(180deg);
+	}
+
+	.track-notes[open] > summary {
+		margin-bottom: 0.5rem;
 	}
 
 	.track-card:target {

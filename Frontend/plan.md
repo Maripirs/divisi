@@ -93,6 +93,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | — | In-app notation editor + OMR review | Moved to `OMR_EDITOR_PLAN.md` (milestones E1–E10) |
+| F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built: two sources (group B16 / personal position-less B5 annotation), on the piece page and an expandable Rehearsal Tracks card, per-note timestamps, player-mode scroll cap; `check`/`build`/vitest 107 green; no real-browser pass yet |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -665,6 +666,118 @@ pausing background video decode) so only its audio is ever heard.
       bottom bar, and that the reference recording is genuinely audio-only
       (nothing visible, just sound) on a real device
 
+### F20 — Piece Notes panel (frontend for Backend B16, + a personal source) [~]
+
+Backend **B16** (`f08c969`, committed but not yet pushed/deployed) shipped
+`PieceRehearsalNote` — a group admin's durable, group-wide reminders pinned
+to a piece. It landed with **no frontend at all** and no `F` milestone;
+the endpoints existed but nothing in the app called them. This wires it in
+as **"Piece Notes"** (the human's preferred name), and sets up a second,
+per-member **personal** source alongside the admin one.
+
+**Deliberately plain (per the human, 2026-09-02):** a piece note is just a
+short line of text. B16's optional kind / title / page / measure / part
+fields are **not** surfaced; they stay at their Backend defaults.
+
+**Two sources, kept visually distinct** (per the human, 2026-09-02):
+- **From the director** — group-wide, admin-authored (B16). Members read-only.
+  Solid accent left-edge; section label in the accent colour.
+- **My notes** — the signed-in member's own private note. Stored as a
+  Backend **B5 `Annotation`** with the reserved sentinel position `-1`
+  ("not pinned to a spot in the score"), so no new Backend work and it
+  syncs across devices. `ScoreView`'s marker layer filters position `-1`
+  out (`loadAnnotations` now keeps only `positionWholeNotes >= 0`). Dashed
+  muted left-edge; muted section label. Always editable by its owner.
+
+Each note shows its **timestamp** (`formatDateTime` — both sources already
+persist `created_at`).
+
+Numbered **F20** on purpose — `F14`–`F19` are the editor milestones now in
+`OMR_EDITOR_PLAN.md` (E2–E10), referenced all through that plan's log.
+
+**Where it shows:**
+- Piece page (`/piece/[id]`), a collapsible panel under the top bar
+  (`PieceNotesPanel`, default `chrome="details"`). Starts **collapsed**
+  with a rotating chevron; when open its body is capped at
+  `min(45vh, 14rem)` and scrolls, so it never pushes the score/PDF down.
+- Group **Rehearsal Tracks** tab (`groups/[id]`), each track card gains an
+  expandable "Piece Notes" disclosure (chevron + label) rendering the same
+  panel with `chrome="bare"`. Lazy — nothing fetches until a card is
+  expanded.
+
+**Layout:** notes flow in a responsive grid (`auto-fill`,
+`minmax(min(100%, 15rem), 1fr)`) so they sit side by side when there's
+width and stack when narrow. A long body is clamped to 4 lines with a
+per-note "Show more" (so one long note can't stretch its row and strand
+the short notes beside it); an expanded or editing card spans the full
+row. Cards are compact — body, then a footer line with the timestamp and
+edit/delete. Adding is a small `+` next to each section heading (no
+full-width "Add note" bar). All component classes are `pn-`-prefixed after
+a bare `.note` collided with a centered global in `shell.css`.
+
+If the group's Weekly Notes page is disabled for members (B16 gates the
+list on `GroupPage.weekly_notes`, 403/404), just the director section is
+hidden — the personal section still works.
+
+**Access shape:** director notes — members with Weekly Notes page access
+list them, only a group admin writes. Personal notes — any signed-in
+member, always their own. No guest path (both sources need a session).
+
+**Acceptance criteria:**
+- [x] The piece page shows a "Piece Notes" disclosure for a logged-in user
+      viewing a real group-owned Backend piece; a personal piece, a guest,
+      or a bundled fixture never shows it
+- [x] A group admin can add a director note (one text field), edit it, and
+      delete it (click-to-confirm); a non-admin member sees it read-only
+- [x] Any signed-in member can add / edit / delete their own personal notes
+      on the piece; another member never sees them
+- [x] Director vs. personal notes are visually distinct — solid accent edge
+      + accent label vs. dashed muted edge + muted label, plus the two
+      section headings
+- [x] Notes render through the small shared note-markdown renderer; each
+      note shows its stored timestamp
+- [x] Personal notes never appear as score markers (`ScoreView` filters
+      position `-1`)
+- [x] On the player the panel body is height-capped and scrolls
+- [x] The Rehearsal Tracks tab lets you expand any track card to read (and
+      manage) that piece's notes without opening the player; nothing fetches
+      until expand
+- [x] The director section degrades quietly on a 403/404; the personal
+      section keeps working
+- [x] `npm run check` (0 errors) / `npm run build` clean; vitest 107 green
+- [ ] Human clicks through it in a real browser (admin + plain member, both
+      surfaces, both notes kinds), against a local Backend with B16
+
+**Tasks — Claude:**
+- [x] `$lib/api/pieceNotes.ts` — typed client, two sources: `group` (B16
+      `rehearsal-notes` proxy) and `personal` (B5 `annotations` proxy with
+      the reserved position `-1`). `{ body }` in/out; `PieceNoteSource`
+      discriminator on the returned `PieceNote`
+- [x] `routes/piece/[id]/notes/{,[noteId]}/+server.ts` — authenticated
+      proxies onto B16's `rehearsal-notes` endpoints (the personal source
+      reuses the existing `annotations` proxies unchanged)
+- [x] `RemotePieceMeta.groupId` added; `resolve/+server.ts` populates it and
+      a `canManagePieceNotes` flag (admin of the owning group)
+- [x] `PieceNotesPanel.svelte` — `chrome` prop (`'details'` | `'bare'`),
+      two sections with distinct edges/labels, per-note `formatDateTime`
+      timestamp, `42vh` scroll cap in `details` mode, `ConfirmButton`
+      delete, `renderNoteMarkdown` body, section-aware edit/add state
+- [x] `piece/[id]/+page.svelte` — mounts the panel under the top bar;
+      `loadAnnotations` filters to `positionWholeNotes >= 0` so personal
+      notes aren't drawn as score markers
+- [x] `groups/[id]/+page.svelte` — track card restructured to a column
+      (`.track-card-row` + a `.track-notes` disclosure); lazy-mounts the
+      panel on expand
+- [x] en/es keys (`piece_notes_*`)
+
+**Tasks — Human:**
+- [ ] With B16 available locally: on the piece page and on a track card, as
+      an admin add a couple of director notes and a couple of personal
+      notes, edit/delete one of each, confirm the timestamps and the
+      visual distinction; then as a plain member confirm the director notes
+      are read-only and personal notes are their own. Check `/` and `/es`,
+      and that the player panel scrolls rather than shoving the score down.
+
 ## Backlog
 
 - **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
@@ -713,6 +826,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-02: **F20 built — "Piece Notes"** (frontend for Backend B16, which had shipped backend-only with no `F` milestone). Iterated hard with the human across the session: a categorized "Rehearsal Notes" panel → one plain text field → renamed "Piece Notes" → two sources → shown on the Tracks tab too → timestamps → player-mode scroll cap. Final shape: `PieceNotesPanel.svelte`, a `chrome: 'details' | 'bare'` disclosure with two visually-distinct sections — **From the director** (group-wide, admin-authored B16; solid accent edge; members read-only) and **My notes** (per-member private; dashed muted edge; always owner-editable). The personal source is stored as a B5 `Annotation` at the reserved sentinel position `-1`, so **no new Backend work** and it syncs; `piece/[id]/+page.svelte`'s `loadAnnotations` now filters `positionWholeNotes >= 0` so those don't render as score markers. Each note shows its `created_at` via `formatDateTime`. On the player the panel body is capped at `42vh` and scrolls. Shown on the piece page under the top bar and inside a new lazy expandable disclosure on each **Rehearsal Tracks** card (`groups/[id]`; card restructured to `.track-card-row` + `.track-notes`). `$lib/api/pieceNotes.ts` wraps the B16 `rehearsal-notes` proxy (`routes/piece/[id]/notes/{,[noteId]}/+server.ts`) and the existing `annotations` proxy. `RemotePieceMeta.groupId` + `resolve/+server.ts` `canManagePieceNotes` (owning-group admin). Director section self-hides on a 403/404 (Weekly Notes page disabled); personal section keeps working. en/es `piece_notes_*` keys. `check` 0 errors, `build` clean, vitest 107. Same-day follow-ups from a live look on iPad: (1) Tracks card passed `canManage={isAdmin}` (raw role) so an admin "Viewing as Member" still saw add/delete on director notes — now `canManage={mode === 'admin'}` (Backend `require_admin` blocked the writes regardless); (2) the panel filled half the player screen — now starts collapsed with a rotating chevron, body capped at `min(45vh, 14rem)` and scrolls; (3) notes now flow in a responsive grid (side by side when wide), with a long body clamped to 4 lines + a per-note "Show more" so it can't stretch its row and strand its neighbours; (4) "Add note" bar replaced by a small `+` next to each section heading; (5) all classes `pn-`-prefixed to stop a centered global `.note` in `shell.css` leaking in. Needs the human real-browser pass against a local Backend with B16 (B16 isn't pushed/deployed yet).
 
 - 2026-09-01: **Code-review fixes on `feat/generate-track-from-pdf`** (layered on the F19 rework, no behaviour change in the common path). **F19 downstream page offsets:** `reviewPages` now derives each page's `startIndex` from a running cumulative sum of `measureCount` across `reviewPagesRaw` (not the fixed `startMeasure - 1` from the B18 report), and `onsetWholeNotes` from the live `startIndex + 1`; `insertPageBars` / `rerunReviewPage` patch that page's `measureCount` (`+ fillBars` / `= result.measure_count`) so later pages' band / auto-scroll / dim veil shift with an in-editor insert or re-run instead of landing N bars early. For a fresh B18 report the sum equals `startMeasure - 1`, so nothing moves. **Publish gate:** a `pagedReportJobId` draft whose page list fails to map (`reviewPagesUnavailable`) no longer counts as "all pages approved" via `[].every()`. Publish stays blocked and the review bar shows the new `piece_editor_review_pages_unavailable` string (en+es). **Pre-B18 fallback:** `mapReport` keeps one entry per page but flags them `offsetsKnown: false`; `pageBand` / `dimOffPage` / the score select + `scrollPageIntoView` in `selectReviewPage` no-op for such a page (approval is an honour-system "I looked"), the PDF pane still turns. `reviewPages.test.ts` updated for the new shape. **`goToPrevSeam`** steps to the last seam from the cold state instead of skipping seam 0. **`.mxl`:** `mxl.ts` normalizes the `container.xml` `full-path` (leading `./`, `\` -> `/`, percent-decode, case-insensitive / trailing-path / basename match) before the entry lookup, and decodes a UTF-16 (BOM-sniffed LE/BE) inner document instead of forcing UTF-8; `remotePiece.ts`'s `loadRemoteMusicFile` wraps the unpack so a corrupt ZIP surfaces as the same "Malformed MusicXML" failure the plain-XML path produces. `mxl.test.ts` +3 (`./`-prefix, backslash, UTF-16 LE). **Measures-mode bar pick:** `EditorScoreView` derives the 0-based measure index from the graphical measure's position in `GraphicSheet.MeasureList` (fallback: `SourceMeasures` order), not arithmetic on OSMD's printed `MeasureNumber` (a hand-upload with a `number="0"` pickup or non-sequential numbers no longer selects the wrong bars); the hit field is renamed `measureNumber` -> `measureIndex`. `check` / `test` / `build` all green.
 

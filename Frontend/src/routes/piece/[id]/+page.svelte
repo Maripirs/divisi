@@ -38,6 +38,7 @@
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
+	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import {
 		AnnotationApiError,
 		createAnnotation,
@@ -75,6 +76,10 @@
 	// "Edit music" entry point in the practice-setup drawer; the editor route
 	// re-checks server-side and the Backend re-checks again on save.
 	let canEditMusic = $state(false);
+	// F20: whether this caller is an admin of the piece's owning group, so
+	// the Piece Notes panel shows its add/edit/delete controls for the
+	// group's notes. Members still see those notes read-only.
+	let canManagePieceNotes = $state(false);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like
@@ -332,6 +337,7 @@
 				remote: RemotePieceMeta | null;
 				unreachable: boolean;
 				canEditMusic?: boolean;
+				canManagePieceNotes?: boolean;
 			};
 			if (!body.remote) {
 				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
@@ -339,6 +345,7 @@
 			}
 			remoteMeta = body.remote;
 			canEditMusic = body.canEditMusic ?? false;
+			canManagePieceNotes = body.canManagePieceNotes ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode` was seeded assuming no piece at all (forced to
 			// 'player' below) — now that `hasPlayer`/`hasPdfPane` are actually
@@ -840,7 +847,12 @@
 	async function loadAnnotations() {
 		if (!remoteMeta) return;
 		try {
-			annotations = await listAnnotations(remoteMeta.pieceId);
+			// F20: personal "piece notes" are stored as position-less annotations
+			// (position -1) and shown in the Piece Notes panel, not as score
+			// markers — keep only real, score-positioned annotations here.
+			annotations = (await listAnnotations(remoteMeta.pieceId)).filter(
+				(a) => a.positionWholeNotes >= 0
+			);
 		} catch {
 			// A failed load just means no markers show yet — not worth a
 			// blocking error state layered on top of the player's own; the
@@ -1025,6 +1037,19 @@
 				</svg>
 			</button>
 		</header>
+
+		{#if remoteMeta?.groupId && page.data.user}
+			<!-- F20: short text notes pinned to this piece (Backend B16 group
+			     notes; personal notes pending). Read-only for members; group
+			     admins get authoring controls. The panel hides itself when
+			     the group's Weekly Notes page is disabled for members or
+			     there's nothing to show. -->
+			<PieceNotesPanel
+				pieceId={remoteMeta.pieceId}
+				groupId={remoteMeta.groupId}
+				canManage={canManagePieceNotes}
+			/>
+		{/if}
 
 		{#if piece?.youtubeUrl && !hasPdfPane}
 			<!-- F5: reference-audio link. F13 replaced this video embed with

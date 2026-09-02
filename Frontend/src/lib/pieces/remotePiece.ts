@@ -16,6 +16,11 @@ export interface RemotePieceMeta {
 	hasPdf: boolean;
 	youtubeUrl: string | null;
 	defaultTempoBpm: number | null;
+	/** F20: the owning group's id when this is a group-owned piece, else
+	 * null (a personal library piece, or a guest resolution with no group
+	 * context). The piece page's "Rehearsal Notes" panel needs it to hit the
+	 * Backend's group-scoped B16 list endpoint. */
+	groupId: string | null;
 }
 
 /** Sniffs which parser a fetched music file needs: MIDI files start with

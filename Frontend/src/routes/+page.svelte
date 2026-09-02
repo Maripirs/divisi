@@ -57,7 +57,8 @@
 								hasMusic: p.has_music,
 								hasPdf: p.has_pdf,
 								youtubeUrl: p.youtube_url,
-								defaultTempoBpm: p.default_tempo_bpm
+								defaultTempoBpm: p.default_tempo_bpm,
+								groupId: group.id
 							})
 						: getPieceByTitle(p.title)
 				)
