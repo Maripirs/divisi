@@ -15,6 +15,11 @@ from app.core.config import get_settings
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+# Every test here drives the real FluidSynth subprocess via the B7 render
+# pipeline, so the whole module is integration-only: skip with
+# `-m "not integration"` where the `fluidsynth` binary isn't installed.
+pytestmark = pytest.mark.integration
+
 
 def _register_and_login(client, email, name="Name", password="hunter22"):
     client.post("/auth/register", json={"email": email, "name": name, "password": password})

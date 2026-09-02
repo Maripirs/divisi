@@ -147,11 +147,33 @@ Rules:
 
 ## Tests
 
-Black-box, API-level, in `tests/`. Run with `.venv/bin/python -m pytest -q`.
-The full suite is slow (~15+ min) — background it, or run a subset. OMR tests
-force `shutil.which` to report both engines missing where that matters, so
-they pass regardless of whether Audiveris/oemer happen to be installed
-locally.
+Black-box, API-level, in `tests/`. Run with `.venv/bin/python -m pytest`
+(config in `pytest.ini`: quiet, `testpaths = tests`, `-n auto`).
+
+The full suite runs in roughly 30 to 60 seconds. It used to take ~7.5
+minutes; almost all of that was bcrypt password hashing at the production
+cost factor, run hundreds of times (most tests register and log in a few
+users just to assert a permission check). The root `conftest.py` sets
+`BCRYPT_ROUNDS=4` for the test session before `app` is imported, which
+drops the per-hash cost ~240x with no behaviour change (bcrypt reads the
+cost from the stored hash on verify). Production uses the default 12; see
+`bcrypt_rounds` in `app/core/config.py`.
+
+`-n auto` runs the suite across CPU cores via `pytest-xdist`. Each test
+gets its own in-memory SQLite engine (see `tests/conftest.py`), so this is
+safe. Pass `-p no:xdist` to run serially when debugging.
+
+Tests that shell out to the `fluidsynth` binary (the B7 render pipeline)
+are marked `@pytest.mark.integration`. Run everything by default, or
+`.venv/bin/python -m pytest -m "not integration"` on a host without
+`fluidsynth`.
+
+OMR tests force `shutil.which` to report both engines missing where that
+matters, so they pass regardless of whether Audiveris/oemer happen to be
+installed locally.
+
+CI (`.github/workflows/backend-ci.yml`) runs the full suite, including the
+`integration` tests, on any change under `Backend/`.
 
 ## Deployment
 

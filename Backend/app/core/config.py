@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
+    # bcrypt work factor for password hashing. 12 is a sane production
+    # default (~0.4s/hash). Tests set BCRYPT_ROUNDS=4 via the root
+    # conftest.py so the auth-heavy suite isn't dominated by hashing
+    # (~7.5min -> ~40s); 4 is bcrypt's minimum and fine for throwaway
+    # in-memory test users.
+    bcrypt_rounds: int = 12
     storage_dir: str = "./data/storage"
     # Read-only, version-controlled piece source files (the repo root's
     # `Fixtures/`, copied into the image at `./fixtures` by the Dockerfile —
