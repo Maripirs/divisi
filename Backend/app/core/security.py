@@ -11,7 +11,7 @@ from app.core.config import get_settings
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(get_settings().bcrypt_rounds)).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:

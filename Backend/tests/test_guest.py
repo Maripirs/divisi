@@ -93,6 +93,7 @@ def test_guest_sees_no_pieces_for_a_group_with_nothing_distributed(client):
     assert response.json() == {"group_name": "Empty Choir", "pieces": []}
 
 
+@pytest.mark.integration  # fetches a rendered stem -> runs the FluidSynth pipeline
 def test_guest_can_fetch_manifest_and_stem_for_a_distributed_piece(client):
     admin_headers = _register_and_login(client, "admin2@example.com")
     group, piece_id, version_id = _create_group_with_distributed_midi_piece(client, admin_headers)

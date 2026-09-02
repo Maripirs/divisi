@@ -1,0 +1,33 @@
+name: Backend CI
+
+# Scoped to Backend/ only. The Frontend has its own workflow.
+#
+# Check-only, deliberately: Render autodeploys the Backend from `main` on
+# its own, so this never deploys anything and needs no secrets. It's a
+# pre-merge safety net that runs the pytest suite (in-memory SQLite, no
+# Postgres service), including the fluidsynth-backed `integration` tests.
+on:
+  push:
+    branches: [main]
+    paths: ['Backend/**']
+  pull_request:
+    paths: ['Backend/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]"
+      - run: pip install "pytest-xdist>=3.5"
+      # The B7 render tests shell out to the `fluidsynth` binary; install
+      # it so the `integration`-marked tests run here rather than skip.
+      - run: sudo apt-get update && sudo apt-get install -y fluidsynth
+      # Picks up Backend/pytest.ini: `-q -n auto`, runs everything.
+      - run: pytest
