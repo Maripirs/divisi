@@ -50,8 +50,16 @@ from app.api.schemas.library import (
     PieceVersionOut,
     RenderManifestOut,
     TimeSignatureOut,
+    VersionPublishRequest,
+    WorkingDraftOut,
 )
-from app.api.schemas.omr import OmrImportOut, OmrImportRequest, OmrJobOut
+from app.api.schemas.omr import (
+    OmrImportOut,
+    OmrImportRequest,
+    OmrJobListItemOut,
+    OmrJobOut,
+    OmrPageRerunOut,
+)
 from app.api.schemas.piece_markup import MarkupMarkCreate, MarkupMarkOut, MarkupMarkUpdate
 from app.api.schemas.piece_rehearsal_notes import (
     PieceRehearsalNoteCreate,
@@ -110,8 +118,11 @@ __all__ = [
     "OAuthProviderStatusOut",
     "OmrImportOut",
     "OmrImportRequest",
+    "OmrJobListItemOut",
     "OmrJobOut",
+    "OmrPageRerunOut",
     "PieceDefaultTempoUpdate",
+    "PieceDetailsUpdate",
     "PieceOut",
     "PieceRehearsalNoteCreate",
     "PieceRehearsalNoteOut",
@@ -119,6 +130,8 @@ __all__ = [
     "PieceUploadOut",
     "PieceVersionOut",
     "RenderManifestOut",
+    "VersionPublishRequest",
+    "WorkingDraftOut",
     "ResetPasswordRequest",
     "ResponsibilityDateCreate",
     "ResponsibilityDateOut",

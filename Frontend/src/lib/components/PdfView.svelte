@@ -18,17 +18,22 @@
 		type MarkupMark
 	} from '$lib/api/pieceMarkup';
 	import StampShape from '$lib/components/StampShape.svelte';
-	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
+	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 
 	/**
-	 * Renders a PDF with our own zoom controls (+/- buttons and a two-finger
-	 * pinch gesture, both driving the same `zoom` state) instead of an
-	 * `<iframe>` — mobile Safari's iframe-embedded PDF viewer turned out to
-	 * be a stripped-down build with no toolbar and no pinch-zoom at all,
-	 * a platform limitation no CSS/JS from outside the iframe can fix.
-	 * Rendering via pdf.js onto canvases gives identical zoom behavior on
-	 * every platform, matching ScoreView's own zoom controls.
+	 * Renders a PDF with our own +/- zoom controls instead of an `<iframe>` —
+	 * mobile Safari's iframe-embedded PDF viewer turned out to be a
+	 * stripped-down build with no toolbar and no pinch-zoom at all, a platform
+	 * limitation no CSS/JS from outside the iframe can fix. Rendering via
+	 * pdf.js onto canvases gives identical zoom behavior on every platform,
+	 * matching ScoreView's own zoom controls.
+	 *
+	 * Deliberately no two-finger pinch-to-zoom here (ScoreView still has it):
+	 * re-rendering every page through pdf.js on each gesture frame left the
+	 * canvases resizing and blanking mid-pinch, which read as the page
+	 * distorting. A two-finger gesture just pans/scrolls the pane natively
+	 * (`touch-action: pan-x pan-y`); zoom is the +/- buttons only.
 	 *
 	 * When `canMarkup` is on, also renders a piaScore-style markup layer on
 	 * top of each page: pen strokes, stamps, and text annotations. Visibility
@@ -38,13 +43,20 @@
 	 * stroke's thickness reads the same in both directions and a mark
 	 * stays correctly placed across zoom levels without any conversion.
 	 */
+	/** `'none'` hides saved marks entirely; `'mine'` / `'group'` pick which
+	 * scope's marks load. Bindable so the host page can drive it from its own
+	 * UI (the piece route's Practice Setup drawer) instead of a control
+	 * floating on the PDF. */
+	type MarkupVisibility = 'none' | MarkupScope;
+
 	let {
 		pdfUrl,
 		zoom = $bindable(1),
 		active = true,
 		pieceId,
 		canMarkup = false,
-		currentUserId
+		currentUserId,
+		markupVisibility = $bindable('mine')
 	}: {
 		pdfUrl: string;
 		zoom?: number;
@@ -67,6 +79,7 @@
 		 * component's own `annotationMode` (F12) for the on/off within that. */
 		canMarkup?: boolean;
 		currentUserId?: string;
+		markupVisibility?: MarkupVisibility;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -98,16 +111,9 @@
 	let marks = $state<MarkupMark[]>([]);
 	let marksLoadedKey: string | undefined;
 
-	type MarkupVisibility = 'none' | MarkupScope;
-	const MARKUP_VISIBILITY_OPTIONS: { value: MarkupVisibility; label: () => string }[] = [
-		{ value: 'none', label: () => m.markup_visibility_none() },
-		{ value: 'mine', label: () => m.markup_visibility_mine() },
-		{ value: 'group', label: () => m.markup_visibility_group() }
-	];
-	let markupVisibility = $state<MarkupVisibility>('mine');
-
 	// F12: a master edit-mode toggle separate from which tool is armed. The
-	// visibility segmented control decides whether saved marks are shown.
+	// visibility control (now in the piece route's Practice Setup drawer)
+	// decides whether saved marks are shown.
 	let annotationMode = $state(false);
 	type MarkupTool = 'pen' | 'stamp' | 'text' | 'eraser' | null;
 	let tool = $state<MarkupTool>(null);
@@ -137,6 +143,9 @@
 	const MIN_TEXT_SIZE = 0.024;
 	const MAX_TEXT_SIZE = 0.08;
 	const TEXT_SIZE_STEP = 0.002;
+	// Coarser than the slider's step — the −/+ buttons on an open editor are
+	// for quick nudges, not fine tuning.
+	const TEXT_SIZE_NUDGE = 0.008;
 	const DEFAULT_TEXT_SIZE = 0.04;
 	let textSize = $state(DEFAULT_TEXT_SIZE);
 
@@ -161,6 +170,7 @@
 		value: string;
 		color: string;
 		width: number;
+		openedAt: number;
 	} | null>(null);
 	let activeTextDrag = $state<{
 		markId: string;
@@ -252,7 +262,8 @@
 			y: point[1],
 			value: '',
 			color: penColor,
-			width: textSize
+			width: textSize,
+			openedAt: performance.now()
 		};
 		void focusTextEditor();
 	}
@@ -266,13 +277,26 @@
 			y: mark.y,
 			value: mark.text ?? '',
 			color: mark.color,
-			width: sizeForText(mark)
+			width: sizeForText(mark),
+			openedAt: performance.now()
 		};
 		void focusTextEditor();
 	}
 
 	function cancelTextEditor(): void {
 		textEditor = null;
+	}
+
+	/** A blur within the first moments of opening is almost always a stray
+	 * focus steal (a post-tap synthetic mouse event, a layout shift) rather
+	 * than the user tabbing away — re-focus instead of committing an empty
+	 * field and closing. A genuine blur after that commits as normal. */
+	function handleTextEditorBlur(): void {
+		if (textEditor && !textEditor.value.trim() && performance.now() - textEditor.openedAt < 400) {
+			void focusTextEditor();
+			return;
+		}
+		void commitTextEditor();
 	}
 
 	async function commitTextEditor(): Promise<void> {
@@ -302,6 +326,27 @@
 		}
 	}
 
+	/** Nudge the size of the text in the open editor. Live-updates the
+	 * editor preview via `textEditorStyle`; `commitTextEditor` persists the
+	 * new `width` on blur/Enter. */
+	function nudgeTextEditorSize(delta: number): void {
+		if (!textEditor) return;
+		const next = Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, textEditor.width + delta));
+		textEditor.width = next;
+		// Keep the tool's default in step too, so the next new text matches
+		// the size the user just settled on. Focus stays in the field on its
+		// own — the buttons' `pointerdown` preventDefault sees to that.
+		if (!textEditor.markId) textSize = next;
+	}
+
+	/** The editor's × — drop the mark being edited (or, for a not-yet-saved
+	 * text, just close the editor). */
+	function deleteTextEditorMark(): void {
+		const markId = textEditor?.markId;
+		textEditor = null;
+		if (markId) void removeMark(markId);
+	}
+
 	function setTool(next: MarkupTool): void {
 		tool = tool === next ? null : next;
 		activeStroke = null;
@@ -324,9 +369,12 @@
 		}
 	}
 
-	function setMarkupVisibility(next: MarkupVisibility): void {
-		markupVisibility = next;
-		if (next === 'none') {
+	// Visibility now lives on the host (the Practice Setup drawer). When it
+	// switches to `'none'` the editing surface has nothing to draw on, so
+	// disarm the master toggle and any in-progress mark — same cleanup
+	// `toggleAnnotationMode` does when turned off directly.
+	$effect(() => {
+		if (markupVisibility === 'none' && annotationMode) {
 			annotationMode = false;
 			tool = null;
 			activeStroke = null;
@@ -334,7 +382,7 @@
 			textEditor = null;
 			activeTextDrag = null;
 		}
-	}
+	});
 
 	function markupErrorMessage(err: unknown): string {
 		return err instanceof MarkupApiError ? err.message : m.errors_could_not_reach_server();
@@ -362,6 +410,11 @@
 		} else if (tool === 'stamp') {
 			void placeStamp(pageIndex, point);
 		} else if (tool === 'text') {
+			// Suppress the compatibility mouse events a tap fires after
+			// `touchend` — one of them lands on this layer and blurs the text
+			// field we're about to focus, which would commit it empty and
+			// close it before anything could be typed.
+			event.preventDefault();
 			openTextEditorForCreate(pageIndex, point);
 		} else if (tool === 'eraser') {
 			eraseNear(pageIndex, point);
@@ -409,6 +462,10 @@
 	function handleTextPointerDown(event: PointerEvent, mark: MarkupMark, pageIndex: number): void {
 		if (!annotationMode || !isOwnMark(mark) || mark.x === null || mark.y === null) return;
 		event.stopPropagation();
+		// Same reason as the text-create branch in `handleMarkupPointerDown`:
+		// keep the post-tap compatibility mouse events from blurring the
+		// editor this may open on pointerup.
+		event.preventDefault();
 		const point = pointFromEvent(event, pageIndex);
 		if (!point) return;
 		(event.currentTarget as Element).setPointerCapture(event.pointerId);
@@ -632,6 +689,15 @@
 		await renderAllPages(pdf);
 	}
 
+	/** F16: scroll a 1-based page into view within the pane — the editor
+	 * calls this when "Next seam" lands on a failed-OMR-page seam so the
+	 * reference scan for that page is right there beside the empty bars.
+	 * No-op until that page's canvas has mounted. */
+	export function scrollToPage(pageNumber: number): void {
+		const canvas = canvasRefs[pageNumber - 1];
+		if (canvas) canvas.scrollIntoView({ block: 'start', behavior: 'smooth' });
+	}
+
 	// Load/resize/zoom/the `active` transition can all independently decide
 	// a render pass is needed, and on a fast (e.g. cache-served) reload
 	// several of those can fire within the same tick. The `token` check
@@ -705,13 +771,65 @@
 	function resetZoom(): void {
 		zoom = 1;
 	}
+
+	// --- Click-drag panning (mouse) ---
+	// Grab-and-drag to move around the page, the way a desktop PDF viewer
+	// works — most useful when zoomed in past the container. Mouse only:
+	// touch already pans/scrolls natively (`touch-action: pan-x pan-y`, one
+	// finger or two), and a finger-drag that also scrolled here would fight
+	// that. Skipped while a markup tool is armed (the overlay
+	// owns that drag, to draw) and when the press lands on a control or an
+	// editable mark.
+	let panning = $state(false);
+	let panOrigin = { x: 0, y: 0, left: 0, top: 0 };
+
+	function handlePanPointerDown(event: PointerEvent): void {
+		if (event.pointerType !== 'mouse' || event.button !== 0) return;
+		if (annotationMode && tool !== null) return;
+		if ((event.target as Element | null)?.closest('button, input, .text-editor, .text-mark--editable')) {
+			return;
+		}
+		const overflowsX = container.scrollWidth > container.clientWidth;
+		const overflowsY = container.scrollHeight > container.clientHeight;
+		if (!overflowsX && !overflowsY) return;
+		panning = true;
+		panOrigin = {
+			x: event.clientX,
+			y: event.clientY,
+			left: container.scrollLeft,
+			top: container.scrollTop
+		};
+		container.setPointerCapture(event.pointerId);
+		event.preventDefault();
+	}
+
+	function handlePanPointerMove(event: PointerEvent): void {
+		if (!panning) return;
+		container.scrollLeft = panOrigin.left - (event.clientX - panOrigin.x);
+		container.scrollTop = panOrigin.top - (event.clientY - panOrigin.y);
+	}
+
+	function endPan(event: PointerEvent): void {
+		if (!panning) return;
+		panning = false;
+		if (container.hasPointerCapture(event.pointerId)) {
+			container.releasePointerCapture(event.pointerId);
+		}
+	}
 </script>
 
 <div class="pdf-view">
+	<!-- Scroll region; the pointer handlers add mouse click-drag panning as a
+	     progressive enhancement over the native scroll, no role needed. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="pdf-container"
+		class:panning
 		bind:this={container}
-		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z) }}
+		onpointerdown={handlePanPointerDown}
+		onpointermove={handlePanPointerMove}
+		onpointerup={endPan}
+		onpointercancel={endPan}
 	>
 		{#if loading}
 			<div class="status-card">
@@ -807,6 +925,38 @@
 										void commitTextEditor();
 									}}
 								>
+									<!-- `pointerdown` preventDefault keeps focus in the field so the
+									     blur-commit does not fire (and null `textEditor`) before these
+									     handlers run. -->
+									<div class="text-editor-tools">
+										<button
+											type="button"
+											onpointerdown={(event) => event.preventDefault()}
+											onclick={() => nudgeTextEditorSize(-TEXT_SIZE_NUDGE)}
+											disabled={textEditor.width <= MIN_TEXT_SIZE}
+											aria-label={m.markup_text_smaller()}
+										>
+											−
+										</button>
+										<button
+											type="button"
+											onpointerdown={(event) => event.preventDefault()}
+											onclick={() => nudgeTextEditorSize(TEXT_SIZE_NUDGE)}
+											disabled={textEditor.width >= MAX_TEXT_SIZE}
+											aria-label={m.markup_text_larger()}
+										>
+											+
+										</button>
+										<button
+											type="button"
+											class="text-editor-delete"
+											onpointerdown={(event) => event.preventDefault()}
+											onclick={() => deleteTextEditorMark()}
+											aria-label={m.markup_text_delete()}
+										>
+											×
+										</button>
+									</div>
 									<input
 										bind:this={textEditorInput}
 										value={textEditor.value}
@@ -816,7 +966,7 @@
 										onkeydown={(event) => {
 											if (event.key === 'Escape') cancelTextEditor();
 										}}
-										onblur={() => void commitTextEditor()}
+										onblur={() => handleTextEditorBlur()}
 										aria-label={m.markup_text_field()}
 									/>
 								</form>
@@ -835,11 +985,11 @@
 	</div>
 
 	{#if canMarkup}
-		<!-- F12: master on/off — always shown (even while off) so there's a way
-		     into editing, while saved marks remain visible as read-only markup.
-		     Its own corner (top-left), clear of both the zoom controls and the
-		     tool toolbar, which only appears once this is on. -->
-		<div class="markup-top-controls">
+		<!-- F12: bottom-left. The master on/off button sits at the bottom;
+		     turning it on expands the tool panel upward directly above it, so
+		     the two read as one control. Saved marks stay visible as
+		     read-only markup whenever the button is off. -->
+		<div class="markup-panel">
 			<button
 				class="annotation-mode-toggle"
 				class:active={annotationMode}
@@ -849,22 +999,8 @@
 			>
 				✎
 			</button>
-			<div class="visibility-toggle" aria-label={m.markup_visibility()}>
-				{#each MARKUP_VISIBILITY_OPTIONS as option (option.value)}
-					<button
-						class:active={markupVisibility === option.value}
-						onclick={() => setMarkupVisibility(option.value)}
-						aria-pressed={markupVisibility === option.value}
-					>
-						{option.label()}
-					</button>
-				{/each}
-			</div>
-		</div>
-	{/if}
-
-	{#if canMarkup && annotationMode}
-		<div class="markup-toolbar">
+			{#if annotationMode}
+			<div class="markup-toolbar">
 			<div class="tool-row">
 				<button
 					class="tool-btn"
@@ -986,6 +1122,8 @@
 			{#if markupError}
 				<p class="markup-error">{markupError}</p>
 			{/if}
+			</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -1001,6 +1139,12 @@
 		overflow: auto;
 		background: var(--score-page, var(--surface-2));
 		touch-action: pan-x pan-y;
+		cursor: grab;
+	}
+
+	.pdf-container.panning {
+		cursor: grabbing;
+		user-select: none;
 	}
 
 	.pdf-page {
@@ -1084,6 +1228,51 @@
 		transform: translate(-0.25rem, -0.25rem);
 		margin: 0;
 		color: inherit;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.25rem;
+	}
+
+	/* Sits just above the field while a text is being written or edited:
+	   −/+ nudge its size, × drops it. */
+	.text-editor-tools {
+		display: flex;
+		gap: 2px;
+		padding: 3px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		box-shadow: var(--shadow);
+	}
+
+	.text-editor-tools button {
+		width: 1.75rem;
+		height: 1.75rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		background: transparent;
+		color: var(--text);
+		border-radius: var(--radius-full);
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.text-editor-tools button:hover:not(:disabled) {
+		background: var(--surface-2);
+	}
+
+	.text-editor-tools button:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
+	.text-editor-tools .text-editor-delete {
+		color: var(--danger);
 	}
 
 	.text-editor input {
@@ -1180,16 +1369,30 @@
 		font-weight: 600;
 	}
 
-	/* Top-left — clear of `.zoom-controls` (bottom-right) and
-	   `.markup-toolbar` (bottom-left, only present once this is on). */
-	.markup-top-controls {
+	/* Bottom-left, opposite `.zoom-controls` (bottom-right). The always-present
+	   on/off button anchors the group; the tool panel (when open) sits beside
+	   it on a wide enough viewport, or stacked above it on a narrow one.
+	   `column-reverse` keeps the button pinned to the bottom while the panel
+	   grows upward (button is first in the DOM). */
+	.markup-panel {
 		position: absolute;
 		left: 0.75rem;
-		top: 0.75rem;
+		bottom: 0.75rem;
 		display: flex;
-		align-items: center;
+		flex-direction: column-reverse;
+		align-items: flex-start;
 		gap: 0.4rem;
 		max-width: calc(100% - 1.5rem);
+		max-height: calc(100% - 1.5rem);
+	}
+
+	/* Enough room to lay the panel out to the right of the button rather
+	   than above it. */
+	@media (min-width: 560px) {
+		.markup-panel {
+			flex-direction: row;
+			align-items: flex-end;
+		}
 	}
 
 	.annotation-mode-toggle {
@@ -1205,37 +1408,6 @@
 		cursor: pointer;
 	}
 
-	.visibility-toggle {
-		display: flex;
-		gap: 2px;
-		padding: 3px;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-full);
-		box-shadow: var(--shadow);
-	}
-
-	.visibility-toggle button {
-		border: none;
-		background: transparent;
-		color: var(--text-muted);
-		border-radius: var(--radius-full);
-		padding: 0.4rem 0.6rem;
-		font-size: 0.8125rem;
-		font-weight: 700;
-		cursor: pointer;
-	}
-
-	.visibility-toggle button:hover {
-		background: var(--surface-2);
-		color: var(--text);
-	}
-
-	.visibility-toggle button.active {
-		background: color-mix(in srgb, var(--accent) 16%, transparent);
-		color: var(--accent);
-	}
-
 	.annotation-mode-toggle:hover {
 		background: var(--surface-2);
 	}
@@ -1246,13 +1418,12 @@
 		color: var(--accent);
 	}
 
-	/* Opposite corner from `.zoom-controls` so the two floating panels never
-	   overlap. */
 	.markup-toolbar {
-		position: absolute;
-		left: 0.75rem;
-		bottom: 0.75rem;
-		max-width: calc(100% - 1.5rem);
+		min-height: 0;
+		min-width: 0;
+		flex: 0 1 auto;
+		overflow-y: auto;
+		max-width: 100%;
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
@@ -1261,6 +1432,47 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow);
+		transform-origin: bottom left;
+		animation: markup-toolbar-expand-up 0.16s ease-out;
+	}
+
+	@keyframes markup-toolbar-expand-up {
+		from {
+			opacity: 0;
+			transform: scaleY(0.55) translateY(0.35rem);
+		}
+
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	/* Beside-the-button layout: unfold horizontally out of the button
+	   instead of upward. */
+	@media (min-width: 560px) {
+		.markup-toolbar {
+			transform-origin: left center;
+			animation-name: markup-toolbar-expand-side;
+		}
+	}
+
+	@keyframes markup-toolbar-expand-side {
+		from {
+			opacity: 0;
+			transform: scaleX(0.55) translateX(-0.35rem);
+		}
+
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.markup-toolbar {
+			animation: none;
+		}
 	}
 
 	.tool-row,

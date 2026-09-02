@@ -60,7 +60,9 @@
 		annotateMode = false,
 		onAnnotationPlace,
 		onAnnotationMarkerClick,
-		zoom = $bindable(1)
+		zoom = $bindable(1),
+		rendering = $bindable(false),
+		showBadge = true
 	}: {
 		xml: string;
 		positionWholeNotes: number;
@@ -76,6 +78,14 @@
 		// gesture in here and the parent's persisted-settings restore on
 		// load need to drive the same value.
 		zoom?: number;
+		// Bindable out: true while OSMD is (re-)engraving a new score, so the
+		// parent can dim/disable whatever control triggered the change and
+		// show its own "updating" hint next to it.
+		rendering?: boolean;
+		// Lets the parent suppress this component's own floating badge when
+		// it's showing that feedback somewhere better placed (e.g. right in
+		// the Practice Setup drawer).
+		showBadge?: boolean;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -198,23 +208,44 @@
 		else onNoteClick?.(timestamp);
 	}
 
+	// Resolves only after the browser has painted at least once. A single
+	// requestAnimationFrame callback runs *before* the paint it schedules,
+	// so two back-to-back guarantee one full frame has been painted in
+	// between — long enough for the `rendering` badge to actually show
+	// before load()/render() seize the main thread.
+	function waitForPaint(): Promise<void> {
+		return new Promise((resolve) => {
+			requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+		});
+	}
+
 	$effect(() => {
 		const currentXml = xml;
 		if (!osmd || currentXml === loadedXml) return;
+		const osmdRef = osmd;
 		loadedXml = currentXml;
 		cursorReady = false;
+		rendering = true;
 		loadError = null;
 		lastCursorSystemTop = undefined;
-		osmd.setOptions(osmdOptions(displayMode, scoreTheme));
-		osmd
-			.load(currentXml)
+		osmdRef.setOptions(osmdOptions(displayMode, scoreTheme));
+		// Yield a painted frame before load() and again before render() so
+		// the "updating score" badge is on screen the whole time the main
+		// thread is blocked, not revealed only once the work is already done.
+		Promise.resolve()
+			.then(waitForPaint)
+			.then(() => osmdRef.load(currentXml))
+			.then(waitForPaint)
 			.then(() => {
-				osmd!.render();
+				osmdRef.render();
 				applyScoreTreatments();
 				cursorReady = true;
 			})
 			.catch((e: unknown) => {
 				loadError = String(e);
+			})
+			.finally(() => {
+				rendering = false;
 			});
 	});
 
@@ -659,6 +690,12 @@
 		bind:this={container}
 		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z), onPan: cancelFollow }}
 	></div>
+	{#if rendering && showBadge}
+		<div class="render-status" role="status" aria-live="polite">
+			<span class="render-status__dot" aria-hidden="true"></span>
+			{m.piece_updating_score()}
+		</div>
+	{/if}
 	{#if loadError}
 		<p class="error">{loadError}</p>
 	{/if}
@@ -717,6 +754,54 @@
 		color: var(--score-button-active-text) !important;
 		text-align: center;
 		font-variant-numeric: tabular-nums;
+	}
+	/* Pinned near the top of the viewport, not just the score — so the badge
+	   is still visible when a Practice Setup change is made with the drawer
+	   open over the score (on mobile the drawer covers it entirely). Offset
+	   down far enough to clear the player's own top bar (back button +
+	   title). `pointer-events: none` so it never eats a tap underneath it. */
+	.render-status {
+		position: fixed;
+		top: calc(3.5rem + env(safe-area-inset-top, 0px));
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 5;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.4rem 0.85rem;
+		border: 1px solid var(--score-chrome-border);
+		border-radius: var(--radius-full);
+		background: var(--score-chrome);
+		box-shadow: var(--shadow);
+		color: var(--score-button-text);
+		font-size: 0.8125rem;
+		font-weight: 650;
+		pointer-events: none;
+	}
+	.render-status__dot {
+		width: 0.6rem;
+		height: 0.6rem;
+		border-radius: 50%;
+		background: var(--score-button-active);
+		animation: render-status-pulse 0.9s ease-in-out infinite;
+	}
+	@keyframes render-status-pulse {
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: scale(0.75);
+		}
+		50% {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.render-status__dot {
+			animation: none;
+			opacity: 0.8;
+		}
 	}
 	.annotate-hint {
 		flex: 1;

@@ -9,6 +9,9 @@ reimplementing (and risking drifting from) library.py's rules.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from pathlib import Path
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -19,6 +22,7 @@ from app.db.models import (
     Group,
     GroupRole,
     Homework,
+    OmrJob,
     OwnerType,
     Piece,
     PieceMarkupMark,
@@ -27,8 +31,10 @@ from app.db.models import (
     VersionStatus,
 )
 
+from app.rendering.pipeline import discard_render_cache
 from app.services.common import get_or_404
 from app.services.groups import group_role  # noqa: F401  (re-exported for existing `from app.services.pieces import group_role` call sites; home is now app/services/groups.py)
+from app.storage.files import load_file, save_file
 
 
 def get_piece_or_404(piece_id: str, db: Session) -> Piece:
@@ -134,6 +140,153 @@ def add_version(
     return version
 
 
+def working_draft(piece_id: str, db: Session) -> PieceVersion | None:
+    """The single open *working draft* on a piece, if any: a `draft`
+    `PieceVersion` with `source == modification`. This is what
+    generate-from-PDF auto-imports into and what the in-app editor opens
+    and saves back (B17 / F16). "At most one open" is enforced by the two
+    writers — `get_or_create_working_draft` reuses this one instead of
+    making another, and `_import_draft_version` rejects it before adding a
+    fresh one — so if more than one exists (legacy rows) the newest wins.
+
+    Widened from B8's `pending_generated_version_id`, which returned just
+    the id and is now a thin wrapper over this."""
+    return (
+        db.query(PieceVersion)
+        .filter(
+            PieceVersion.piece_id == piece_id,
+            PieceVersion.status == VersionStatus.draft,
+            PieceVersion.source == VersionSource.modification,
+        )
+        .order_by(PieceVersion.created_at.desc())
+        .first()
+    )
+
+
+def pending_generated_version_id(piece_id: str, db: Session) -> str | None:
+    """Id of the piece's open working draft, if any. Thin wrapper over
+    `working_draft` kept for `library._omr_fields` and `omr.list_jobs`,
+    which only need the id for "a draft is waiting" state."""
+    wd = working_draft(piece_id, db)
+    return wd.id if wd is not None else None
+
+
+def live_version(piece: Piece, db: Session) -> PieceVersion | None:
+    """The version the app currently treats as *the* piece: a group
+    piece's most recently distributed version, or (personal piece, or a
+    group piece nothing has been distributed for yet) its newest
+    non-rejected version. This is what `get_or_create_working_draft`
+    clones on first edit; it is never mutated in place."""
+    if piece.owner_type == OwnerType.group:
+        distributed = (
+            db.query(PieceVersion)
+            .join(Distribution, Distribution.piece_version_id == PieceVersion.id)
+            .filter(
+                PieceVersion.piece_id == piece.id,
+                Distribution.group_id == piece.owner_id,
+            )
+            .order_by(Distribution.distributed_at.desc())
+            .first()
+        )
+        if distributed is not None:
+            return distributed
+    return (
+        db.query(PieceVersion)
+        .filter(
+            PieceVersion.piece_id == piece.id,
+            PieceVersion.status != VersionStatus.rejected,
+        )
+        .order_by(PieceVersion.created_at.desc())
+        .first()
+    )
+
+
+def _content_copy(stored_path: str | None) -> str | None:
+    """Independent copy of a stored file's bytes under a fresh key, so a
+    working draft's files outlive whatever the live version does with
+    its own. Returns None if the source has no bytes (a slot that was
+    never filled, or bytes lost to a free-tier disk wipe)."""
+    if not stored_path:
+        return None
+    try:
+        return save_file(load_file(stored_path), suffix=Path(stored_path).suffix)
+    except FileNotFoundError:
+        return None
+
+
+def get_or_create_working_draft(piece: Piece, user, db: Session) -> PieceVersion:
+    """Return the piece's open working draft, creating one first (by
+    content-copying the live version's music + PDF) if there isn't one.
+    Idempotent: a second call returns the same version. The caller gates
+    this behind review authority."""
+    existing = working_draft(piece.id, db)
+    if existing is not None:
+        return existing
+
+    live = live_version(piece, db)
+    return add_version(
+        piece=piece,
+        created_by=user.id,
+        file_path=_content_copy(live.file_path) if live is not None else None,
+        pdf_file_path=_content_copy(live.pdf_file_path) if live is not None else None,
+        file_name=live.file_name if live is not None else None,
+        pdf_file_name=live.pdf_file_name if live is not None else None,
+        source=VersionSource.modification,
+        db=db,
+    )
+
+
+def replace_version_file(version: PieceVersion, data: bytes, file_name: str | None, db: Session) -> PieceVersion:
+    """Overwrite a `draft` version's music file in place (a working-draft
+    save) — no new row. Drops any stale rendered output cached under the
+    version id. The caller checks status and authority."""
+    version.file_path = save_file(
+        data, suffix=Path(file_name).suffix if file_name else ""
+    )
+    if file_name:
+        version.file_name = file_name
+    db.commit()
+    db.refresh(version)
+    discard_render_cache(version.id)
+    return version
+
+
+def publish_version(version: PieceVersion, user, db: Session) -> PieceVersion:
+    """Take a working draft all the way live in one step: submit -> approve
+    -> (group piece) distribute. No new state machine — it just walks the
+    same `VersionStatus` values and writes the same `Distribution` row the
+    individual endpoints do, without the per-endpoint "creator only"
+    submit check (the caller has already required review authority, and a
+    working draft's creator is often not whoever publishes it — it may be
+    the OMR runner). A personal piece stops after `approved`."""
+    if not (version.status == VersionStatus.draft and version.source == VersionSource.modification):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only an open working draft can be published",
+        )
+    version.status = VersionStatus.approved
+    version.reviewed_by = user.id
+    version.reviewed_at = datetime.now(timezone.utc)
+    version.seams_resolved_ack = True
+
+    piece = get_piece_or_404(version.piece_id, db)
+    if piece.owner_type == OwnerType.group:
+        already = (
+            db.query(Distribution)
+            .filter(
+                Distribution.piece_version_id == version.id,
+                Distribution.group_id == piece.owner_id,
+            )
+            .first()
+        )
+        if already is None:
+            db.add(Distribution(piece_version_id=version.id, group_id=piece.owner_id))
+
+    db.commit()
+    db.refresh(version)
+    return version
+
+
 def delete_piece(piece: Piece, db: Session) -> None:
     """F5 edit panel: delete a track entirely, not just one of its files —
     a harder, less-reversible action than anything else in this module, so
@@ -168,6 +321,11 @@ def delete_piece(piece: Piece, db: Session) -> None:
             synchronize_session=False
         )
     db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).delete(synchronize_session=False)
+    # "Generate music from PDF" jobs tagged with this piece — their derived
+    # result may already have been imported as a version (deleted just
+    # above) or not yet; either way the job row FK's `pieces.id`, so it
+    # goes before the piece does.
+    db.query(OmrJob).filter(OmrJob.piece_id == piece.id).delete(synchronize_session=False)
     db.query(Homework).filter(Homework.piece_id == piece.id).update(
         {Homework.piece_id: None}, synchronize_session=False
     )

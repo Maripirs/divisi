@@ -1,15 +1,19 @@
 """Orchestrates B7: MIDI file -> stems + MusicXML, cached per `PieceVersion`.
 
-A `PieceVersion`'s `file_path` is set once at creation and never mutated by
-any endpoint (see `app/api/routes/library.py`), so a version's rendered
-output can be cached by version id alone — no content hash needed, just "has
-this id been rendered before". Cache is a manifest.json file per version
-dir; its presence is the cache-hit signal.
+A `PieceVersion`'s `file_path` is normally set once at creation and never
+mutated, so a version's rendered output can be cached by version id alone —
+no content hash needed, just "has this id been rendered before". Cache is a
+manifest.json file per version dir; its presence is the cache-hit signal.
+
+The one exception is a B17 working draft: `PUT /library/versions/{id}/file`
+replaces a `draft` version's music file in place, so that route calls
+`discard_render_cache` to drop any stale render for the id.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 
@@ -65,6 +69,15 @@ def render_manifest(piece_version_id: str, source_file_path: Path, force: bool =
     }
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return manifest
+
+
+def discard_render_cache(piece_version_id: str) -> None:
+    """Drop any cached stems/MusicXML/manifest for this version, so the
+    next `render_manifest` call re-renders from the current file. Used when
+    a version's music file is replaced in place (B17 working drafts)."""
+    render_dir = _render_dir(piece_version_id)
+    if render_dir.exists():
+        shutil.rmtree(render_dir)
 
 
 def render_file_path(piece_version_id: str, filename: str) -> Path:

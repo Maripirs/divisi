@@ -14,10 +14,10 @@ runs but silently produces no lyrics at all.
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.omr._subprocess import log_tail, run_logged
 
 
 class OmrEngineUnavailable(Exception):
@@ -43,7 +43,12 @@ def run_audiveris(source_path: Path, output_dir: Path) -> Path:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     timeout = get_settings().audiveris_step_timeout_seconds
-    result = subprocess.run(
+    # Audiveris logs each step (LOAD, BINARY, SCALE, GRID, HEADERS, HEADS,
+    # STEMS, TEXTS, ...) as it goes — on a long run that's the only
+    # progress signal there is. `run_logged` tees it to the console and to
+    # `audiveris.log` in the output dir so there's a record afterwards.
+    log_path = output_dir / "audiveris.log"
+    code = run_logged(
         [
             bin_name,
             "-batch",
@@ -54,11 +59,11 @@ def run_audiveris(source_path: Path, output_dir: Path) -> Path:
             str(output_dir),
             str(source_path),
         ],
-        capture_output=True,
-        text=True,
+        log_path,
     )
-    if result.returncode != 0:
-        raise OmrEngineError(f"audiveris failed ({result.returncode}): {result.stderr.strip()}")
+    if code != 0:
+        tail = log_tail(log_path)
+        raise OmrEngineError(f"audiveris failed ({code}); see {log_path}\n{tail}".rstrip())
 
     exported = sorted(output_dir.glob("*.mxl"))
     if not exported:

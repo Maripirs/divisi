@@ -52,6 +52,7 @@
 		const ext = name.split('.').pop()?.toLowerCase();
 		if (ext === 'mid' || ext === 'midi') return 'MIDI';
 		if (ext === 'musicxml' || ext === 'xml') return 'XML';
+		if (ext === 'mxl') return 'MXL';
 		if (ext === 'pdf') return 'PDF';
 		return ext ? ext.toUpperCase() : '';
 	}

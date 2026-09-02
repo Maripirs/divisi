@@ -50,6 +50,7 @@
 		type Annotation,
 		type AnnotationShare
 	} from '$lib/api/annotations';
+	import type { MarkupScope } from '$lib/api/pieceMarkup';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
@@ -69,6 +70,11 @@
 	// svelte-ignore state_referenced_locally
 	let piece = $state<Piece | undefined>(getPiece(data.id));
 	let remoteMeta = $state<RemotePieceMeta | null>(null);
+	// F14: set from `resolve/+server.ts` — true only for a real Backend piece
+	// that has a music file and whose owner/admin the caller is. Gates the
+	// "Edit music" entry point in the practice-setup drawer; the editor route
+	// re-checks server-side and the Backend re-checks again on save.
+	let canEditMusic = $state(false);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like
@@ -199,6 +205,11 @@
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
 	let menuOpen = $state(false);
+	// Bound out of `ScoreView`: true while OSMD re-engraves the score after a
+	// Practice Setup change. Used to dim/disable the drawer controls and show
+	// an "updating" hint right there, since the re-render blocks the main
+	// thread for a second or two and the tap otherwise looks ignored.
+	let scoreRendering = $state(false);
 	// F5: forced to whichever single pane exists when a piece doesn't have
 	// both — a stale/default 'pdf'/'player' pick from before this piece was
 	// opened must never select a pane this piece doesn't have. `!piece` is
@@ -217,6 +228,15 @@
 	);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
+	// F12: which scope of saved PDF marks is shown (or `'none'` to hide
+	// them). Driven from the Practice Setup drawer below and bound into
+	// `PdfView`, which no longer floats its own control for this.
+	let pdfMarkupVisibility = $state<'none' | MarkupScope>('mine');
+	const PDF_MARKUP_VISIBILITY_OPTIONS: { value: 'none' | MarkupScope; label: () => string }[] = [
+		{ value: 'none', label: () => m.markup_visibility_none() },
+		{ value: 'mine', label: () => m.markup_visibility_mine() },
+		{ value: 'group', label: () => m.markup_visibility_group() }
+	];
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
@@ -308,12 +328,17 @@
 				loadState = { kind: 'unreachable' };
 				return;
 			}
-			const body = (await res.json()) as { remote: RemotePieceMeta | null; unreachable: boolean };
+			const body = (await res.json()) as {
+				remote: RemotePieceMeta | null;
+				unreachable: boolean;
+				canEditMusic?: boolean;
+			};
 			if (!body.remote) {
 				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
 				return;
 			}
 			remoteMeta = body.remote;
+			canEditMusic = body.canEditMusic ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode` was seeded assuming no piece at all (forced to
 			// 'player' below) — now that `hasPlayer`/`hasPdfPane` are actually
@@ -394,7 +419,14 @@
 				return;
 			}
 			durationMs = player.duration;
-			baseTempoBpm = player.baseBPM;
+			// The "100%" anchor for the tempo readout is the piece's *opening*
+			// tempo — the admin's configured default if there is one, otherwise
+			// the file's own tempo. So a piece always opens showing 100%, and
+			// the steppers move you off it, rather than the readout starting at
+			// some odd percentage because the admin default (or a
+			// tempo the parser couldn't read from the file) differs from the
+			// file's declared tempo.
+			baseTempoBpm = adminDefaultTempo ?? player.baseBPM;
 			const storedTempo = stored.tempoBpm;
 			if (storedTempo !== undefined && storedTempo >= MIN_TEMPO_BPM && storedTempo <= MAX_TEMPO_BPM) {
 				setTempo(storedTempo, false);
@@ -1055,6 +1087,8 @@
 						<ScoreView
 							bind:this={scoreView}
 							bind:zoom={zoomLevel}
+							bind:rendering={scoreRendering}
+							showBadge={!menuOpen}
 							{xml}
 							{displayMode}
 							staffVisualStates={visibleStaffStates}
@@ -1080,6 +1114,7 @@
 						pieceId={remoteMeta?.pieceId}
 						canMarkup={canAnnotate}
 						currentUserId={page.data.user?.id}
+						bind:markupVisibility={pdfMarkupVisibility}
 					/>
 					</div>
 				</div>
@@ -1166,6 +1201,18 @@
 					</button>
 				</header>
 
+				{#if scoreRendering}
+					<!-- Sticks to the top of the drawer as you scroll, so the
+					     "your tap landed, the score is redrawing" hint stays next
+					     to whichever control was just used. The controls below go
+					     `inert` + dimmed for the same second or two. -->
+					<div class="menu-updating" role="status" aria-live="polite">
+						<span class="menu-updating__dot" aria-hidden="true"></span>
+						{m.piece_updating_score()}
+					</div>
+				{/if}
+
+				<div class="menu-body" class:menu-body--updating={scoreRendering} inert={scoreRendering}>
 				{#if hasPlayer}
 				<!-- F13: tempo only means anything against the synthesized
 				     mix — a PDF-only piece (or one whose PDF view is showing
@@ -1285,6 +1332,25 @@
 					</section>
 				{/if}
 
+				{#if viewMode === 'pdf' && canAnnotate}
+					<!-- F12: was a control floating on the PDF itself — moved here
+					     so it sits with the other per-piece view settings.
+					     `PdfView` binds `markupVisibility` to this. -->
+					<section class="menu-section">
+						<h3>{m.markup_visibility()}</h3>
+						<div class="segmented" role="group" aria-label={m.markup_visibility()}>
+							{#each PDF_MARKUP_VISIBILITY_OPTIONS as option (option.value)}
+								<button
+									class:active={pdfMarkupVisibility === option.value}
+									onclick={() => (pdfMarkupVisibility = option.value)}
+								>
+									{option.label()}
+								</button>
+							{/each}
+						</div>
+					</section>
+				{/if}
+
 				{#if viewMode === 'player'}
 					<section class="menu-section">
 						<h3>{m.settings_display()}</h3>
@@ -1370,6 +1436,20 @@
 					{/if}
 				</section>
 				{/if}
+
+				{#if canEditMusic}
+					<!-- F14: only an owner/admin of a real Backend track with a
+					     music file gets here (`resolve/+server.ts` decides). Opens
+					     the in-app notation editor; the route re-checks access
+					     server-side. -->
+					<section class="menu-section">
+						<h3>{m.piece_editor_menu_heading()}</h3>
+						<a class="menu-edit-link" href={lh(`/piece/${data.id}/edit`)}>
+							{m.piece_editor_title()}
+						</a>
+					</section>
+				{/if}
+				</div>
 			</aside>
 		{/if}
 
@@ -1756,6 +1836,66 @@
 		gap: 1rem;
 	}
 
+	/* Holds every drawer section so they can all be dimmed/`inert` as one
+	   while the score re-engraves — keeps the drawer's own column gap. */
+	.menu-body {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+		transition: opacity 0.15s ease;
+	}
+	.menu-body--updating {
+		opacity: 0.45;
+		/* `inert` already blocks interaction; this is the belt-and-suspenders
+		   visual + a guard for anything that ignores `inert`. */
+		pointer-events: none;
+	}
+
+	.menu-updating {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: -0.375rem 0;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--surface-2);
+		color: var(--text);
+		font-size: 0.8125rem;
+		font-weight: 650;
+	}
+	.menu-updating__dot {
+		width: 0.55rem;
+		height: 0.55rem;
+		flex-shrink: 0;
+		border-radius: 50%;
+		background: var(--accent);
+		animation: menu-updating-pulse 0.9s ease-in-out infinite;
+	}
+	@keyframes menu-updating-pulse {
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: scale(0.75);
+		}
+		50% {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.menu-updating__dot {
+			animation: none;
+			opacity: 0.8;
+		}
+		.menu-body {
+			transition: none;
+		}
+	}
+
 	.menu-header h2 {
 		margin: 0;
 		color: var(--text);
@@ -1782,6 +1922,27 @@
 		color: var(--text);
 		border-radius: var(--radius-md);
 		padding: 0.55rem 0.7rem;
+	}
+
+	/* F14: the "Edit music" entry point (owner/admin only). Styled here
+	   because the practice-setup drawer doesn't pull in `shell.css`'s
+	   `.btn`. */
+	.menu-edit-link {
+		display: block;
+		text-align: center;
+		font: inherit;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		border: 1px solid var(--accent);
+		background: transparent;
+		color: var(--accent);
+		border-radius: var(--radius-md);
+		padding: 0.55rem 0.7rem;
+		text-decoration: none;
+	}
+	.menu-edit-link:hover {
+		background: var(--accent);
+		color: var(--accent-contrast);
 	}
 
 	.subsection-hint {

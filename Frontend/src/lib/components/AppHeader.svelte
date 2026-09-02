@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Logo from './Logo.svelte';
+	import OmrJobAlerts from './OmrJobAlerts.svelte';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -29,14 +30,21 @@
 				<Logo size={22} />
 				<span>Divisi</span>
 			</a>
-			<button class="settings-link" onclick={() => (settingsDrawer.open = true)} aria-label={m.settings_title()}>
+			<div class="brand-row-actions">
+				<!-- Self-contained (reads its own store, no props) so it rides
+				     along on every screen that mounts `AppHeader`: an admin
+				     hears a "Generate music from PDF" job they started has
+				     finished no matter where they've navigated since. -->
+				<OmrJobAlerts />
+				<button class="settings-link" onclick={() => (settingsDrawer.open = true)} aria-label={m.settings_title()}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<circle cx="12" cy="12" r="3" />
 					<path
 						d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
 					/>
 				</svg>
-			</button>
+				</button>
+			</div>
 		</div>
 		<h1 class="page-title">{title}</h1>
 	</div>

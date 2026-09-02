@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.db.models import OwnerType, VersionSource, VersionStatus
+from app.db.models import OmrJobStatus, OwnerType, VersionSource, VersionStatus
 
 
 class PieceOut(BaseModel):
@@ -62,11 +62,47 @@ class PieceUploadOut(BaseModel):
     version: PieceVersionOut
 
 
+class WorkingDraftOut(BaseModel):
+    """B17: the piece's single open working draft, as returned by
+    `POST /library/pieces/{id}/working-draft`. `forked_from_live` is true
+    when this call just created it by copying the live version (the editor
+    badges it "Working draft — not yet live" either way, but F16 uses this
+    to know it's a fresh copy)."""
+
+    version: PieceVersionOut
+    forked_from_live: bool
+
+
+class VersionPublishRequest(BaseModel):
+    """B17: body of `POST /library/versions/{id}/publish`. `seams_resolved`
+    is F16's editor gate (every OMR seam marked resolved client-side); the
+    Backend can't verify it, only record it and refuse a `false`."""
+
+    seams_resolved: bool
+
+
 class DistributionOut(BaseModel):
     id: str
     piece_version_id: str
     group_id: str
     distributed_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class LibraryEntryOmrJobOut(BaseModel):
+    """Just enough of the most recent "Generate music from PDF" job for
+    the Tracks tab's edit panel to show generating / failed / done, and
+    (B16) whether a paged run left seams for a human to review."""
+
+    id: str
+    status: OmrJobStatus
+    error_message: str | None = None
+    paged: bool = False
+    needs_review: bool | None = None
+    # B17: best-effort "page X of Y" while a paged run is in progress.
+    pages_done: int | None = None
+    pages_total: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -94,6 +130,13 @@ class LibraryEntryOut(BaseModel):
     # storage-relative and never sent to the client.
     music_file_name: str | None = None
     pdf_file_name: str | None = None
+    # "Generate music from PDF" (Tracks tab): the most recent OMR job for
+    # this piece, and the id of the draft version a finished job produced
+    # (newest `draft` + `modification` version), if one is waiting for an
+    # admin to accept or discard it. Both null when the feature was never
+    # used on this track.
+    latest_omr_job: LibraryEntryOmrJobOut | None = None
+    pending_generated_version_id: str | None = None
 
 
 class GuestPieceOut(BaseModel):

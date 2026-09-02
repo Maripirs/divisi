@@ -12,9 +12,12 @@
 		"check": "npm run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "npm run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
-		"test:watch": "vitest"
+		"test:watch": "vitest",
+		"test:e2e": "playwright test",
+		"test:e2e:ui": "playwright test --ui"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.62.1",
 		"@sveltejs/adapter-cloudflare": "^7.2.9",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
@@ -30,6 +33,7 @@
 	},
 	"dependencies": {
 		"@inlang/paraglide-js": "^2.25.0",
+		"fflate": "^0.8.3",
 		"js-synthesizer": "^1.13.0",
 		"midi-file": "^1.2.4",
 		"opensheetmusicdisplay": "^2.1.2",
