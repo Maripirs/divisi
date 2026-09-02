@@ -28,7 +28,21 @@ async function loadRemoteMusicFile(url: string): Promise<ParsedMIDI> {
 	let magic = '';
 	for (let i = 0; i < 4 && i < bytes.length; i++) magic += String.fromCharCode(bytes[i]);
 	if (magic === 'MThd') return parseMidiFile(bytes);
-	if (isMxl(bytes)) return parseMusicXmlFile(extractMusicXmlText(bytes));
+	if (isMxl(bytes)) {
+		let xmlText: string;
+		try {
+			xmlText = extractMusicXmlText(bytes);
+		} catch (err) {
+			// A truncated / corrupt ZIP (fflate throws a raw `FlateError`) or an
+			// archive with no score document: surface it the way an unparseable
+			// plain MusicXML does, a thrown `Error` the caller's `piece.load()`
+			// catch turns into its normal "couldn't load" state.
+			throw new Error(
+				`Malformed MusicXML: ${err instanceof Error ? err.message : String(err)}`
+			);
+		}
+		return parseMusicXmlFile(xmlText);
+	}
 	return parseMusicXmlFile(new TextDecoder().decode(bytes));
 }
 

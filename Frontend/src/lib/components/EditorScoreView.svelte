@@ -42,6 +42,7 @@
 		measureMode = false,
 		measureBand = null,
 		pageBand = null,
+		dimOffPage = false,
 		onPickNote = undefined,
 		onSeekTo = undefined,
 		fill = false
@@ -99,6 +100,10 @@
 			fromMeasure: number;
 			toMeasure: number;
 		} | null;
+		// F19 rework: when true and a page band is present, veil everything above
+		// and below the focused page so the current page reads as the only live
+		// system. Pure overlay, same recompute triggers as `pageBand`.
+		dimOffPage?: boolean;
 		// Called when the user clicks a notehead (or, in Measures mode, anywhere
 		// in a bar). The page resolves the hit to a `<note>` via
 		// `EditableScore.findByOnset` and updates selection. `extend` is the
@@ -109,11 +114,13 @@
 			partId: string;
 			staff: number;
 			octave: number | undefined;
-			/** 1-based measure number read straight off OSMD's graphical model —
+			/** 0-based index of the clicked bar in OSMD's graphical measure list.
 			 * Measures mode uses this instead of resolving a bar through
-			 * `findByOnset`, which misfires on a part that's tacet at the click's
-			 * onset. `null` if OSMD's model didn't surface it. */
-			measureNumber: number | null;
+			 * `findByOnset` (which misfires on a part that's tacet at the click's
+			 * onset) or the printed `MeasureNumber` (a hand-upload with a pickup
+			 * or non-sequential numbers makes that a wrong index). `null` if
+			 * OSMD's model didn't surface it. */
+			measureIndex: number | null;
 			extend: boolean;
 		}) => void;
 		// Called when the user drags the playhead bar or clicks an empty spot
@@ -250,9 +257,10 @@
 		};
 		Pitch?: { Octave?: number };
 	};
-	// The graphical note OSMD returns for a hit; walked for the 1-based measure
-	// number (which `findByOnset` can't reliably give — a part that's tacet for
-	// the opening bars has no note there to match a click's onset against).
+	// The graphical note OSMD returns for a hit; walked for its position in
+	// OSMD's graphical measure list (which `findByOnset` can't reliably give:
+	// a part that's tacet for the opening bars has no note there to match a
+	// click's onset against).
 	type NearestGraphical = {
 		sourceNote?: NearestSource;
 		parentVoiceEntry?: {
@@ -272,16 +280,30 @@
 	function nearestSourceAt(clientX: number, clientY: number): NearestSource | null {
 		return nearestGraphicalAt(clientX, clientY)?.sourceNote ?? null;
 	}
-	// 1-based measure number for a hit, from the graphical note or (fallback)
-	// the source staff entry's parent measure. `null` if neither is reachable.
-	function measureNumberOf(g: NearestGraphical | null): number | null {
+	// The hit's 0-based measure index: its position in OSMD's graphical measure
+	// list (`GraphicSheet.MeasureList[measureIndex][staffIndex]`), falling back
+	// to the source measure's position in document order. Deliberately *not*
+	// OSMD's printed `MeasureNumber`: a generated / merged draft is renumbered
+	// 1..N so the two agree, but a hand-upload with a pickup (`number="0"`) or
+	// non-sequential printed numbers makes the printed number a wrong index (a
+	// `number="0"` pickup would map to -1). `null` if neither is reachable.
+	function measureIndexOf(g: NearestGraphical | null): number | null {
 		const gm = g?.parentVoiceEntry?.parentStaffEntry?.parentMeasure;
-		const n = gm?.MeasureNumber ?? gm?.parentSourceMeasure?.MeasureNumber;
-		if (typeof n === 'number' && Number.isFinite(n)) return n;
-		const src =
-			g?.sourceNote?.ParentStaffEntry?.VerticalSourceStaffEntryContainer?.ParentMeasure
-				?.MeasureNumber;
-		return typeof src === 'number' && Number.isFinite(src) ? src : null;
+		const list = (osmd?.GraphicSheet as { MeasureList?: unknown[][] } | undefined)?.MeasureList;
+		if (gm && list) {
+			for (let i = 0; i < list.length; i++) {
+				if (list[i]?.some((cell) => cell === (gm as unknown))) return i;
+			}
+		}
+		const sm =
+			(gm as { parentSourceMeasure?: unknown } | undefined)?.parentSourceMeasure ??
+			g?.sourceNote?.ParentStaffEntry?.VerticalSourceStaffEntryContainer?.ParentMeasure;
+		const sources = (osmd?.Sheet as { SourceMeasures?: unknown[] } | undefined)?.SourceMeasures;
+		if (sm && Array.isArray(sources)) {
+			const idx = sources.indexOf(sm);
+			if (idx >= 0) return idx;
+		}
+		return null;
 	}
 
 	// A click in the score is either "select this notehead" (an edit gesture,
@@ -316,7 +338,7 @@
 			partId,
 			staff,
 			octave,
-			measureNumber: measureNumberOf(g),
+			measureIndex: measureIndexOf(g),
 			extend: event.shiftKey
 		});
 	}
@@ -613,6 +635,14 @@
 		jumpToCursor();
 	}
 
+	/** F19 rework: frame the focused page's band at the top of the scroll
+	 * region, the way `PdfView.scrollToPage` frames the scan page. */
+	export function scrollPageIntoView(): void {
+		if (!container || pageBandRects.length === 0) return;
+		const top = Math.min(...pageBandRects.map((r) => r.top));
+		container.scrollTop = Math.max(0, top - 12);
+	}
+
 	function disengageFollow(): void {
 		following = false;
 	}
@@ -626,7 +656,12 @@
 	/** F19 diagnostic seam (dev / `?e2e` only): the focused page's band inputs
 	 * and the rects they produced. */
 	export function debugPageBand(): unknown {
-		return { pageBand, rectCount: pageBandRects.length, rects: pageBandRects };
+		return {
+			pageBand,
+			rectCount: pageBandRects.length,
+			rects: pageBandRects,
+			dimRects: pageDimRects
+		};
 	}
 
 	/** Test seam (e2e playhead-sync spec): the playhead cursor's current
@@ -889,12 +924,18 @@
 	let pageBandRects = $state<
 		{ key: string; top: number; left: number; width: number; height: number }[]
 	>([]);
+	// F19 rework: two full-width veils (above the page, below the page) drawn
+	// when `dimOffPage`. Same content-space coords as `pageBandRects`.
+	let pageDimRects = $state<
+		{ key: string; top: number; left: number; width: number; height: number }[]
+	>([]);
 
 	function computePageBand(): void {
 		const list = (osmd?.GraphicSheet as { MeasureList?: GraphicalMeasureLike[][] } | undefined)
 			?.MeasureList;
 		if (!osmd || !renderedOnce || !container || !pageBand || !list) {
 			pageBandRects = [];
+			pageDimRects = [];
 			return;
 		}
 		const unit = 10 * osmd.Zoom;
@@ -937,17 +978,31 @@
 				cur.bottom = Math.max(cur.bottom, barBottom);
 			}
 		}
-		pageBandRects = [...rows.entries()].map(([rowKey, r]) => ({
+		const rects = [...rows.entries()].map(([rowKey, r]) => ({
 			key: `page:${lo}-${hi}:${rowKey}`,
 			top: r.top - pad,
 			left: r.left - pad,
 			width: r.right - r.left + pad * 2,
 			height: r.bottom - r.top + pad * 2
 		}));
+		pageBandRects = rects;
+		if (dimOffPage && rects.length && container) {
+			const minTop = Math.min(...rects.map((r) => r.top));
+			const maxBottom = Math.max(...rects.map((r) => r.top + r.height));
+			const w = container.scrollWidth;
+			const h = container.scrollHeight;
+			pageDimRects = [
+				{ key: 'dim:top', top: 0, left: 0, width: w, height: Math.max(0, minTop) },
+				{ key: 'dim:bottom', top: maxBottom, left: 0, width: w, height: Math.max(0, h - maxBottom) }
+			];
+		} else {
+			pageDimRects = [];
+		}
 	}
 
 	$effect(() => {
 		void pageBand;
+		void dimOffPage;
 		if (!osmd || !renderedOnce) return;
 		untrack(() => computePageBand());
 	});
@@ -968,6 +1023,15 @@
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
 	</div>
 	<div class="score-container" bind:this={container}>
+		{#each pageDimRects as veil (veil.key)}
+			<div
+				class="page-dim"
+				style:top="{veil.top}px"
+				style:left="{veil.left}px"
+				style:width="{veil.width}px"
+				style:height="{veil.height}px"
+			></div>
+		{/each}
 		{#each pageBandRects as band (band.key)}
 			<div
 				class="page-band"
@@ -1112,14 +1176,26 @@
 	   end read clearly without fighting the notation. */
 	.page-band {
 		position: absolute;
-		background: color-mix(in srgb, var(--accent) 10%, transparent);
-		border-left: 3px solid var(--accent);
-		border-right: 3px solid var(--accent);
+		background: color-mix(in srgb, var(--accent) 4%, transparent);
+		border-left: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+		border-right: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
 		border-radius: 2px;
 		pointer-events: none;
 		/* Same layer as the F17 measure band; drawn earlier in the DOM so the
 		   measure band paints on top when both are present. */
 		z-index: 1;
+	}
+
+	/* F19 rework: the off-page veil, a near-opaque wash of the page background
+	   above and below the focused page, so only the current system stays crisp.
+	   Sits above the engraving and the seam rules; the page band's own strip is
+	   never covered (the veils stop at its edges). */
+	.page-dim {
+		position: absolute;
+		background: var(--bg);
+		opacity: 0.72;
+		pointer-events: none;
+		z-index: 4;
 	}
 
 	/* F15: a labelled rule at each unresolved page join from a paged OMR

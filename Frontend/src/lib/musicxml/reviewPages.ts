@@ -23,6 +23,12 @@ export type ReviewPageRaw = {
 	ok: boolean;
 	startMeasure: number;
 	measureCount: number;
+	/** True when `startMeasure` / `measureCount` came from B18's per-page
+	 * offsets in the report. False for a pre-B18 report where every page's
+	 * offsets were null: the entry still exists (so approve / skip and the
+	 * Publish gate keep working) but its bar range is a placeholder, and the
+	 * editor skips the band highlight + auto-scroll for that page. */
+	offsetsKnown: boolean;
 };
 
 /** Client-side review status of a page. `skipped` is a deliberate "move on
@@ -31,16 +37,25 @@ export type ReviewPageRaw = {
 export type PageStatus = 'approved' | 'failed' | 'review' | 'untouched';
 
 /** Build the review-page list from a paged report. Uses B18's per-page
- * `start_measure` / `measure_count` when present; on an older report (both
- * null) it walks a running 1-based offset from the counts so the list still
- * covers the score end to end. */
+ * `start_measure` / `measure_count` when present and marks each such entry
+ * `offsetsKnown: true`. On an older report (every page's offsets null) it
+ * still returns one entry per page so approve / skip and the Publish gate
+ * work, but marks them `offsetsKnown: false`: the bar range is a placeholder
+ * the editor doesn't highlight or scroll to. */
 export function mapReport(pages: PagedReport['pages']): ReviewPageRaw[] {
 	let running = 1;
 	return pages.map((p) => {
+		const offsetsKnown = p.start_measure != null || p.measure_count != null;
 		const count = p.measure_count ?? 0;
 		const start = p.start_measure ?? running;
 		running = start + count;
-		return { page: p.page, ok: p.ok, startMeasure: Math.max(1, start), measureCount: Math.max(0, count) };
+		return {
+			page: p.page,
+			ok: p.ok,
+			startMeasure: Math.max(1, start),
+			measureCount: Math.max(0, count),
+			offsetsKnown
+		};
 	});
 }
 

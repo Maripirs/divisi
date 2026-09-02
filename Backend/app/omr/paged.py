@@ -414,7 +414,15 @@ def _assign_page_offsets(pages: list[PageResult], per_page_measures: dict[int, i
     whole-score merge). Walking in page order makes the offsets tile the
     merge with no gaps or overlaps; a page absent from the map (it failed,
     or the merge dropped it) counts 0 and inherits the running offset, so
-    its `start_measure` is exactly where the next real page begins."""
+    its `start_measure` is exactly where the next real page begins.
+
+    When `per_page_measures` is empty the whole-score merge failed (malformed
+    OMR output). There is no real tiling to write, so leave every page's
+    offsets unset rather than writing a degenerate "start 1, span 0" report,
+    which Frontend F19 would take at face value and collapse every page onto
+    bar 1."""
+    if not per_page_measures:
+        return
     running = 1
     for p in pages:
         count = per_page_measures.get(p.page, 0)

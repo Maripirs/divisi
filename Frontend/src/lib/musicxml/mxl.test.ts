@@ -43,6 +43,44 @@ describe('extractMusicXmlText', () => {
 		expect(extractMusicXmlText(bytes)).toContain('score-partwise');
 	});
 
+	it('normalizes a "./"-prefixed container full-path', () => {
+		const bytes = mxl({
+			'META-INF/container.xml': CONTAINER('./score.xml'),
+			'score.xml': SCORE,
+			'aaa-decoy.xml': '<nope/>'
+		});
+		expect(extractMusicXmlText(bytes)).toContain('score-partwise');
+		expect(extractMusicXmlText(bytes)).not.toContain('nope');
+	});
+
+	it('normalizes a backslash-separated container full-path', () => {
+		const bytes = mxl({
+			'META-INF/container.xml': CONTAINER('MusicXML\\score.xml'),
+			'MusicXML/score.xml': SCORE,
+			'aaa-decoy.xml': '<nope/>'
+		});
+		expect(extractMusicXmlText(bytes)).toContain('score-partwise');
+		expect(extractMusicXmlText(bytes)).not.toContain('nope');
+	});
+
+	it('decodes a UTF-16 LE inner document instead of mangling it as UTF-8', () => {
+		const u16 = new Uint8Array(2 + SCORE.length * 2);
+		u16[0] = 0xff;
+		u16[1] = 0xfe;
+		for (let i = 0; i < SCORE.length; i++) {
+			const code = SCORE.charCodeAt(i);
+			u16[2 + i * 2] = code & 0xff;
+			u16[2 + i * 2 + 1] = code >> 8;
+		}
+		const bytes = zipSync({
+			'META-INF/container.xml': strToU8(CONTAINER('score.xml')),
+			'score.xml': u16
+		});
+		const out = extractMusicXmlText(bytes);
+		expect(out).toContain('score-partwise');
+		expect(out).not.toContain(String.fromCharCode(0xfffd)); // no U+FFFD replacement chars
+	});
+
 	it('strips a leading BOM', () => {
 		const bytes = mxl({ 'score.xml': `﻿${SCORE}` });
 		expect(extractMusicXmlText(bytes).charCodeAt(0)).toBe('<'.charCodeAt(0));

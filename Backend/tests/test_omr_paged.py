@@ -297,3 +297,36 @@ def test_rerun_page_rewrites_downstream_offsets(tmp_path, monkeypatch):
     assert pages[3]["start_measure"] == 8
     on_disk = json.loads((out / "paged-report.json").read_text())
     assert [p["start_measure"] for p in on_disk["pages"]] == [1, 4, 8]
+
+
+def test_merge_failure_leaves_page_offsets_unset_not_all_ones(tmp_path, monkeypatch):
+    """When the whole-score merge blows up on malformed OMR output there is
+    no real tiling: the report must leave every page's offsets null, not
+    tile them all at (start 1, span 0), which Frontend F19 would take at
+    face value and collapse every page onto bar 1."""
+    out = tmp_path / "out"
+    out.mkdir()
+    report = paged.PagedReport(
+        output_dir=out,
+        pages=[
+            _ok_page(tmp_path, 1, parts=4, measures=3),
+            _ok_page(tmp_path, 2, parts=4, measures=3),
+            _ok_page(tmp_path, 3, parts=4, measures=3),
+        ],
+    )
+
+    def boom(*_args, **_kwargs):
+        raise ValueError("bad OMR output")
+
+    monkeypatch.setattr(paged, "merge_musicxml", boom)
+
+    mx, _mid = paged._finalize_paged_run(report, out)
+
+    assert mx is None
+    assert report.combined_error is not None
+    assert all(p.start_measure is None and p.measure_count is None for p in report.pages)
+
+    on_disk = json.loads((out / "paged-report.json").read_text())
+    assert all(
+        p["start_measure"] is None and p["measure_count"] is None for p in on_disk["pages"]
+    )
