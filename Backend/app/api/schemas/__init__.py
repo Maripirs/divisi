@@ -53,6 +53,11 @@ from app.api.schemas.library import (
 )
 from app.api.schemas.omr import OmrImportOut, OmrImportRequest, OmrJobOut
 from app.api.schemas.piece_markup import MarkupMarkCreate, MarkupMarkOut, MarkupMarkUpdate
+from app.api.schemas.piece_rehearsal_notes import (
+    PieceRehearsalNoteCreate,
+    PieceRehearsalNoteOut,
+    PieceRehearsalNoteUpdate,
+)
 from app.api.schemas.responsibilities import (
     ResponsibilityDateCreate,
     ResponsibilityDateOut,
@@ -108,6 +113,9 @@ __all__ = [
     "OmrJobOut",
     "PieceDefaultTempoUpdate",
     "PieceOut",
+    "PieceRehearsalNoteCreate",
+    "PieceRehearsalNoteOut",
+    "PieceRehearsalNoteUpdate",
     "PieceUploadOut",
     "PieceVersionOut",
     "RenderManifestOut",

@@ -362,6 +362,42 @@ class WeeklyNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class PieceRehearsalNoteKind(str, enum.Enum):
+    pronunciation = "pronunciation"
+    rhythm = "rhythm"
+    breath = "breath"
+    dynamics = "dynamics"
+    entrance = "entrance"
+    page_turn = "page_turn"
+    other = "other"
+
+
+class PieceRehearsalNote(Base):
+    """B16: a durable, group-wide rehearsal reminder shown in a piece's
+    Rehearsal Notes section (e.g. "sopranos: lift off beat 3 on p.4",
+    "watch the tenor entrance at m.52"). Outlives the weekly note it may
+    have started life as, so it stays put next to the music rather than
+    scrolling away with the week. Distinct from `Annotation` /
+    `PieceMarkupMark` (marks drawn on the PDF itself) and from
+    `WeeklyNote` (a dated bulletin members scroll back through)."""
+
+    __tablename__ = "piece_rehearsal_notes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default=PieceRehearsalNoteKind.other.value)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[str] = mapped_column(String, nullable=False, default="")
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measure_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    part_scope: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the note out from under the rest of the group.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ResponsibilitySchedule(Base):
     """B13: a named, reusable set of roles (e.g. "Sunday cantors") that
     individual one-off dates get added to. Scoped down hard from the

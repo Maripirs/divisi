@@ -10,6 +10,7 @@ from app.api.routes import (
     library,
     omr,
     piece_markup,
+    piece_rehearsal_notes,
     responsibilities,
     weekly_notes,
 )
@@ -31,6 +32,7 @@ app.include_router(omr.router)
 app.include_router(library.router)
 app.include_router(annotations.router)
 app.include_router(piece_markup.router)
+app.include_router(piece_rehearsal_notes.router)
 app.include_router(guest.router)
 app.include_router(homework.router)
 app.include_router(responsibilities.router)
