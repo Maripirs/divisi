@@ -31,6 +31,16 @@ Homework        id, group_id, piece_id (nullable), title, range, instructions, d
                  created_by, created_at  — a group admin's assignment to their members;
                  unrelated to Piece review/distribution status (B4)
 
+PieceRehearsalNote id, group_id, piece_id, kind (pronunciation|rhythm|breath|
+                 dynamics|entrance|page_turn|other), title (nullable), body,
+                 page_number (nullable), measure_label (nullable), part_scope
+                 (nullable, free text — choir part naming varies too much per
+                 group for an enum), created_by, created_at  — a durable,
+                 group-wide rehearsal reminder shown in a piece's "Rehearsal
+                 Notes" section; outlives the weekly note it may have started
+                 as. Distinct from Annotation/PieceMarkupMark (marks drawn on
+                 the PDF) and from WeeklyNote (a dated bulletin). (B16)
+
 GroupPageSettings group_id, page (homework|tracks|members|about|responsibilities),
                  enabled (bool), audience (members|everyone)  — per-group, per-page
                  visibility; replaces Group.guest_homework_visible (B10). `audience`
@@ -74,6 +84,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B13 | Responsibilities (+ regular rehearsal schedule) | ✅ Done |
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
+| B16 | Piece rehearsal notes (durable per-piece reminders) | ⏳ Planned |
 
 ### B1 — Backend scaffold [x]
 
@@ -415,8 +426,93 @@ fast-follow (see Backlog), deliberately not built this pass.
 **Tasks — Human:**
 - [ ] Deploy this to production — push to `backend/deploy`, and run the new migration against the real Neon Postgres DB. Nothing in the Frontend's F11 can actually save/load until this happens.
 
+### B16 — Piece rehearsal notes (durable per-piece reminders) [ ]
+
+Scoped down from the Codex "Divisi Weekly Notes Backend Proposal"
+(`~/Documents/Codex/2026-08-30/on/outputs/divisi-weekly-notes-backend-proposal.md`).
+That doc proposes three things at once: `weekly_note_sections` +
+`weekly_note_items` (a normalized section/item tree under a weekly note),
+`piece_rehearsal_notes` (durable per-piece reminders), and
+`group_resources` (stable group links). This milestone builds **only
+`piece_rehearsal_notes`** — the actual product win (piece-specific
+knowledge that today is trapped in dated posts becomes reusable and
+searchable on the piece). The other two are deferred to Backlog: the
+section/item tree is the expensive, least-proven part (2 tables + ~6 CRUD
+endpoints + ordering) and a JSONB column on `weekly_notes` would get most
+of its value if structure is ever actually wanted; `group_resources` is
+cheap and useful but independent.
+
+Standalone: new table + new route module, no change to any existing
+table, endpoint, or the `WeeklyNote.body` free-text flow.
+
+**Two decisions to confirm at build time:**
+1. **List page-access gate.** Reuse `GroupPage.weekly_notes` for the
+   `GET` list (these notes are conceptually the durable half of weekly
+   notes), rather than adding a dedicated `GroupPage` value — a new page
+   would mean a `group_page_settings` seed + backfill in the migration.
+   Split it out later only if an admin wants to toggle it independently.
+2. **`part_scope` is free-text `str`, not an enum** — SSAATTBB, divisi,
+   "low altos", "everyone" all need to fit; matches `Homework.range`
+   being a plain string.
+No `source_weekly_note_id` column yet — it only earns its place once
+"promote a weekly note into a piece note" ships (Backlog).
+
+**Acceptance criteria:**
+- [ ] A group admin can create a rehearsal note against a piece that
+  belongs to their group (kind, optional title, body, optional
+  page_number / measure_label / part_scope)
+- [ ] Any member of the group can list a piece's rehearsal notes; a
+  non-member / guest cannot (403, no data leak)
+- [ ] Creating a note for a piece that isn't this group's piece is
+  rejected (400/404, not a cross-group write)
+- [ ] An admin can edit (full replace) and delete a note; a member cannot
+- [ ] Unknown group / piece / note id returns 404
+- [ ] Disabling the gating page hides the list for members but not admins
+  (same mechanism as homework)
+
+**Tasks — Claude:**
+- [ ] `PieceRehearsalNote` model + `PieceRehearsalNoteKind` enum in
+  `app/db/models.py` (after `WeeklyNote`), following the `Homework`
+  pattern — `_uuid` PK, `_now` default, nullable `created_by` with the
+  account-deletion comment. `kind` stored as plain `String` (validated by
+  the Pydantic enum at the API layer, like `GroupPageSettings.page`)
+- [ ] Alembic migration, `down_revision = 'c1f7a4d2e8b6'` (current head);
+  `op.create_table` with FKs to `groups.id` / `pieces.id` / `users.id`;
+  no `group_page_settings` seeding. Do **not** run `alembic upgrade`
+  locally against `Backend/.env` (prod Neon) — verify against a scratch
+  SQLite URL or a Neon branch
+- [ ] `app/api/schemas/piece_rehearsal_notes.py` (`...Create` / `...Update`
+  full-replace / `...Out`), re-exported from `schemas/__init__.py`
+- [ ] `app/api/routes/piece_rehearsal_notes.py`, two-prefix router cloned
+  from `weekly_notes.py` / `homework.py`:
+  `POST/GET /groups/{group_id}/pieces/{piece_id}/rehearsal-notes`,
+  `PUT/DELETE /piece-rehearsal-notes/{note_id}`. Reuse `get_group_or_404`,
+  `require_admin`, `require_member`, `get_piece_or_404`, `get_or_404`,
+  `require_member_page_access(..., GroupPage.weekly_notes, ...)`. Register
+  in `app/main.py`
+- [ ] `tests/test_piece_rehearsal_notes.py` — reuse `_upload_piece(...,
+  owner_type="group", group_id=...)` from `test_piece_markup.py`; cover
+  every acceptance criterion above
+
+**Tasks — Human:**
+- [ ] Deploy: push to `backend/deploy`, run the new migration against the
+  real Neon Postgres DB
+
 ## Backlog
 
+- **B16 fast-follow — promote a weekly note into a piece note**: an admin
+  turns weekly-note text into a durable `PieceRehearsalNote`. Adds a
+  `source_weekly_note_id` (nullable) column + a `POST` action endpoint.
+- **B16 fast-follow — `group_resources`**: stable group links (YouTube
+  playlist, member portal, shared doc, Divisi join link) as a small table
+  + CRUD, so they don't get retyped into every weekly note. From the same
+  Codex proposal.
+- **Weekly note structured sections/items**: the Codex proposal's
+  `weekly_note_sections` + `weekly_note_items` tree. Deferred pending
+  evidence admins will author structured notes rather than prose; a JSONB
+  `structured` column on `weekly_notes` is the cheaper first step if so.
+- **Markdown links in the Frontend weekly-note renderer** (`[text](url)`)
+  — frontend-only, no backend change; tracked here so it isn't lost.
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
@@ -434,6 +530,8 @@ fast-follow (see Backlog), deliberately not built this pass.
 ## Log
 
 *Condensed 2026-08-29 — see each milestone's own section above for full acceptance-criteria/task detail; this is now a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-01: Scoped B16 (piece rehearsal notes) off the Codex "Weekly Notes Backend Proposal" — took only `piece_rehearsal_notes` (durable per-piece reminders, the real product win) and pushed the proposal's `weekly_note_sections`/`_items` tree and `group_resources` to Backlog. Not built yet.
 
 - 2026-08-31: Closed out B8 (OMR) — installed both engines locally on macOS and ran a real 4-part choral PDF (`fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf`) through each end-to-end. Debugging trail: (1) initial runs looked stuck/timing-out — turned out the harness's Bash sandbox throttles CPU/IO 10-50x, confirmed by rerunning outside it; (2) even unsandboxed, Audiveris still hit its own 120s-per-step default on real content (`HEADERS` took ~19min, `HEADS` ~30min) — not an environment artifact, just too tight for dense scores, so `audiveris.py` now always passes `-constant …sheetStepTimeOut=<audiveris_step_timeout_seconds>` (1800s default); (3) Audiveris produced zero lyrics silently until Tesseract's `eng.traineddata` was installed (empty by default, no error); (4) oemer hit two real bugs in its own unmaintained 0.1.8 code — a CoreML/onnxruntime crash and an OpenCV `HoughLinesP` shape-mismatch `IndexError` — both reproduced, root-caused, and worked around (patches don't survive a fresh `pip install`, so they're documented as a re-apply-after-install step, not shipped as a repo fix). End state: Audiveris correctly recovers 4 separate SATB parts + OCR'd lyrics/title/composer; oemer completes but flattens everything into one chord-stacked part with no lyrics — confirms the existing engine-priority design rather than changing it. Recipe for both installs + the oemer patches now in `Backend/README.md`'s "OMR engines" section. No test suite changes (this was an install/config verification pass, not new application code beyond the timeout constant).
 
