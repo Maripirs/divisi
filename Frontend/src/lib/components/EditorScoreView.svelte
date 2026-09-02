@@ -124,8 +124,10 @@
 			extend: boolean;
 		}) => void;
 		// Called when the user drags the playhead bar or clicks an empty spot
-		// in the score. The page converts the onset to ms, seeks the audio,
-		// and (when `play`) starts playback from there.
+		// in the score. The page converts the onset to ms and seeks the audio.
+		// `play` is always false today (repositions only — playback starts
+		// solely from the Play button); the flag is kept for a future
+		// click-to-play affordance.
 		onSeekTo?: (onsetWholeNotes: number, opts: { play: boolean }) => void;
 	} = $props();
 
@@ -229,6 +231,7 @@
 		container?.removeEventListener('click', handlePick);
 		container?.removeEventListener('wheel', disengageFollow);
 		container?.removeEventListener('touchmove', disengageFollow);
+		if (engraveTimer !== undefined) clearTimeout(engraveTimer);
 		osmd = undefined;
 	});
 
@@ -307,10 +310,11 @@
 	}
 
 	// A click in the score is either "select this notehead" (an edit gesture,
-	// unchanged from F14) or "move the playhead here and play" (a click on
-	// empty staff space). VexFlow renders each notehead as a `g.vf-notehead`;
-	// a click whose target sits inside a note glyph is a selection, anything
-	// else (staff line, gap between notes, barline) is a seek.
+	// unchanged from F14) or "move the playhead here" (a click on empty staff
+	// space — repositions only, never starts the transport; playback begins
+	// solely from the Play button). VexFlow renders each notehead as a
+	// `g.vf-notehead`; a click whose target sits inside a note glyph is a
+	// selection, anything else (staff line, gap between notes, barline) is a seek.
 	function handlePick(event: MouseEvent): void {
 		if (!osmd || !pointF2D || !renderedOnce) return;
 		// The pointerup that ends a playhead drag is followed by a synthetic
@@ -323,9 +327,9 @@
 		const target = event.target as Element | null;
 		const onNote = !!target?.closest?.('.vf-notehead, .vf-stavenote, .vf-rest');
 		// In Measures mode every click selects a bar; a click on empty staff
-		// space only seeks in note mode.
+		// space only repositions the playhead in note mode (no auto-play).
 		if (!onNote && !measureMode) {
-			onSeekTo?.(onsetWholeNotes, { play: true });
+			onSeekTo?.(onsetWholeNotes, { play: false });
 			return;
 		}
 		if (!onPickNote) return;
@@ -674,82 +678,115 @@
 		return typeof t === 'number' ? t : null;
 	}
 
-	// Re-engrave whenever `xml` changes — the editor hands a freshly
-	// serialized model after every edit, and OSMD has no partial update, so
-	// each change is a full `load()` + `render()`. `loadedXml` guards against
-	// re-running on an unrelated reactive tick.
-	$effect(() => {
-		const currentXml = xml;
-		const osmdRef = osmd;
-		if (!osmdRef || currentXml === loadedXml) return;
-		loadedXml = currentXml;
-		rendering = true;
-		loadError = null;
-		osmdRef.setOptions(osmdOptions(scoreTheme));
-		osmdRef.Zoom = zoom;
-		Promise.resolve()
-			.then(() => osmdRef.load(currentXml))
-			.then(() => {
-				osmdRef.render();
-				renderedOnce = true;
-				// A fresh sheet: the first system counts as "changed" again,
-				// and OSMD rebuilt cursor 0 at bar 0 — force a re-walk.
-				lastCursorSystemTop = undefined;
-				selectionStale = true;
-				// `render()` rebuilt and re-hid both cursor elements — drop the
-				// shown/styled flags so `placeCursor` re-shows and re-styles.
-				selectionShown = false;
-				playheadShown = false;
-				cursorsStyled = false;
-				// Measure seam positions before parking the cursor — both walk
-				// the shared cursor, so seams first, then `placeCursor()` puts
-				// it back on the selection/playback position.
-				measureSeams();
-				// OSMD rebuilds the cursor with the sheet, so re-place it
-				// (playback or selection) after every re-engrave.
-				placeCursor();
-				computeMeasureBand();
-				computePageBand();
-			})
-			.catch((e: unknown) => {
-				loadError = String(e);
-			})
-			.finally(() => {
-				rendering = false;
-			});
-	});
+	// Re-engrave whenever `xml`, the zoom, or the theme changes. The editor
+	// hands a freshly serialized model after every edit and OSMD has no
+	// partial update, so each is a full `load()` + `render()` — hundreds of ms
+	// on a real choral score. Two things this has to get right:
+	//
+	//  - OSMD is not reentrant: a second `load()` before the first settles
+	//    corrupts its internal state. A single worker (`engrave`) owns the
+	//    pass and loops until the sheet matches the newest inputs, so overlap
+	//    is structurally impossible however fast the changes arrive.
+	//  - A burst of edits (holding Backspace, rapid transpose) must not pay a
+	//    full engrave per keystroke. The page applies model edits freely now;
+	//    a short throttle here collapses the resulting `xml` changes into at
+	//    most one engrave per `ENGRAVE_THROTTLE_MS`, so the score trails the
+	//    edits by one render instead of freezing between them, and catches up
+	//    the instant the burst stops.
+	let engraving = false;
+	let appliedZoom = 1;
+	let appliedTheme: ResolvedTheme | undefined;
+	let engraveTimer: ReturnType<typeof setTimeout> | undefined;
+	const ENGRAVE_THROTTLE_MS = 90;
 
-	// Re-render at the new zoom / theme. OSMD rebuilds the whole graphical
-	// sheet, so both are applied by re-rendering, not by restyling the SVG.
-	// Guarded on `renderedOnce` so this never runs before the load effect
-	// above has given OSMD a sheet.
+	// The per-engrave cursor/band repaint. `render()` rebuilds the graphical
+	// sheet and both cursor elements, so every derived bit of on-screen state
+	// is stale afterwards. `untrack`ed by callers: `measureSeams`/`placeCursor`
+	// read `playheadWholeNotes`/`isPlaying`/`selectedOnset`, and without the
+	// untrack an `$effect` calling this would re-subscribe to the playback
+	// position and re-engrave every animation frame.
+	function repaintAfterEngrave(): void {
+		renderedOnce = true;
+		// Fresh sheet: the first system counts as "changed" again, and OSMD
+		// rebuilt cursor 0 at bar 0 — force a re-walk. Drop the shown/styled
+		// flags so `placeCursor` re-shows and re-styles the rebuilt elements.
+		lastCursorSystemTop = undefined;
+		selectionStale = true;
+		selectionShown = false;
+		playheadShown = false;
+		cursorsStyled = false;
+		// Seams borrow the shared cursor to probe screen positions, so measure
+		// them first, then `placeCursor()` parks it back on the selection /
+		// playback position.
+		measureSeams();
+		placeCursor();
+		computeMeasureBand();
+		computePageBand();
+	}
+
+	async function engrave(): Promise<void> {
+		if (engraving || !osmd) return;
+		engraving = true;
+		rendering = true;
+		try {
+			// More edits can land while a pass runs — loop until the sheet
+			// reflects the newest xml / zoom / theme.
+			while (
+				osmd &&
+				(xml !== loadedXml || zoom !== appliedZoom || scoreTheme !== appliedTheme)
+			) {
+				const target = xml;
+				const level = zoom;
+				const theme = scoreTheme;
+				loadError = null;
+				try {
+					osmd.setOptions(osmdOptions(theme));
+					osmd.Zoom = level;
+					await osmd.load(target);
+					if (!osmd) break;
+					osmd.render();
+					// Mark consumed only after a clean render.
+					loadedXml = target;
+					appliedZoom = level;
+					appliedTheme = theme;
+					untrack(() => repaintAfterEngrave());
+				} catch (e) {
+					loadError = String(e);
+					// Consume this input too, so a parse failure doesn't spin
+					// the loop; a later edit (new xml) still retries.
+					loadedXml = target;
+					appliedZoom = level;
+					appliedTheme = theme;
+				}
+			}
+		} finally {
+			engraving = false;
+			rendering = false;
+			// Catch an edit that landed in the gap between the loop's last
+			// condition check and here (the `$effect` saw `engraving` still
+			// true and bailed, and it won't re-run on its own for that).
+			scheduleEngrave();
+		}
+	}
+
+	// Arm a throttled engrave. While a timer is pending or the worker is
+	// running this is a no-op — the worker re-reads all three inputs and will
+	// not miss a change. At most one engrave per `ENGRAVE_THROTTLE_MS`, so a
+	// burst of edits collapses instead of paying a full render each.
+	function scheduleEngrave(): void {
+		if (!osmd || engraving || engraveTimer !== undefined) return;
+		if (xml === loadedXml && zoom === appliedZoom && scoreTheme === appliedTheme) return;
+		engraveTimer = setTimeout(() => {
+			engraveTimer = undefined;
+			void engrave();
+		}, ENGRAVE_THROTTLE_MS);
+	}
+
 	$effect(() => {
-		const level = zoom;
-		const theme = scoreTheme;
-		if (!osmd || !renderedOnce) return;
-		// `untrack`: `placeCursor()` (below, via `measureSeams`/`placeCursor`)
-		// synchronously reads `playheadWholeNotes` / `isPlaying` /
-		// `selectedOnset`, and `$effect` tracks reads transitively through
-		// calls. Without this, a full `osmd.render()` here re-subscribes to the
-		// playback position and re-engraves the entire sheet on every
-		// animation frame during playback (~1.7s main-thread stalls on a long
-		// score). Only `zoom` / `scoreTheme` should retrigger this effect; the
-		// per-frame cursor move has its own effect below.
-		untrack(() => {
-			osmd!.setOptions(osmdOptions(theme));
-			osmd!.Zoom = level;
-			osmd!.render();
-			lastCursorSystemTop = undefined;
-			selectionStale = true;
-			// Fresh cursor elements after render() — see the load effect above.
-			selectionShown = false;
-			playheadShown = false;
-			cursorsStyled = false;
-			measureSeams();
-			placeCursor();
-			computeMeasureBand();
-			computePageBand();
-		});
+		void xml;
+		void zoom;
+		void scoreTheme;
+		scheduleEngrave();
 	});
 
 	// Re-place the cursors when the selection or the playhead position moves

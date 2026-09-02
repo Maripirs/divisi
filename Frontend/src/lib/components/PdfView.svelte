@@ -18,17 +18,22 @@
 		type MarkupMark
 	} from '$lib/api/pieceMarkup';
 	import StampShape from '$lib/components/StampShape.svelte';
-	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
+	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 
 	/**
-	 * Renders a PDF with our own zoom controls (+/- buttons and a two-finger
-	 * pinch gesture, both driving the same `zoom` state) instead of an
-	 * `<iframe>` — mobile Safari's iframe-embedded PDF viewer turned out to
-	 * be a stripped-down build with no toolbar and no pinch-zoom at all,
-	 * a platform limitation no CSS/JS from outside the iframe can fix.
-	 * Rendering via pdf.js onto canvases gives identical zoom behavior on
-	 * every platform, matching ScoreView's own zoom controls.
+	 * Renders a PDF with our own +/- zoom controls instead of an `<iframe>` —
+	 * mobile Safari's iframe-embedded PDF viewer turned out to be a
+	 * stripped-down build with no toolbar and no pinch-zoom at all, a platform
+	 * limitation no CSS/JS from outside the iframe can fix. Rendering via
+	 * pdf.js onto canvases gives identical zoom behavior on every platform,
+	 * matching ScoreView's own zoom controls.
+	 *
+	 * Deliberately no two-finger pinch-to-zoom here (ScoreView still has it):
+	 * re-rendering every page through pdf.js on each gesture frame left the
+	 * canvases resizing and blanking mid-pinch, which read as the page
+	 * distorting. A two-finger gesture just pans/scrolls the pane natively
+	 * (`touch-action: pan-x pan-y`); zoom is the +/- buttons only.
 	 *
 	 * When `canMarkup` is on, also renders a piaScore-style markup layer on
 	 * top of each page: pen strokes, stamps, and text annotations. Visibility
@@ -770,9 +775,9 @@
 	// --- Click-drag panning (mouse) ---
 	// Grab-and-drag to move around the page, the way a desktop PDF viewer
 	// works — most useful when zoomed in past the container. Mouse only:
-	// touch already pans natively (`touch-action: pan-x pan-y`) and pinches
-	// via the `pinchZoom` action, and a finger-drag that also scrolled here
-	// would fight that. Skipped while a markup tool is armed (the overlay
+	// touch already pans/scrolls natively (`touch-action: pan-x pan-y`, one
+	// finger or two), and a finger-drag that also scrolled here would fight
+	// that. Skipped while a markup tool is armed (the overlay
 	// owns that drag, to draw) and when the press lands on a control or an
 	// editable mark.
 	let panning = $state(false);
@@ -821,7 +826,6 @@
 		class="pdf-container"
 		class:panning
 		bind:this={container}
-		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z) }}
 		onpointerdown={handlePanPointerDown}
 		onpointermove={handlePanPointerMove}
 		onpointerup={endPan}

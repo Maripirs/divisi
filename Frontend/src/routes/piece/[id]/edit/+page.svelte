@@ -128,10 +128,12 @@
 	// bar). Cleared on the next selection or successful edit, and auto-clears
 	// after a few seconds.
 	let editNotice = $state<string | null>(null);
-	// Bound out of `EditorScoreView`: true while OSMD re-engraves. Edits are
-	// held off until it settles so two `osmd.load()` calls can't overlap (a
-	// real risk on a held arrow key — the spike serialized edits the same
-	// way with its `busy` flag).
+	// Bound out of `EditorScoreView`: true while OSMD re-engraves. Model edits
+	// no longer wait for it — they mutate the `EditableScore` DOM, which is
+	// independent of OSMD's state, and `EditorScoreView` coalesces the
+	// resulting re-engraves into a single non-overlapping worker. This still
+	// gates Save / Publish / Undo / Redo (which want a settled sheet) and
+	// drives the toolbar's transient "updating" disabled state.
 	let reRendering = $state(false);
 	let surfaceEl = $state<HTMLDivElement | undefined>(undefined);
 	let scoreView: EditorScoreView | undefined = $state();
@@ -228,7 +230,7 @@
 	// staff. Re-serialize + mark dirty like `applyStructuralEdit`, but keep the
 	// bar selection so several clefs can be tried in a row.
 	function applyClefRange(preset: { sign: string; line: number }): void {
-		if (!score || !measureSel || reRendering) return;
+		if (!score || !measureSel) return;
 		const { partId, staff, start, end } = measureSel;
 		const before = workingXml;
 		const applied = score.setClefRange(partId, staff, start, end, {
@@ -327,7 +329,7 @@
 	// mark dirty like `applyEdit`, but there is no "selected note" to keep —
 	// indices shift when bars are added — so the selection is cleared.
 	function applyStructuralEdit(mutate: () => boolean): boolean {
-		if (!score || reRendering) return false;
+		if (!score) return false;
 		const before = workingXml;
 		if (!mutate()) return false;
 		editHistory.record(before);
@@ -1064,7 +1066,7 @@
 	// Key stepper over `fifths` -7..7, clamped at the ends. Applies to every
 	// part at the selected measure via `setKey`.
 	function stepKey(delta: 1 | -1): void {
-		if (!score || selectedIndex === null || reRendering) return;
+		if (!score || selectedIndex === null) return;
 		const current = selectedKey ?? 0;
 		const next = Math.max(-7, Math.min(7, current + delta));
 		if (next === current) return;
@@ -1151,7 +1153,7 @@
 	// A mutation that returns `false` (the model refused it) is a no-op: it
 	// must not flag the score dirty or re-render. Returns whether it applied.
 	function applyEdit(mutate: (s: EditableScore, index: number) => boolean | void): boolean {
-		if (!score || selectedIndex === null || reRendering) return false;
+		if (!score || selectedIndex === null) return false;
 		const before = workingXml;
 		if (mutate(score, selectedIndex) === false) return false;
 		editHistory.record(before);
@@ -1206,7 +1208,7 @@
 	// the measure's grid or a lengthening the bar can't absorb; surface that
 	// as a transient notice rather than a silent nothing.
 	function applyDuration(type: DurationType, dots: 0 | 1 | 2 = durationDots): boolean {
-		if (!score || selectedIndex === null || reRendering) return false;
+		if (!score || selectedIndex === null) return false;
 		// Already exactly this value: a silent no-op, not a refusal, so it
 		// must not warn or flag the score dirty.
 		if (selectedDuration && selectedDuration.type === type && selectedDuration.dots === dots) {
@@ -1223,7 +1225,7 @@
 	function cycleDots(): void {
 		const next = ((durationDots + 1) % 3) as 0 | 1 | 2;
 		const type = selectedDuration?.type;
-		if (type && score && selectedIndex !== null && !reRendering) {
+		if (type && score && selectedIndex !== null) {
 			if (!applyDuration(type, next)) return;
 		}
 		durationDots = next;
