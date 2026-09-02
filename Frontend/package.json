@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "NODE_EXTRA_CA_CERTS=../Backend/.certs/dev-cert.pem vite dev",
 		"build": "vite build",
+		"deploy": "vite build && wrangler deploy",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
