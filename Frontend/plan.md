@@ -30,7 +30,9 @@ on a machine with no browser/Playwright available, so that's the recurring block
 across the board, not a code gap. F11's markup layer also can't fully work on the
 preview until Backend B15's migration runs against production. The in-app notation
 editor and the OMR-review milestones live in their own plan, `OMR_EDITOR_PLAN.md`
-(E1–E10). See the status table under Milestones.
+(E1–E10), and now only on the `omr-editor` branch — the frontend surface of that
+work was deleted from `main` as unverified WIP (the Backend OMR code stays, dormant
+and UI-unreachable). See the status table under Milestones.
 
 The web app is the active product; the native iOS app is paused (see the "iOS app"
 section below and the repo-root `README.md`).
@@ -92,7 +94,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
-| — | In-app notation editor + OMR review | Moved to `OMR_EDITOR_PLAN.md` (milestones E1–E10) |
+| — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built: two sources (group B16 / personal position-less B5 annotation), on the piece page and an expandable Rehearsal Tracks card, per-note timestamps, player-mode scroll cap; `check`/`build`/vitest 107 green; no real-browser pass yet |
 
 ### F1 — Standalone playback + notation prototype [x]

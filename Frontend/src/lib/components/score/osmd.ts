@@ -1,11 +1,9 @@
-/** Shared OpenSheetMusicDisplay setup for the two score mounts —
- * `ScoreView.svelte` (playback) and `EditorScoreView.svelte` (notation
- * editor). Only the genuinely common bits live here; each component still
- * owns its cursor/marker wiring and its own theme resolution. */
+/** Shared OpenSheetMusicDisplay setup for `ScoreView.svelte` (playback).
+ * Only the genuinely common bits live here; the component still owns its
+ * cursor/marker wiring and its own theme resolution. */
 
-/** The three colours both mounts feed OSMD, already resolved from the
- * active theme by the caller (they resolve it differently — a
- * `DisplayMode`-aware palette vs. a straight `THEME_PALETTES` lookup). */
+/** The three colours the mount feeds OSMD, already resolved from the
+ * active theme by the caller (a `DisplayMode`-aware palette lookup). */
 export interface OsmdColors {
 	/** Noteheads, stems, staff lines, most engraved ink. */
 	ink: string;
@@ -15,10 +13,10 @@ export interface OsmdColors {
 	page: string;
 }
 
-/** The OSMD constructor options common to both mounts: no title, no
- * built-in follow/resize surprises, colouring on so the caller can tint
- * ink/rests per theme. Spread this and add the mount-specific keys
- * (`cursorsOptions`, and `backend: 'svg'` for the editor). */
+/** The OSMD constructor options for the mount: no title, no built-in
+ * follow/resize surprises, colouring on so the caller can tint ink/rests
+ * per theme. Spread this and add the mount-specific keys
+ * (`cursorsOptions`). */
 export function baseOsmdOptions(colors: OsmdColors) {
 	return {
 		autoResize: true,

@@ -71,11 +71,6 @@
 	// svelte-ignore state_referenced_locally
 	let piece = $state<Piece | undefined>(getPiece(data.id));
 	let remoteMeta = $state<RemotePieceMeta | null>(null);
-	// F14: set from `resolve/+server.ts` — true only for a real Backend piece
-	// that has a music file and whose owner/admin the caller is. Gates the
-	// "Edit music" entry point in the practice-setup drawer; the editor route
-	// re-checks server-side and the Backend re-checks again on save.
-	let canEditMusic = $state(false);
 	// F20: whether this caller is an admin of the piece's owning group, so
 	// the Piece Notes panel shows its add/edit/delete controls for the
 	// group's notes. Members still see those notes read-only.
@@ -336,7 +331,6 @@
 			const body = (await res.json()) as {
 				remote: RemotePieceMeta | null;
 				unreachable: boolean;
-				canEditMusic?: boolean;
 				canManagePieceNotes?: boolean;
 			};
 			if (!body.remote) {
@@ -344,7 +338,6 @@
 				return;
 			}
 			remoteMeta = body.remote;
-			canEditMusic = body.canEditMusic ?? false;
 			canManagePieceNotes = body.canManagePieceNotes ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode` was seeded assuming no piece at all (forced to
@@ -1461,19 +1454,6 @@
 					{/if}
 				</section>
 				{/if}
-
-				{#if canEditMusic}
-					<!-- F14: only an owner/admin of a real Backend track with a
-					     music file gets here (`resolve/+server.ts` decides). Opens
-					     the in-app notation editor; the route re-checks access
-					     server-side. -->
-					<section class="menu-section">
-						<h3>{m.piece_editor_menu_heading()}</h3>
-						<a class="menu-edit-link" href={lh(`/piece/${data.id}/edit`)}>
-							{m.piece_editor_title()}
-						</a>
-					</section>
-				{/if}
 				</div>
 			</aside>
 		{/if}
@@ -1947,27 +1927,6 @@
 		color: var(--text);
 		border-radius: var(--radius-md);
 		padding: 0.55rem 0.7rem;
-	}
-
-	/* F14: the "Edit music" entry point (owner/admin only). Styled here
-	   because the practice-setup drawer doesn't pull in `shell.css`'s
-	   `.btn`. */
-	.menu-edit-link {
-		display: block;
-		text-align: center;
-		font: inherit;
-		font-size: 0.9375rem;
-		font-weight: 600;
-		border: 1px solid var(--accent);
-		background: transparent;
-		color: var(--accent);
-		border-radius: var(--radius-md);
-		padding: 0.55rem 0.7rem;
-		text-decoration: none;
-	}
-	.menu-edit-link:hover {
-		background: var(--accent);
-		color: var(--accent-contrast);
 	}
 
 	.subsection-hint {

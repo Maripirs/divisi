@@ -1,7 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
-import { subjectFromToken } from '$lib/server/jwt';
 import type { GroupOut, GroupRole, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
 import type { RequestHandler } from './$types';
@@ -23,14 +22,6 @@ interface GuestPieceResponse {
 interface RemoteResolution {
 	remote: RemotePieceMeta | null;
 	unreachable: boolean;
-	/** F14: whether this caller may open the in-app notation editor on the
-	 * piece — it has a music file *and* the caller is the owner of a
-	 * personal piece or an `admin` of the owning group, the same rule
-	 * `routes/piece/[id]/edit/+page.server.ts` enforces before the editor
-	 * mounts and the Backend re-checks on save. Absent/`false` for guests
-	 * and for anyone without edit rights, so `+page.svelte` hides the entry
-	 * point. */
-	canEditMusic?: boolean;
 	/** F20: whether this caller is an `admin` of the piece's owning group —
 	 * the authority the Backend requires to create/edit/delete the group's
 	 * piece notes (B16). Members still see those notes read-only;
@@ -41,9 +32,8 @@ interface RemoteResolution {
 
 /** The caller's role in this piece's owning group, or `null` for a
  * personal piece, a group the caller isn't in, or any Backend hiccup
- * resolving it. One `/groups` fetch feeds both `canEditMusic` and
- * `canManagePieceNotes` below — never throws, since those flags only
- * decide whether to show UI and should fail closed. */
+ * resolving it. Feeds `canManagePieceNotes` below — never throws, since
+ * that flag only decides whether to show UI and should fail closed. */
 async function resolveOwningGroupRole(
 	entry: LibraryEntryOut,
 	token: string,
@@ -56,22 +46,6 @@ async function resolveOwningGroupRole(
 	} catch {
 		return null;
 	}
-}
-
-/** Mirrors `edit/+page.server.ts`'s `resolveEditAccess`: personal piece →
- * its owner; group piece → an `admin` of the owning group (`groupRole`,
- * already resolved by {@link resolveOwningGroupRole}). */
-function resolveCanEditMusic(
-	entry: LibraryEntryOut,
-	token: string,
-	groupRole: GroupRole | null
-): boolean {
-	if (!entry.has_music) return false;
-	if (entry.owner_type === 'user') {
-		const userId = subjectFromToken(token);
-		return userId !== null && entry.owner_id === userId;
-	}
-	return groupRole === 'admin';
 }
 
 /** Bounds how long a single Backend fetch can hang before this counts as
@@ -155,7 +129,6 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 		return json({
 			remote,
 			unreachable: false,
-			canEditMusic: resolveCanEditMusic(entry, locals.token, groupRole),
 			canManagePieceNotes: groupRole === 'admin'
 		} satisfies RemoteResolution);
 	} catch (err) {

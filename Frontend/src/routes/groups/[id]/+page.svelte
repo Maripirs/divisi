@@ -146,13 +146,6 @@
 	// only take effect on Save), deleting a track is its own explicit
 	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
-	// Tracks tab (admin only): "Generate music from PDF" — in-flight flags for
-	// starting a job and for discarding the draft a finished job leaves on the
-	// track. Promoting the draft to live now happens in the editor's "Publish
-	// as live version" (F16), not from here. Not keyed by piece id: the whole
-	// block only renders inside the one open edit panel (`editingDetailsPieceId`).
-	let generatingFromPdf = $state(false);
-	let discardingGenerated = $state(false);
 	// Members tab: which member's row (by id) has its title swapped for the
 	// inline edit form — at most one at a time, same pattern as above.
 	let editingTitleUserId = $state<string | null>(null);
@@ -493,7 +486,7 @@
 					: track.has_music || track.has_pdf
 						? lh(`/piece/${track.piece_id}${tempoQuery}`)
 						: null}
-				<section class="card track-card" id={`track-${track.piece_id}`}>
+				<section class="card track-card">
 					<div class="track-card-row">
 					<div class="track-info">
 						{#if mode === 'admin' && editingDetailsPieceId === track.piece_id}
@@ -571,107 +564,6 @@
 									</button>
 								</div>
 							</form>
-
-							<!-- "Generate music from PDF (prone to error)" — runs the
-							     Backend's OMR pipeline on the track's current PDF and lands
-							     the result as a draft version to review. Its own <form>s
-							     (can't nest in the edit form above), only shown when there's
-							     a PDF to read. Fire-and-forget: OMR can take hours, so the
-							     panel just switches to a "check back later" note. -->
-							{#if track.has_pdf}
-								{@const omrJob = track.latest_omr_job}
-								<div class="generate-from-pdf">
-									{#if omrJob?.status === 'pending' || omrJob?.status === 'running'}
-										<p class="card-note">
-											{#if omrJob.status === 'running' && omrJob.pages_total}
-												{m.groups_generate_page_progress({
-													done: omrJob.pages_done ?? 0,
-													total: omrJob.pages_total
-												})}
-											{:else}
-												{m.groups_generate_in_progress()}
-											{/if}
-										</p>
-									{:else if track.pending_generated_version_id}
-										<p class="card-eyebrow">{m.groups_generate_draft_ready()}</p>
-										{#if omrJob?.needs_review}
-											<p class="card-note">{m.groups_generate_needs_review()}</p>
-										{/if}
-										<div class="btn-row">
-											<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/edit`)}>
-												{m.groups_generate_open_editor()}
-											</a>
-											<ConfirmButton>
-												{#snippet trigger(start)}
-													<button
-														type="button"
-														class="text-link text-link--danger"
-														onclick={start}
-														disabled={discardingGenerated}
-													>
-														{m.groups_generate_discard()}
-													</button>
-												{/snippet}
-												{#snippet confirm(cancel)}
-													<form
-														method="POST"
-														action="?/discardGeneratedVersion"
-														use:enhance={withSubmitting((v) => (discardingGenerated = v))}
-													>
-														<input type="hidden" name="versionId" value={track.pending_generated_version_id} />
-														<button type="submit" class="text-link text-link--danger" disabled={discardingGenerated}>
-															{m.groups_generate_discard_confirm()}
-														</button>
-														<button type="button" class="text-link" onclick={cancel} disabled={discardingGenerated}>
-															{m.action_cancel()}
-														</button>
-													</form>
-												{/snippet}
-											</ConfirmButton>
-										</div>
-										<p class="card-note">{m.groups_generate_open_editor_hint()}</p>
-									{:else}
-										{#if omrJob?.status === 'failed'}
-											<p class="error">{m.groups_generate_failed({ error: omrJob.error_message ?? '' })}</p>
-										{/if}
-										<form
-											method="POST"
-											action="?/generateTrackFromPdf"
-											use:enhance={withSubmitting((v) => (generatingFromPdf = v))}
-										>
-											<input type="hidden" name="pieceId" value={track.piece_id} />
-											<input type="hidden" name="versionId" value={track.version_id} />
-											<button type="submit" class="text-link" disabled={generatingFromPdf}>
-												{generatingFromPdf ? m.groups_generating() : m.groups_generate_from_pdf()}
-											</button>
-										</form>
-										<p class="card-note">{m.groups_generate_hint()}</p>
-									{/if}
-									{#if form?.form === 'generateFromPdf' && form?.error}
-										<p class="error">{form.error}</p>
-									{/if}
-								</div>
-							{/if}
-
-							<!-- F14/F16: open the in-app notation editor on this track.
-							     Hidden while a generated draft is pending — that block
-							     above already links to the editor for its working
-							     draft. The editor route re-checks admin access
-							     server-side and the Backend re-checks on save/publish. -->
-							{#if track.has_music && !track.pending_generated_version_id}
-								<div class="edit-music-row">
-									<a class="text-link" href={lh(`/piece/${track.piece_id}/edit`)}>
-										{track.latest_omr_job?.needs_review
-											? m.groups_generate_review_in_editor()
-											: m.piece_editor_title()}
-									</a>
-									<p class="card-note">
-										{track.latest_omr_job?.needs_review
-											? m.groups_generate_review_hint()
-											: m.piece_editor_entry_hint()}
-									</p>
-								</div>
-							{/if}
 
 							<!-- Delete-the-whole-track: a minimal trash icon pinned to the
 							     card's top-right corner rather than a button sitting next to
@@ -1922,10 +1814,6 @@
 		position: relative;
 		flex-direction: column;
 		align-items: stretch;
-		/* The header OMR alert deep-links to `#track-<pieceId>`; keep the
-		   scrolled-to card off the very top edge, and flash it briefly so
-		   it's obvious which track the alert meant. */
-		scroll-margin-top: 1.5rem;
 	}
 
 	.track-card-row {
@@ -1940,19 +1828,6 @@
 	   (`variant="inline"`) — divider, chevron, and marker reset all live
 	   there now. */
 
-	.track-card:target {
-		animation: track-card-flash 1.6s ease-out;
-	}
-
-	@keyframes track-card-flash {
-		from {
-			box-shadow: 0 0 0 2px var(--accent);
-		}
-		to {
-			box-shadow: 0 0 0 2px transparent;
-		}
-	}
-
 	.track-delete-corner {
 		position: absolute;
 		top: 0.6rem;
@@ -1964,20 +1839,6 @@
 	.track-delete-corner-form {
 		display: flex;
 		gap: 0.35rem;
-	}
-
-	/* "Generate music from PDF" block — a hairline rule sets it apart from
-	   the edit form's own Save/Cancel row just above it. */
-	.generate-from-pdf {
-		margin-top: 0.9rem;
-		padding-top: 0.9rem;
-		border-top: 1px solid var(--border);
-	}
-
-	.edit-music-row {
-		margin-top: 0.9rem;
-		padding-top: 0.9rem;
-		border-top: 1px solid var(--border);
 	}
 
 	/* Homework summary/collapsed-row styles moved to HomeworkCard.svelte;

@@ -1,9 +1,9 @@
 /**
  * `.mxl` is compressed MusicXML: a ZIP archive holding one score document
- * plus a `META-INF/container.xml` that names it. Every music-file entry
- * point in this app (`loadEditableScore`, the player's
- * `loadRemoteMusicFile`) works on plain MusicXML *text*, so this unpacks an
- * `.mxl` payload to that text before it reaches `DOMParser` / the parser.
+ * plus a `META-INF/container.xml` that names it. The music-file entry
+ * point in this app (the player's `loadRemoteMusicFile`) works on plain
+ * MusicXML *text*, so this unpacks an `.mxl` payload to that text before it
+ * reaches `DOMParser` / the parser.
  *
  * Mirrors the Backend's own `.mxl` handling in
  * `Backend/app/omr/pipeline.py` (`_normalize_to_musicxml`), which the OMR

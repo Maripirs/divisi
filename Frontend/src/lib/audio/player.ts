@@ -55,16 +55,6 @@ interface JSSynthesizer {
 export const MIN_TEMPO_BPM = 40;
 export const MAX_TEMPO_BPM = 240;
 
-// F14: a MIDI channel reserved for `previewNote` (short single-note
-// auditions when a note is selected/re-pitched in the editor). Kept well
-// clear of the mixer buckets (`buildPlaybackMidi` assigns channels 0..n-1
-// in `parsed.parts` order — SATB + accompaniment, plus any divisi desks)
-// and off channel 9 (percussion). Not affected by the per-part mix.
-const PREVIEW_CHANNEL = 15;
-// Grand piano — a neutral voice for the audition regardless of what a
-// score reload left on this channel.
-const PREVIEW_PROGRAM = 0;
-
 // Loaded onto the main thread as `window.JSSynth` — needed there for the
 // `AudioWorkletNodeSynthesizer` constructor and `Constants`, even though
 // the actual synthesis work happens on the worklet thread below.
@@ -163,11 +153,6 @@ export class MidiPlayer {
 	// and diverges only once the human moves the tempo control.
 	private currentTempoBPM = 120;
 	private destroyed = false;
-	// F14 note preview: the key currently sounding on `PREVIEW_CHANNEL` (so a
-	// rapid re-preview can release it first) and its scheduled note-off.
-	private previewKey: number | null = null;
-	private previewOffTimer: ReturnType<typeof setTimeout> | null = null;
-	private previewChannelReady = false;
 
 	private constructor(
 		context: AudioContext,
@@ -229,9 +214,6 @@ export class MidiPlayer {
 			0
 		);
 		this.pausedAtMs = 0;
-		// `resetPlayer` re-inits the synth's channel state, so the preview
-		// channel's program/volume has to be re-sent on the next preview.
-		this.previewChannelReady = false;
 		await this.synth.resetPlayer();
 		if (this.destroyed) return;
 		await this.synth.addSMFDataToPlayer(bytes.buffer as ArrayBuffer);
@@ -281,14 +263,6 @@ export class MidiPlayer {
 		this.playing = false;
 		this.pausedAtMs = 0;
 		this.channelForPart = null;
-		if (this.previewOffTimer) {
-			clearTimeout(this.previewOffTimer);
-			this.previewOffTimer = null;
-		}
-		if (this.previewKey !== null) {
-			this.synth.midiNoteOff(PREVIEW_CHANNEL, this.previewKey);
-			this.previewKey = null;
-		}
 		this.destroyed = true;
 		this.audioEl.pause();
 		this.audioEl.srcObject = null;
@@ -347,40 +321,6 @@ export class MidiPlayer {
 		const channel = this.channelForPart[part];
 		const midiValue = Math.round(Math.min(1, Math.max(0, volume)) * 127);
 		this.synth.midiControl(channel, 7, midiValue);
-	}
-
-	/** F14: briefly sound a single note (default ~0.7 s) on the reserved
-	 * preview channel, so a correction in the notation editor can be *heard*
-	 * as it's selected or re-pitched — independent of transport state and the
-	 * per-part mix. Re-calling before the previous note has released cuts it
-	 * short and starts the new one. Resumes the audio graph from the caller's
-	 * gesture (a click / key press), same as `play()` does. */
-	previewNote(midi: number, durationMs = 700): void {
-		if (this.destroyed) return;
-		const key = Math.round(midi);
-		if (key < 0 || key > 127) return;
-		// Same gesture-time resume as `play()` — a preview can be the first
-		// sound the page makes, before the transport has ever run.
-		void this.audioEl.play().catch(() => {});
-		if (this.context.state === 'suspended') void this.context.resume();
-		if (!this.previewChannelReady) {
-			this.synth.midiProgramChange(PREVIEW_CHANNEL, PREVIEW_PROGRAM);
-			this.synth.midiControl(PREVIEW_CHANNEL, 7, 110);
-			this.previewChannelReady = true;
-		}
-		if (this.previewOffTimer) {
-			clearTimeout(this.previewOffTimer);
-			this.previewOffTimer = null;
-		}
-		if (this.previewKey !== null) this.synth.midiNoteOff(PREVIEW_CHANNEL, this.previewKey);
-		this.synth.midiNoteOn(PREVIEW_CHANNEL, key, 100);
-		this.previewKey = key;
-		this.previewOffTimer = setTimeout(() => {
-			if (this.destroyed) return;
-			this.synth.midiNoteOff(PREVIEW_CHANNEL, key);
-			if (this.previewKey === key) this.previewKey = null;
-			this.previewOffTimer = null;
-		}, Math.max(50, durationMs));
 	}
 
 	get isPlaying(): boolean {

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Logo from './Logo.svelte';
-	import OmrJobAlerts from './OmrJobAlerts.svelte';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -31,11 +30,6 @@
 				<span>Divisi</span>
 			</a>
 			<div class="brand-row-actions">
-				<!-- Self-contained (reads its own store, no props) so it rides
-				     along on every screen that mounts `AppHeader`: an admin
-				     hears a "Generate music from PDF" job they started has
-				     finished no matter where they've navigated since. -->
-				<OmrJobAlerts />
 				<button class="settings-link" onclick={() => (settingsDrawer.open = true)} aria-label={m.settings_title()}>
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<circle cx="12" cy="12" r="3" />
