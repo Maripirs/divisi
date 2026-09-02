@@ -5,6 +5,7 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import FileSlot from '$lib/components/FileSlot.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import Disclosure from '$lib/components/Disclosure.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import EditableCard from '$lib/components/EditableCard.svelte';
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
@@ -783,22 +784,19 @@
 					</div>
 					<!-- F20: expand a track to read/manage this piece's notes without
 					     opening the player. -->
-					<details class="track-notes" bind:open={notesExpanded[track.piece_id]}>
-						<summary>
-							<svg class="track-notes-chevron" viewBox="0 0 24 24" aria-hidden="true"
-								><path d="M6 9l6 6 6-6" /></svg
-							>
-							{m.piece_notes_title()}
-						</summary>
-						{#if notesExpanded[track.piece_id]}
-							<PieceNotesPanel
-								pieceId={track.piece_id}
-								groupId={data.group.id}
-								canManage={mode === 'admin'}
-								chrome="bare"
-							/>
-						{/if}
-					</details>
+					<Disclosure variant="inline" bind:open={notesExpanded[track.piece_id]}>
+						{#snippet summary()}{m.piece_notes_title()}{/snippet}
+						{#snippet children()}
+							{#if notesExpanded[track.piece_id]}
+								<PieceNotesPanel
+									pieceId={track.piece_id}
+									groupId={data.group.id}
+									canManage={mode === 'admin'}
+									chrome="bare"
+								/>
+							{/if}
+						{/snippet}
+					</Disclosure>
 				</section>
 			{/each}
 		{/if}
@@ -1932,45 +1930,9 @@
 		gap: 1rem;
 	}
 
-	.track-notes {
-		border-top: 1px solid var(--border);
-		padding-top: 0.5rem;
-	}
-
-	.track-notes > summary {
-		cursor: pointer;
-		list-style: none;
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: var(--accent);
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.track-notes > summary::-webkit-details-marker {
-		display: none;
-	}
-
-	.track-notes-chevron {
-		width: 0.9rem;
-		height: 0.9rem;
-		flex: 0 0 auto;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2.4;
-		stroke-linecap: round;
-		stroke-linejoin: round;
-		transition: transform 0.15s ease;
-	}
-
-	.track-notes[open] .track-notes-chevron {
-		transform: rotate(180deg);
-	}
-
-	.track-notes[open] > summary {
-		margin-bottom: 0.5rem;
-	}
+	/* The track-card "Piece Notes" disclosure is `Disclosure.svelte`
+	   (`variant="inline"`) — divider, chevron, and marker reset all live
+	   there now. */
 
 	.track-card:target {
 		animation: track-card-flash 1.6s ease-out;

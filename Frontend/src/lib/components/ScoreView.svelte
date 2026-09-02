@@ -7,6 +7,7 @@
 		renderedStaffBands,
 		paintSymbolsInMutedBands
 	} from '$lib/components/score/scoreTreatments';
+	import { baseOsmdOptions, quietOsmdLogging } from '$lib/components/score/osmd';
 	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time, so it can't trigger a
@@ -146,6 +147,7 @@
 		const osmdModule = await import('opensheetmusicdisplay');
 		PointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(displayMode, scoreTheme));
+		quietOsmdLogging(osmd);
 		container.addEventListener('click', handleContainerClick);
 		container.addEventListener('wheel', cancelFollow, { passive: true });
 		window.addEventListener('resize', handleWindowResize);
@@ -454,17 +456,7 @@
 	function osmdOptions(mode: DisplayMode | undefined, activeTheme: ResolvedTheme | undefined) {
 		const theme = themeFor(mode, activeTheme);
 		return {
-			autoResize: true,
-			drawTitle: false,
-			followCursor: false,
-			coloringEnabled: true,
-			colorStemsLikeNoteheads: true,
-			defaultColorMusic: theme.music,
-			defaultColorNotehead: theme.notehead,
-			defaultColorStem: theme.stem,
-			defaultColorRest: theme.rest,
-			defaultColorLabel: theme.label,
-			pageBackgroundColor: theme.page,
+			...baseOsmdOptions({ ink: theme.music, muted: theme.rest, page: theme.page }),
 			// Index 0 is always the playback cursor (`osmd.cursor`); one more
 			// entry per annotation marker follows, positioned/styled by
 			// `applyAnnotationMarkers` via `osmd.cursors[i + 1]`.

@@ -4,6 +4,7 @@
 	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
 	import { formatDateTime } from '$lib/utils/dates';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import Disclosure from '$lib/components/Disclosure.svelte';
 	import {
 		createGroupNote,
 		createPersonalNote,
@@ -171,20 +172,19 @@
 </script>
 
 {#if chrome === 'details'}
-	<details class="pn">
-		<summary class="pn-summary">
-			<svg class="pn-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+	<Disclosure variant="panel">
+		{#snippet summary()}
 			{m.piece_notes_title()}
 			{#if loaded}<span class="pn-count">{total}</span>{/if}
-		</summary>
-		{@render content()}
-	</details>
+		{/snippet}
+		{#snippet children()}{@render content(true)}{/snippet}
+	</Disclosure>
 {:else}
-	<div class="pn pn--bare">{@render content()}</div>
+	<div class="pn-bare">{@render content(false)}</div>
 {/if}
 
-{#snippet content()}
-	<div class="pn-body">
+{#snippet content(capped: boolean)}
+	<div class="pn-body" class:pn-body--capped={capped}>
 		{#if !loaded}
 			<p class="pn-muted">{m.piece_notes_loading()}</p>
 		{:else}
@@ -310,50 +310,12 @@
 {/snippet}
 
 <style>
-	.pn {
-		margin: 0.5rem 1rem 0;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface);
-		color: var(--text);
+	/* The `details` chrome (border, padding, chevron, marker reset) is
+	   `Disclosure.svelte` (`variant="panel"`). This file styles only the
+	   panel body and its notes. */
+
+	.pn-bare {
 		text-align: left;
-	}
-
-	.pn--bare {
-		margin: 0;
-		border: none;
-		background: none;
-	}
-
-	.pn-summary {
-		cursor: pointer;
-		padding: 0.55rem 0.8rem;
-		font-weight: 600;
-		font-size: 0.88rem;
-		list-style: none;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.pn-summary::-webkit-details-marker {
-		display: none;
-	}
-
-	.pn-chevron {
-		width: 1rem;
-		height: 1rem;
-		flex: 0 0 auto;
-		fill: none;
-		stroke: currentColor;
-		stroke-width: 2.4;
-		stroke-linecap: round;
-		stroke-linejoin: round;
-		transition: transform 0.15s ease;
-	}
-
-	.pn[open] .pn-chevron {
-		transform: rotate(180deg);
 	}
 
 	.pn-count {
@@ -380,12 +342,12 @@
 	/* On the piece player the panel shares the screen with the score/PDF:
 	   keep it a short strip that scrolls, never a wall that shoves the music
 	   down. The bare variant (a group's Tracks card) has room to grow. */
-	.pn:not(.pn--bare) .pn-body {
+	.pn-body--capped {
 		max-height: min(45vh, 14rem);
 		overflow-y: auto;
 	}
 
-	.pn--bare .pn-body {
+	.pn-bare .pn-body {
 		padding: 0;
 	}
 

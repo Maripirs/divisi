@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { THEME_PALETTES, type ResolvedTheme } from '$lib/theme';
+	import { baseOsmdOptions, quietOsmdLogging } from '$lib/components/score/osmd';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time so it can't trigger a runtime
@@ -189,18 +190,8 @@
 	function osmdOptions(theme: ResolvedTheme) {
 		const palette = THEME_PALETTES[theme];
 		return {
-			autoResize: true,
-			drawTitle: false,
-			followCursor: false,
+			...baseOsmdOptions({ ink: palette.ink, muted: palette.muted, page: palette.surface }),
 			backend: 'svg',
-			coloringEnabled: true,
-			colorStemsLikeNoteheads: true,
-			defaultColorMusic: palette.ink,
-			defaultColorNotehead: palette.ink,
-			defaultColorStem: palette.ink,
-			defaultColorRest: palette.muted,
-			defaultColorLabel: palette.muted,
-			pageBackgroundColor: palette.surface,
 			cursorsOptions: cursorsOptions(theme)
 		};
 	}
@@ -209,6 +200,7 @@
 		const osmdModule = await import('opensheetmusicdisplay');
 		pointF2D = osmdModule.PointF2D;
 		osmd = new osmdModule.OpenSheetMusicDisplay(container, osmdOptions(scoreTheme));
+		quietOsmdLogging(osmd);
 		// The playhead is driven by `parseMusicXmlFile(workingXml)` audio, which
 		// walks the score linearly and never expands repeats. OSMD's cursor
 		// iterator follows repeat barlines by default (back-jumps at the end
@@ -250,7 +242,7 @@
 	}
 
 	// The `sourceNote` nearest a screen point. OSMD's deep source model isn't
-	// fully surfaced in its types, hence the cast — the shape the F14 spike
+	// fully surfaced in its types, hence the cast — the shape F14 development
 	// relied on.
 	type NearestSource = {
 		getAbsoluteTimestamp(): { RealValue: number };
@@ -367,7 +359,7 @@
 		}
 	}
 
-	// The selection marker (`osmd.cursors[0]`). F14's spike found that
+	// The selection marker (`osmd.cursors[0]`). F14 found that
 	// coloring a `GraphicalNote` doesn't survive OSMD rebuilding its
 	// graphical sheet on every re-engrave, whereas a cursor is re-derived
 	// from timestamps on each render, so a cursor is the reliable marker.

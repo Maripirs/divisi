@@ -8,8 +8,8 @@
  * OMR step emitted that this app doesn't model — exactly as it came in,
  * which is the whole point for "clean up a rough generated score".
  *
- * Ported from the F14 spike (`src/lib/spike/musicXmlEdit.ts`), same
- * DOM-mutation approach. Scope here is what editor tasks 2-4 need: build the
+ * Ported from the F14 throwaway spike, same DOM-mutation approach. Scope
+ * here is what editor tasks 2-4 need: build the
  * model, resolve an OSMD click back to a `<note>`, transpose a note by a
  * semitone, and delete a note (turn it into a rest so measure timing is
  * preserved).

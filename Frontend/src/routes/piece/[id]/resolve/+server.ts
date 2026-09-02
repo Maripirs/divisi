@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { subjectFromToken } from '$lib/server/jwt';
-import type { GroupOut, LibraryEntryOut } from '$lib/server/backendTypes';
+import type { GroupOut, GroupRole, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
 import type { RequestHandler } from './$types';
 
@@ -39,45 +39,39 @@ interface RemoteResolution {
 	canManagePieceNotes?: boolean;
 }
 
-/** Mirrors `edit/+page.server.ts`'s `resolveEditAccess`: personal piece →
- * its owner; group piece → an `admin` of the owning group. Any Backend
- * hiccup resolving the group role degrades to "no", never throws — this is
- * only deciding whether to show a link. */
-async function resolveCanEditMusic(
+/** The caller's role in this piece's owning group, or `null` for a
+ * personal piece, a group the caller isn't in, or any Backend hiccup
+ * resolving it. One `/groups` fetch feeds both `canEditMusic` and
+ * `canManagePieceNotes` below — never throws, since those flags only
+ * decide whether to show UI and should fail closed. */
+async function resolveOwningGroupRole(
 	entry: LibraryEntryOut,
 	token: string,
 	fetchFn: typeof fetch
-): Promise<boolean> {
+): Promise<GroupRole | null> {
+	if (entry.owner_type !== 'group') return null;
+	try {
+		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
+		return groups.find((g) => g.id === entry.owner_id)?.role ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/** Mirrors `edit/+page.server.ts`'s `resolveEditAccess`: personal piece →
+ * its owner; group piece → an `admin` of the owning group (`groupRole`,
+ * already resolved by {@link resolveOwningGroupRole}). */
+function resolveCanEditMusic(
+	entry: LibraryEntryOut,
+	token: string,
+	groupRole: GroupRole | null
+): boolean {
 	if (!entry.has_music) return false;
 	if (entry.owner_type === 'user') {
 		const userId = subjectFromToken(token);
 		return userId !== null && entry.owner_id === userId;
 	}
-	try {
-		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
-		return groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
-	} catch {
-		return false;
-	}
-}
-
-/** F20: is the caller an `admin` of this piece's owning group? Same
- * `/groups` role check as `resolveCanEditMusic`'s group branch, but
- * independent of `has_music` — piece notes attach to any group piece.
- * False for a personal piece; degrades to false on any Backend hiccup
- * (it only gates showing the authoring controls). */
-async function resolveCanManagePieceNotes(
-	entry: LibraryEntryOut,
-	token: string,
-	fetchFn: typeof fetch
-): Promise<boolean> {
-	if (entry.owner_type !== 'group') return false;
-	try {
-		const groups = await backendJson<GroupOut[]>(token, '/groups', undefined, fetchFn);
-		return groups.find((g) => g.id === entry.owner_id)?.role === 'admin';
-	} catch {
-		return false;
-	}
+	return groupRole === 'admin';
 }
 
 /** Bounds how long a single Backend fetch can hang before this counts as
@@ -157,15 +151,12 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 			defaultTempoBpm: entry.default_tempo_bpm,
 			groupId: entry.owner_type === 'group' ? entry.owner_id : null
 		};
-		const [canEditMusic, canManagePieceNotes] = await Promise.all([
-			resolveCanEditMusic(entry, locals.token, fetch),
-			resolveCanManagePieceNotes(entry, locals.token, fetch)
-		]);
+		const groupRole = await resolveOwningGroupRole(entry, locals.token, fetch);
 		return json({
 			remote,
 			unreachable: false,
-			canEditMusic,
-			canManagePieceNotes
+			canEditMusic: resolveCanEditMusic(entry, locals.token, groupRole),
+			canManagePieceNotes: groupRole === 'admin'
 		} satisfies RemoteResolution);
 	} catch (err) {
 		if (err instanceof BackendApiError) {
