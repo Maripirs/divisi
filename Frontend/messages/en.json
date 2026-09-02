@@ -122,6 +122,8 @@
 	"responsibilities_badge_covered": "Fully staffed",
 	"responsibilities_quick_add": "Quick add",
 	"responsibilities_next_rehearsal": "Next rehearsal",
+	"responsibilities_quick_add_prev_week": "Previous week",
+	"responsibilities_quick_add_next_week": "Next week",
 	"responsibilities_duplicate_next_week": "Duplicate next week",
 	"responsibilities_done": "Done",
 	"responsibilities_no_roles": "No roles yet",

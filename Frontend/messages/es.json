@@ -122,6 +122,8 @@
 	"responsibilities_badge_covered": "Cubierta",
 	"responsibilities_quick_add": "Añadir rápido",
 	"responsibilities_next_rehearsal": "Próximo ensayo",
+	"responsibilities_quick_add_prev_week": "Semana anterior",
+	"responsibilities_quick_add_next_week": "Semana siguiente",
 	"responsibilities_duplicate_next_week": "Duplicar la próxima semana",
 	"responsibilities_done": "Listo",
 	"responsibilities_no_roles": "Aún no hay roles",

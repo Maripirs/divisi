@@ -78,3 +78,16 @@ export function toDatetimeLocalValue(iso: string): string {
 	const d = new Date(iso);
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/**
+ * A `datetime-local` value ("2026-09-02T19:00", no timezone) to a UTC ISO
+ * string, read in the browser's own timezone. Call this client-side (in a
+ * `use:enhance` submit) to rewrite the field before it reaches the form
+ * action: the action runs on Cloudflare, whose clock is always UTC, so
+ * `new Date(wallClock)` there would pin 7 PM local to 7 PM UTC and every
+ * viewer behind UTC then sees the time shifted earlier (caught live: a
+ * 7 PM rehearsal saved and rendered back as 12:00).
+ */
+export function datetimeLocalToIso(value: string): string {
+	return new Date(value).toISOString();
+}

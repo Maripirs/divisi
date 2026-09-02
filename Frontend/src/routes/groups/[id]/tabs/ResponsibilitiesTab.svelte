@@ -6,6 +6,7 @@
 	import CoverageMeter from '$lib/components/CoverageMeter.svelte';
 	import { coverageTotals } from '$lib/components/groupCards';
 	import {
+		datetimeLocalToIso,
 		formatDateTime,
 		formatEventDate,
 		formatWeekdayTime,
@@ -71,6 +72,16 @@
 		nextRehearsalLocal =
 			weekday !== null && time !== null ? nextRehearsalDatetimeLocal(weekday, time) : '';
 	});
+	// Quick-add panel's ‹ / › stepper: how many whole weeks past the next
+	// rehearsal the panel is currently pointing at. 0 is the floor — the
+	// next occurrence — so you can't step back into the past.
+	let quickAddWeekOffset = $state(0);
+	let quickAddLocal = $derived.by(() => {
+		if (!nextRehearsalLocal) return '';
+		const d = new Date(nextRehearsalLocal);
+		d.setDate(d.getDate() + quickAddWeekOffset * 7);
+		return toDatetimeLocalValue(d.toISOString());
+	});
 	// Label for the whole-date coverage badge above the selected-date roster —
 	// mirrors `coverageTotals(...).status` from groupCards.ts.
 	function dateStatusLabel(status: string): string {
@@ -78,6 +89,14 @@
 		if (status === 'underfilled') return m.responsibilities_badge_needs_people();
 		if (status === 'overfilled') return m.join_coverage_overfilled();
 		return m.responsibilities_badge_covered();
+	}
+	// The date forms submit a tz-naive `datetime-local` string; the form
+	// action runs on Cloudflare (UTC clock), so it has to be resolved to a
+	// UTC instant here on the client instead. Rewrites the field in place
+	// right before `use:enhance` sends it.
+	function dateFieldToIso(formData: FormData) {
+		const raw = String(formData.get('date') ?? '');
+		if (raw) formData.set('date', datetimeLocalToIso(raw));
 	}
 </script>
 
@@ -153,7 +172,8 @@
 			<form
 				method="POST"
 				action="?/addResponsibilityDate"
-				use:enhance={() => {
+				use:enhance={({ formData }) => {
+					dateFieldToIso(formData);
 					addingDate = true;
 					return async ({ result, update }) => {
 						addingDate = false;
@@ -290,6 +310,7 @@
 					error={form?.form === 'editDate' && form?.error}
 					deleteLabel={m.groups_delete_date()}
 					deleteConfirmLabel={m.groups_delete_date_confirm()}
+					beforeSubmit={dateFieldToIso}
 					onCancel={() => (editingDateId = null)}
 				>
 					{#snippet fields()}
@@ -385,6 +406,25 @@
 					<button type="button" class="text-link" onclick={duplicateDateNextWeek}>
 						{m.responsibilities_duplicate_next_week()}
 					</button>
+					<ConfirmButton>
+						{#snippet trigger(start)}
+							<button type="button" class="text-link text-link--danger" onclick={start}>
+								{m.groups_delete_date()}
+							</button>
+						{/snippet}
+						{#snippet confirm(cancel)}
+							<p class="card-note">{m.groups_delete_date_confirm()}</p>
+							<div class="btn-row">
+								<button type="button" class="btn btn-outline" onclick={cancel}>
+									{m.action_cancel()}
+								</button>
+								<form method="POST" action="?/deleteResponsibilityDate" use:enhance>
+									<input type="hidden" name="dateId" value={d.id} />
+									<button type="submit" class="btn btn-danger">{m.groups_delete_date()}</button>
+								</form>
+							</div>
+						{/snippet}
+					</ConfirmButton>
 				</div>
 				{#if data.schedules.length > 0}
 					<div class="date-role-sets">
@@ -428,7 +468,10 @@
 		<form
 			method="POST"
 			action="?/addResponsibilityDate"
-			use:enhance={withSubmitting((v) => (addingDate = v))}
+			use:enhance={withSubmitting(
+				(v) => (addingDate = v),
+				() => (quickAddWeekOffset = 0)
+			)}
 		>
 			{#if data.schedules.length > 1}
 				<div class="field">
@@ -448,8 +491,29 @@
 			{:else}
 				<input type="hidden" name="scheduleId" value={data.schedules[0].id} />
 			{/if}
-			<p class="card-meta">{formatDateTime(new Date(nextRehearsalLocal).toISOString())}</p>
-			<input type="hidden" name="date" value={nextRehearsalLocal} />
+			<div class="quick-add-step">
+				<button
+					type="button"
+					class="quick-add-step__arrow"
+					onclick={() => (quickAddWeekOffset -= 1)}
+					disabled={quickAddWeekOffset === 0}
+					aria-label={m.responsibilities_quick_add_prev_week()}
+					title={m.responsibilities_quick_add_prev_week()}
+				>
+					‹
+				</button>
+				<p class="card-meta">{formatDateTime(datetimeLocalToIso(quickAddLocal))}</p>
+				<button
+					type="button"
+					class="quick-add-step__arrow"
+					onclick={() => (quickAddWeekOffset += 1)}
+					aria-label={m.responsibilities_quick_add_next_week()}
+					title={m.responsibilities_quick_add_next_week()}
+				>
+					›
+				</button>
+			</div>
+			<input type="hidden" name="date" value={datetimeLocalToIso(quickAddLocal)} />
 			{#if form?.form === 'addDate' && form?.error}
 				<p class="error">{form.error}</p>
 			{/if}
@@ -544,6 +608,45 @@
 {/if}
 
 <style>
+	/* Quick-add ‹ / › week stepper: the rehearsal date sits between two
+	   arrows that walk the group's weekly slot forward/back a week at a
+	   time. Back is disabled at offset 0 (the next occurrence). */
+	.quick-add-step {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.quick-add-step .card-meta {
+		flex: 1 1 auto;
+		text-align: center;
+	}
+
+	.quick-add-step__arrow {
+		flex: 0 0 auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.75rem;
+		height: 1.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 1.1rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.quick-add-step__arrow:hover:not(:disabled) {
+		border-color: var(--accent);
+	}
+
+	.quick-add-step__arrow:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
 	.inline-edit-row {
 		display: flex;
 		flex-direction: row;

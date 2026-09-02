@@ -2,7 +2,6 @@
 	import type { Snippet } from 'svelte';
 	import { enhance } from '$app/forms';
 	import ConfirmButton from './ConfirmButton.svelte';
-	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
 
 	/** A2: the inline edit-in-place shell that repeats across the group
@@ -37,6 +36,7 @@
 		deleteLabel,
 		deleteConfirmLabel,
 		onCancel,
+		beforeSubmit,
 		fields
 	}: {
 		saveAction: string;
@@ -52,6 +52,10 @@
 		deleteLabel?: string;
 		deleteConfirmLabel?: string;
 		onCancel: () => void;
+		/** Runs on the raw `FormData` right before it's sent, for both the
+		 * save and the delete submit — e.g. to rewrite a `datetime-local`
+		 * field to a UTC ISO string client-side. */
+		beforeSubmit?: (formData: FormData) => void;
 		fields: Snippet;
 	} = $props();
 </script>
@@ -60,7 +64,15 @@
 	method="POST"
 	action={saveAction}
 	{enctype}
-	use:enhance={withSubmitting((v) => (saving = v), onCancel)}
+	use:enhance={({ formData }) => {
+		beforeSubmit?.(formData);
+		saving = true;
+		return async ({ update }) => {
+			saving = false;
+			onCancel();
+			await update();
+		};
+	}}
 >
 	<input type="hidden" name={idName} value={idValue} />
 	{@render fields()}
