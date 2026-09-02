@@ -239,7 +239,66 @@ in the same pass.
       `measureLabel`/`annotationErrorMessage` are now private to the module.
       check 0 errors (14 warnings, all pre-existing, byte-identical to
       baseline), build ok, 54 tests green.
-- [ ] Step 5 — PdfMarkupLayer.svelte
+- [x] Step 5 (PdfView markup editor split). New `src/lib/components/pdf/`
+      directory with three files. `pdfMarkup.svelte.ts` (665 lines): the repo's
+      second stateful `.svelte.ts` factory (`createPdfMarkupController(deps)`),
+      same shape as step 4's `annotations.svelte.ts`. Owns every markup `$state`
+      decl (`marks`, `annotationMode`, `tool`, `penColor`/`penWidth`,
+      `stampType`/`stampSize`, `textSize`, `activeStrokePage`/`activeStroke`,
+      `recentMarkIds`, `markupError`, `textEditor`, `activeTextDrag`) plus a new
+      `textEditorFocusRequest` counter, the constants (`PEN_COLORS`,
+      `PEN_WIDTHS`, `STAMPS`, the stamp/text size min/max/step and nudge,
+      `ERASE_RADIUS`, defaults), and all 25-ish CRUD/erase/undo/text-editor
+      functions. The `$lib/api/pieceMarkup` import block and the
+      `MarkupVisibility` / `MarkupTool` types moved here too (`PdfView` now
+      imports `MarkupVisibility` from the module). `PdfMarkupLayer.svelte` (305
+      lines): the per-page `<svg class="markup-layer">` overlay plus the
+      `<form class="text-editor">`, rendered once per page by `PdfView` inside
+      its `{#each}` loop. `PdfMarkupPanel.svelte` (446 lines): the whole
+      floating `.markup-panel` toolbar, rendered once (still guarded by
+      `{#if canMarkup}` in `PdfView`). Markup-scoped `<style>` rules travelled
+      with their markup (layer/text-editor rules to the Layer, panel/toolbar
+      rules to the Panel). pdf.js render, zoom controls, and mouse click-drag
+      panning all stayed in `PdfView`; `handlePanPointerDown` now reads
+      `markup.annotationMode` / `markup.tool` and its `closest()` class strings
+      are unchanged. All 7 `$props` on `PdfView` are untouched, so the caller
+      (`piece/[id]/+page.svelte`) needed no change.
+      Interface decisions: deps are getter-style, matching step 4.
+      `pieceId`, `canMarkup`, `currentUserId` as `() => value` getters;
+      `markupVisibility` as a `getMarkupVisibility` / `setMarkupVisibility` pair
+      (the controller mutates it in `toggleAnnotationMode`); and, for the
+      geometry the controller can no longer see directly,
+      `aspectFor: (pageIndex) => pageAspects[pageIndex] ?? 1.4142` and
+      `canvasFor: (pageIndex) => canvasRefs[pageIndex]`. `pageAspects` stays
+      `$state` in `PdfView` (written by `renderAllPages`); the Layer also gets
+      `aspect` per page as a plain prop for its `viewBox`. Pure geometry
+      (`strokePathD`, `distanceToSegment`, `distanceToStroke`) is exported as
+      standalone functions, not methods, with `pdfMarkup.test.ts` (9 tests,
+      node env, plain describe/it) covering them; the factory itself is not
+      unit-tested (same runes-outside-a-component reason as step 4). Focus
+      mechanism: the text input's ref (`textEditorInput`) and its `tick()` +
+      `.focus()` + `.select()` live in `PdfMarkupLayer`, driven by a small
+      `$effect` that depends on `markup.textEditorFocusRequest` (a counter the
+      controller bumps on every focus request, including the 400ms blur-guard
+      re-focus path, which itself stays verbatim in the controller). The Layer
+      keeps a read-only `const textEditor = $derived(markup.textEditor)` alias
+      so `{#if textEditor && ...}` narrows the way it did inline; the Panel does
+      the same for its reads and routes writes through new controller setters
+      (`setPenColor`/`setPenWidth`/`setStampType`/`setStampSize`/`setTextSize`,
+      `setTextEditorValue`). The two markup `$effect`s (mark-loading keyed on
+      `${pieceId}:${visibility}`, and the `visibility === 'none'` cleanup)
+      stayed in `PdfView` as one-line wrappers calling
+      `markup.syncMarksForVisibility()` / `markup.syncAnnotationModeWithVisibility()`,
+      keeping rune-effect lifecycle in the component (matching step 4's choice
+      to keep `$effect` out of the factory). Line counts: `PdfView.svelte`
+      1637 to 532 (minus 1105); new `pdfMarkup.svelte.ts` 665,
+      `PdfMarkupLayer.svelte` 305, `PdfMarkupPanel.svelte` 446,
+      `pdfMarkup.test.ts` 65. check 0 errors (14 warnings, byte-identical to
+      the pre-change baseline confirmed on the clean tree), build ok, 63 tests
+      green (was 54). Not manually exercised: the pen / stamp / text / eraser /
+      undo flow was not run in a browser (standing blocker on this machine, no
+      e2e attempted); this change rests on check + build + the geometry unit
+      tests only.
 - [ ] Step 6 — groups/[id] tabs/*.svelte
 - [ ] Step 7 — groups/[id] actions/*.ts
 - [x] Step 8 — backend library.py split — `app/api/routes/library.py` (626
