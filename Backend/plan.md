@@ -2,9 +2,9 @@
 
 Separate from the native iOS app's own plan (paused 2026-08-27, condensed into `Frontend/plan.md`'s "iOS app" section during 2026-08-28's repo cleanup). This plan tracks the backend service only. Milestones prefixed `B` to avoid confusion with the app's `M` milestones when discussed together.
 
-**Status:** B1–B15 shipped (a couple of the earlier ones got informal follow-up expansions afterward — real piece uploads under B4, a rehearsal-schedule addition under B13). B11's long-standing ephemeral-disk gap is now closed in code: `app/storage/files.py` writes uploads to Neon Object Storage (committed 9d7ef53), with a remaining human step to set the `AWS_*` env vars on Render (see Backlog). **B8 is now fully verified end-to-end** (both human tasks done — see its section). Other open threads, none Claude-blocking: B7 has one human-only task left (see its section); B14's email-provider and OAuth-consent-publish steps are in Backlog. **B15 shipped** (its migrations `e4a8c2f6b1d9` / `b6e2d9f4a7c1` reached prod when `c1f7a4d2e8b6` was cherry-picked to `main` on 2026-08-31 — see Log). **B16's `d2f8a6c4e1b9` is still not on production** and reaches it only by merging `feat/generate-track-from-pdf` to `main`, never by a local `alembic upgrade` against prod (see the 2026-08-31 outage Log entry).
+**Status:** B1–B15 shipped (a couple of the earlier ones got informal follow-up expansions afterward — real piece uploads under B4, a rehearsal-schedule addition under B13). B11's long-standing ephemeral-disk gap is now closed in code: `app/storage/files.py` writes uploads to Neon Object Storage (committed 9d7ef53), with a remaining human step to set the `AWS_*` env vars on Render (see Backlog). Other open threads, none Claude-blocking: B7 has one human-only task left (see its section); B14's email-provider and OAuth-consent-publish steps are in Backlog. **B15 shipped** (its migrations `e4a8c2f6b1d9` / `b6e2d9f4a7c1` reached prod when `c1f7a4d2e8b6` was cherry-picked to `main` on 2026-08-31 — see Log). The OMR pipeline and the in-app notation editor moved to `OMR_EDITOR_PLAN.md` (milestones E1–E10) on 2026-09-01; their still-pending migrations (`d2f8a6c4e1b9`, `e7b1c9d3a2f4`) reach production only by merging `feat/generate-track-from-pdf` to `main`, never by a local `alembic upgrade` against prod.
 
-The web frontend is the active product; OMR (B8) is scaffolded but backlogged. See `Frontend/plan.md` and the repo-root `README.md`.
+The web frontend is the active product; the OMR pipeline and the notation editor now have their own plan, `OMR_EDITOR_PLAN.md`. See `Frontend/plan.md` and the repo-root `README.md`.
 
 ## Domain model (agreed, informs B3–B5 below)
 
@@ -66,7 +66,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B5 | Annotations + sharing | ✅ Done |
 | B6 | Guest access (join links) | ✅ Done |
 | B7 | MIDI → audio + notation rendering pipeline | ⏳ Claude tasks done; waiting on human to listen to a rendered stem |
-| B8 | OMR pipeline | ✅ Done (verified end-to-end on macOS) |
+| — | OMR pipeline + notation editor | Moved to `OMR_EDITOR_PLAN.md` (milestones E1–E10) |
 | B9 | Homework / assignments | ✅ Done |
 | B10 | Guest privacy controls (password + homework visibility) | ✅ Done |
 | B11 | Deploy to hosting | ✅ Live at `divisi.onrender.com`; ephemeral-disk gap closed by the Neon Object Storage swap (9d7ef53) |
@@ -74,9 +74,6 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B13 | Responsibilities (+ regular rehearsal schedule) | ✅ Done |
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
-| B16 | Paged OMR pipeline (per-page transcribe + merge) | ⏳ Claude tasks done (full suite 181 green); human hasn't run a real multi-page scan through it. Migration `d2f8a6c4e1b9` not yet on production — reaches prod only via merge to `main` (its parent `c1f7a4d2e8b6` is already on prod + `main` as of 2026-08-31, see Log) |
-| B17 | Working-draft slot + per-page OMR progress & re-run | ⏳ Claude tasks done (202 green); human hasn't run a real multi-page scan + re-run through it. Migration `e7b1c9d3a2f4` not on production — reaches prod only via merge to `main` |
-| B18 | Per-page measure offsets in the paged report | ✅ Built 2026-09-01 (`pytest` 205 green); no migration, report-shape only. Feeds Frontend F19 |
 
 ### B1 — Backend scaffold [x]
 
@@ -200,25 +197,6 @@ code was Swift/AudioToolbox.
 
 **Tasks — Human:**
 - [ ] Listen to a rendered stem set and confirm the GM soundfont's sound quality holds up for practice use
-
-### B8 — OMR pipeline [x]
-
-**Acceptance criteria:**
-- [x] Uploading a scanned sheet-music PDF produces a job id; polling it eventually returns MusicXML/MIDI output for a real test PDF
-
-**Tasks — Claude:**
-- [x] `app/omr/audiveris.py` (subprocess wrapper), `app/omr/oemer.py` (subprocess wrapper — wraps the CLI, not a direct import; oemer has no other stable entry point), `pipeline.py` (chooses/chains engine, normalizes to MusicXML)
-- [x] Background-task job tracking (DB row: pending/running/done/failed + result path)
-- [x] `/omr/jobs` POST (upload) + `/omr/jobs/{id}` GET (status/result) endpoints
-- [x] Follow-up: `POST /omr/jobs/{id}/import` turns a `done` job's result into a real `Piece`/`PieceVersion`
-- [x] Follow-up (2026-08-31): `GET /omr/jobs` lists the caller's own jobs (newest first, +piece/group context) for the Frontend's "your generation finished" header alert
-- [x] `audiveris.py` now passes `-constant org.audiveris.omr.Main.sheetStepTimeOut=<audiveris_step_timeout_seconds>` (default 1800s) — Audiveris's own 120s-per-step default is too tight for real scores, not a sandbox artifact (see log below)
-
-**Tasks — Human:**
-- [x] Supply a real scanned sheet-music PDF to test the pipeline end-to-end — used `fixtures/SFCC/Coleridge-Taylor_Proserpine_A4.pdf` (real 4-part choral score, not a toy image)
-- [x] Install Audiveris locally — GitHub release `.dmg` (bundles its own JRE, no separate JDK needed); recipe in `Backend/README.md`'s "OMR engines" section
-
-**Verified 2026-08-31 (macOS, arm64):** Both engines installed and run end-to-end against the real fixture above (see log entry below for the full debugging trail — sandbox CPU/IO throttling, the 120s timeout, missing Tesseract language data, and two real bugs in oemer 0.1.8 itself). Audiveris correctly recovers the piece's 4-part (SATB) structure and OCR's its lyrics/title/composer; oemer's output flattens every staff into one part with notes stacked as chords and captures no lyrics at all (it has no OCR step) — confirms `pipeline.py`'s existing engine priority (Audiveris primary, oemer a last-resort single-page fallback) is the right call, not just a paper design.
 
 ### B9 — Homework / assignments [x]
 
@@ -419,230 +397,6 @@ fast-follow (see Backlog), deliberately not built this pass.
 **Tasks — Human:**
 - [ ] Deploy this to production — push to `backend/deploy`, and run the new migration against the real Neon Postgres DB. Nothing in the Frontend's F11 can actually save/load until this happens.
 
-### B16 — Paged OMR pipeline [~]
-
-B8's `run_omr` hands Audiveris a multi-page PDF as one "book". Audiveris exports
-*nothing* for the whole book if a single page crashes a step (a RHYTHMS-step
-NullPointerException is the common one), so one bad page on a 21-page choral scan
-= zero output. This milestone ports the paged approach proven in the standalone
-`omr-local` tool: split the PDF into one-page PDFs, transcribe each independently,
-then merge only the page joins that are *obvious* (same part count, matched
-top-to-bottom, measures renumbered end-to-end). A run of such pages becomes one
-**segment**; a join that isn't obvious (part count changed, a page failed, a page
-had no measures) ends the segment and starts a new one, recording why. A
-*provisional* whole-score merge is always written too (short parts rest-padded)
-so downstream always has a draft — it's the one that auto-imports as the draft
-`PieceVersion`, exactly as B8 does today.
-
-Feeds `Frontend/plan.md`'s F15 — the editor overlays a marker at each unresolved
-boundary so an admin fixes the seams there instead of in MuseScore.
-
-**Decisions:**
-- Paged mode is the default for any PDF with >1 page (`omr_paged_multipage`,
-  default on). A 1-page input, and the case where Audiveris isn't installed, both
-  fall back to B8's single-run `run_omr` (which can still try oemer). Paged mode
-  itself is Audiveris-only — oemer is first-page-only, so paged+oemer is moot.
-- `OmrJobStatus` is unchanged. A needs-review job is still `done` with a pending
-  draft; it carries an extra `needs_review` boolean + a stored `paged-report.json`.
-- Cross-page ties / slurs / directions are lost at every join, obvious or not —
-  same limitation the standalone tool documents.
-
-**Acceptance criteria:**
-- [x] A multi-page PDF where one page crashes Audiveris still yields a MusicXML +
-      MIDI draft from the pages that succeeded, instead of the whole job failing
-- [x] Consecutive pages with the same part count merge into one segment with
-      end-to-end measure numbers; a part-count change or a failed page starts a
-      new segment and the boundary records the reason
-- [x] `needs_review` is true iff the pages did not all land in one segment; the
-      provisional `score.musicxml` is written regardless
-- [x] `GET /omr/jobs/{id}/paged-report` returns the segment/boundary/per-page
-      breakdown; `GET /omr/jobs/{id}/segments/{n}/{kind}` serves a segment's
-      MusicXML/MIDI and rejects `../` path traversal
-- [x] The auto-imported draft `PieceVersion` is the provisional whole-score merge
-- [x] `pytest` green (new `test_omr_paged.py` + `test_omr_api.py` additions;
-      full suite 181 passing 2026-08-31)
-
-**Tasks — Claude:**
-- [x] `app/omr/paged.py` ported from `omr-local/omr_local/paged.py` — `split_pages`,
-      per-page engine run, `_segment_pages`, `merge_musicxml` (rest-pad + renumber),
-      `run_omr_paged`; adapted to `get_settings()` and the 2-arg engine signature.
-      Report gains a `boundary_measure` per segment (the F15 seam anchor).
-- [x] `app/omr/_subprocess.py` (`run_logged` + `log_tail`) — tee engine output to
-      `<dir>/<engine>.log`; reworked `audiveris.py`/`oemer.py` onto it so a bad page
-      leaves a `pages/pNN/audiveris.log` trail; tail the log into `OmrEngineError`.
-- [x] `OmrJob` columns `paged` / `needs_review` / `paged_report_path` + migration
-      `d2f8a6c4e1b9` (Postgres only — an earlier migration already uses PG-only DDL).
-- [x] `run_omr_job`: multi-page ⇒ `run_omr_paged` (falls back to `run_omr` on
-      `OmrEngineUnavailable`); persists the paged fields; draft import unchanged.
-- [x] `omr.py` routes + schema: `paged`/`needs_review`/`report_url` on `OmrJobOut`,
-      `needs_review` on the list item, `GET .../paged-report` (rewrites segment file
-      paths to URLs) + `.../segments/{n}/{kind}` (traversal-guarded `FileResponse`).
-- [x] `latest_omr_job` in `library`'s `LibraryEntryOmrJobOut` gains `needs_review` / `paged`.
-- [x] `config.py`: `omr_paged_multipage` (default true), `oemer_dpi` (promoted from
-      the hardcoded 300 in `oemer._rasterize_first_page`).
-- [x] Tests: `test_omr_paged.py` (7: segmenting, merge padding/renumber, boundary
-      measures, run_omr_paged shapes) + `test_omr_api.py` (5: paged job ⇒ `done` +
-      `needs_review`, report route URL rewrite, segment download, traversal 404,
-      non-paged job 404s the report route).
-
-**Tasks — Human:**
-- [ ] With Audiveris installed, run a real multi-page choral scan from
-      `fixtures/SFCC/` through the paged path (upload via `POST /omr/jobs`, or call
-      `run_omr_paged` directly) and confirm the `pages/`, `segments/`,
-      `paged-report.json` layout and a sane `needs_review` + `boundary_measure`s.
-- [ ] Get migration `d2f8a6c4e1b9` onto production by **merging this branch to
-      `main`** (the Render deploy then runs it). Do NOT `alembic upgrade` it from
-      a local checkout against the prod `.env` — see the 2026-08-31 Log entry for
-      why that breaks `main`'s deploy. `c1f7a4d2e8b6` (its parent) is already on
-      both prod and `main` as of 2026-08-31.
-
-### B17 — Working-draft slot + per-page OMR progress & re-run [~]
-
-Pairs with `Frontend/plan.md`'s **F16**. Designed with the human 2026-08-31 to
-make generate-from-PDF → in-app edit → publish one coherent loop instead of a
-pile of unrelated `draft` rows.
-
-**Model:**
-- **Working draft** = the single open `draft` / `source: modification`
-  `PieceVersion` on a piece (today's `pending_generated_version_id` is almost
-  this — B17 makes it *the* concept and enforces "at most one open").
-- The **live** version is unchanged: a group piece's latest `distributed`, a
-  personal piece's latest. Never mutated in place.
-
-**Decisions:**
-- Copy-on-edit clones the live version's `file_path` + `pdf_file_path` by
-  content-copy (`save_file(load_file(...))`, as `_import_draft_version` already
-  does for the MIDI) so the draft's files outlive anything the live version does.
-- Generate-from-PDF replaces an existing open working draft: the old one is
-  `reject`ed (status → `rejected`, history kept) before the new import.
-- `POST /library/versions/{id}/publish` is a convenience wrapper over the
-  existing submit → approve → (distribute) endpoints, same authority checks — no
-  new state machine. Personal piece = submit + approve, no distribute. Takes
-  `{ seams_resolved: bool }`; `false` → 409. The Backend can't inspect the
-  editor's seam state — it records the ack on the version and trusts F16's gate.
-- Per-page progress is best-effort: `pages_done` bumped + committed after each
-  page in `run_omr_paged`. No new status value.
-- Per-page re-run reuses the split PDF still on disk under
-  `omr_jobs/{id}/pages/page-NN.pdf`: re-run the one page, re-run `_segment_pages`
-  + the merges, rewrite `score.musicxml` / `score.mid` / `paged-report.json` and
-  `OmrJob.needs_review`, and return the re-run page's own normalized MusicXML
-  (+ measure count, + whether it still failed) for F16 to splice. It does **not**
-  re-import the draft — the editor owns the working model at that point.
-
-**Acceptance criteria:**
-- [x] `POST /library/pieces/{id}/working-draft` returns the existing open working
-      draft, or creates one cloning the live version's music + PDF; review
-      authority required; idempotent (second call returns the same version).
-- [x] `PUT /library/versions/{id}/file` replaces a `draft` version's music file
-      in place (creator or review authority); refuses a non-draft.
-- [x] `POST /library/versions/{id}/publish` with `seams_resolved: true` takes a
-      working draft to `approved` and (group piece) distributes it; `false` or a
-      non-working-draft → 409; not review authority → 403.
-- [x] Generate-from-PDF on a piece that already has an open working draft rejects
-      the old one and imports the new — never two open at once.
-- [x] `OmrJobOut` + the list item carry `pages_done` / `pages_total`; they climb
-      while a paged job runs. (TestClient runs the bg task synchronously so the
-      suite only sees the final `pages_done == pages_total`; the per-page commit
-      is covered by `test_on_page_done_fires_once_per_page`.)
-- [x] `POST /omr/jobs/{id}/pages/{n}/rerun` re-transcribes page n, rewrites the
-      report + provisional merge + `needs_review`, and returns
-      `{ ok, still_failed, measure_count, page_musicxml_url }`; 404 for a
-      non-paged job or an out-of-range page; traversal-safe.
-- [x] `pytest` green (202 passed — new working-draft, publish, rerun, progress
-      tests).
-
-**Tasks — Claude:**
-- [x] `services/pieces.py`: `working_draft(piece_id, db)` (the lookup, renamed /
-      widened from `pending_generated_version_id`),
-      `get_or_create_working_draft(piece, user, db)` (clone live files),
-      `publish_version(version, user, db)` (wraps submit / approve / distribute).
-      Also `live_version` + `replace_version_file`. `pending_generated_version_id`
-      kept as a thin wrapper over `working_draft`.
-- [x] `_import_draft_version` (`app/jobs/omr_jobs.py`): reject an existing open
-      working draft before adding the new one.
-- [x] `app/api/routes/library.py`: `POST /library/pieces/{id}/working-draft`,
-      `PUT /library/versions/{id}/file`, `POST /library/versions/{id}/publish`
-      (`{ seams_resolved }`). Schemas `WorkingDraftOut` / `VersionPublishRequest`
-      in `app/api/schemas/library.py`.
-- [x] `OmrJob.pages_done` / `pages_total` (nullable ints) + migration
-      `e7b1c9d3a2f4` (chained off `d2f8a6c4e1b9`; also adds
-      `piece_versions.seams_resolved_ack`). `run_omr_paged` takes an optional
-      `on_page_done(done, total)` callback; `run_omr_job` passes one that bumps +
-      commits the job row per page.
-- [x] `app/omr/paged.py`: factored the per-page loop (`_transcribe_page` +
-      `_finalize_paged_run`) so `rerun_page(output_dir, page_no, engine)` re-runs
-      one page from the on-disk split PDF and rebuilds segments + merges +
-      `paged-report.json`. Each page's normalized XML lands at a deterministic
-      `pages/pNN/page.musicxml` so a re-run can reload the others.
-- [x] `app/api/routes/omr.py`: `POST /omr/jobs/{id}/pages/{n}/rerun` (job owner;
-      calls `rerun_page`, updates `OmrJob.needs_review`, returns the F16 shape) +
-      `GET /omr/jobs/{id}/pages/{n}/musicxml` (serves the re-run page's XML,
-      traversal-guarded like `.../segments/{n}/{kind}`).
-- [x] Schemas: `pages_done` / `pages_total` on `OmrJobOut` +
-      `LibraryEntryOmrJobOut` + `OmrJobListItemOut`; `OmrPageRerunOut`.
-- [x] Tests: `test_library_working_draft.py` (get-or-create idempotency, clone
-      contents, publish happy / 409 / 403, generate replaces),
-      `test_omr_paged.py` / `test_omr_api.py` additions (progress counters,
-      rerun recovers / still-fails / out-of-range, route wiring + page-XML serve).
-
-**Tasks — Human:**
-- [ ] After F16: run a real multi-page scan, re-run a page via the API, confirm
-      `paged-report.json` + `score.musicxml` are rewritten and `needs_review`
-      flips when the last bad page is recovered.
-- [ ] Migration reaches prod only by merge to `main` (same rule as
-      `d2f8a6c4e1b9` — see the 2026-08-31 outage Log entry).
-
-### B18 — Per-page measure offsets in the paged report [x]
-
-Feeds `Frontend/plan.md`'s **F19** (page-by-page review of a generated draft).
-F19's editor needs to map each source page to its measure range in the
-provisional whole-score merge, to scroll + highlight that range while the admin
-approves the page. The report already has segments → page lists and a
-`boundary_measure` per segment, but nothing per *page*, so the frontend would
-otherwise have to fetch all N `pages/pNN/page.musicxml` and count `<measure>`s.
-
-**Decisions:**
-- Report-shape change only — no new column, no migration. `paged-report.json` is
-  rewritten by `rerun_page` already, so a re-run keeps the offsets current.
-- Offsets are into the **provisional whole-score merge** (`score.musicxml`), the
-  same coordinate system as `boundary_measure`, so F19 can reconcile the two.
-- A failed page contributes 0 measures and gets `measure_count: 0` with
-  `start_measure` pointing at where it *would* begin (so "insert N bars" in F19
-  has an anchor).
-
-**Acceptance criteria:**
-- [x] `GET /omr/jobs/{id}/paged-report` returns `start_measure` (1-based) and
-      `measure_count` on every entry of `pages[]`; they tile the merge with no
-      gaps or overlaps and `sum(measure_count) == <measures in score.musicxml>`.
-- [x] A failed page has `measure_count: 0` and a `start_measure` equal to the
-      next real page's `start_measure`.
-- [x] `rerun_page` rewrites the offsets when a recovered page changes measure
-      counts downstream.
-- [x] `pytest` green (new assertions in `test_omr_paged.py` / `test_omr_api.py`).
-
-**Tasks — Claude:**
-- [x] `app/omr/paged.py`: `merge_musicxml` now returns a third value,
-      `per_page_measures` (page number -> bars it contributed to that merge;
-      `sum ==` the merged score's measure count). `_finalize_paged_run` feeds
-      the *whole-score* merge's map to a new `_assign_page_offsets`, which walks
-      `report.pages` in order setting `start_measure` / `measure_count` on every
-      `PageResult` (failed pages included — count 0, `start_measure` inherits
-      the running offset so it equals the next real page's). `rerun_page` goes
-      through `_finalize_paged_run`, so offsets are rewritten on a re-run.
-- [x] `PagedReport.as_dict()`'s `pages[]` entries emit the two fields;
-      `PageResult` gained `start_measure` / `measure_count`. The paged-report
-      route returns the dict as-is, so no `app/api/schemas/omr.py` change was
-      needed (that route has no pydantic model — it rewrites segment paths to
-      URLs dynamically); the shape is documented on `PageResult` / `as_dict`.
-- [x] Tests: `test_omr_paged.py` — `merge_musicxml` per-page-count return,
-      offsets tile the provisional merge + sum to its measure count,
-      failed-page zero-count at the next page's start, `rerun_page` rewrites
-      downstream offsets (on disk too). `test_omr_api.py` — the stub report
-      carries the fields and the route passes them through.
-
-**Tasks — Human:**
-- [ ] None beyond F19's end-to-end pass (no migration, no deploy gate).
-
 ## Backlog
 
 - **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
@@ -650,7 +404,6 @@ otherwise have to fetch all N `pages/pNN/page.musicxml` and count `<measure>`s.
 - Group invite flow (email invite vs. join code) — not designed yet
 - ~~Wire `app/storage/files.py` to Neon's Object Storage~~ **DONE 2026-08-31** (committed 9d7ef53; credential verified 8bc2e31). `save_file` → `uploads` bucket (`obj/…` keys) when `AWS_*` set, else local disk; `resolve_source_path` materializes via a local cache; serving routes 404 (not 500) on missing bytes. **Remaining human step:** set `AWS_ENDPOINT_URL_S3` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_BUCKET` on Render, redeploy, then re-upload the 6 lost modification-version PDFs.
 - Object-storage orphans: `delete_piece` leaves `obj/…` files in the bucket. Add a sweep-by-prefix cleanup (or delete-on-piece-delete).
-- Real job queue (Celery/RQ) if background-task OMR processing proves too slow/blocking
 - Responsibilities: recurrence rules + lazy date generation (needs a real scheduled-job runner, which doesn't exist yet)
 - Responsibilities: notifications/reminders (no notification infra of any kind exists yet)
 - Responsibilities: swap requests between members, and an admin-required-approval step for signups — both explicitly deferred out of B13
