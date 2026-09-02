@@ -208,4 +208,16 @@ in the same pass.
 - [ ] Step 5 — PdfMarkupLayer.svelte
 - [ ] Step 6 — groups/[id] tabs/*.svelte
 - [ ] Step 7 — groups/[id] actions/*.ts
-- [ ] Step 8 — backend library.py split
+- [x] Step 8 — backend library.py split — `app/api/routes/library.py` (626
+      lines) → `app/api/routes/library/` package: `pieces.py` (piece CRUD +
+      `_omr_fields`), `versions.py` (upload/submit/approve/reject/distribute
+      + working-draft/replace-file/publish), `files.py` (file/pdf/manifest/
+      renders serving + `_source_path_or_404`), shared `_common.py`
+      (`_get_piece_or_404`/`_get_version_or_404`/`_require_piece_access`/
+      `_require_review_authority`/`_save_upload`), and `__init__.py` mounting
+      the three subrouters under the same `/library` prefix so `main.py` is
+      unchanged. Pure mechanical move: all 15 `/library/*` paths, methods,
+      response models, status codes, docstrings, auth checks identical
+      (verified against `app.openapi()`). One test's monkeypatch target
+      updated to the `library.files` submodule. Full suite 226 passed.
+      `db/models/` package split not done (out of scope for this pass).

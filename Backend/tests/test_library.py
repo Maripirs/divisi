@@ -507,12 +507,12 @@ def test_version_pdf_route_404_not_500_when_bytes_missing_from_storage(client, m
     version_id = upload.json()["version"]["id"]
     assert client.get(f"/library/versions/{version_id}/pdf", headers=headers).status_code == 200
 
-    from app.api.routes import library as library_routes
+    from app.api.routes.library import files as library_files
 
     def _raise_missing(_path):
         raise FileNotFoundError(_path)
 
-    monkeypatch.setattr(library_routes, "resolve_existing_source_path", _raise_missing)
+    monkeypatch.setattr(library_files, "resolve_existing_source_path", _raise_missing)
     gone = client.get(f"/library/versions/{version_id}/pdf", headers=headers)
     assert gone.status_code == 404
     assert "missing from storage" in gone.json()["detail"]
