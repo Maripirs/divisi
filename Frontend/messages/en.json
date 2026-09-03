@@ -115,6 +115,8 @@
 	"responsibilities_page_meta": "Reusable role sets and the next rehearsals that need staffing.",
 	"responsibilities_templates_heading": "Role sets",
 	"responsibilities_upcoming_heading": "Upcoming dates",
+	"responsibilities_no_upcoming": "No upcoming dates",
+	"responsibilities_past_heading": "Past dates ({count})",
 	"responsibilities_filled": "{active}/{needed} filled",
 	"responsibilities_quick_add": "Quick add",
 	"responsibilities_next_rehearsal": "Next rehearsal",

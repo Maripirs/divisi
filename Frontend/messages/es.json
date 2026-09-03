@@ -115,6 +115,8 @@
 	"responsibilities_page_meta": "Conjuntos de roles reutilizables y los próximos ensayos que necesitan gente.",
 	"responsibilities_templates_heading": "Conjuntos de roles",
 	"responsibilities_upcoming_heading": "Próximas fechas",
+	"responsibilities_no_upcoming": "No hay próximas fechas",
+	"responsibilities_past_heading": "Fechas pasadas ({count})",
 	"responsibilities_filled": "{active}/{needed} cubiertos",
 	"responsibilities_quick_add": "Añadir rápido",
 	"responsibilities_next_rehearsal": "Próximo ensayo",

@@ -34,11 +34,33 @@
 	let savingDateEdit = $state(false);
 	// Responsibilities tab restructure: the upcoming dates render as a
 	// compact strip and only the one picked here shows its full roster
-	// below. Seeded to the soonest date; `selectedDate` re-resolves against
-	// the live list so a deleted/selected-away id falls back to the first.
-	let selectedDateId = $state<string | null>(data.responsibilities[0]?.id ?? null);
+	// below. Seeded to the soonest upcoming date (falling back to the most
+	// recent past one); `selectedDate` re-resolves against the live list so
+	// a deleted/selected-away id falls back to the first.
+	//
+	// `data.responsibilities` from the backend holds every date the group
+	// ever created (admins need signup/coverage history), oldest-first. We
+	// split it at "now": `upcomingDates` stays oldest-first (soonest next),
+	// `pastDates` is reversed so the most recent past date leads.
+	const isUpcoming = (d: { date: string }) => new Date(d.date).getTime() >= Date.now();
+	// Plain helper mirroring the partition below, for the one-shot `$state`
+	// seed (a `$state` initialiser can't read a `$derived`).
+	function seedSelectedDateId(): string | null {
+		const dates = data.responsibilities;
+		const firstUpcoming = dates.find(isUpcoming);
+		if (firstUpcoming) return firstUpcoming.id;
+		const past = dates.filter((d) => !isUpcoming(d));
+		return past[past.length - 1]?.id ?? null;
+	}
+	let selectedDateId = $state<string | null>(seedSelectedDateId());
+	let upcomingDates = $derived(data.responsibilities.filter(isUpcoming));
+	let pastDates = $derived(data.responsibilities.filter((d) => !isUpcoming(d)).reverse());
 	let selectedDate = $derived(
-		data.responsibilities.find((d) => d.id === selectedDateId) ?? data.responsibilities[0] ?? null
+		data.responsibilities.find((d) => d.id === selectedDateId) ??
+			upcomingDates[0] ??
+			pastDates[0] ??
+			data.responsibilities[0] ??
+			null
 	);
 	// Which schedule's row (admin Templates panel) has swapped its role-chip
 	// summary for the inline edit forms — one at a time, same click-to-reveal
@@ -231,35 +253,46 @@
 {#if data.responsibilities.length === 0}
 	<p class="empty">{m.join_no_responsibilities()}</p>
 {:else}
+	<!-- One date chip, shared by the upcoming strip and the past-dates
+	     disclosure below so the ~20 lines of coverage/formatting markup
+	     live in one place. -->
+	{#snippet dateChip(d: (typeof data.responsibilities)[number])}
+		{@const totals = coverageTotals(
+			d.schedules
+				.flatMap((s) => s.roles)
+				.map((role) => ({
+					neededCount: role.needed_count,
+					activeCount: role.active_count
+				}))
+		)}
+		<button
+			type="button"
+			class="date-chip"
+			aria-pressed={selectedDate?.id === d.id}
+			onclick={() => (selectedDateId = d.id)}
+		>
+			<span class="date-chip__date">
+				{formatEventDate(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
+			</span>
+			<span class="date-chip__sub">{formatWeekdayTime(d.date)}</span>
+			<span class="date-chip__fill">
+				{m.responsibilities_filled({ active: totals.active, needed: totals.needed })}
+			</span>
+			<CoverageMeter active={totals.active} needed={totals.needed} />
+		</button>
+	{/snippet}
+
 	<section class="card">
 		<p class="card-eyebrow">{m.responsibilities_upcoming_heading()}</p>
-		<div class="date-strip" role="group" aria-label={m.responsibilities_upcoming_heading()}>
-			{#each data.responsibilities as d (d.id)}
-				{@const totals = coverageTotals(
-					d.schedules
-						.flatMap((s) => s.roles)
-						.map((role) => ({
-							neededCount: role.needed_count,
-							activeCount: role.active_count
-						}))
-				)}
-				<button
-					type="button"
-					class="date-chip"
-					aria-pressed={selectedDate?.id === d.id}
-					onclick={() => (selectedDateId = d.id)}
-				>
-					<span class="date-chip__date">
-						{formatEventDate(d.date)}{#if d.canceled} · {m.responsibilities_canceled()}{:else if d.locked} · {m.responsibilities_locked()}{/if}
-					</span>
-					<span class="date-chip__sub">{formatWeekdayTime(d.date)}</span>
-					<span class="date-chip__fill">
-						{m.responsibilities_filled({ active: totals.active, needed: totals.needed })}
-					</span>
-					<CoverageMeter active={totals.active} needed={totals.needed} />
-				</button>
-			{/each}
-		</div>
+		{#if upcomingDates.length === 0}
+			<p class="card-meta">{m.responsibilities_no_upcoming()}</p>
+		{:else}
+			<div class="date-strip" role="group" aria-label={m.responsibilities_upcoming_heading()}>
+				{#each upcomingDates as d (d.id)}
+					{@render dateChip(d)}
+				{/each}
+			</div>
+		{/if}
 
 	{#if selectedDate}
 		{@const d = selectedDate}
@@ -426,6 +459,24 @@
 		</div>
 	{/if}
 	</section>
+
+	{#if pastDates.length > 0}
+		<!-- History lives collapsed below the upcoming card: admins expand it
+		     for signup/coverage records, members rarely need it. A past chip
+		     still drives the selected-date panel up in the card above. -->
+		<details class="past-dates">
+			<summary>{m.responsibilities_past_heading({ count: pastDates.length })}</summary>
+			<div
+				class="date-strip"
+				role="group"
+				aria-label={m.responsibilities_past_heading({ count: pastDates.length })}
+			>
+				{#each pastDates as d (d.id)}
+					{@render dateChip(d)}
+				{/each}
+			</div>
+		</details>
+	{/if}
 {/if}
 
 {#if mode === 'admin' && data.schedules.length > 0 && nextRehearsalLocal}
@@ -810,6 +861,19 @@
 		padding-top: 0.25rem;
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	/* Past-dates disclosure below the upcoming card: the summary reads as a
+	   muted text link, and its strip gets a little breathing room once open. */
+	.past-dates summary {
+		cursor: pointer;
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		padding: 0.35rem 0;
+	}
+
+	.past-dates .date-strip {
+		margin-top: 0.5rem;
 	}
 
 	/* The selected date's roster lives in the same card as the date strip,
