@@ -695,11 +695,6 @@
 
 <style>
 	.score-view {
-		/* Positioning context for the landscape-phone floating zoom pill
-		   (see the landscape media block at the end of this style block).
-		   Safe unconditionally: no other descendant is absolutely positioned
-		   against it (`.render-status` uses `position: fixed`). */
-		position: relative;
 		--score-page: var(--surface);
 		--score-chrome: var(--surface-2);
 		--score-chrome-border: var(--border);
@@ -856,25 +851,29 @@
 	}
 
 	/* Landscape phones have almost no vertical room. Rather than spend a
-	   full-width sticky strip on the zoom bar, float it as a compact pill
-	   over the top-right corner of the score. It will overlap the top-right
-	   of the first system, and that overlap is the accepted trade-off, so no
-	   compensating padding is added to the score container. */
+	   full-width strip on the zoom bar, shrink it to a compact pill over the
+	   top-right corner of the score. It stays `position: sticky` (the only
+	   way to keep pinned while the score scrolls without escaping to the
+	   viewport and colliding with the app's top bar), but its own flow
+	   height is zeroed so it costs the score nothing: the buttons overflow
+	   downward over the top-right of the first system, and that overlap is
+	   the accepted trade-off. `pointer-events` is dropped on the empty strip
+	   and restored on the buttons so the overlap never eats a score tap. */
 	@media (orientation: landscape) and (max-height: 500px) {
 		.zoom-controls {
-			position: absolute;
-			top: 0.35rem;
-			right: 0.35rem;
-			left: auto;
-			width: auto;
-			margin: 0;
-			padding: 0;
+			height: 0;
+			min-height: 0;
+			overflow: visible;
+			align-items: flex-start;
+			padding: 0.35rem 0.35rem 0;
 			gap: 0.2rem;
 			border-bottom: none;
 			background: transparent;
+			pointer-events: none;
 			z-index: 4;
 		}
 		.zoom-controls button {
+			pointer-events: auto;
 			min-width: 1.9rem;
 			padding: 0.15rem 0.5rem;
 			font-size: 0.75rem;
