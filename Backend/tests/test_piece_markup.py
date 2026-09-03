@@ -165,50 +165,156 @@ def test_stranger_cannot_create_or_list_marks(client):
     assert client.get("/piece-markup", params={"piece_id": piece_id}, headers=owner_headers).json() != []
 
 
-def test_group_scope_lists_group_piece_marks(client):
-    admin_headers = _register_and_login(client, "gadmin4b@example.com")
-    owner_headers = _register_and_login(client, "owner4b@example.com")
-    peer_headers = _register_and_login(client, "peer4b@example.com")
+def _stamp_body(piece_id, scope=None, color="#000", x=0.1, y=0.1):
+    body = {
+        "piece_id": piece_id,
+        "page_number": 1,
+        "kind": "stamp",
+        "color": color,
+        "stamp_type": "breath",
+        "x": x,
+        "y": y,
+    }
+    if scope is not None:
+        body["scope"] = scope
+    return body
 
+
+def _make_group_piece(client, admin_headers, member_emails=()):
     group_id = client.post("/groups", json={"name": "Choir"}, headers=admin_headers).json()["id"]
-    client.post("/groups/" + group_id + "/members", json={"email": "owner4b@example.com"}, headers=admin_headers)
-    client.post("/groups/" + group_id + "/members", json={"email": "peer4b@example.com"}, headers=admin_headers)
+    for email in member_emails:
+        client.post(f"/groups/{group_id}/members", json={"email": email}, headers=admin_headers)
     piece_id = _upload_piece(client, admin_headers, owner_type="group", group_id=group_id)
+    return group_id, piece_id
 
-    owner_mark = client.post(
-        "/piece-markup",
-        json={
-            "piece_id": piece_id,
-            "page_number": 1,
-            "kind": "stamp",
-            "color": "#000",
-            "stamp_type": "breath",
-            "x": 0.1,
-            "y": 0.1,
-        },
-        headers=owner_headers,
+
+def _promote_to_admin(client, admin_headers, group_id, email):
+    members = client.get(f"/groups/{group_id}/members", headers=admin_headers).json()
+    user_id = next(m["user_id"] for m in members if m["email"] == email)
+    resp = client.put(
+        f"/groups/{group_id}/members/{user_id}/role",
+        json={"role": "admin"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+def test_group_scope_returns_only_group_marks(client):
+    admin_headers = _register_and_login(client, "gadmin7@example.com")
+    member_headers = _register_and_login(client, "member7@example.com")
+    _, piece_id = _make_group_piece(client, admin_headers, ["member7@example.com"])
+
+    admin_personal = client.post(
+        "/piece-markup", json=_stamp_body(piece_id, color="#a00"), headers=admin_headers
     ).json()
-    peer_mark = client.post(
-        "/piece-markup",
-        json={
-            "piece_id": piece_id,
-            "page_number": 1,
-            "kind": "stamp",
-            "color": "#111",
-            "stamp_type": "accent",
-            "x": 0.2,
-            "y": 0.2,
-        },
-        headers=peer_headers,
+    admin_group = client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group", color="#0a0"), headers=admin_headers
+    )
+    assert admin_group.status_code == 201
+    assert admin_group.json()["scope"] == "group"
+    admin_group = admin_group.json()
+    member_personal = client.post(
+        "/piece-markup", json=_stamp_body(piece_id, color="#00a"), headers=member_headers
     ).json()
 
-    mine = client.get("/piece-markup", params={"piece_id": piece_id, "scope": "mine"}, headers=owner_headers)
-    assert mine.status_code == 200
-    assert [mark["id"] for mark in mine.json()] == [owner_mark["id"]]
+    # The group layer: only scope=group marks, visible to any member.
+    for headers in (admin_headers, member_headers):
+        group = client.get(
+            "/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=headers
+        )
+        assert group.status_code == 200
+        assert {m["id"] for m in group.json()} == {admin_group["id"]}
 
-    group = client.get("/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=owner_headers)
-    assert group.status_code == 200
-    assert {mark["id"] for mark in group.json()} == {owner_mark["id"], peer_mark["id"]}
+    # Personal scope (default) is unchanged: only the caller's own personal marks.
+    admin_default = client.get("/piece-markup", params={"piece_id": piece_id}, headers=admin_headers)
+    assert {m["id"] for m in admin_default.json()} == {admin_personal["id"]}
+    member_default = client.get("/piece-markup", params={"piece_id": piece_id}, headers=member_headers)
+    assert {m["id"] for m in member_default.json()} == {member_personal["id"]}
+
+
+def test_group_scope_write_requires_owning_group_admin(client):
+    admin_headers = _register_and_login(client, "gadmin8@example.com")
+    member_headers = _register_and_login(client, "member8@example.com")
+    stranger_headers = _register_and_login(client, "stranger8@example.com")
+    _, piece_id = _make_group_piece(client, admin_headers, ["member8@example.com"])
+
+    # A plain member can read the group layer but not write it.
+    assert client.get(
+        "/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=member_headers
+    ).status_code == 200
+    assert client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group"), headers=member_headers
+    ).status_code == 403
+
+    # A non-member gets 403 on any scope, no leak.
+    assert client.get(
+        "/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=stranger_headers
+    ).status_code == 403
+    assert client.get(
+        "/piece-markup", params={"piece_id": piece_id, "scope": "personal"}, headers=stranger_headers
+    ).status_code == 403
+    assert client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group"), headers=stranger_headers
+    ).status_code == 403
+
+    # The admin can.
+    assert client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group"), headers=admin_headers
+    ).status_code == 201
+
+
+def test_any_owning_group_admin_co_edits_group_marks(client):
+    admin_a = _register_and_login(client, "admina9@example.com")
+    admin_b = _register_and_login(client, "adminb9@example.com")
+    member_headers = _register_and_login(client, "member9@example.com")
+    group_id, piece_id = _make_group_piece(
+        client, admin_a, ["adminb9@example.com", "member9@example.com"]
+    )
+    _promote_to_admin(client, admin_a, group_id, "adminb9@example.com")
+
+    mark_one = client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group", x=0.1), headers=admin_a
+    ).json()
+    mark_two = client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group", x=0.2), headers=admin_a
+    ).json()
+
+    # Admin B edits a group mark admin A created...
+    edited = client.patch(
+        f"/piece-markup/{mark_one['id']}", json={"x": 0.9, "y": 0.8}, headers=admin_b
+    )
+    assert edited.status_code == 200
+    assert edited.json()["x"] == 0.9
+    # ...and user_id follows the last editor (audit only).
+    assert edited.json()["user_id"] != mark_one["user_id"]
+
+    # ...and deletes another.
+    assert client.delete(f"/piece-markup/{mark_two['id']}", headers=admin_b).status_code == 204
+
+    # A plain member cannot edit or delete the group layer.
+    assert client.patch(
+        f"/piece-markup/{mark_one['id']}", json={"x": 0.1}, headers=member_headers
+    ).status_code == 403
+    assert client.delete(f"/piece-markup/{mark_one['id']}", headers=member_headers).status_code == 403
+
+    remaining = client.get(
+        "/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=admin_a
+    ).json()
+    assert {m["id"] for m in remaining} == {mark_one["id"]}
+
+
+def test_group_scope_on_personal_piece_returns_empty(client):
+    owner_headers = _register_and_login(client, "owner10@example.com")
+    piece_id = _upload_piece(client, owner_headers)
+
+    resp = client.get("/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=owner_headers)
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+    # And a group-scoped write on a personal piece is rejected.
+    assert client.post(
+        "/piece-markup", json=_stamp_body(piece_id, scope="group"), headers=owner_headers
+    ).status_code == 403
 
 
 def test_owner_can_delete_others_cannot(client):

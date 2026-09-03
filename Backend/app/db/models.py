@@ -289,8 +289,9 @@ class PieceMarkupMark(Base):
     """A piaScore-style freehand mark drawn directly on
     one page of a piece's PDF — distinct from `Annotation` (a single text
     note at one score position, no drawing involved). Every mark is scoped
-    to `user_id`; group-owned pieces can also expose a combined group view,
-    while deletion stays owner-only.
+    `scope`: a `personal` mark belongs to its creator; a `group` mark lives
+    on a group-owned piece's shared layer and is co-edited by any admin of
+    that group (see `scope` below).
 
     `x`/`y`/`points` are fractions of the PDF page's own rendered *width*
     (both axes, not width/height respectively — so 1 unit means the same
@@ -304,8 +305,18 @@ class PieceMarkupMark(Base):
     __tablename__ = "piece_markup_marks"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    # Creator / last editor. Always set. For a `group`-scoped mark this is
+    # audit-only (any admin of the owning group may edit it), not a
+    # permission check.
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    # "personal" (only the creator sees / edits it) or "group" (the shared
+    # layer on a group-owned piece, co-edited by any admin of that group).
+    # Plain string validated by a Pydantic enum at the API layer, same as
+    # `kind` below.
+    scope: Mapped[str] = mapped_column(
+        String, nullable=False, server_default="personal", default="personal"
+    )
     page_number: Mapped[int] = mapped_column(Integer, nullable=False)  # 1-indexed, matches pdf.js
     kind: Mapped[str] = mapped_column(String, nullable=False)  # "stroke" | "stamp" | "text"
     color: Mapped[str] = mapped_column(String, nullable=False)  # CSS hex color

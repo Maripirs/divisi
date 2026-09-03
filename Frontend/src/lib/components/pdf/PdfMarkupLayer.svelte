@@ -8,7 +8,6 @@
 		MIN_TEXT_SIZE,
 		MAX_TEXT_SIZE,
 		TEXT_SIZE_NUDGE,
-		type MarkupVisibility,
 		type PdfMarkupController
 	} from './pdfMarkup.svelte';
 
@@ -26,8 +25,7 @@
 		aspect,
 		canvas,
 		markup,
-		canMarkup,
-		markupVisibility
+		canMarkup
 	}: {
 		pageIndex: number;
 		/** `height / width` of this page's rendered canvas, for the SVG
@@ -37,8 +35,12 @@
 		canvas: HTMLCanvasElement | undefined;
 		markup: PdfMarkupController;
 		canMarkup: boolean;
-		markupVisibility: MarkupVisibility;
 	} = $props();
+
+	/** A group-layer mark the caller can't edit right now: render it in the
+	 * muted / dashed "director" treatment (mirrors F20's PieceNotesPanel). */
+	const directorLook = (mark: Parameters<typeof markup.isMarkInteractive>[0]) =>
+		mark.scope === 'group' && !markup.isMarkInteractive(mark);
 
 	// Local `$derived` alias so `{#if textEditor && ...}` narrows the way it
 	// did when this markup lived inline in `PdfView` (Svelte narrows a plain
@@ -63,7 +65,7 @@
 	}
 </script>
 
-{#if canMarkup && markupVisibility !== 'none'}
+{#if canMarkup && (markup.showMine || markup.showDirector)}
 	<svg
 		class="markup-layer"
 		class:markup-layer--editable={markup.annotationMode}
@@ -79,6 +81,7 @@
 		{#each markup.marksForPage(pageIndex) as mark (mark.id)}
 			{#if mark.kind === 'stroke' && mark.points}
 				<path
+					class:markup-mark--director={directorLook(mark)}
 					d={strokePathD(mark.points)}
 					stroke={mark.color}
 					stroke-width={mark.width ?? PEN_WIDTHS[1]}
@@ -87,24 +90,30 @@
 					stroke-linejoin="round"
 				/>
 			{:else if mark.kind === 'stamp' && mark.x !== null && mark.y !== null}
-				<g class="stamp-mark" style:color={mark.color} transform={`translate(${mark.x} ${mark.y}) scale(${markup.sizeForStamp(mark)})`}>
+				<g
+					class="stamp-mark"
+					class:markup-mark--director={directorLook(mark)}
+					style:color={mark.color}
+					transform={`translate(${mark.x} ${mark.y}) scale(${markup.sizeForStamp(mark)})`}
+				>
 					<StampShape type={mark.stampType} />
 				</g>
 			{:else if mark.kind === 'text' && mark.x !== null && mark.y !== null && mark.text}
 				<g
 					class="text-mark"
-					class:text-mark--editable={markup.annotationMode && markup.isOwnMark(mark)}
+					class:text-mark--editable={markup.annotationMode && markup.isMarkInteractive(mark)}
+					class:markup-mark--director={directorLook(mark)}
 					style:color={mark.color}
 					transform={`translate(${mark.x} ${mark.y})`}
 					role="button"
-					tabindex={markup.annotationMode && markup.isOwnMark(mark) ? 0 : -1}
+					tabindex={markup.annotationMode && markup.isMarkInteractive(mark) ? 0 : -1}
 					aria-label={m.markup_text_field()}
 					onpointerdown={(e) => markup.handleTextPointerDown(e, mark, pageIndex)}
 					onpointermove={markup.handleTextPointerMove}
 					onpointerup={(e) => markup.handleTextPointerUp(e, mark, pageIndex)}
 					onpointercancel={() => markup.handleTextPointerCancel(mark)}
 					onkeydown={(event) => {
-						if ((event.key === 'Enter' || event.key === ' ') && markup.annotationMode && markup.isOwnMark(mark)) {
+						if ((event.key === 'Enter' || event.key === ' ') && markup.annotationMode && markup.isMarkInteractive(mark)) {
 							event.preventDefault();
 							markup.openTextEditorForMark(mark, pageIndex);
 						}
@@ -207,6 +216,17 @@
 		   the page, so native panning has to be fully handed over here. */
 		touch-action: none;
 		cursor: crosshair;
+	}
+
+	/* The shared director layer shown to someone who can't edit it right now:
+	   muted and, for strokes, dashed, the same "not yours to touch" read as
+	   F20's PieceNotesPanel director notes. */
+	.markup-mark--director {
+		opacity: 0.55;
+	}
+
+	path.markup-mark--director {
+		stroke-dasharray: 0.012 0.009;
 	}
 
 	.stamp-mark {

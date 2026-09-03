@@ -814,36 +814,36 @@ layer at once, which this needs. And its "Group" option currently loads
   draw target is Director markup.
 
 **Acceptance criteria:**
-- [ ] A member on a real group-owned piece's PDF can turn on "Show director
+- [x] A member on a real group-owned piece's PDF can turn on "Show director
       markup" and see the shared layer read-only, on top of / beside their
       own marks, both toggles working independently
-- [ ] An owning-group admin can pick "Director markup" as the draw target
+- [x] An owning-group admin can pick "Director markup" as the draw target
       and add / move / edit / delete marks in the shared layer, including
       marks another admin made
-- [ ] The persistent "editing the shared layer" reminder is visible the
+- [x] The persistent "editing the shared layer" reminder is visible the
       entire time the draw target is Director markup, and gone otherwise
-- [ ] A non-admin never sees the draw-target control or a way to write the
+- [x] A non-admin never sees the draw-target control or a way to write the
       group layer; a personal piece never shows "Show director markup"
-- [ ] `npm run check` / `npm run build` clean; vitest green
+- [x] `npm run check` / `npm run build` clean; vitest green
 - [ ] Human confirms on a real touchscreen: the two toggles, the admin
       draw-target switch + reminder, and that a member can't edit the
       shared layer
 
 **Tasks — Claude:**
-- [ ] `$lib/api/pieceMarkup.ts`: `scope` on create; keep `listMarks(pieceId,
+- [x] `$lib/api/pieceMarkup.ts`: `scope` on create; keep `listMarks(pieceId,
       scope)`; drop the dead `MarkupScope = 'mine' | 'group'` exclusivity
       assumptions where they leak into the UI
-- [ ] `routes/piece/[id]/markup/**`: thread `scope` on POST
-- [ ] `pdfMarkup.svelte.ts` / `PdfView.svelte` / `PdfMarkupPanel.svelte`:
+- [x] `routes/piece/[id]/markup/**`: thread `scope` on POST
+- [x] `pdfMarkup.svelte.ts` / `PdfView.svelte` / `PdfMarkupPanel.svelte`:
       replace `markupVisibility` (`none|mine|group`) with `showMine` /
       `showDirector` booleans + `drawTarget` (`mine|director`); load both
       mark sets when their toggle is on; gate `drawTarget` on
       `isOwningGroupAdmin`
-- [ ] Persistent draw-target reminder element
-- [ ] `resolve/+server.ts`: generalize F20's `canManagePieceNotes` to an
+- [x] Persistent draw-target reminder element
+- [x] `resolve/+server.ts`: generalize F20's `canManagePieceNotes` to an
       `isOwningGroupAdmin` flag (or add alongside) for the piece route
-- [ ] en/es keys for the toggles, the draw-target control, the reminder
-- [ ] vitest for the new load/permission branches where practical
+- [x] en/es keys for the toggles, the draw-target control, the reminder
+- [x] vitest for the new load/permission branches where practical
 
 **Tasks — Human:**
 - [ ] Touchscreen pass per the last acceptance box, against a Backend with

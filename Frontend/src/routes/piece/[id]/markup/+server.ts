@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
  * (no guest path — marks are personal, same as annotations). */
 export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 	if (!locals.token) return new Response(null, { status: 401 });
-	const scope = url.searchParams.get('scope') === 'group' ? 'group' : 'mine';
+	const scope = url.searchParams.get('scope') === 'group' ? 'group' : 'personal';
 	try {
 		const body = await backendJson(
 			locals.token,

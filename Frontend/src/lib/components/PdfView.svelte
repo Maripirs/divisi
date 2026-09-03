@@ -8,7 +8,7 @@
 	import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 	import PdfMarkupLayer from '$lib/components/pdf/PdfMarkupLayer.svelte';
 	import PdfMarkupPanel from '$lib/components/pdf/PdfMarkupPanel.svelte';
-	import { createPdfMarkupController, type MarkupVisibility } from '$lib/components/pdf/pdfMarkup.svelte';
+	import { createPdfMarkupController } from '$lib/components/pdf/pdfMarkup.svelte';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 
@@ -27,12 +27,14 @@
 	 * (`touch-action: pan-x pan-y`); zoom is the +/- buttons only.
 	 *
 	 * When `canMarkup` is on, also renders a piaScore-style markup layer on
-	 * top of each page: pen strokes, stamps, and text annotations. Visibility
-	 * can be personal or group-wide (see `$lib/api/pieceMarkup.ts`). Points
-	 * are stored as fractions of the page's own rendered *width* (not a
-	 * 0-1-per-axis square), so a
-	 * stroke's thickness reads the same in both directions and a mark
-	 * stays correctly placed across zoom levels without any conversion.
+	 * top of each page: pen strokes, stamps, and text annotations. Two
+	 * independent layers show additively per the `showMineMarkup` /
+	 * `showDirectorMarkup` toggles: the caller's own personal marks and, on a
+	 * group-owned piece, the shared director layer (see
+	 * `$lib/api/pieceMarkup.ts`). Points are stored as fractions of the page's
+	 * own rendered *width* (not a 0-1-per-axis square), so a stroke's
+	 * thickness reads the same in both directions and a mark stays correctly
+	 * placed across zoom levels without any conversion.
 	 */
 	let {
 		pdfUrl,
@@ -41,7 +43,9 @@
 		pieceId,
 		canMarkup = false,
 		currentUserId,
-		markupVisibility = $bindable('mine')
+		isOwningGroupAdmin = false,
+		showMineMarkup = $bindable(false),
+		showDirectorMarkup = $bindable(false)
 	}: {
 		pdfUrl: string;
 		zoom?: number;
@@ -64,11 +68,17 @@
 		 * controller's own `annotationMode` (F12) for the on/off within that. */
 		canMarkup?: boolean;
 		currentUserId?: string;
-		/** `'none'` hides saved marks entirely; `'mine'` / `'group'` pick which
-		 * scope's marks load. Bindable so the host page can drive it from its
-		 * own UI (the piece route's Practice Setup drawer) instead of a control
+		/** Whether the caller is an admin of this piece's owning group — gates
+		 * the "Drawing into: Director markup" draw target and whether
+		 * group-layer marks are interactive. Always false for a personal piece,
+		 * a non-admin member, or a guest. */
+		isOwningGroupAdmin?: boolean;
+		/** The two independent, session-local visibility toggles, both default
+		 * off and additive. Bindable so the host page drives them from its own
+		 * UI (the piece route's Practice Setup drawer) instead of a control
 		 * floating on the PDF. */
-		markupVisibility?: MarkupVisibility;
+		showMineMarkup?: boolean;
+		showDirectorMarkup?: boolean;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -106,16 +116,20 @@
 		pieceId: () => pieceId,
 		canMarkup: () => canMarkup,
 		currentUserId: () => currentUserId,
-		getMarkupVisibility: () => markupVisibility,
-		setMarkupVisibility: (value) => (markupVisibility = value),
+		getShowMine: () => showMineMarkup,
+		setShowMine: (value) => (showMineMarkup = value),
+		getShowDirector: () => showDirectorMarkup,
+		setShowDirector: (value) => (showDirectorMarkup = value),
+		isOwningGroupAdmin: () => isOwningGroupAdmin,
 		aspectFor: (pageIndex) => pageAspects[pageIndex] ?? 1.4142,
 		canvasFor: (pageIndex) => canvasRefs[pageIndex]
 	});
 
-	// Load marks for the current `(pieceId, visibility)`, and disarm the
-	// editor when visibility goes to `'none'`. Kept here as `$effect`s (rather
-	// than inside the factory) so rune-effect lifecycle stays in the
-	// component, matching step 4.
+	// Load marks for the current `(pieceId, showMine, showDirector)`, and
+	// disarm the editor / reset the draw target when the layers go dark or
+	// the admin flag drops. Kept here as `$effect`s (rather than inside the
+	// factory) so rune-effect lifecycle stays in the component, matching
+	// step 4.
 	$effect(() => {
 		markup.syncMarksForVisibility();
 	});
@@ -384,7 +398,6 @@
 							canvas={canvasRefs[i]}
 							{markup}
 							{canMarkup}
-							{markupVisibility}
 						/>
 					</div>
 				</div>

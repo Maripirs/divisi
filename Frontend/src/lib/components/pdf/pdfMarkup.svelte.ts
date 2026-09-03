@@ -33,11 +33,11 @@ import {
 } from '$lib/api/pieceMarkup';
 import { m } from '$lib/paraglide/messages';
 
-/** `'none'` hides saved marks entirely; `'mine'` / `'group'` pick which
- * scope's marks load. Bindable on `PdfView` so the host page can drive it from
- * its own UI (the piece route's Practice Setup drawer) instead of a control
- * floating on the PDF. */
-export type MarkupVisibility = 'none' | MarkupScope;
+/** Which layer an armed tool draws into: the caller's own `personal` marks,
+ * or the shared `group` (director) layer. Only an owning-group admin can
+ * pick `'director'`; it always starts at `'mine'` so an admin never scribbles
+ * on the shared layer by accident. */
+export type MarkupDrawTarget = 'mine' | 'director';
 
 export type MarkupTool = 'pen' | 'stamp' | 'text' | 'eraser' | null;
 
@@ -123,6 +123,32 @@ export function distanceToStroke(points: [number, number][], point: [number, num
 	return min;
 }
 
+/** F21 gating, pulled out as a pure fn so the branch matrix is unit-testable
+ * without instantiating the runes factory (same split as the geometry
+ * helpers above). A `personal` mark is its creator's to move / edit / erase;
+ * a `group` (director-layer) mark is only interactive for an owning-group
+ * admin who is in annotation mode with the director draw target selected.
+ * Everyone else sees the group layer read-only. */
+export function markInteractivity(
+	scope: MarkupScope,
+	ctx: {
+		isOwn: boolean;
+		isOwningGroupAdmin: boolean;
+		annotationMode: boolean;
+		drawTarget: MarkupDrawTarget;
+	}
+): boolean {
+	if (scope === 'group') {
+		return ctx.isOwningGroupAdmin && ctx.annotationMode && ctx.drawTarget === 'director';
+	}
+	return ctx.isOwn;
+}
+
+/** The scope a newly drawn mark is saved with, given the current draw target. */
+export function scopeForDrawTarget(drawTarget: MarkupDrawTarget): MarkupScope {
+	return drawTarget === 'director' ? 'group' : 'personal';
+}
+
 export interface PdfMarkupControllerDeps {
 	/** `pieceId` prop: the real Backend piece id marks are stored against,
 	 * `undefined` for a bundled fixture PDF (no real `Piece` row to key marks
@@ -134,11 +160,21 @@ export interface PdfMarkupControllerDeps {
 	/** `currentUserId` prop: tells the current user's own marks apart from a
 	 * group's. */
 	currentUserId: () => string | undefined;
-	/** `markupVisibility` is `$bindable` on `PdfView` and two-way-bound by the
-	 * parent route; `toggleAnnotationMode` mutates it, so the controller needs
-	 * read *and* write access. */
-	getMarkupVisibility: () => MarkupVisibility;
-	setMarkupVisibility: (value: MarkupVisibility) => void;
+	/** `showMineMarkup` / `showDirectorMarkup` are the two independent,
+	 * session-local visibility toggles, `$bindable` on `PdfView` and two-way-
+	 * bound by the parent route. They are additive: both layers can show at
+	 * once. Arming annotation mode forces `showMine` on; picking the director
+	 * draw target forces `showDirector` on, so the controller needs write
+	 * access to both. */
+	getShowMine: () => boolean;
+	setShowMine: (value: boolean) => void;
+	getShowDirector: () => boolean;
+	setShowDirector: (value: boolean) => void;
+	/** `isOwningGroupAdmin` prop: whether the caller is an admin of this
+	 * piece's owning group. Gates the `'director'` draw target and whether
+	 * group-layer marks are interactive. Always false for a personal piece,
+	 * a non-admin member, or a guest. */
+	isOwningGroupAdmin: () => boolean;
 	/** `pageAspects[pageIndex] ?? 1.4142`. `pageAspects` is written by pdf.js
 	 * (`renderAllPages`, which stays in `PdfView`); the markup geometry only
 	 * reads it. */
@@ -149,15 +185,23 @@ export interface PdfMarkupControllerDeps {
 }
 
 export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
+	// One array holds both layers; each mark carries its own `scope`, so
+	// `marksForPage` filters to whichever toggles are on and the CRUD paths
+	// stay single. Loaded marks of a scope are kept in memory even while
+	// their toggle is off (re-enabling shows them again without a refetch).
 	let marks = $state<MarkupMark[]>([]);
-	// Session bookkeeping, not reactive: the `${pieceId}:${visibility}` key
-	// whose marks are currently loaded.
-	let marksLoadedKey: string | undefined;
+	// Session bookkeeping, not reactive: the `${pieceId}:<scope>` key whose
+	// marks of that scope are currently loaded, one per layer.
+	let personalLoadedKey: string | undefined;
+	let groupLoadedKey: string | undefined;
 
 	// F12: a master edit-mode toggle separate from which tool is armed. The
-	// visibility control (in the piece route's Practice Setup drawer) decides
+	// visibility toggles (in the piece route's Practice Setup drawer) decide
 	// whether saved marks are shown at all.
 	let annotationMode = $state(false);
+	// F21: which layer an armed tool draws into. Only ever `'director'` while
+	// annotation mode is on and the caller is an owning-group admin.
+	let drawTarget = $state<MarkupDrawTarget>('mine');
 	let tool = $state<MarkupTool>(null);
 	let penColor = $state(PEN_COLORS[0]);
 	let penWidth = $state(PEN_WIDTHS[1]);
@@ -186,26 +230,41 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		textEditorFocusRequest++;
 	}
 
-	/** Drives the mark list off `(pieceId, visibility)`. `PdfView` calls this
-	 * from an `$effect`, so the reactive reads below register as deps. */
+	/** Drives the mark list off `(pieceId, showMine, showDirector)`. `PdfView`
+	 * calls this from an `$effect`, so the reactive reads below register as
+	 * deps. Loads each layer the first time its toggle turns on and leaves it
+	 * cached after; a toggle going off just stops `marksForPage` rendering it. */
 	function syncMarksForVisibility(): void {
 		const id = deps.pieceId();
-		const visibility = deps.getMarkupVisibility();
-		if (!deps.canMarkup() || !id || visibility === 'none') {
+		if (!deps.canMarkup() || !id) {
 			marks = [];
-			marksLoadedKey = undefined;
+			personalLoadedKey = undefined;
+			groupLoadedKey = undefined;
 			return;
 		}
-		const key = `${id}:${visibility}`;
-		if (marksLoadedKey === key) return;
-		marksLoadedKey = key;
-		void loadMarks(id, visibility, key);
+		if (deps.getShowMine()) {
+			const key = `${id}:personal`;
+			if (personalLoadedKey !== key) {
+				personalLoadedKey = key;
+				void loadScope(id, 'personal', key);
+			}
+		}
+		if (deps.getShowDirector()) {
+			const key = `${id}:group`;
+			if (groupLoadedKey !== key) {
+				groupLoadedKey = key;
+				void loadScope(id, 'group', key);
+			}
+		}
 	}
 
-	async function loadMarks(id: string, scope: MarkupScope, key: string): Promise<void> {
+	async function loadScope(id: string, scope: MarkupScope, key: string): Promise<void> {
 		try {
 			const loaded = await listMarks(id, scope);
-			if (marksLoadedKey === key) marks = loaded;
+			const currentKey = scope === 'group' ? groupLoadedKey : personalLoadedKey;
+			if (currentKey !== key) return;
+			// Swap in just this scope's marks; leave the other layer untouched.
+			marks = [...marks.filter((mark) => mark.scope !== scope), ...loaded];
 		} catch {
 			// A failed load just means no prior marks show yet, not worth a
 			// blocking error state on top of the PDF's own; the toolbar still
@@ -214,13 +273,13 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		}
 	}
 
-	// Visibility lives on the host (the Practice Setup drawer). When it
-	// switches to `'none'` the editing surface has nothing to draw on, so
-	// disarm the master toggle and any in-progress mark, the same cleanup
-	// `toggleAnnotationMode` does when turned off directly. `PdfView` calls
-	// this from an `$effect`.
+	// The visibility toggles + admin flag live on the host. When nothing is
+	// visible anymore, disarm the master toggle and any in-progress mark (the
+	// same cleanup `toggleAnnotationMode` does when turned off directly); and
+	// snap the draw target back to `'mine'` whenever `'director'` is no longer
+	// allowed. `PdfView` calls this from an `$effect`.
 	function syncAnnotationModeWithVisibility(): void {
-		if (deps.getMarkupVisibility() === 'none' && annotationMode) {
+		if (annotationMode && !deps.getShowMine() && !deps.getShowDirector()) {
 			annotationMode = false;
 			tool = null;
 			activeStroke = null;
@@ -228,15 +287,41 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			textEditor = null;
 			activeTextDrag = null;
 		}
+		if (drawTarget === 'director' && !(annotationMode && deps.isOwningGroupAdmin())) {
+			drawTarget = 'mine';
+		}
+	}
+
+	/** The scope an armed tool writes into right now. */
+	function currentScope(): MarkupScope {
+		return scopeForDrawTarget(drawTarget);
 	}
 
 	function marksForPage(pageIndex: number): MarkupMark[] {
 		const pageNumber = pageIndex + 1;
-		return marks.filter((mark) => mark.pageNumber === pageNumber);
+		const showMine = deps.getShowMine();
+		const showDirector = deps.getShowDirector();
+		return marks.filter(
+			(mark) =>
+				mark.pageNumber === pageNumber &&
+				(mark.scope === 'group' ? showDirector : showMine)
+		);
 	}
 
 	function isOwnMark(mark: MarkupMark): boolean {
 		return mark.userId === deps.currentUserId();
+	}
+
+	/** Whether the caller may move / edit / erase this mark. A `personal` mark
+	 * is its creator's; a `group` mark is only interactive for an owning-group
+	 * admin whose draw target is the director layer. */
+	function isMarkInteractive(mark: MarkupMark): boolean {
+		return markInteractivity(mark.scope, {
+			isOwn: isOwnMark(mark),
+			isOwningGroupAdmin: deps.isOwningGroupAdmin(),
+			annotationMode,
+			drawTarget
+		});
 	}
 
 	function sizeForStamp(mark: MarkupMark): number {
@@ -280,7 +365,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 	}
 
 	function openTextEditorForMark(mark: MarkupMark, pageIndex: number): void {
-		if (mark.kind !== 'text' || !isOwnMark(mark) || mark.x === null || mark.y === null) return;
+		if (mark.kind !== 'text' || !isMarkInteractive(mark) || mark.x === null || mark.y === null) return;
 		textEditor = {
 			markId: mark.id,
 			pageIndex,
@@ -333,7 +418,16 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 				});
 				marks = marks.map((mark) => (mark.id === updated.id ? updated : mark));
 			} else {
-				const created = await createText(pieceId, editor.pageIndex + 1, editor.color, editor.width, value, editor.x, editor.y);
+				const created = await createText(
+					pieceId,
+					editor.pageIndex + 1,
+					editor.color,
+					editor.width,
+					value,
+					editor.x,
+					editor.y,
+					currentScope()
+				);
 				marks = [...marks, created];
 				recentMarkIds = [...recentMarkIds, created.id];
 			}
@@ -369,12 +463,14 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		activeTextDrag = null;
 	}
 
-	/** Flips the master toggle. Turning it off also disarms whatever tool was
-	 * selected and drops any in-progress stroke, otherwise the mode could come
-	 * back on already armed, or a pointerup after the layer's already unmounted
-	 * could try to commit a stroke nobody can see anymore. */
+	/** Flips the master toggle. Arming it turns "Show my markup" on if it was
+	 * off (F21). Turning it off also disarms whatever tool was selected, drops
+	 * any in-progress stroke, and resets the draw target, otherwise the mode
+	 * could come back on already armed or aimed at the shared layer, or a
+	 * pointerup after the layer's already unmounted could try to commit a
+	 * stroke nobody can see anymore. */
 	function toggleAnnotationMode(): void {
-		if (!annotationMode && deps.getMarkupVisibility() === 'none') deps.setMarkupVisibility('mine');
+		if (!annotationMode && !deps.getShowMine()) deps.setShowMine(true);
 		annotationMode = !annotationMode;
 		if (!annotationMode) {
 			tool = null;
@@ -382,7 +478,22 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			activeStrokePage = -1;
 			textEditor = null;
 			activeTextDrag = null;
+			drawTarget = 'mine';
 		}
+	}
+
+	/** F21: switch which layer an armed tool draws into. `'director'` is a
+	 * no-op unless the caller is an owning-group admin; picking it also turns
+	 * "Show director markup" on so the admin sees what they are editing.
+	 * Picking `'mine'` keeps "Show my markup" on for the same reason. */
+	function setDrawTarget(target: MarkupDrawTarget): void {
+		if (target === 'director') {
+			if (!deps.isOwningGroupAdmin()) return;
+			deps.setShowDirector(true);
+		} else {
+			deps.setShowMine(true);
+		}
+		drawTarget = target;
 	}
 
 	function markupErrorMessage(err: unknown): string {
@@ -441,7 +552,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		if (tool !== 'pen' || !points || points.length < 2 || !pieceId) return;
 		markupError = null;
 		try {
-			const created = await createStroke(pieceId, pageIndex + 1, penColor, penWidth, points);
+			const created = await createStroke(pieceId, pageIndex + 1, penColor, penWidth, points, currentScope());
 			marks = [...marks, created];
 			recentMarkIds = [...recentMarkIds, created.id];
 		} catch (err) {
@@ -454,7 +565,16 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		if (!pieceId) return;
 		markupError = null;
 		try {
-			const created = await createStamp(pieceId, pageIndex + 1, penColor, stampType, stampSize, point[0], point[1]);
+			const created = await createStamp(
+				pieceId,
+				pageIndex + 1,
+				penColor,
+				stampType,
+				stampSize,
+				point[0],
+				point[1],
+				currentScope()
+			);
 			marks = [...marks, created];
 			recentMarkIds = [...recentMarkIds, created.id];
 		} catch (err) {
@@ -463,7 +583,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 	}
 
 	function handleTextPointerDown(event: PointerEvent, mark: MarkupMark, pageIndex: number): void {
-		if (!annotationMode || !isOwnMark(mark) || mark.x === null || mark.y === null) return;
+		if (!annotationMode || !isMarkInteractive(mark) || mark.x === null || mark.y === null) return;
 		event.stopPropagation();
 		// Same reason as the text-create branch in `handleMarkupPointerDown`:
 		// keep the post-tap compatibility mouse events from blurring the editor
@@ -531,7 +651,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 
 	function eraseNear(pageIndex: number, point: [number, number]): void {
 		const hit = marksForPage(pageIndex)
-			.filter(isOwnMark)
+			.filter(isMarkInteractive)
 			.find((mark) => {
 				if (mark.kind === 'stamp') {
 					return (
@@ -593,6 +713,20 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		get annotationMode() {
 			return annotationMode;
 		},
+		get drawTarget() {
+			return drawTarget;
+		},
+		/** Whether the "Drawing into" control should be offered at all: an
+		 * owning-group admin only. */
+		get canDrawDirector() {
+			return deps.isOwningGroupAdmin();
+		},
+		get showMine() {
+			return deps.getShowMine();
+		},
+		get showDirector() {
+			return deps.getShowDirector();
+		},
 		get tool() {
 			return tool;
 		},
@@ -631,6 +765,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		},
 		marksForPage,
 		isOwnMark,
+		isMarkInteractive,
 		sizeForStamp,
 		sizeForText,
 		textHitWidth,
@@ -644,6 +779,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		deleteTextEditorMark,
 		setTool,
 		toggleAnnotationMode,
+		setDrawTarget,
 		handleMarkupPointerDown,
 		handleMarkupPointerMove,
 		handleMarkupPointerUp,

@@ -485,7 +485,7 @@ No `source_weekly_note_id` column yet — it only earns its place once
 - [x] Deploy: push `main` — done. Prod Neon is at head `f9d4c1a7b2e8`
   (`alembic current` via `Backend/.env`), so `d7e3a9c1f6b4` is live.
 
-### B17 — Group markup layer (shared, admin-co-edited) [ ]
+### B17 — Group markup layer (shared, admin-co-edited) [x]
 
 (`B17`/`B18` were also used on the `omr-editor` branch for paged-OMR work,
 see `OMR_EDITOR_PLAN.md`; on `main`, `B17` is this.)
@@ -502,26 +502,26 @@ member's* personal marks on a group piece with no opt-in — that's the
 behavior this milestone replaces (the human flagged it as wrong, 2026-09-02).
 
 **Acceptance criteria:**
-- [ ] `piece_markup_marks.scope` (`personal` | `group`, default `personal`);
+- [x] `piece_markup_marks.scope` (`personal` | `group`, default `personal`);
   existing rows backfill to `personal`. `user_id` stays NOT NULL and now
   means creator / last editor (audit only for group-scoped marks).
-- [ ] `GET /piece-markup?scope=group` returns the group layer for a
+- [x] `GET /piece-markup?scope=group` returns the group layer for a
   group-owned piece to any member of that group; `[]` for a personal piece.
   `scope=personal` (the default) is unchanged — still only the caller's own.
-- [ ] `POST /piece-markup` accepts `scope` (default `personal`). `scope=group`
+- [x] `POST /piece-markup` accepts `scope` (default `personal`). `scope=group`
   is rejected (403) unless the piece is group-owned **and** the caller is an
   admin of that group.
-- [ ] `PATCH` / `DELETE /piece-markup/{id}`: a `personal` mark stays
+- [x] `PATCH` / `DELETE /piece-markup/{id}`: a `personal` mark stays
   creator-only; a `group` mark is editable/deletable by any admin of the
   owning group (not just whoever created it).
-- [ ] A non-member gets 403 on any scope for that piece; nothing leaks.
+- [x] A non-member gets 403 on any scope for that piece; nothing leaks.
 
 **Tasks — Claude:**
-- [ ] Alembic migration: add `scope` column, backfill `personal`.
-- [ ] `MarkupMarkCreate.scope`; scope-aware access checks in
+- [x] Alembic migration: add `scope` column, backfill `personal`.
+- [x] `MarkupMarkCreate.scope`; scope-aware access checks in
   `piece_markup.py` (reuse the group-admin helper shape from
   `piece_rehearsal_notes.py` / `services/groups.py`).
-- [ ] `tests/test_piece_markup.py`: admin A edits/deletes a group mark admin
+- [x] `tests/test_piece_markup.py`: admin A edits/deletes a group mark admin
   B created; member reads the group layer but 403s writing it; non-member
   403; personal scope regression-covered.
 

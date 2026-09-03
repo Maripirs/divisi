@@ -7,12 +7,16 @@ import { ApiError, jsonInit, makeCall } from './client';
  * `points` are fractions of the PDF page's own rendered width — see
  * `app.db.models.PieceMarkupMark`'s doc comment for why. */
 export type MarkKind = 'stroke' | 'stamp' | 'text';
-export type MarkupScope = 'mine' | 'group';
+/** `personal`: the caller's own marks. `group`: the shared director layer on
+ * a group-owned piece (any member reads it, any owning-group admin edits it,
+ * see Backend B17). */
+export type MarkupScope = 'personal' | 'group';
 
 export interface MarkupMark {
 	id: string;
 	userId: string;
 	pieceId: string;
+	scope: MarkupScope;
 	pageNumber: number;
 	kind: MarkKind;
 	color: string;
@@ -29,6 +33,7 @@ interface MarkupMarkResponse {
 	id: string;
 	user_id: string;
 	piece_id: string;
+	scope: MarkupScope;
 	page_number: number;
 	kind: MarkKind;
 	color: string;
@@ -63,6 +68,7 @@ function toMark(body: MarkupMarkResponse): MarkupMark {
 		id: body.id,
 		userId: body.user_id,
 		pieceId: body.piece_id,
+		scope: body.scope,
 		pageNumber: body.page_number,
 		kind: body.kind,
 		color: body.color,
@@ -76,7 +82,7 @@ function toMark(body: MarkupMarkResponse): MarkupMark {
 	};
 }
 
-export async function listMarks(pieceId: string, scope: MarkupScope = 'mine'): Promise<MarkupMark[]> {
+export async function listMarks(pieceId: string, scope: MarkupScope = 'personal'): Promise<MarkupMark[]> {
 	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup?scope=${scope}`);
 	const body = (await res.json()) as MarkupMarkResponse[];
 	return body.map(toMark);
@@ -87,11 +93,12 @@ export async function createStroke(
 	pageNumber: number,
 	color: string,
 	width: number,
-	points: [number, number][]
+	points: [number, number][],
+	scope: MarkupScope = 'personal'
 ): Promise<MarkupMark> {
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/markup`,
-		jsonInit('POST', { page_number: pageNumber, kind: 'stroke', color, width, points })
+		jsonInit('POST', { page_number: pageNumber, kind: 'stroke', color, width, points, scope })
 	);
 	return toMark(await res.json());
 }
@@ -103,11 +110,12 @@ export async function createStamp(
 	stampType: string,
 	width: number,
 	x: number,
-	y: number
+	y: number,
+	scope: MarkupScope = 'personal'
 ): Promise<MarkupMark> {
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/markup`,
-		jsonInit('POST', { page_number: pageNumber, kind: 'stamp', color, width, stamp_type: stampType, x, y })
+		jsonInit('POST', { page_number: pageNumber, kind: 'stamp', color, width, stamp_type: stampType, x, y, scope })
 	);
 	return toMark(await res.json());
 }
@@ -119,11 +127,12 @@ export async function createText(
 	width: number,
 	text: string,
 	x: number,
-	y: number
+	y: number,
+	scope: MarkupScope = 'personal'
 ): Promise<MarkupMark> {
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/markup`,
-		jsonInit('POST', { page_number: pageNumber, kind: 'text', color, width, text, x, y })
+		jsonInit('POST', { page_number: pageNumber, kind: 'text', color, width, text, x, y, scope })
 	);
 	return toMark(await res.json());
 }

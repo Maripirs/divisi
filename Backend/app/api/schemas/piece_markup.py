@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, model_validator
 
 MarkKind = Literal["stroke", "stamp", "text"]
+MarkScope = Literal["personal", "group"]
 
 
 class MarkupMarkCreate(BaseModel):
@@ -14,6 +15,11 @@ class MarkupMarkCreate(BaseModel):
     page_number: int
     kind: MarkKind
     color: str
+
+    # "personal" (default) or "group". `group` is only accepted on a
+    # group-owned piece when the caller is an admin of that group; the
+    # route enforces that.
+    scope: MarkScope = "personal"
 
     # Stroke-only.
     width: float | None = None
@@ -53,6 +59,7 @@ class MarkupMarkOut(BaseModel):
     id: str
     user_id: str
     piece_id: str
+    scope: MarkScope
     page_number: int
     kind: MarkKind
     color: str

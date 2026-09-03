@@ -26,6 +26,8 @@
 	// Read-only `$derived` aliases so the template reads like the inline
 	// version it was lifted from; writes go through the controller's setters.
 	const annotationMode = $derived(markup.annotationMode);
+	const drawTarget = $derived(markup.drawTarget);
+	const canDrawDirector = $derived(markup.canDrawDirector);
 	const tool = $derived(markup.tool);
 	const penColor = $derived(markup.penColor);
 	const penWidth = $derived(markup.penWidth);
@@ -52,6 +54,29 @@
 	</button>
 	{#if annotationMode}
 	<div class="markup-toolbar">
+	{#if canDrawDirector}
+		<div class="draw-target">
+			<span class="draw-target-label">{m.markup_draw_target()}</span>
+			<div class="segmented" role="group" aria-label={m.markup_draw_target()}>
+				<button
+					type="button"
+					class:active={drawTarget === 'mine'}
+					aria-pressed={drawTarget === 'mine'}
+					onclick={() => markup.setDrawTarget('mine')}
+				>
+					{m.markup_draw_target_mine()}
+				</button>
+				<button
+					type="button"
+					class:active={drawTarget === 'director'}
+					aria-pressed={drawTarget === 'director'}
+					onclick={() => markup.setDrawTarget('director')}
+				>
+					{m.markup_draw_target_director()}
+				</button>
+			</div>
+		</div>
+	{/if}
 	<div class="tool-row">
 		<button
 			class="tool-btn"
@@ -175,6 +200,13 @@
 	{/if}
 	</div>
 	{/if}
+	{#if annotationMode && drawTarget === 'director'}
+		<!-- F21: persistent, always-visible reminder (not a dismissible toast).
+		     Last in the DOM so `column-reverse` / `row` both float it clear of
+		     the toolbar. Stays up the entire time the draw target is the
+		     shared layer. -->
+		<p class="director-reminder" role="status">{m.markup_director_reminder()}</p>
+	{/if}
 </div>
 
 <style>
@@ -289,6 +321,64 @@
 		display: flex;
 		gap: 0.25rem;
 		flex-wrap: wrap;
+	}
+
+	/* F21: persistent reminder that edits go to the shared group layer. A
+	   solid coloured bar pinned above the toolbar, always visible while the
+	   director draw target is active. Deliberately not dismissible. */
+	.director-reminder {
+		margin: 0;
+		max-width: 18rem;
+		padding: 0.4rem 0.6rem;
+		border-radius: var(--radius-md);
+		background: var(--accent);
+		color: var(--accent-contrast);
+		font-size: 0.75rem;
+		font-weight: 650;
+		line-height: 1.3;
+		box-shadow: var(--shadow);
+	}
+
+	.draw-target {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		padding: 0.1rem 0.15rem 0.15rem;
+	}
+
+	.draw-target-label {
+		font-size: 0.7rem;
+		font-weight: 650;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.draw-target .segmented {
+		display: flex;
+		gap: 2px;
+		padding: 2px;
+		background: var(--surface-2);
+		border-radius: var(--radius-md);
+	}
+
+	.draw-target .segmented button {
+		flex: 1;
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--text);
+		padding: 0.25rem 0.5rem;
+		border-radius: 0.35rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.draw-target .segmented button.active {
+		background: var(--surface);
+		border-color: var(--accent);
+		color: var(--accent);
 	}
 
 	.tool-btn {

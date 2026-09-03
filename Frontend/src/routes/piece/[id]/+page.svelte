@@ -40,7 +40,6 @@
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { createAnnotationController } from '$lib/player/annotations.svelte';
-	import type { MarkupScope } from '$lib/api/pieceMarkup';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
@@ -60,10 +59,13 @@
 	// svelte-ignore state_referenced_locally
 	let piece = $state<Piece | undefined>(getPiece(data.id));
 	let remoteMeta = $state<RemotePieceMeta | null>(null);
-	// F20: whether this caller is an admin of the piece's owning group, so
-	// the Piece Notes panel shows its add/edit/delete controls for the
-	// group's notes. Members still see those notes read-only.
-	let canManagePieceNotes = $state(false);
+	// Whether this caller is an admin of the piece's owning group. F20: the
+	// Piece Notes panel shows its add/edit/delete controls for the group's
+	// notes. F21: the PDF markup layer lets an admin draw into the shared
+	// "director" layer. Members see both read-only.
+	let isOwningGroupAdmin = $state(false);
+	// Kept as the name the Piece Notes panel already binds to.
+	const canManagePieceNotes = $derived(isOwningGroupAdmin);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like
@@ -217,15 +219,12 @@
 	);
 	let zoomLevel = $state(1);
 	let pdfZoomLevel = $state(1);
-	// F12: which scope of saved PDF marks is shown (or `'none'` to hide
-	// them). Driven from the Practice Setup drawer below and bound into
-	// `PdfView`, which no longer floats its own control for this.
-	let pdfMarkupVisibility = $state<'none' | MarkupScope>('mine');
-	const PDF_MARKUP_VISIBILITY_OPTIONS: { value: 'none' | MarkupScope; label: () => string }[] = [
-		{ value: 'none', label: () => m.markup_visibility_none() },
-		{ value: 'mine', label: () => m.markup_visibility_mine() },
-		{ value: 'group', label: () => m.markup_visibility_group() }
-	];
+	// F21: two independent, session-local PDF-markup visibility toggles, both
+	// default off and additive. Driven from the Practice Setup drawer below
+	// and bound into `PdfView`, which no longer floats its own control.
+	// "Show director markup" only applies to a group-owned piece.
+	let showMineMarkup = $state(false);
+	let showDirectorMarkup = $state(false);
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
@@ -322,6 +321,7 @@
 			const body = (await res.json()) as {
 				remote: RemotePieceMeta | null;
 				unreachable: boolean;
+				isOwningGroupAdmin?: boolean;
 				canManagePieceNotes?: boolean;
 			};
 			if (!body.remote) {
@@ -329,7 +329,7 @@
 				return;
 			}
 			remoteMeta = body.remote;
-			canManagePieceNotes = body.canManagePieceNotes ?? false;
+			isOwningGroupAdmin = body.isOwningGroupAdmin ?? body.canManagePieceNotes ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode` was seeded assuming no piece at all (forced to
 			// 'player' below) — now that `hasPlayer`/`hasPdfPane` are actually
@@ -960,7 +960,9 @@
 						pieceId={remoteMeta?.pieceId}
 						canMarkup={canAnnotate}
 						currentUserId={page.data.user?.id}
-						bind:markupVisibility={pdfMarkupVisibility}
+						isOwningGroupAdmin={isOwningGroupAdmin && !!remoteMeta?.groupId}
+						bind:showMineMarkup
+						bind:showDirectorMarkup
 					/>
 					</div>
 				</div>
@@ -1179,21 +1181,36 @@
 				{/if}
 
 				{#if viewMode === 'pdf' && canAnnotate}
-					<!-- F12: was a control floating on the PDF itself — moved here
-					     so it sits with the other per-piece view settings.
-					     `PdfView` binds `markupVisibility` to this. -->
+					<!-- F21: two independent, additive toggles (was an exclusive
+					     None/Mine/Group picker). "Show director markup" only
+					     applies to a group-owned piece. `PdfView` two-way-binds
+					     both. -->
 					<section class="menu-section">
-						<h3>{m.markup_visibility()}</h3>
-						<div class="segmented" role="group" aria-label={m.markup_visibility()}>
-							{#each PDF_MARKUP_VISIBILITY_OPTIONS as option (option.value)}
-								<button
-									class:active={pdfMarkupVisibility === option.value}
-									onclick={() => (pdfMarkupVisibility = option.value)}
-								>
-									{option.label()}
-								</button>
-							{/each}
-						</div>
+						<h3>{m.markup_visibility_heading()}</h3>
+						<button
+							type="button"
+							class="markup-toggle"
+							class:active={showMineMarkup}
+							role="switch"
+							aria-checked={showMineMarkup}
+							onclick={() => (showMineMarkup = !showMineMarkup)}
+						>
+							<span class="markup-toggle-box" aria-hidden="true"></span>
+							{m.markup_show_mine()}
+						</button>
+						{#if remoteMeta?.groupId}
+							<button
+								type="button"
+								class="markup-toggle"
+								class:active={showDirectorMarkup}
+								role="switch"
+								aria-checked={showDirectorMarkup}
+								onclick={() => (showDirectorMarkup = !showDirectorMarkup)}
+							>
+								<span class="markup-toggle-box" aria-hidden="true"></span>
+								{m.markup_show_director()}
+							</button>
+						{/if}
 					</section>
 				{/if}
 
@@ -1743,6 +1760,50 @@
 		font-weight: 700;
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
+	}
+
+	/* F21: independent on/off markup-visibility toggles. */
+	.markup-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		width: 100%;
+		padding: 0.55rem 0.7rem;
+		margin-bottom: 0.4rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.markup-toggle:last-child {
+		margin-bottom: 0;
+	}
+
+	.markup-toggle-box {
+		flex: none;
+		width: 1.1rem;
+		height: 1.1rem;
+		border: 2px solid var(--border);
+		border-radius: 0.35rem;
+		background: var(--surface-2);
+	}
+
+	.markup-toggle.active {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		color: var(--accent);
+	}
+
+	.markup-toggle.active .markup-toggle-box {
+		border-color: var(--accent);
+		background: var(--accent);
+		box-shadow: inset 0 0 0 3px var(--surface);
 	}
 
 	.your-part-select {

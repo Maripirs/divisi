@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { distanceToSegment, distanceToStroke, strokePathD } from './pdfMarkup.svelte';
+import {
+	distanceToSegment,
+	distanceToStroke,
+	markInteractivity,
+	scopeForDrawTarget,
+	strokePathD
+} from './pdfMarkup.svelte';
 
 // Scope note: only the pure geometry helpers are covered here. The factory
 // (`createPdfMarkupController`) owns runes state and is exercised by
@@ -42,6 +48,43 @@ describe('distanceToSegment', () => {
 
 	it('measures distance to the point when the segment has zero length', () => {
 		expect(distanceToSegment([1, 1], [1, 1], [1, 4])).toBeCloseTo(3);
+	});
+});
+
+describe('scopeForDrawTarget', () => {
+	it('maps the director target to the group scope, everything else to personal', () => {
+		expect(scopeForDrawTarget('director')).toBe('group');
+		expect(scopeForDrawTarget('mine')).toBe('personal');
+	});
+});
+
+describe('markInteractivity', () => {
+	const admin = { isOwn: false, isOwningGroupAdmin: true, annotationMode: true, drawTarget: 'director' as const };
+
+	it('lets a creator edit their own personal mark regardless of draw target', () => {
+		expect(
+			markInteractivity('personal', { ...admin, isOwn: true, drawTarget: 'mine' })
+		).toBe(true);
+	});
+
+	it('never lets someone edit a personal mark that is not theirs', () => {
+		expect(markInteractivity('personal', { ...admin, isOwn: false })).toBe(false);
+	});
+
+	it('lets an owning-group admin edit a group mark while aimed at the director layer', () => {
+		expect(markInteractivity('group', admin)).toBe(true);
+	});
+
+	it('keeps the group layer read-only for a non-admin member', () => {
+		expect(markInteractivity('group', { ...admin, isOwningGroupAdmin: false })).toBe(false);
+	});
+
+	it('keeps the group layer read-only for an admin whose draw target is their own markup', () => {
+		expect(markInteractivity('group', { ...admin, drawTarget: 'mine' })).toBe(false);
+	});
+
+	it('keeps the group layer read-only for an admin not in annotation mode', () => {
+		expect(markInteractivity('group', { ...admin, annotationMode: false })).toBe(false);
 	});
 });
 

@@ -22,11 +22,14 @@ interface GuestPieceResponse {
 interface RemoteResolution {
 	remote: RemotePieceMeta | null;
 	unreachable: boolean;
-	/** F20: whether this caller is an `admin` of the piece's owning group —
-	 * the authority the Backend requires to create/edit/delete the group's
-	 * piece notes (B16). Members still see those notes read-only;
+	/** Whether this caller is an `admin` of the piece's owning group. F20 uses
+	 * it as the authority the Backend requires to create/edit/delete the
+	 * group's piece notes (B16); F21 uses it to allow drawing into the shared
+	 * "director" markup layer (B17). Members still see both read-only;
 	 * absent/`false` hides the authoring controls (and is always false for a
-	 * personal piece or a guest). */
+	 * personal piece or a guest). `canManagePieceNotes` is kept as a
+	 * back-compat alias of the same value. */
+	isOwningGroupAdmin?: boolean;
 	canManagePieceNotes?: boolean;
 }
 
@@ -126,10 +129,12 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 			groupId: entry.owner_type === 'group' ? entry.owner_id : null
 		};
 		const groupRole = await resolveOwningGroupRole(entry, locals.token, fetch);
+		const isOwningGroupAdmin = groupRole === 'admin';
 		return json({
 			remote,
 			unreachable: false,
-			canManagePieceNotes: groupRole === 'admin'
+			isOwningGroupAdmin,
+			canManagePieceNotes: isOwningGroupAdmin
 		} satisfies RemoteResolution);
 	} catch (err) {
 		if (err instanceof BackendApiError) {
