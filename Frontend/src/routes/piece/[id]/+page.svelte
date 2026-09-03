@@ -95,18 +95,29 @@
 	}
 
 	// The admin's chosen tempo for this piece (`PUT
-	// /library/pieces/{id}/default-tempo`, set from a group's Tracks tab),
-	// bridged in via the URL rather than looked up directly — this route is
-	// `ssr:false` and keyed off `$lib/pieces/registry`'s fixture id, not the
-	// Backend's real piece id, so whatever generated this link (Tracks tab,
-	// personal Library, guest join page) is the one place that actually has
-	// both ids to correlate. `null` when the admin never set one, or the
-	// piece has no real Backend counterpart yet (fixture-only demo tracks).
+	// /library/pieces/{id}/default-tempo`, set from a group's Tracks tab).
+	// `null` when the admin never set one, or the piece has no real Backend
+	// counterpart (fixture-only demo tracks).
+	//
+	// Primary source is `remoteMeta.defaultTempoBpm`, resolved from
+	// `/library/pieces` by `resolve/+server.ts` and available by the time
+	// `bootstrap()` reads this. The `?defaultTempo=` URL param is a legacy
+	// fallback: only the group Tracks tab ever attached it, so pieces
+	// opened from Home, the Library, a homework link, or a guest join link
+	// were all ignoring the configured tempo and falling back to the
+	// parser's 120 BPM default. Kept as the fallback because a bundled
+	// fixture matched by title (see `getPieceByTitle`) has no `remoteMeta`.
 	const adminDefaultTempoParam = page.url.searchParams.get('defaultTempo');
-	const adminDefaultTempo: number | null = (() => {
-		const parsed = adminDefaultTempoParam ? Number(adminDefaultTempoParam) : NaN;
-		return Number.isFinite(parsed) && parsed >= MIN_TEMPO_BPM && parsed <= MAX_TEMPO_BPM ? parsed : null;
-	})();
+	function normalizeDefaultTempo(bpm: number | null | undefined): number | null {
+		const n = bpm == null ? NaN : Number(bpm);
+		return Number.isFinite(n) && n >= MIN_TEMPO_BPM && n <= MAX_TEMPO_BPM ? Math.round(n) : null;
+	}
+	const urlDefaultTempo = normalizeDefaultTempo(
+		adminDefaultTempoParam ? Number(adminDefaultTempoParam) : null
+	);
+	const adminDefaultTempo: number | null = $derived(
+		normalizeDefaultTempo(remoteMeta?.defaultTempoBpm) ?? urlDefaultTempo
+	);
 
 	// Singer-facing labels per UX_WIREFRAME.md's "Practice View Labels" —
 	// these are the same DisplayMode values (flat/highlighted/solo/custom)
