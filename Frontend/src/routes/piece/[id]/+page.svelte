@@ -2055,17 +2055,21 @@
 	   portrait phones, tablets, and desktop keep the roomier layout. */
 	@media (orientation: landscape) and (max-height: 500px) {
 		.top-bar {
-			padding-top: calc(0.3rem + env(safe-area-inset-top, 0px));
-			padding-bottom: 0.3rem;
+			padding-top: calc(0.15rem + env(safe-area-inset-top, 0px));
+			padding-bottom: 0.15rem;
 		}
 
 		.top-bar-title p {
 			display: none;
 		}
 
+		.top-bar-title h1 {
+			font-size: 0.9rem;
+		}
+
 		.bottom-bar {
-			padding-top: 0.4rem;
-			padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
+			padding-top: 0.2rem;
+			padding-bottom: calc(0.2rem + env(safe-area-inset-bottom, 0px));
 		}
 
 		.scrubber {
@@ -2080,9 +2084,30 @@
 			gap: 0.35rem;
 		}
 
+		/* Shrink the bar controls so the bar height tracks the control, not
+		   a 36/44px touch target. A deliberate density trade for landscape:
+		   these are all secondary taps (back, menu, follow cursor, annotate)
+		   plus the play button, which stays the largest of them. */
+		.top-bar .icon-btn,
+		.bottom-bar .icon-btn {
+			width: 30px;
+			height: 30px;
+		}
+
+		.top-bar .icon-btn svg,
+		.bottom-bar .icon-btn svg {
+			width: 18px;
+			height: 18px;
+		}
+
 		.play-btn {
-			width: 40px;
-			height: 40px;
+			width: 32px;
+			height: 32px;
+		}
+
+		.play-btn svg {
+			width: 16px;
+			height: 16px;
 		}
 	}
 </style>
