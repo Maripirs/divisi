@@ -26,10 +26,3 @@ npx wrangler deploy
 
 Edit `wrangler.jsonc` (`triggers.crons`) or `HEALTH_URL` in
 `src/index.js`, then `npx wrangler deploy` again.
-
-## Backup pinger
-
-`.github/workflows/backend-keepwarm.yml` does the same thing on GitHub's
-scheduler. GitHub's cron drifts under load, so this Worker is the primary;
-the workflow is a redundant fallback and can be deleted if you don't want
-two.
