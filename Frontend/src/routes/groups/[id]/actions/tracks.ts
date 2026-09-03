@@ -23,11 +23,15 @@ export const trackActions = {
 		const composer = String(form.get('composer') ?? '').trim();
 		const youtubeUrl = String(form.get('youtube_url') ?? '').trim();
 		const tempoRaw = String(form.get('defaultTempoBpm') ?? '').trim();
+		const presentation = String(form.get('presentation') ?? '').trim();
 		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'pieceDetails' });
 		if (!title) return fail(400, { error: m.groups_upload_name_required(), form: 'pieceDetails' });
 		const defaultTempoBpm = tempoRaw ? Number(tempoRaw) : null;
 		if (tempoRaw && (!Number.isFinite(defaultTempoBpm) || defaultTempoBpm! <= 0)) {
 			return fail(400, { error: m.groups_enter_valid_tempo(), form: 'pieceDetails' });
+		}
+		if (presentation && presentation !== 'score_reference' && presentation !== 'play_along') {
+			return fail(400, { error: m.groups_invalid_presentation(), form: 'pieceDetails' });
 		}
 
 		const musicFile = form.get('file');
@@ -52,7 +56,8 @@ export const trackActions = {
 						title,
 						composer: composer || null,
 						youtube_url: youtubeUrl || null,
-						default_tempo_bpm: defaultTempoBpm
+						default_tempo_bpm: defaultTempoBpm,
+						presentation: presentation || null
 					})
 				},
 				fetch

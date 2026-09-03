@@ -209,6 +209,13 @@ class Piece(Base):
     # means nothing set yet.
     composer: Mapped[str | None] = mapped_column(String, nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Admin-set (group admin, or the owner for a personal piece) hint for how
+    # the piece first presents to a viewer who has never opened it. `None`
+    # means today's automatic behavior, unchanged. `"score_reference"` seeds
+    # the first open onto the PDF score plus the reference recording;
+    # `"play_along"` seeds it onto the play-along synth mix. First-open seed
+    # only: a viewer's saved per-piece view/audio always wins over this.
+    presentation: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

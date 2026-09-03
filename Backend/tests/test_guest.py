@@ -73,10 +73,26 @@ def test_resolve_join_code_lists_distributed_pieces_no_auth(client):
             "distributed_at": body["pieces"][0]["distributed_at"],
             "composer": None,
             "youtube_url": None,
+            "presentation": None,
             "has_music": True,
             "has_pdf": False,
         }
     ]
+
+
+def test_resolve_join_code_surfaces_the_admin_presentation_hint(client):
+    admin_headers = _register_and_login(client, "presentationadmin@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+
+    set_res = client.patch(
+        f"/library/pieces/{piece_id}",
+        json={"title": "Requiem", "presentation": "score_reference"},
+        headers=admin_headers,
+    )
+    assert set_res.status_code == 200
+
+    body = client.get(f"/guest/{group['join_code']}").json()
+    assert body["pieces"][0]["presentation"] == "score_reference"
 
 
 def test_unknown_join_code_returns_404(client):

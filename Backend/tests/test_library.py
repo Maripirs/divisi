@@ -19,6 +19,7 @@ def _upload_file(
     composer=None,
     youtube_url=None,
     default_tempo_bpm=None,
+    presentation=None,
 ):
     data = {"title": title, "owner_type": owner_type}
     if group_id:
@@ -29,6 +30,8 @@ def _upload_file(
         data["youtube_url"] = youtube_url
     if default_tempo_bpm is not None:
         data["default_tempo_bpm"] = default_tempo_bpm
+    if presentation is not None:
+        data["presentation"] = presentation
     files = {}
     if include_music:
         files["file"] = ("piece.xml", io.BytesIO(b"<musicxml/>"), "application/xml")
@@ -235,6 +238,62 @@ def test_piece_details_can_set_and_clear_default_tempo(client):
     )
     assert clear_res.status_code == 200
     assert clear_res.json()["default_tempo_bpm"] is None
+
+
+def test_piece_details_can_set_each_presentation_and_clear(client):
+    # F22 / B19: the admin-set "how a piece first presents" hint rides on
+    # the same edit-details endpoint as composer/youtube/default-tempo.
+    headers = _register_and_login(client, "presentationowner@example.com")
+    upload = _upload_file(client, headers)
+    piece_id = upload.json()["piece"]["id"]
+    assert upload.json()["piece"]["presentation"] is None
+
+    for value in ("score_reference", "play_along"):
+        set_res = client.patch(
+            f"/library/pieces/{piece_id}",
+            json={"title": "Ave Maria", "presentation": value},
+            headers=headers,
+        )
+        assert set_res.status_code == 200
+        assert set_res.json()["presentation"] == value
+
+        library = client.get("/library/pieces", headers=headers)
+        assert library.json()[0]["presentation"] == value
+
+    clear_res = client.patch(
+        f"/library/pieces/{piece_id}", json={"title": "Ave Maria", "presentation": None}, headers=headers
+    )
+    assert clear_res.status_code == 200
+    assert clear_res.json()["presentation"] is None
+    assert client.get("/library/pieces", headers=headers).json()[0]["presentation"] is None
+
+
+def test_piece_details_invalid_presentation_rejected(client):
+    headers = _register_and_login(client, "presentationbad@example.com")
+    piece_id = _upload_file(client, headers).json()["piece"]["id"]
+
+    res = client.patch(
+        f"/library/pieces/{piece_id}",
+        json={"title": "Ave Maria", "presentation": "landscape"},
+        headers=headers,
+    )
+    assert res.status_code == 422
+
+
+def test_upload_presentation_round_trip(client):
+    headers = _register_and_login(client, "presentationupload@example.com")
+    upload = _upload_file(client, headers, presentation="score_reference")
+    assert upload.status_code == 201
+    assert upload.json()["piece"]["presentation"] == "score_reference"
+
+    library = client.get("/library/pieces", headers=headers)
+    assert library.json()[0]["presentation"] == "score_reference"
+
+
+def test_upload_invalid_presentation_rejected(client):
+    headers = _register_and_login(client, "presentationuploadbad@example.com")
+    upload = _upload_file(client, headers, presentation="nope")
+    assert upload.status_code == 400
 
 
 def test_piece_details_blank_title_rejected(client):

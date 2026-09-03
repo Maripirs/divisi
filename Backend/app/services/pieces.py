@@ -82,6 +82,7 @@ def create_piece_with_version(
     composer: str | None = None,
     youtube_url: str | None = None,
     default_tempo_bpm: int | None = None,
+    presentation: str | None = None,
     pdf_file_path: str | None = None,
     file_name: str | None = None,
     pdf_file_name: str | None = None,
@@ -93,6 +94,7 @@ def create_piece_with_version(
         composer=composer,
         youtube_url=youtube_url,
         default_tempo_bpm=default_tempo_bpm,
+        presentation=presentation,
     )
     db.add(piece)
     db.flush()

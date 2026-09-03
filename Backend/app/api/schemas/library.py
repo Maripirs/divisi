@@ -2,10 +2,18 @@
 piece listing, and B7 render-manifest shapes."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 from app.db.models import OmrJobStatus, OwnerType, VersionSource, VersionStatus
+
+# Admin-set hint for how a piece first presents to a viewer who has never
+# opened it. `None` = today's automatic behavior. `"score_reference"` seeds
+# the first open onto the PDF score + reference recording; `"play_along"`
+# seeds it onto the play-along synth mix. First-open seed only: a viewer's
+# saved per-piece settings always win over this.
+PiecePresentation = Literal["score_reference", "play_along"]
 
 
 class PieceOut(BaseModel):
@@ -16,6 +24,7 @@ class PieceOut(BaseModel):
     default_tempo_bpm: int | None = None
     composer: str | None = None
     youtube_url: str | None = None
+    presentation: PiecePresentation | None = None
 
     model_config = {"from_attributes": True}
 
@@ -24,9 +33,9 @@ class PieceDetailsUpdate(BaseModel):
     """Same review-authority boundary as default-tempo: full replace of a
     piece's editable metadata (title/composer/reference link/default
     tempo), not just the upload-time write-once fields they look like.
-    `composer`/`youtube_url`/`default_tempo_bpm` of `None` (or blank)
-    clears them; `title` is required — a piece must always have one. One
-    endpoint covering what used to be two (this plus the dedicated
+    `composer`/`youtube_url`/`default_tempo_bpm`/`presentation` of `None`
+    (or blank) clears them; `title` is required (a piece must always have
+    one). One endpoint covering what used to be two (this plus the dedicated
     default-tempo route) so the Frontend's single "Edit details" panel
     only needs one call."""
 
@@ -34,6 +43,7 @@ class PieceDetailsUpdate(BaseModel):
     composer: str | None = None
     youtube_url: str | None = None
     default_tempo_bpm: int | None = None
+    presentation: PiecePresentation | None = None
 
 
 class PieceDefaultTempoUpdate(BaseModel):
@@ -119,6 +129,7 @@ class LibraryEntryOut(BaseModel):
     default_tempo_bpm: int | None = None
     composer: str | None = None
     youtube_url: str | None = None
+    presentation: PiecePresentation | None = None
     # Computed booleans, not raw paths — never leak a storage-relative path
     # to the client. The Frontend uses these to decide what to render, and
     # reaches actual bytes only through the file-serving routes below.
@@ -149,6 +160,7 @@ class GuestPieceOut(BaseModel):
     distributed_at: datetime
     composer: str | None = None
     youtube_url: str | None = None
+    presentation: PiecePresentation | None = None
     has_music: bool = False
     has_pdf: bool = False
 

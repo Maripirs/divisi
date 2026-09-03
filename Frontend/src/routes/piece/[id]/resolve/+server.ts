@@ -3,6 +3,7 @@ import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import type { GroupOut, GroupRole, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
+import type { PiecePresentation } from '$lib/pieces/types';
 import type { RequestHandler } from './$types';
 
 interface GuestPieceResponse {
@@ -10,6 +11,7 @@ interface GuestPieceResponse {
 	title: string;
 	composer: string | null;
 	youtube_url: string | null;
+	presentation: PiecePresentation | null;
 	has_music: boolean;
 	has_pdf: boolean;
 }
@@ -107,6 +109,7 @@ async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof
 			hasPdf: entry.has_pdf,
 			youtubeUrl: entry.youtube_url,
 			defaultTempoBpm: null,
+			presentation: entry.presentation ?? null,
 			// A guest resolution has no group context, and there's no guest
 			// path to piece notes anyway (the Backend requires a member).
 			groupId: null
@@ -140,6 +143,7 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 			hasPdf: entry.has_pdf,
 			youtubeUrl: entry.youtube_url,
 			defaultTempoBpm: entry.default_tempo_bpm,
+			presentation: entry.presentation ?? null,
 			groupId: entry.owner_type === 'group' ? entry.owner_id : null
 		};
 		const groupRole = await resolveOwningGroupRole(entry, locals.token, fetch);

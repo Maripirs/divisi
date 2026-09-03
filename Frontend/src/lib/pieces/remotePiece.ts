@@ -2,7 +2,7 @@ import type { ParsedMIDI } from '../midi/types';
 import { parseMidiFile } from '../midi/parser';
 import { parseMusicXmlFile } from '../musicxml/parser';
 import { extractMusicXmlText, isMxl } from '../musicxml/mxl';
-import type { Piece } from './types';
+import type { Piece, PiecePresentation } from './types';
 
 /** Metadata for one real Backend piece, as resolved server-side by
  * `routes/piece/[id]/+page.server.ts` from `/library/pieces`. Deliberately
@@ -16,6 +16,9 @@ export interface RemotePieceMeta {
 	hasPdf: boolean;
 	youtubeUrl: string | null;
 	defaultTempoBpm: number | null;
+	/** Admin-set first-open presentation hint, or null for the automatic
+	 * pane-shape default. See `PiecePresentation`. */
+	presentation: PiecePresentation | null;
 	/** F20: the owning group's id when this is a group-owned piece, else
 	 * null (a personal library piece, or a guest resolution with no group
 	 * context). The piece page's "Rehearsal Notes" panel needs it to hit the
@@ -71,6 +74,7 @@ export function buildRemotePiece(meta: RemotePieceMeta, guestCode?: string | nul
 		collection: 'group',
 		...(meta.hasPdf ? { pdfUrl } : {}),
 		...(meta.youtubeUrl ? { youtubeUrl: meta.youtubeUrl } : {}),
+		...(meta.presentation ? { presentation: meta.presentation } : {}),
 		...(meta.hasMusic ? { load: () => loadRemoteMusicFile(fileUrl) } : {})
 	};
 }

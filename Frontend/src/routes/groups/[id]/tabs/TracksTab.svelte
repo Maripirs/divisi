@@ -24,6 +24,9 @@
 	let composerEditDraft = $state('');
 	let youtubeEditDraft = $state('');
 	let tempoEditDraft = $state('');
+	// F5 "Opens as": '' = automatic pane-shape default, else the admin-set
+	// first-open presentation hint. See `Piece.presentation` (Backend).
+	let presentationEditDraft = $state('');
 	let savingDetails = $state(false);
 	// F5: Tracks tab (admin only) upload form — click-to-reveal, same pattern
 	// as the other create forms on this page.
@@ -110,6 +113,14 @@
 						<label class="field">
 							<span>{m.groups_upload_default_tempo()}</span>
 							<input name="defaultTempoBpm" type="number" min="1" bind:value={tempoEditDraft} placeholder="e.g. 96" />
+						</label>
+						<label class="field">
+							<span>{m.groups_presentation_label()}</span>
+							<select name="presentation" bind:value={presentationEditDraft}>
+								<option value="">{m.groups_presentation_auto()}</option>
+								<option value="score_reference">{m.groups_presentation_score_reference()}</option>
+								<option value="play_along">{m.groups_presentation_play_along()}</option>
+							</select>
 						</label>
 
 						<p class="card-eyebrow">{m.groups_edit_attachments()}</p>
@@ -246,6 +257,7 @@
 								composerEditDraft = track.composer ?? '';
 								youtubeEditDraft = track.youtube_url ?? '';
 								tempoEditDraft = track.default_tempo_bpm ? String(track.default_tempo_bpm) : '';
+								presentationEditDraft = track.presentation ?? '';
 								editingDetailsPieceId = track.piece_id;
 							}}
 						>

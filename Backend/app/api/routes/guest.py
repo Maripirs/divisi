@@ -127,6 +127,7 @@ def resolve_join_code(join_code: str, password: str | None = None, db: Session =
                 distributed_at=distribution.distributed_at,
                 composer=piece.composer,
                 youtube_url=piece.youtube_url,
+                presentation=piece.presentation,
                 has_music=version.file_path is not None,
                 has_pdf=version.pdf_file_path is not None,
             )

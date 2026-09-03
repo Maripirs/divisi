@@ -329,6 +329,33 @@
 		}
 	});
 
+	/** The seed view/audio for a piece being opened. An admin can set
+	 * `piece.presentation` to land a first-time viewer on the PDF score plus
+	 * reference recording, or on the play-along mix, but only when this
+	 * piece actually has the panes that presentation needs, and only for a
+	 * viewer with no saved settings for it (a returning viewer's own pick,
+	 * restored in `bootstrap()`, always wins). Absent a usable hint this is
+	 * the same pane-shape default the page has always used. */
+	function seededPresentation(): { viewMode: ViewMode; audioSource: 'mix' | 'reference' } {
+		const paneDefault = {
+			viewMode: !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode,
+			audioSource: 'mix' as const
+		};
+		const hint = piece?.presentation;
+		if (!hint || !piece) return paneDefault;
+		// "Opened before" == this piece has a persisted blob; every save
+		// writes `viewMode`, so its presence is the reliable signal. The
+		// admin hint only seeds the very first open.
+		if (loadPersistedSettings(piece.id).viewMode !== undefined) return paneDefault;
+		if (hint === 'score_reference' && hasPdfPane && piece.youtubeUrl) {
+			return { viewMode: 'pdf', audioSource: 'reference' };
+		}
+		if (hint === 'play_along' && hasPlayer) {
+			return { viewMode: 'player', audioSource: 'mix' };
+		}
+		return paneDefault;
+	}
+
 	/** Fetches `resolve/+server.ts` for a real Backend piece — deliberately
 	 * from here, not `+page.server.ts`'s `load` (which returns instantly
 	 * now): by the time this runs, the component has already mounted and
@@ -357,13 +384,15 @@
 			remoteMeta = body.remote;
 			isOwningGroupAdmin = body.isOwningGroupAdmin ?? body.canManagePieceNotes ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
-			// `viewMode` was seeded assuming no piece at all (forced to
-			// 'player' below) — now that `hasPlayer`/`hasPdfPane` are actually
-			// known, apply the same shape-default `+page.server.ts` used to
-			// compute before this piece existed at mount time. `bootstrap()`
-			// (next) still gets the final say via this piece's own persisted
-			// settings, exactly as before.
-			viewMode = !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode;
+			// `viewMode`/`audioSource` were seeded assuming no piece at all.
+			// Now that `hasPlayer`/`hasPdfPane` are known, apply the pane-shape
+			// default, or the admin's `presentation` hint when this is a
+			// first-time open of a piece that carries one. `bootstrap()` (next)
+			// still gets the final say via this piece's own persisted settings,
+			// exactly as before.
+			const seed = seededPresentation();
+			viewMode = seed.viewMode;
+			audioSource = seed.audioSource;
 			loadState = hasPlayer ? { kind: 'loading' } : { kind: 'pdfOnly' };
 			void bootstrap();
 		} catch {

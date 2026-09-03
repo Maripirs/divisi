@@ -3,6 +3,8 @@
  * view shape its template wants, same convention `$lib/api/guest.ts` uses
  * for the unauthenticated guest routes. */
 
+import type { PiecePresentation } from '$lib/pieces/types';
+
 export type GroupRole = 'admin' | 'member';
 export type VersionStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
 export type VersionSource = 'original' | 'modification';
@@ -137,6 +139,9 @@ export interface LibraryEntryOut {
 	default_tempo_bpm: number | null;
 	composer: string | null;
 	youtube_url: string | null;
+	/** Admin-set first-open presentation hint; null means the automatic
+	 * pane-shape default. Mirrors `Piece.presentation`. */
+	presentation: PiecePresentation | null;
 	/** Computed by the Backend, never a raw storage path — see
 	 * `Backend/app/api/schemas/library.py`'s `LibraryEntryOut`. */
 	has_music: boolean;

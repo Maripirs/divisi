@@ -59,6 +59,7 @@ def update_piece_details(
     piece.composer = payload.composer.strip() if payload.composer and payload.composer.strip() else None
     piece.youtube_url = payload.youtube_url.strip() if payload.youtube_url and payload.youtube_url.strip() else None
     piece.default_tempo_bpm = payload.default_tempo_bpm
+    piece.presentation = payload.presentation
     db.commit()
     db.refresh(piece)
     return piece
@@ -105,6 +106,7 @@ async def upload_piece(
     composer: str | None = Form(None),
     youtube_url: str | None = Form(None),
     default_tempo_bpm: int | None = Form(None),
+    presentation: str | None = Form(None),
     file: UploadFile | None = File(None),
     pdf_file: UploadFile | None = File(None),
     db: Session = Depends(get_db),
@@ -113,6 +115,10 @@ async def upload_piece(
     if file is None and pdf_file is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a music file, a PDF, or both"
+        )
+    if presentation not in (None, "", "score_reference", "play_along"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid presentation value"
         )
     owner_id = resolve_new_piece_owner_id(owner_type, group_id, current_user.id, db)
 
@@ -131,6 +137,7 @@ async def upload_piece(
         composer=composer,
         youtube_url=youtube_url,
         default_tempo_bpm=default_tempo_bpm,
+        presentation=presentation or None,
         db=db,
     )
     return PieceUploadOut(piece=piece, version=version)
@@ -186,6 +193,7 @@ def list_my_library(
                 default_tempo_bpm=piece.default_tempo_bpm,
                 composer=piece.composer,
                 youtube_url=piece.youtube_url,
+                presentation=piece.presentation,
                 has_music=latest.file_path is not None,
                 has_pdf=latest.pdf_file_path is not None,
                 music_file_name=latest.file_name,
@@ -225,6 +233,7 @@ def list_my_library(
                     default_tempo_bpm=piece.default_tempo_bpm,
                     composer=piece.composer,
                     youtube_url=piece.youtube_url,
+                    presentation=piece.presentation,
                     has_music=version.file_path is not None,
                     has_pdf=version.pdf_file_path is not None,
                     music_file_name=version.file_name,

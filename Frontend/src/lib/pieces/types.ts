@@ -1,5 +1,13 @@
 import type { ParsedMIDI } from '../midi/types';
 
+/** Admin-set hint for how a piece first presents to a viewer who has
+ * never opened it. `score_reference` seeds the first open onto the PDF
+ * score plus the reference recording; `play_along` seeds it onto the
+ * play-along synth mix. First-open seed only: a viewer's saved per-piece
+ * view/audio always wins over this (see `routes/piece/[id]/+page.svelte`).
+ * Mirrors the Backend `Piece.presentation` column. */
+export type PiecePresentation = 'score_reference' | 'play_along';
+
 /** Library-listing metadata for one piece — enough to render a picker card
  * without loading the piece itself. */
 export interface PieceSummary {
@@ -17,6 +25,9 @@ export interface PieceSummary {
 	/** YouTube reference-audio link, shown in its own always-visible area
 	 * regardless of which of music-file/PDF exist — see `+page.svelte`. */
 	youtubeUrl?: string;
+	/** Admin-set first-open presentation hint; absent means the automatic
+	 * pane-shape default. Only ever set for a real Backend piece. */
+	presentation?: PiecePresentation;
 }
 
 /** A pickable piece. `load()` resolves to the same `ParsedMIDI` shape
