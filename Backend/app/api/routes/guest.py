@@ -16,6 +16,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    GuestAuthIn,
+    GuestAuthOut,
     GuestGroupOut,
     GuestPieceOut,
     HomeworkOut,
@@ -27,7 +29,7 @@ from app.api.schemas import (
     WeeklyNoteOut,
 )
 from app.core.rate_limit import rate_limit_guest
-from app.core.security import verify_password
+from app.core.security import create_guest_token, decode_guest_token, verify_password
 from app.db.models import (
     Distribution,
     Group,
@@ -73,16 +75,19 @@ def _get_group_by_join_code_or_404(join_code: str, db: Session) -> Group:
     return group
 
 
-def _check_guest_password(group: Group, password: str | None) -> None:
-    """B10: if the group's admin set a guest password, every route below
-    requires it — a leaked join-code link alone shouldn't be enough. One
-    generic message either way (missing vs. wrong) rather than
-    distinguishing them; nothing meaningful is gained by telling an
-    unauthorized caller which case they're in."""
+def _authorize_guest(group: Group, password: str | None, token: str | None) -> None:
+    """A guest route passes when the group has no guest password, when the
+    right password is supplied, or when a valid guest token for this group
+    is supplied (minted by POST /guest/{join_code}/auth after a password
+    check). One generic 401 either way, same as before: nothing here should
+    tell an unauthorized caller which case they are in."""
     if group.guest_password_hash is None:
         return
-    if password is None or not verify_password(password, group.guest_password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect or missing group password")
+    if password is not None and verify_password(password, group.guest_password_hash):
+        return
+    if token is not None and decode_guest_token(token) == group.id:
+        return
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect or missing group password")
 
 
 def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> PieceVersion | None:
@@ -96,10 +101,29 @@ def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> Pi
     return row
 
 
-@router.get("/{join_code}", response_model=GuestGroupOut)
-def resolve_join_code(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> GuestGroupOut:
+@router.post("/{join_code}/auth")
+def authenticate_guest(join_code: str, payload: GuestAuthIn, db: Session = Depends(get_db)) -> GuestAuthOut:
+    """Exchange the group's guest password for a signed guest token the
+    caller can then send as `token=` on every other guest route, so a
+    leaked join-code link still is not enough on its own (B10). Rate
+    limited by the router-wide `rate_limit_guest` dependency. A group with
+    no guest password set still returns a token (the token just always
+    passes `_authorize_guest`), so the frontend can treat "has a guest
+    cookie" uniformly."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    if group.guest_password_hash is not None:
+        pw = payload.password
+        if pw is None or not verify_password(pw, group.guest_password_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect or missing group password")
+    return GuestAuthOut(token=create_guest_token(group.id))
+
+
+@router.get("/{join_code}", response_model=GuestGroupOut)
+def resolve_join_code(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> GuestGroupOut:
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
     # B12: this route *is* the guest-facing "tracks" page (a group's
     # distributed pieces) — gated the same way homework is below, replacing
     # the old unconditional-for-guests behavior.
@@ -137,7 +161,9 @@ def resolve_join_code(join_code: str, password: str | None = None, db: Session =
 
 
 @router.get("/{join_code}/homework", response_model=list[HomeworkOut])
-def list_guest_homework(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> list[Homework]:
+def list_guest_homework(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> list[Homework]:
     """Read-only, same no-auth stance as the rest of this router — a
     homework assignment (title/range/instructions/due date) carries no more
     sensitivity than the piece titles already exposed above, so it's
@@ -146,7 +172,7 @@ def list_guest_homework(join_code: str, password: str | None = None, db: Session
     audience) — unlike tracks, homework isn't guest-visible by default
     even with the right join code/password."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.homework, db)
     return (
         db.query(Homework)
@@ -157,14 +183,16 @@ def list_guest_homework(join_code: str, password: str | None = None, db: Session
 
 
 @router.get("/{join_code}/weekly-notes", response_model=list[WeeklyNoteOut])
-def list_guest_weekly_notes(join_code: str, password: str | None = None, db: Session = Depends(get_db)) -> list[WeeklyNote]:
+def list_guest_weekly_notes(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> list[WeeklyNote]:
     """Read-only, same no-auth stance as `list_guest_homework` above — a
     weekly note carries no more sensitivity than homework does (`created_by`
     is a bare id, never surfaced as a name), so it reuses `WeeklyNoteOut`
     as-is rather than a hidden-identity variant. Gated by the `weekly_notes`
     page settings, members-only audience by default."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.weekly_notes, db)
     return (
         db.query(WeeklyNote)
@@ -176,7 +204,7 @@ def list_guest_weekly_notes(join_code: str, password: str | None = None, db: Ses
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])
 def list_guest_responsibility_dates(
-    join_code: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
 ) -> list[ResponsibilityGuestDateOut]:
     """Read-only, same no-auth stance as the rest of this router. Unlike the
     member-facing `GET /groups/{id}/responsibilities/dates`, this never
@@ -187,7 +215,7 @@ def list_guest_responsibility_dates(
     rolled up across all of them. Gated by B12's `responsibilities` page
     settings, same mechanism as homework."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.responsibilities, db)
     dates = (
         db.query(ResponsibilityDate)
@@ -254,7 +282,11 @@ def list_guest_responsibility_dates(
     response_model=list[PieceRehearsalNoteOut],
 )
 def list_guest_piece_rehearsal_notes(
-    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str,
+    piece_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
 ) -> list[PieceRehearsalNote]:
     """B16 expansion (2026-09-02): a guest viewing a group's piece sees the
     "From the director" rehearsal notes read-only. Deliberate asymmetry
@@ -265,7 +297,7 @@ def list_guest_piece_rehearsal_notes(
     join-code/password/distribution scoping as the other guest piece
     routes; ordering matches the member list (oldest first)."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
     if _latest_distributed_version(group.id, piece_id, db) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
@@ -282,14 +314,18 @@ def list_guest_piece_rehearsal_notes(
 
 @router.get("/{join_code}/pieces/{piece_id}/manifest", response_model=RenderManifestOut)
 def get_guest_piece_manifest(
-    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str,
+    piece_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
 ) -> RenderManifestOut:
     """Same manifest shape/pipeline as the authenticated
     `/library/versions/{id}/manifest` (B7) — scoped here to whatever
     version this group actually has distributed for this piece, rather
     than trusting a client-supplied version id."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
@@ -319,13 +355,17 @@ def get_guest_piece_manifest(
 
 @router.get("/{join_code}/pieces/{piece_id}/file")
 def get_guest_piece_file(
-    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str,
+    piece_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
 ) -> FileResponse:
     """F5: raw music-file bytes for this group's currently-distributed
     version of a piece. Same join-code/password/page-settings gate as the
     manifest route; 404s cleanly when that version has no music file."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
@@ -337,13 +377,17 @@ def get_guest_piece_file(
 
 @router.get("/{join_code}/pieces/{piece_id}/pdf")
 def get_guest_piece_pdf(
-    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str,
+    piece_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
 ) -> FileResponse:
     """Raw PDF bytes for this group's currently-distributed version of a
     piece. Same gate as the manifest route; 404s cleanly when that version
     has no PDF."""
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:
@@ -355,10 +399,15 @@ def get_guest_piece_pdf(
 
 @router.get("/{join_code}/pieces/{piece_id}/renders/{filename}")
 def get_guest_render_file(
-    join_code: str, piece_id: str, filename: str, password: str | None = None, db: Session = Depends(get_db)
+    join_code: str,
+    piece_id: str,
+    filename: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
 ) -> FileResponse:
     group = _get_group_by_join_code_or_404(join_code, db)
-    _check_guest_password(group, password)
+    _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
     version = _latest_distributed_version(group.id, piece_id, db)
     if version is None:

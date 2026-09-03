@@ -170,6 +170,18 @@ class GuestGroupOut(BaseModel):
     pieces: list[GuestPieceOut]
 
 
+class GuestAuthIn(BaseModel):
+    """Body of POST /guest/{join_code}/auth: the group's guest password,
+    exchanged for a signed guest token. Optional so a group with no guest
+    password set can still be hit uniformly by the frontend."""
+
+    password: str | None = None
+
+
+class GuestAuthOut(BaseModel):
+    token: str
+
+
 class TimeSignatureOut(BaseModel):
     numerator: int
     denominator: int

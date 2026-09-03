@@ -46,3 +46,28 @@ def decode_access_token(token: str) -> str | None:
     except JWTError:
         return None
     return payload.get("sub")
+
+
+def create_guest_token(group_id: str) -> str:
+    """B10: a signed, stateless token proving the caller cleared a group's
+    guest password. Same secret/algorithm as the member access token, but
+    a distinct `gsub` claim and a `scope` marker so the two can never be
+    mistaken for each other (see `decode_guest_token`)."""
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.guest_token_expire_minutes)
+    payload = {"gsub": group_id, "scope": "guest", "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_guest_token(token: str) -> str | None:
+    """Return the group id if the token is a valid guest token, else None.
+    The `scope == "guest"` check is what stops a member access token (which
+    has no such claim) from ever being accepted as a guest token."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        return None
+    if payload.get("scope") != "guest":
+        return None
+    return payload.get("gsub")

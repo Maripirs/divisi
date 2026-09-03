@@ -180,11 +180,22 @@ interface GuestPieceRehearsalNoteResponse {
 
 interface GuestRequestOptions {
 	password?: string;
+	/** An opaque signed guest token (from the per-group httpOnly cookie,
+	 * `$lib/server/guestSession.ts`), read server-side and threaded through
+	 * here. Supplying it is equivalent to supplying the right `?password=`;
+	 * a group with no guest password ignores both. This is how a
+	 * password-protected group's guest routes stay reachable without ever
+	 * putting the password in a browser-visible URL. */
+	token?: string;
 	fetchFn?: typeof fetch;
 }
 
-function guestUrl(path: string, password?: string): string {
+function guestUrl(path: string, { password, token }: { password?: string; token?: string } = {}): string {
 	const url = new URL(`${PUBLIC_API_BASE_URL}${path}`);
+	// `token` is the browser-safe path (nothing sensitive in the URL);
+	// `password` is still accepted for the very first server-side exchange
+	// but is no longer built into anything the browser sees.
+	if (token) url.searchParams.set('token', token);
 	if (password) url.searchParams.set('password', password);
 	return url.toString();
 }
@@ -221,8 +232,8 @@ async function throwForStatus(res: Response, code: string): Promise<never> {
  * its name and currently-distributed pieces. Unauthenticated — no cookie/
  * token sent or required (a `password` is only needed if the group's admin
  * set one via B10). */
-export async function resolveJoinCode(code: string, { password, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestGroup> {
-	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}`, password), fetchFn);
+export async function resolveJoinCode(code: string, { password, token, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestGroup> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}`, { password, token }), fetchFn);
 	if (!res.ok) await throwForStatus(res, code);
 
 	const body: GuestGroupResponse = await res.json();
@@ -248,8 +259,8 @@ export async function resolveJoinCode(code: string, { password, fetchFn = fetch 
  * means "this group doesn't expose homework to guests" (a `GuestApiError`
  * with `status === 404`), which callers should treat as "no homework tab"
  * rather than a real error. */
-export async function listGuestHomework(code: string, { password, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestHomework[]> {
-	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/homework`, password), fetchFn);
+export async function listGuestHomework(code: string, { password, token, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestHomework[]> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/homework`, { password, token }), fetchFn);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
@@ -271,9 +282,12 @@ export async function listGuestHomework(code: string, { password, fetchFn = fetc
  * "this group doesn't expose responsibilities to guests", not a real error. */
 export async function listGuestResponsibilityDates(
 	code: string,
-	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestResponsibilityDate[]> {
-	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, password), fetchFn);
+	const res = await guestFetch(
+		guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, { password, token }),
+		fetchFn
+	);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
@@ -304,9 +318,9 @@ export async function listGuestResponsibilityDates(
  * notes to guests", not a real error. */
 export async function listGuestWeeklyNotes(
 	code: string,
-	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestWeeklyNote[]> {
-	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, password), fetchFn);
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, { password, token }), fetchFn);
 	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
@@ -328,12 +342,12 @@ export async function listGuestWeeklyNotes(
 export async function listGuestPieceRehearsalNotes(
 	code: string,
 	pieceId: string,
-	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestPieceRehearsalNote[]> {
 	const res = await guestFetch(
 		guestUrl(
 			`/guest/${encodeURIComponent(code)}/pieces/${encodeURIComponent(pieceId)}/rehearsal-notes`,
-			password
+			{ password, token }
 		),
 		fetchFn
 	);

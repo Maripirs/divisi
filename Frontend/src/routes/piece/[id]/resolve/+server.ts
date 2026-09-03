@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
+import { readGuestCookie } from '$lib/server/guestSession';
 import type { GroupOut, GroupRole, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
 import type { PiecePresentation } from '$lib/pieces/types';
@@ -33,6 +34,11 @@ interface RemoteResolution {
 	 * back-compat alias of the same value. */
 	isOwningGroupAdmin?: boolean;
 	canManagePieceNotes?: boolean;
+	/** Guest path only: the piece's group has a guest password set and this
+	 * browser has no valid guest-token cookie for it yet (the Backend's
+	 * `/guest/{code}` answered 401). `+page.svelte` shows an inline password
+	 * gate for this rather than the misleading "no piece found" card. */
+	passwordRequired?: boolean;
 }
 
 /** The caller's role in this piece's owning group, or `null` for a
@@ -89,13 +95,28 @@ function isTransientBackendStatus(status: number): boolean {
 	return status >= 500 || status === 429 || status === 408;
 }
 
-async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof fetch): Promise<RemoteResolution> {
+async function resolveGuestRemote(
+	pieceId: string,
+	code: string,
+	token: string | null,
+	fetchFn: typeof fetch
+): Promise<RemoteResolution> {
+	// A valid guest token proves this browser cleared the group's password
+	// gate on `/join/[code]`; forwarding it here is what makes a
+	// password-protected group's piece links resolve at all. A group with no
+	// guest password ignores it.
+	const url = new URL(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}`);
+	if (token) url.searchParams.set('token', token);
 	let res: Response;
 	try {
-		res = await fetchWithTimeout(fetchFn, `${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}`);
+		res = await fetchWithTimeout(fetchFn, url.toString());
 	} catch {
 		return { remote: null, unreachable: true };
 	}
+	// 401 == the group has a guest password and this browser has no (valid)
+	// token for it yet. Distinct from "no such piece": prompt for the
+	// password instead of claiming the link is dead.
+	if (res.status === 401) return { remote: null, unreachable: false, passwordRequired: true };
 	if (!res.ok) return { remote: null, unreachable: isTransientBackendStatus(res.status) };
 	const body = (await res.json()) as { pieces: GuestPieceResponse[] };
 	const entry = body.pieces.find((p) => p.piece_id === pieceId);
@@ -123,11 +144,12 @@ async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof
  * used to do inline, before blocking the whole page's first paint on it
  * became the bug this route fixes. Called from `+page.svelte`'s
  * `onMount`, well after a "loading" status card is already on screen. */
-export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
+export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
 	if (!locals.token) {
 		const code = url.searchParams.get('code');
 		if (!code) return json({ remote: null, unreachable: false } satisfies RemoteResolution);
-		return json(await resolveGuestRemote(params.id, code, fetch));
+		const token = readGuestCookie(cookies, code);
+		return json(await resolveGuestRemote(params.id, code, token, fetch));
 	}
 
 	try {

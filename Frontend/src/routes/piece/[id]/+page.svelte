@@ -83,15 +83,48 @@
 	// guest-accessible demo library), so "back" can return there instead of
 	// the generic library.
 	const guestJoinCode = page.url.searchParams.get('code');
-	// B10 guest password, threaded through the same `?password=` query param
-	// the join page's form uses. Only relevant on the guest path below.
-	const guestPassword = page.url.searchParams.get('password');
 
 	/** F20 guest expansion: the "From the director" notes for a guest
 	 * viewing this piece via a join code. Read-only; the "My notes" section
-	 * is omitted (no session for per-member B5 annotations). */
+	 * is omitted (no session for per-member B5 annotations). The group's
+	 * guest token is injected server-side by the `/piece/[id]/notes?code=`
+	 * proxy from its httpOnly cookie, so nothing authed reaches this browser. */
 	function loadGuestDirectorNotes(): Promise<PieceNote[]> {
-		return listGuestGroupNotes(guestJoinCode ?? '', remoteMeta?.pieceId ?? '', guestPassword ?? undefined);
+		return listGuestGroupNotes(guestJoinCode ?? '', remoteMeta?.pieceId ?? '');
+	}
+
+	// B10 password gate: shown (in the player pane) when `resolve/+server.ts`
+	// reports the group has a guest password and this browser has no valid
+	// guest-token cookie for it yet. The password is POSTed to
+	// `/join/[code]/auth`, which mints that cookie; on success we retry
+	// `resolveRemote()`. Nothing sensitive is ever put in the URL.
+	let gatePassword = $state('');
+	let gatePasswordWrong = $state(false);
+	let gateSubmitting = $state(false);
+
+	async function submitPiecePassword(event: SubmitEvent) {
+		event.preventDefault();
+		gateSubmitting = true;
+		gatePasswordWrong = false;
+		try {
+			const res = await fetch(`/join/${guestJoinCode ?? ''}/auth`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ password: gatePassword })
+			});
+			const body = (await res.json()) as { ok: boolean };
+			if (body.ok) {
+				gatePassword = '';
+				loadState = { kind: 'loading' };
+				await resolveRemote();
+			} else {
+				gatePasswordWrong = true;
+			}
+		} catch {
+			gatePasswordWrong = true;
+		} finally {
+			gateSubmitting = false;
+		}
 	}
 
 	// The admin's chosen tempo for this piece (`PUT
@@ -166,6 +199,11 @@
 		// "not found" would be actively misleading — the piece is very
 		// likely fine, the server just hasn't responded yet.
 		| { kind: 'unreachable' }
+		// B10: this piece's group has a guest password and this browser has
+		// no valid guest-token cookie for it yet. A small password gate in
+		// the player pane recovers it, rather than the misleading `notFound`
+		// card a 401 used to land on.
+		| { kind: 'passwordRequired' }
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
 		| { kind: 'noVisibleTracks' }
@@ -374,9 +412,14 @@
 			const body = (await res.json()) as {
 				remote: RemotePieceMeta | null;
 				unreachable: boolean;
+				passwordRequired?: boolean;
 				isOwningGroupAdmin?: boolean;
 				canManagePieceNotes?: boolean;
 			};
+			if (body.passwordRequired) {
+				loadState = { kind: 'passwordRequired' };
+				return;
+			}
 			if (!body.remote) {
 				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
 				return;
@@ -1011,6 +1054,33 @@
 						<p>{m.errors_could_not_reach_server()}</p>
 						<button class="text-link" onclick={() => location.reload()}>{m.piece_retry()}</button>
 					</div>
+				{:else if loadState.kind === 'passwordRequired'}
+					<div class="status-card">
+						<p>{m.piece_password_gate_title()}</p>
+						<p class="status-detail-text">{m.piece_password_gate_body()}</p>
+						<form class="gate-form" onsubmit={submitPiecePassword}>
+							<input
+								type="password"
+								bind:value={gatePassword}
+								placeholder={m.login_password()}
+								aria-label={m.login_password()}
+								required
+								autocomplete="current-password"
+							/>
+							{#if gatePasswordWrong}
+								<p class="status-note status-note--error">{m.join_password_wrong()}</p>
+							{/if}
+							<button class="gate-submit" type="submit" disabled={gateSubmitting}>
+								{m.piece_password_gate_submit()}
+							</button>
+						</form>
+						<a
+							class="text-link"
+							href={lh(`/login?redirectTo=${encodeURIComponent(`/piece/${data.id}?code=${guestJoinCode ?? ''}`)}`)}
+						>
+							{m.piece_password_gate_login()}
+						</a>
+					</div>
 				{:else if loadState.kind === 'error'}
 					<div class="status-card status-card--error">
 						<p>{m.piece_load_error()}</p>
@@ -1630,6 +1700,47 @@
 		font-size: 0.8125rem;
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 		word-break: break-word;
+	}
+
+	/* B10 password gate (`loadState.kind === 'passwordRequired'`). Sits in a
+	   plain `.status-card`; this is just the little form inside it. */
+	.status-detail-text {
+		font-size: 0.8125rem;
+	}
+
+	.gate-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		width: 100%;
+		max-width: 260px;
+	}
+
+	.gate-form input {
+		width: 100%;
+		padding: 0.5rem 0.625rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface);
+		color: var(--text);
+		font-size: 0.875rem;
+	}
+
+	.gate-submit {
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		border: none;
+		border-radius: var(--radius-md);
+		background: var(--accent);
+		color: var(--accent-contrast);
+		font-size: 0.875rem;
+		font-weight: 650;
+		cursor: pointer;
+	}
+
+	.gate-submit:disabled {
+		opacity: 0.6;
+		cursor: default;
 	}
 
 	.spinner {

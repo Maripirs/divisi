@@ -40,6 +40,8 @@ from app.api.schemas.groups import (
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     DistributionOut,
+    GuestAuthIn,
+    GuestAuthOut,
     GuestGroupOut,
     GuestPieceOut,
     LibraryEntryOut,
@@ -109,6 +111,8 @@ __all__ = [
     "GroupPageSettingUpdate",
     "GroupPageSettingsUpdate",
     "GroupRehearsalScheduleUpdate",
+    "GuestAuthIn",
+    "GuestAuthOut",
     "GuestGroupOut",
     "GuestPieceOut",
     "HomeworkCreate",

@@ -1,5 +1,4 @@
 import { ApiError, jsonInit, makeCall } from './client';
-import { listGuestPieceRehearsalNotes } from './guest';
 
 /** F20: "Piece Notes" — short text notes pinned to a piece, shown next to
  * the music on the piece page and inside an expanded track card on a
@@ -108,19 +107,28 @@ export async function deleteGroupNote(pieceId: string, noteId: string): Promise<
 	});
 }
 
+interface GuestGroupNoteResponse {
+	id: string;
+	body: string;
+	created_at: string;
+}
+
 /** F20 guest expansion: the "From the director" notes for a guest (no
- * session), via the Backend's guest rehearsal-notes route. Read-only —
- * there's no guest create/edit/delete. Shaped as {@link PieceNote}s with
+ * session), via the same `/piece/{id}/notes` proxy route as the member
+ * path. Passing `?code=` (the group join code) instead of `?groupId=`
+ * routes it to the Backend's guest rehearsal-notes endpoint, with the
+ * group's guest token injected server-side from its httpOnly cookie. That
+ * indirection is deliberate: a browser-side call cannot read the cookie or
+ * the token, and we never want either in a client-visible URL. Read-only
+ * (no guest create/edit/delete). Shaped as {@link PieceNote}s with
  * `source: 'group'` so `PieceNotesPanel`'s director-only mode renders them
- * exactly like the member path. Goes to the Backend directly (the guest
- * API has no cookie/token), unlike the authenticated calls above. */
-export async function listGuestGroupNotes(
-	code: string,
-	pieceId: string,
-	password?: string
-): Promise<PieceNote[]> {
-	const notes = await listGuestPieceRehearsalNotes(code, pieceId, { password });
-	return notes.map((n) => ({ id: n.id, source: 'group', body: n.body, createdAt: n.createdAt }));
+ * exactly like the member path. */
+export async function listGuestGroupNotes(code: string, pieceId: string): Promise<PieceNote[]> {
+	const res = await call(
+		`/piece/${encodeURIComponent(pieceId)}/notes?code=${encodeURIComponent(code)}`
+	);
+	const body = (await res.json()) as GuestGroupNoteResponse[];
+	return body.map((n) => ({ id: n.id, source: 'group', body: n.body, createdAt: n.created_at }));
 }
 
 /* ---- Personal source (Backend B5 annotations, position-less) ---------- */

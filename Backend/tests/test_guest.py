@@ -239,6 +239,107 @@ def test_guest_password_protects_all_routes(client):
     assert right_password.status_code == 200
 
 
+def test_guest_auth_mints_a_token_that_opens_the_group(client):
+    admin_headers = _register_and_login(client, "gauth-admin@example.com")
+    group = client.post(
+        "/groups", json={"name": "Token Choir", "guest_password": "s3cret"}, headers=admin_headers
+    ).json()
+    code = group["join_code"]
+
+    assert client.get(f"/guest/{code}").status_code == 401
+
+    auth = client.post(f"/guest/{code}/auth", json={"password": "s3cret"})
+    assert auth.status_code == 200
+    token = auth.json()["token"]
+    assert token
+
+    assert client.get(f"/guest/{code}", params={"token": token}).status_code == 200
+
+    assert client.post(f"/guest/{code}/auth", json={"password": "nope"}).status_code == 401
+    assert client.post(f"/guest/{code}/auth", json={}).status_code == 401
+
+
+def test_guest_token_is_accepted_on_every_guarded_route(client):
+    admin_headers = _register_and_login(client, "gtok-admin@example.com")
+    group, piece_id, version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_director_note(client, admin_headers, group["id"], piece_id)
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={
+            "pages": [
+                {"page": "homework", "enabled": True, "audience": "everyone"},
+                {"page": "weekly_notes", "enabled": True, "audience": "everyone"},
+                {"page": "responsibilities", "enabled": True, "audience": "everyone"},
+            ]
+        },
+        headers=admin_headers,
+    )
+    client.post(
+        "/groups/" + group["id"] + "/homework",
+        json={"title": "Lacrymosa", "range": "mm. 18-42"},
+        headers=admin_headers,
+    )
+    client.post(
+        "/groups/" + group["id"] + "/weekly-notes",
+        json={"title": "Week of Sept 1", "note_date": "2026-09-01T00:00:00Z"},
+        headers=admin_headers,
+    )
+    client.put(
+        "/groups/" + group["id"] + "/guest-settings",
+        json={"guest_password": "s3cret"},
+        headers=admin_headers,
+    )
+    code = group["join_code"]
+    token = client.post(f"/guest/{code}/auth", json={"password": "s3cret"}).json()["token"]
+    tp = {"token": token}
+
+    assert client.get(f"/guest/{code}", params=tp).status_code == 200
+    assert client.get(f"/guest/{code}/homework", params=tp).status_code == 200
+    assert client.get(f"/guest/{code}/weekly-notes", params=tp).status_code == 200
+    assert client.get(f"/guest/{code}/responsibilities/dates", params=tp).status_code == 200
+    assert client.get(f"/guest/{code}/pieces/{piece_id}/rehearsal-notes", params=tp).status_code == 200
+    assert client.get(f"/guest/{code}/pieces/{piece_id}/file", params=tp).status_code == 200
+
+    # And the password is still rejected when wrong / absent on those routes.
+    assert client.get(f"/guest/{code}/homework").status_code == 401
+    assert client.get(f"/guest/{code}/pieces/{piece_id}/rehearsal-notes", params={"token": "garbage"}).status_code == 401
+
+
+def test_member_access_token_is_rejected_as_a_guest_token(client):
+    admin_headers = _register_and_login(client, "mtok-admin@example.com")
+    group = client.post(
+        "/groups", json={"name": "Scoped Choir", "guest_password": "s3cret"}, headers=admin_headers
+    ).json()
+    # The raw member access token, not the "Bearer ..." header.
+    member_token = admin_headers["Authorization"].removeprefix("Bearer ")
+
+    resp = client.get(f"/guest/{group['join_code']}", params={"token": member_token})
+    assert resp.status_code == 401
+
+
+def test_garbage_guest_token_is_rejected(client):
+    admin_headers = _register_and_login(client, "gtok-garbage@example.com")
+    group = client.post(
+        "/groups", json={"name": "Garbage Choir", "guest_password": "s3cret"}, headers=admin_headers
+    ).json()
+
+    assert client.get(f"/guest/{group['join_code']}", params={"token": "not-a-real-token"}).status_code == 401
+    assert client.get(f"/guest/{group['join_code']}", params={"token": ""}).status_code == 401
+
+
+def test_guest_auth_returns_a_token_even_with_no_guest_password(client):
+    admin_headers = _register_and_login(client, "gauth-nopw@example.com")
+    group = client.post("/groups", json={"name": "Open Choir"}, headers=admin_headers).json()
+    code = group["join_code"]
+
+    # Unchanged: no password and no token still opens the group.
+    assert client.get(f"/guest/{code}").status_code == 200
+
+    auth = client.post(f"/guest/{code}/auth", json={})
+    assert auth.status_code == 200
+    assert auth.json()["token"]
+
+
 def test_guest_password_can_be_set_via_guest_settings(client):
     admin_headers = _register_and_login(client, "gp-admin2@example.com")
     group = client.post("/groups", json={"name": "Choir GP2"}, headers=admin_headers).json()

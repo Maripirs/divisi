@@ -9,6 +9,7 @@
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { invalidateAll } from '$app/navigation';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -29,6 +30,39 @@
 	// disclosure open. Lazy — the panel only mounts (and fetches) once a
 	// card is expanded.
 	let notesExpanded = $state<Record<string, boolean>>({});
+
+	// B10 password gate (the `result.error === 'password-required'` branch
+	// below). The password is POSTed to `/join/[code]/auth`, which mints the
+	// per-group httpOnly guest-token cookie; on success we `invalidateAll()`
+	// so `+page.ts` re-runs `/join/[code]/data`, which now sees the cookie.
+	// Nothing sensitive ever lands in the URL or history.
+	let guestPassword = $state('');
+	let passwordWrong = $state(false);
+	let passwordSubmitting = $state(false);
+
+	async function submitGuestPassword(event: SubmitEvent) {
+		event.preventDefault();
+		passwordSubmitting = true;
+		passwordWrong = false;
+		try {
+			const res = await fetch(`/join/${data.code}/auth`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ password: guestPassword })
+			});
+			const body = (await res.json()) as { ok: boolean };
+			if (body.ok) {
+				guestPassword = '';
+				await invalidateAll();
+			} else {
+				passwordWrong = true;
+			}
+		} catch {
+			passwordWrong = true;
+		} finally {
+			passwordSubmitting = false;
+		}
+	}
 </script>
 
 <!-- Shared between the resolved `error: 'server'` case and the `{:catch}`
@@ -81,12 +115,24 @@
 			<section class="card">
 				<p class="card-title">{m.join_password_required()}</p>
 				<p class="card-meta">{m.join_password_required_body()}</p>
-				<form method="GET">
+				<form onsubmit={submitGuestPassword}>
 					<label class="field">
 						<span>{m.login_password()}</span>
-						<input type="password" name="password" required autofocus />
+						<!-- svelte-ignore a11y_autofocus -->
+						<input
+							type="password"
+							bind:value={guestPassword}
+							required
+							autofocus
+							autocomplete="current-password"
+						/>
 					</label>
-					<button class="btn btn-primary btn-block" type="submit">{m.join_continue()}</button>
+					{#if passwordWrong}
+						<p class="error">{m.join_password_wrong()}</p>
+					{/if}
+					<button class="btn btn-primary btn-block" type="submit" disabled={passwordSubmitting}>
+						{m.join_continue()}
+					</button>
 				</form>
 			</section>
 		{:else if result.error === 'server'}
@@ -198,7 +244,7 @@
 								</div>
 								<a
 									class="piece-action piece-action--primary"
-									href={lh(`/piece/${practiceId}?guest=1&code=${data.code}`)}
+									href={lh(`/piece/${practiceId}?code=${data.code}`)}
 									aria-label={m.join_open_player()}
 								>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -222,8 +268,7 @@
 										<PieceNotesPanel
 											pieceId={piece.pieceId}
 											chrome="bare"
-											directorLoader={() =>
-												listGuestGroupNotes(data.code, piece.pieceId, data.password)}
+											directorLoader={() => listGuestGroupNotes(data.code, piece.pieceId)}
 										/>
 									{/if}
 								{/snippet}

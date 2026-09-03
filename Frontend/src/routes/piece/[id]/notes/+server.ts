@@ -1,4 +1,6 @@
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendErrorResponse, backendJson } from '$lib/server/backend';
+import { readGuestCookie } from '$lib/server/guestSession';
 import type { RequestHandler } from './$types';
 
 /** F20: the "Piece Notes" panel's group-source proxy — the Backend's B16
@@ -11,9 +13,32 @@ import type { RequestHandler } from './$types';
  * `piece_id` comes from the route param; `groupId` (the owning group) is
  * supplied by the caller — the Backend still verifies the piece actually
  * belongs to that group and 404s otherwise, so a wrong id only ever fails
- * closed. */
-export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
-	if (!locals.token) return new Response(null, { status: 401 });
+ * closed.
+ *
+ * GET has one guest exception: an unauthenticated caller passing `?code=`
+ * (a group join code) instead of `?groupId=` gets the read-only "From the
+ * director" notes via the Backend's guest rehearsal-notes route, with the
+ * group's guest token injected from its httpOnly cookie server-side (same
+ * pattern as `../pdf/+server.ts`). This keeps the browser off the Backend's
+ * guest API directly, so no guest token/password ever reaches client JS.
+ * The response shape (`{ id, body, created_at }[]`) matches the member
+ * route's, so `$lib/api/pieceNotes.ts` maps both the same way. */
+export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
+	if (!locals.token) {
+		const code = url.searchParams.get('code');
+		if (!code) return new Response(null, { status: 401 });
+		const guestUrl = new URL(
+			`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${encodeURIComponent(params.id)}/rehearsal-notes`
+		);
+		const token = readGuestCookie(cookies, code);
+		if (token) guestUrl.searchParams.set('token', token);
+		try {
+			const res = await fetch(guestUrl.toString());
+			return new Response(res.body, { status: res.status, headers: res.headers });
+		} catch {
+			return new Response(null, { status: 503 });
+		}
+	}
 	const groupId = url.searchParams.get('groupId');
 	if (!groupId) return new Response(null, { status: 400 });
 	try {
