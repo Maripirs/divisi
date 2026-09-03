@@ -567,6 +567,11 @@ the reference recording's own timeline.
 (`B17`/`B18` were also used on the `omr-editor` branch for paged-OMR work;
 on `main`, `B18` is this.)
 
+Frontend note (2026-09-02): F22 was tightened so the frontend only ever
+creates `scope='group'` cues (Director-layer only). The schema here still
+permits a cue at any scope; nothing sends a personal one. No backend code
+or migration change.
+
 **Built 2026-09-02, not pushed/deployed.** Migration `c3e5a7b9d1f4`
 (`down_revision = b1c3d5e7f9a2`), one linear head. `time_ms` nullable int,
 no server_default (only a `cue` ever sets it). `MarkupMarkUpdate` also

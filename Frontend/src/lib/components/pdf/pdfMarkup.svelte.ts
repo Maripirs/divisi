@@ -338,6 +338,13 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		}
 		if (drawTarget === 'director' && !(annotationMode && deps.isOwningGroupAdmin())) {
 			drawTarget = 'mine';
+			// The cue tool is director-only; clear it the same way `setDrawTarget`
+			// does when switching back to "mine".
+			if (tool === 'cue') {
+				tool = null;
+				selectedCueId = null;
+				activeCueDrag = null;
+			}
 		}
 	}
 
@@ -549,6 +556,13 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			deps.setShowDirector(true);
 		} else {
 			deps.setShowMine(true);
+			// The cue tool is director-only; its button is about to vanish, so
+			// disarm it (mirrors what `setTool` resets).
+			if (tool === 'cue') {
+				tool = null;
+				selectedCueId = null;
+				activeCueDrag = null;
+			}
 		}
 		drawTarget = target;
 	}
@@ -642,14 +656,21 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		}
 	}
 
+	/** F22: the cue tool is director-layer only. It needs a usable reference
+	 * recording (`canPlaceCue`), an owning-group admin caller, and the director
+	 * draw target selected. On "mine" the button is simply hidden; there is no
+	 * personal-cue path anymore. */
+	function cuePlacementAllowed(): boolean {
+		return deps.canPlaceCue() && deps.isOwningGroupAdmin() && drawTarget === 'director';
+	}
+
 	/** F22: drop a cue at `point`, capturing the reference recording's
 	 * current playhead. A null playhead (no reference player yet) saves at
-	 * `0`; the mm:ss editor can re-time it afterward. Same scope as any other
-	 * new mark (`personal`, or `group` when the draw target is the director
-	 * layer). */
+	 * `0`; the mm:ss editor can re-time it afterward. Always saved with
+	 * `scope === 'group'` (the director layer is the only place cues live). */
 	async function placeCue(pageIndex: number, point: [number, number]): Promise<void> {
 		const pieceId = deps.pieceId();
-		if (!pieceId || !deps.canPlaceCue()) return;
+		if (!pieceId || !cuePlacementAllowed()) return;
 		markupError = null;
 		try {
 			const created = await createCue(
@@ -917,10 +938,12 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		get showDirector() {
 			return deps.getShowDirector();
 		},
-		/** F22: whether the cue tool should appear (reference recording present
-		 * and selected as the audio source). */
+		/** F22: whether the cue tool should appear. Director-layer only: a
+		 * usable reference recording, an owning-group admin caller, and the
+		 * director draw target selected. `PdfMarkupPanel` shows/hides the button
+		 * off this. */
 		get canPlaceCue() {
-			return deps.canPlaceCue();
+			return cuePlacementAllowed();
 		},
 		get selectedCueId() {
 			return selectedCueId;

@@ -98,7 +98,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
-| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass |
+| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'` |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -894,20 +894,30 @@ and **F21** (scopes, draw-target). Reference-recording-only: a cue's
 timestamp is meaningless against "My mix".
 
 **Shape:**
-- A **cue** tool in the markup toolbar, present only when the piece has a
-  reference recording (`youtubeUrl`) and the audio source is the reference.
-  Armed + tap the page = drop a cue at `(page, x, y)` capturing the
-  reference player's current `positionMs`.
+- A **cue** tool in the markup toolbar, Director-layer only: present only
+  when the piece has a reference recording (`youtubeUrl`), the audio source
+  is the reference, the caller is an owning-group admin, **and** the draw
+  target is Director. On "mine" the button is simply hidden (no
+  auto-switch). Armed + tap the page = drop a cue at `(page, x, y)`
+  capturing the reference player's current `positionMs`, always saved with
+  `scope='group'`.
 - Render: a small ▶-in-circle at the cue's `(page, x, y)`. Visible only in
   PDF view with audio source = reference; hidden under "My mix".
 - **Tap a cue** (its layer toggle on, no annotation mode needed) → the
-  reference player `seek(time_ms)` then `play()`.
-- **Edit** a cue's time (mm:ss field) or delete it → needs annotation mode.
-  Personal cue: owner. Group cue: any owning-group admin (F21 rules); a
-  group cue is created under `drawTarget === 'director'`.
+  reference player `seek(time_ms)` then `play()`. Unchanged for everyone.
+- **Edit** a cue's time (mm:ss field) or delete it → needs annotation mode
+  + owning-group admin + draw target = Director (F21 group-mark rules).
+  Personal cues are no longer a thing on the frontend.
 
-**Built 2026-09-02, not deployed.** `check` 0 errors, `build` clean,
-`vitest run` 79 passed. New controller deps `getReferencePositionMs` /
+**Built 2026-09-02, not deployed.** Tightened same day at the human's
+request: the cue tool is Director-layer only. `cuePlacementAllowed()` in
+`pdfMarkupController` gates the toolbar button (via the `canPlaceCue`
+getter), `placeCue`, and clears a stuck `tool === 'cue'` from
+`setDrawTarget('mine')` / `syncAnnotationModeWithVisibility`. The
+`scopeForDrawTarget` / `markInteractivity` pure helpers were left as-is
+(a group cue's re-time/delete gate was already admin + annotation mode +
+Director). `check` 0 errors, `build` clean, `vitest run` 79 passed. New
+controller deps `getReferencePositionMs` /
 `canPlaceCue` / `audioSourceIsReference` / `onCueTap`, threaded
 `piece/[id]/+page.svelte` -> `PdfView` -> `createPdfMarkupController`. A
 null reference playhead saves the cue at `0` (editable afterward) rather
@@ -921,26 +931,28 @@ out cues whenever the audio source isn't the reference recording. The
 `time_ms` flows both ways with no change there.
 
 **Acceptance criteria:**
-- [x] On a real group-owned piece's PDF with a reference recording, a user
-      can drop a personal cue and tapping it jumps + plays the reference
-      audio from that point
-- [x] An owning-group admin can drop director cues (draw target = Director
-      markup); members tap them read-only, can't create/edit
+- [x] On a real group-owned piece's PDF with a reference recording, an
+      owning-group admin with draw target = Director can drop a cue
+      (`scope='group'`) and tapping it jumps + plays the reference audio
+      from that point; the button is hidden on "mine" and for non-admins
+- [x] Members / guests tap group cues read-only, can't create/edit
 - [x] Cues are hidden when the audio source is "My mix" and in score view
 - [x] Editing a cue's time (mm:ss) requires annotation mode; the value
       round-trips
 - [x] `npm run check` / `npm run build` clean; vitest green
-- [ ] Human touchscreen pass: drop personal + director cues, tap to jump,
-      edit a time, confirm they vanish under "My mix"
+- [ ] Human touchscreen pass: as an owning-group admin drop Director cues,
+      tap to jump, edit a time, confirm the button is gone on "mine" and
+      the cues vanish under "My mix"
 
 **Tasks — Claude:**
 - [x] `$lib/api/pieceMarkup.ts`: `kind: 'cue'`, `timeMs` field, carried on
       create (`createCue`); `MarkupMarkPatch.timeMs` -> `time_ms`.
 - [x] `routes/piece/[id]/markup/**`: `time_ms` passes through the generic
       proxy body in both directions, no code change needed.
-- [x] Cue tool in `PdfMarkupPanel`, gated on `canPlaceCue()` (piece has a
-      reference recording and it's the audio source); captures the
-      reference player's `positionMs` on place.
+- [x] Cue tool in `PdfMarkupPanel`, gated on `canPlaceCue()` = reference
+      recording is the audio source **and** owning-group admin **and** draw
+      target = Director; captures the reference player's `positionMs` on
+      place.
 - [x] `PdfMarkupLayer`: renders the ▶-in-circle glyph; tap handler routes
       to `onCueTap` (a callback from `piece/[id]/+page.svelte`, which owns
       the reference player) for a seek + play.
