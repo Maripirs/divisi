@@ -83,13 +83,13 @@ supported? Should roles/responsibility templates be reusable across groups?
 | # | Milestone | Status |
 |---|---|---|
 | F1 | Standalone playback + notation prototype | ✅ Approved — reads as more accurate/pleasant than PlayScore |
-| F2 | Guest access to real pieces via the Backend | ⏳ Built; human hasn't confirmed the join flow in a real browser yet |
+| F2 | Guest access to real pieces via the Backend | ✅ Join flow confirmed in a real browser, incl. a password-protected group (2026-09-02) |
 | F3 | App-shell UI screens (fixture data) | ✅ Screens confirmed in a real browser, light + dark (2026-09-02) |
-| F4 | Login + wire groups/home/library to the real Backend | ⏳ Built, incl. score-position annotation create/share UI; `check`/`build`-clean; human hasn't confirmed login/groups/homework/annotations yet |
+| F4 | Login + wire groups/home/library to the real Backend | ✅ Confirmed in a real browser (2026-09-02): login/redirectTo, real groups/home/library data, homework read+write, score-position annotations create/edit/delete |
 | F5 | Wire the player to real Backend pieces (+ real uploads: MIDI/PDF/YouTube) | ⏳ Built and curl/check-verified; nobody has clicked through the actual upload/practice flow yet (no browser on the build machine) |
-| F6 | Group page settings + Responsibilities | ✅ Built; human hasn't done a live-app walkthrough (`check`/`build` only) |
+| F6 | Group page settings + Responsibilities | ✅ Live-app walkthrough done (2026-09-02): page-settings grid, Responsibilities admin/member/guest incl. the 2026-09-01/02 rework, About-tab rehearsal editor |
 | F7 | Weekly Notes tab + guest sign-in banner | ✅ Done — Playwright-verified live |
-| F8 | Spanish localization (`/es`) | ⏳ Built and curl/check-verified; human hasn't clicked through the Spanish UI in a real browser |
+| F8 | Spanish localization (`/es`) | ✅ Clicked through the Spanish UI in a real browser (2026-09-02): nav/drawer/screens, forms + validation, branded 404, language switcher round-trip |
 | F9 | Graceful error handling app-wide | ✅ Done — live-verified including a real Backend-down/recovered cycle |
 | F10 | Lock down bundled pieces (security fix) | ✅ Done — closed a real hole where 5+ real choir pieces were publicly fetchable with no auth |
 | F11 | PDF markup: freehand pen + stamps (piaScore-style) | ⏳ Built, `check`/`build`-clean; Backend not yet deployed to production (new migration), so unusable on the preview until that lands |
@@ -97,7 +97,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built: two sources (group B16 / personal position-less B5 annotation), on the piece page and an expandable Rehearsal Tracks card, per-note timestamps, player-mode scroll cap; `check`/`build`/vitest 107 green; no real-browser pass yet |
-| F21 | Group markup layer (frontend for Backend B17) | ⏳ Scoped 2026-09-02; not built |
+| F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
+| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Scoped 2026-09-02; not built |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -138,7 +139,7 @@ deliberately has none of.
 **Tasks — Human:**
 - [x] Try it end-to-end and compare directly against PlayScore on the same piece; sign off before Backend wiring starts
 
-### F2 — Guest access to real pieces via the Backend [~]
+### F2 — Guest access to real pieces via the Backend [x]
 
 **Depends on Backend B6** (join code + public guest endpoints). Swaps F1's bundled
 fixture for a real group's actual distributed pieces, reached via a shareable join
@@ -152,7 +153,7 @@ Backend B10), and a password-protected group prompts for it.
 - [x] An invalid/unknown join code shows a clear "not found" state, not a crash
 - [x] A password-protected group prompts for the password and retries, rather than showing a raw error
 - [x] Homework only appears in the guest view for groups that opted into `guest_homework_visible`
-- [ ] Human confirms the join flow (including a password-protected group) in a real browser before this is considered done
+- [x] Human confirms the join flow (including a password-protected group) in a real browser (2026-09-02)
 
 **Tasks — Claude:**
 - [x] `$lib/api/guest.ts`: `listGuestHomework`, password param threaded through `resolveJoinCode`
@@ -164,7 +165,7 @@ Backend B10), and a password-protected group prompts for it.
 - [x] Verified against a real local Backend: registered a user, created a group, uploaded/approved/distributed a piece, confirmed the join code resolves correctly for both a valid code and an unknown one via a real SSR network call
 
 **Tasks — Human:**
-- [ ] Look over `/join` and `/join/[code]` in a real browser before this is considered done
+- [x] Look over `/join` and `/join/[code]` in a real browser — confirmed 2026-09-02
 
 ### F3 — App-shell UI screens (fixture data) [x]
 
@@ -191,7 +192,7 @@ was written.
 **Tasks — Human:**
 - [x] Look over the new screens in a real browser (light + dark) — confirmed 2026-09-02, no changes flagged
 
-### F4 — Login + wire groups/home/library to the real Backend [~]
+### F4 — Login + wire groups/home/library to the real Backend [x]
 
 Scope expanded 2026-08-27 beyond "login + annotations": also replaces F3's fixture
 data with real Backend calls for groups, membership/info, homework (Backend B9), and
@@ -212,7 +213,7 @@ backend concept for "last opened piece" exists (see Backlog).
 - [x] The root library (`/`) shows each group's real distributed pieces (title + review status) alongside the existing bundled demo pieces
 - [x] Browsing, playback, and customization of the existing bundled/demo pieces remain fully guest-accessible — login is opt-in, never a gate
 - [x] A logged-in user can add an annotation at a position in the score; it's private by default and shareable with a specific peer, matching Backend B5's semantics
-- [ ] Human confirms login, group browsing, and homework in a real browser
+- [x] Human confirms login, group browsing, and homework in a real browser (2026-09-02)
 
 **Tasks — Claude:**
 - [x] Login/register UI (`/login`) against Backend B2's endpoints; session via an httpOnly cookie set by a SvelteKit server route, read in `hooks.server.ts` for every authenticated `load`
@@ -242,8 +243,8 @@ session with real tooling confirms it compiles.
 - [x] Position stored as `String(positionWholeNotes)` (same tempo-independent unit the playback cursor/click-to-seek already use) on B5's opaque `Annotation.position` string; displayed as "Measure N" (derived from the piece's time signature)
 
 **Tasks — Human:**
-- [ ] Run a real `npm run check`/`build` — this session couldn't (no `node`/`npm` on `PATH`)
-- [ ] Open a real Backend piece, place a marker, confirm it renders sensibly on the score, and click through create/edit/delete/share/unshare in a real browser
+- [x] Run a real `npm run check`/`build` — done 2026-09-02, 0 errors / build clean
+- [x] Open a real Backend piece, place a marker, click through create/edit/delete in a real browser — confirmed 2026-09-02. Share/unshare not explicitly re-confirmed this pass (needs a 2nd account); the underlying endpoints were curl-verified earlier.
 
 ### F5 — Wire the player to real Backend pieces (client-side, same pipeline as the bundled demo) [~]
 
@@ -331,7 +332,7 @@ Backend-driven — the Backend's B12 (per-page group settings) and B13
 - [x] Ad hoc fixes from a live look: Rehearsal Tracks uses the same circle-play icon as the personal Library, hides version status from members; personal Library hides tracks with no practice file wired up instead of listing them as a dead card
 
 **Tasks — Human:**
-- [ ] Look at the built pages (page-settings grid, Responsibilities tab as member/admin/guest) and confirm the UI reads right — no live-app walkthrough done this pass, `npm run check`/`build` only
+- [x] Look at the built pages (page-settings grid, Responsibilities tab as member/admin/guest) and confirm the UI reads right — live-app walkthrough done 2026-09-02, including the 2026-09-01/02 Responsibilities rework (chip strip + selected-date panel, datetime-local UTC fix, week stepper, coverage meter)
 
 **Expanded 2026-08-29 (regular rehearsal schedule):** admin-editable "Regular
 rehearsals" card on the Info/About tab (day + time), shown read-only to
@@ -340,7 +341,7 @@ members/guests. The Responsibilities "Add a date"/"Edit date" forms gain a
 client-side. `check`/`build` clean; the weekday math verified with a standalone
 script — not clicked through in an actual browser.
 
-- [ ] Human: confirm the "Use next rehearsal" button and the About-tab editor actually look/behave right in a real browser
+- [x] Human: confirm the "Use next rehearsal" button and the About-tab editor look/behave right in a real browser — confirmed 2026-09-02
 
 ### F7 — Weekly Notes tab + guest sign-in banner [x]
 
@@ -364,7 +365,7 @@ exactly.
   2. `note_date` displayed a day early in any UTC-behind timezone (local-time formatting on a date-only UTC-midnight value). New `formatNoteDate` pins the display to UTC.
 - [x] Local dev fix: `Frontend/.env`'s `PUBLIC_API_BASE_URL` was HTTP while the local Backend is HTTPS-only — fixed to `https://localhost:8000`
 
-### F8 — Spanish localization (`/es`) [~]
+### F8 — Spanish localization (`/es`) [x]
 
 At the human's direct request: a full Spanish version of the app under `/es`
 (English stays unprefixed), covering every route. Built with Paraglide JS (inlang)
@@ -388,7 +389,7 @@ across the app so links don't silently drop the `/es` prefix on the next click.
 - [x] A language switcher lets a visitor move between locales from any page, preserving the current path
 - [x] Every internal navigation stays within the currently-chosen locale — verified live via curl
 - [x] `npm run check`/`build` both clean
-- [ ] Human/Playwright click-through of the Spanish UI (menus, forms, the player's Practice Setup drawer) — not done this pass, no browser in this Windows environment
+- [x] Human click-through of the Spanish UI (menus, forms, the player's Practice Setup drawer, a branded 404, language-switcher round-trip) — done 2026-09-02
 
 **Tasks — Claude:**
 - [x] Installed `@inlang/paraglide-js`; `project.inlang/settings.json`, `messages/en.json`/`es.json` (~350 keys)
@@ -399,7 +400,7 @@ across the app so links don't silently drop the `/es` prefix on the next click.
 - [x] Verified live via curl against both `build` output and `dev`
 
 **Tasks — Human:**
-- [ ] Click through the Spanish UI for real (forms, the player drawer, error states) — this pass is `check`/`build`/curl-verified only
+- [x] Click through the Spanish UI for real (forms, the player drawer, error states) — done 2026-09-02
 
 ### F9 — Graceful error handling app-wide [x]
 
@@ -783,6 +784,23 @@ member, always their own. No guest path (both sources need a session).
       are read-only and personal notes are their own. Check `/` and `/es`,
       and that the player panel scrolls rather than shoving the score down.
 
+**Expanded 2026-09-02 (guest access to director notes) — not built yet.**
+From a guest-vs-member screenshot: guest Rehearsal Tracks cards have no
+Piece Notes disclosure at all, while member cards do. Guests should get the
+same disclosure with the **From the director** section, read-only, and the
+**My notes** section fully omitted (no `+`, no "no notes yet" line) — a
+guest has no session for per-member B5 annotations. Same on the guest piece
+page (`/join/[code]/piece/[id]`), matching member `/piece/[id]`.
+- [ ] Guest API client fn for the new B16-guest endpoint (see the Backend
+  plan's B16 "Expansion 2026-09-02" note; gated on the group's Rehearsal
+  Tracks page being `audience: everyone`).
+- [ ] `PieceNotesPanel` gains a read-only, director-only mode (no add /
+  edit / delete, no My-notes section); mount it on the guest track cards
+  and the guest piece page.
+- [ ] en/es keys if any new.
+- [ ] Human: guest browser pass — director notes visible + read-only on a
+  public-Tracks group, absent otherwise.
+
 ### F21 — Group markup layer (frontend for Backend B17) [ ]
 
 Frontend for B17's group-owned markup `scope`. Replaces the stale "F11
@@ -847,10 +865,73 @@ layer at once, which this needs. And its "Group" option currently loads
 
 **Tasks — Human:**
 - [ ] Touchscreen pass per the last acceptance box, against a Backend with
-      B17
+      B17 (needs `main` pushed so B17's migration is live, then a Frontend
+      redeploy)
+
+**Built 2026-09-02 (`e75f79c`, not deployed).** `npm run check` 0 errors,
+`build` clean, `vitest run` 70 passed. `markupVisibility` replaced by
+`showMine` / `showDirector` / `drawTarget`; new pure `markInteractivity` /
+`scopeForDrawTarget` helpers (unit-tested); persistent reminder + the
+draw-target segmented live in `PdfMarkupPanel`; `resolve/+server.ts`
+returns `isOwningGroupAdmin` (alias of `canManagePieceNotes`, so F20 is
+untouched). A hidden layer's marks stay in memory and re-show on toggle
+with no refetch.
+
+### F22 — PDF cue points: tap to jump the reference recording (frontend for Backend B18) [ ]
+
+At the human's request (2026-09-02): while viewing a PDF with a reference
+recording, drop "play from here" markers on the page that seek the
+reference audio to a timestamp. Different from the score-view cursor (that
+is auto-synced to the synth clock); a PDF has no timing, so each cue is a
+hand-placed anchor. Depends on **B18** (the `time_ms` column + `kind='cue'`)
+and **F21** (scopes, draw-target). Reference-recording-only: a cue's
+timestamp is meaningless against "My mix".
+
+**Shape:**
+- A **cue** tool in the markup toolbar, present only when the piece has a
+  reference recording (`youtubeUrl`) and the audio source is the reference.
+  Armed + tap the page = drop a cue at `(page, x, y)` capturing the
+  reference player's current `positionMs`.
+- Render: a small ▶-in-circle at the cue's `(page, x, y)`. Visible only in
+  PDF view with audio source = reference; hidden under "My mix".
+- **Tap a cue** (its layer toggle on, no annotation mode needed) → the
+  reference player `seek(time_ms)` then `play()`.
+- **Edit** a cue's time (mm:ss field) or delete it → needs annotation mode.
+  Personal cue: owner. Group cue: any owning-group admin (F21 rules); a
+  group cue is created under `drawTarget === 'director'`.
+
+**Acceptance criteria:**
+- [ ] On a real group-owned piece's PDF with a reference recording, a user
+      can drop a personal cue and tapping it jumps + plays the reference
+      audio from that point
+- [ ] An owning-group admin can drop director cues (draw target = Director
+      markup); members tap them read-only, can't create/edit
+- [ ] Cues are hidden when the audio source is "My mix" and in score view
+- [ ] Editing a cue's time (mm:ss) requires annotation mode; the value
+      round-trips
+- [ ] `npm run check` / `npm run build` clean; vitest green
+- [ ] Human touchscreen pass: drop personal + director cues, tap to jump,
+      edit a time, confirm they vanish under "My mix"
+
+**Tasks — Claude:**
+- [ ] `$lib/api/pieceMarkup.ts`: `kind: 'cue'`, `timeMs` field, carried on
+      create.
+- [ ] `routes/piece/[id]/markup/**`: pass `time_ms` through.
+- [ ] Cue tool in `PdfMarkupPanel`, gated on `hasReference && audioSource
+      === 'reference'`; capture `youtubeAudioPlayer` `positionMs` on place.
+- [ ] `PdfMarkupLayer`: render the cue glyph; tap handler that calls the
+      reference player's `seek` + `play` (thread a callback from
+      `piece/[id]/+page.svelte`, which owns the reference player).
+- [ ] Edit-time UI (mm:ss parse/format helper, unit-tested).
+- [ ] en/es keys: tool label, edit-time field, format hint.
+- [ ] vitest for the create/permission/format branches.
+
+**Tasks — Human:**
+- [ ] Touchscreen pass per the last acceptance box.
 
 ## Backlog
 
+- **Persist F12 annotation mode + F13 audio source per piece** (asked 2026-09-02, queued with the F21/F22 batch). Add both to `PersistedSettings` in `$lib/player/persistence.ts` (`divisi:settings:<id>`). Audio source: persist the value but only *restore* it when the piece opens in PDF view and actually has a reference recording (score/player view still forces "My mix", per F13's design). F4's separate score-marker toggle is not in scope.
 - ~~**F11 fast-follow — group-published markup layer**~~ **→ promoted to F21** (2026-09-02), redesigned as a shared group-owned layer any admin co-edits (no per-author publish). See F21.
 - **F11 fast-follow — import/export markup:** the human's other ask alongside the group layer, also deliberately deferred — no shape decided yet (a portable file format? peer-to-peer copy of one person's marks to another?).
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only)
