@@ -19,6 +19,7 @@ from app.api.schemas import (
     GuestGroupOut,
     GuestPieceOut,
     HomeworkOut,
+    PieceRehearsalNoteOut,
     RenderManifestOut,
     ResponsibilityGuestDateOut,
     ResponsibilityGuestRoleCoverageOut,
@@ -33,6 +34,7 @@ from app.db.models import (
     GroupPage,
     Homework,
     Piece,
+    PieceRehearsalNote,
     PieceVersion,
     ResponsibilityDate,
     ResponsibilityDateSchedule,
@@ -244,6 +246,37 @@ def list_guest_responsibility_dates(
             )
         )
     return out
+
+
+@router.get(
+    "/{join_code}/pieces/{piece_id}/rehearsal-notes",
+    response_model=list[PieceRehearsalNoteOut],
+)
+def list_guest_piece_rehearsal_notes(
+    join_code: str, piece_id: str, password: str | None = None, db: Session = Depends(get_db)
+) -> list[PieceRehearsalNote]:
+    """B16 expansion (2026-09-02): a guest viewing a group's piece sees the
+    "From the director" rehearsal notes read-only. Deliberate asymmetry
+    with the member list (`GET /groups/{id}/pieces/{id}/rehearsal-notes`,
+    gated on `GroupPage.weekly_notes`): the guest path gates on the group's
+    `tracks` page being enabled *and* `audience == everyone`, the human's
+    call. Personal notes have no guest path. Same
+    join-code/password/distribution scoping as the other guest piece
+    routes; ordering matches the member list (oldest first)."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _check_guest_password(group, password)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
+    if _latest_distributed_version(group.id, piece_id, db) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
+    return (
+        db.query(PieceRehearsalNote)
+        .filter(
+            PieceRehearsalNote.piece_id == piece_id,
+            PieceRehearsalNote.group_id == group.id,
+        )
+        .order_by(PieceRehearsalNote.created_at.asc())
+        .all()
+    )
 
 
 @router.get("/{join_code}/pieces/{piece_id}/manifest", response_model=RenderManifestOut)

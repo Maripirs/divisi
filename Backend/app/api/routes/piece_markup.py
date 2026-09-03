@@ -80,6 +80,7 @@ def create_mark(
         x=payload.x,
         y=payload.y,
         text=payload.text,
+        time_ms=payload.time_ms,
     )
     db.add(mark)
     db.commit()

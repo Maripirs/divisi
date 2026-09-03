@@ -335,6 +335,11 @@ class PieceMarkupMark(Base):
     # Text-only (kind == "text"): inline score text placed at `x`/`y`.
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Cue-only (kind == "cue", B18): milliseconds into the piece's reference
+    # recording that tapping this marker seeks to. Positioned like a stamp
+    # (`x`/`y`/`page_number`). Null for every other kind.
+    time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

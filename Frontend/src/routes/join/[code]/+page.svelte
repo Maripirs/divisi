@@ -4,6 +4,9 @@
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
 	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
 	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
+	import Disclosure from '$lib/components/Disclosure.svelte';
+	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
+	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
@@ -20,6 +23,11 @@
 	// (plain `$state`, not `localStorage`), so it reappears every visit
 	// since guests aren't tracked across sessions at all.
 	let bannerDismissed = $state(false);
+
+	// F20 guest expansion: which track cards have their "Piece Notes"
+	// disclosure open. Lazy — the panel only mounts (and fetches) once a
+	// card is expanded.
+	let notesExpanded = $state<Record<string, boolean>>({});
 </script>
 
 <main class="shell join-result">
@@ -155,19 +163,43 @@
 					{@const bundled = piece.hasMusic || piece.hasPdf ? undefined : getPieceByTitle(piece.title)}
 					{@const practiceId = bundled ? bundled.id : piece.pieceId}
 					<section class="card track-card">
-						<div class="track-info">
-							<p class="card-title">{piece.title}</p>
-							<p class="card-meta">{m.join_shared({ date: formatEventDate(piece.distributedAt) })}</p>
+						<div class="track-card-row">
+							<div class="track-info">
+								<p class="card-title">{piece.title}</p>
+								<p class="card-meta">{m.join_shared({ date: formatEventDate(piece.distributedAt) })}</p>
+							</div>
+							<a
+								class="piece-action piece-action--primary"
+								href={lh(`/piece/${practiceId}?guest=1&code=${data.code}`)}
+								aria-label={m.join_open_player()}
+							>
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+									<path d="M8 5v14l11-7z" />
+								</svg>
+							</a>
 						</div>
-						<a
-							class="piece-action piece-action--primary"
-							href={lh(`/piece/${practiceId}?guest=1&code=${data.code}`)}
-							aria-label={m.join_open_player()}
+						<!-- F20 guest expansion: read-only "From the director" notes,
+						     same disclosure the member Rehearsal Tracks cards have.
+						     Lazy — nothing fetches until expanded. -->
+						<Disclosure
+							variant="inline"
+							bind:open={
+								() => notesExpanded[piece.pieceId] ?? false,
+								(v) => (notesExpanded[piece.pieceId] = v)
+							}
 						>
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-								<path d="M8 5v14l11-7z" />
-							</svg>
-						</a>
+							{#snippet summary()}{m.piece_notes_title()}{/snippet}
+							{#snippet children()}
+								{#if notesExpanded[piece.pieceId]}
+									<PieceNotesPanel
+										pieceId={piece.pieceId}
+										chrome="bare"
+										directorLoader={() =>
+											listGuestGroupNotes(data.code, piece.pieceId, data.password)}
+									/>
+								{/if}
+							{/snippet}
+						</Disclosure>
 					</section>
 				{/each}
 			{/if}
@@ -186,5 +218,19 @@
 		padding: 0.5rem 0 1rem;
 	}
 
-	/* `.track-card`, `.track-info`, `.piece-action` now live in shell.css. */
+	/* `.track-info`, `.piece-action` live in shell.css. F20 made the guest
+	   track card a column (info+play row, then the "Piece Notes" disclosure)
+	   just like the member Rehearsal Tracks cards, so override shell's row. */
+	.track-card {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	.track-card-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
 </style>

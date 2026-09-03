@@ -3,6 +3,8 @@ import {
 	distanceToSegment,
 	distanceToStroke,
 	markInteractivity,
+	msToMinSec,
+	parseMinSec,
 	scopeForDrawTarget,
 	strokePathD
 } from './pdfMarkup.svelte';
@@ -85,6 +87,55 @@ describe('markInteractivity', () => {
 
 	it('keeps the group layer read-only for an admin not in annotation mode', () => {
 		expect(markInteractivity('group', { ...admin, annotationMode: false })).toBe(false);
+	});
+
+	// F22: cue interactivity is the same scope-based gate. A personal cue is
+	// its creator's to re-time; a group (director) cue only for an owning-group
+	// admin aimed at the director layer in annotation mode.
+	it('gates a personal cue on ownership', () => {
+		expect(markInteractivity('personal', { ...admin, isOwn: true, drawTarget: 'mine' })).toBe(true);
+		expect(markInteractivity('personal', { ...admin, isOwn: false })).toBe(false);
+	});
+
+	it('gates a group cue on admin + annotation mode + director target', () => {
+		expect(markInteractivity('group', admin)).toBe(true);
+		expect(markInteractivity('group', { ...admin, drawTarget: 'mine' })).toBe(false);
+		expect(markInteractivity('group', { ...admin, isOwningGroupAdmin: false })).toBe(false);
+	});
+});
+
+describe('msToMinSec / parseMinSec', () => {
+	it('formats milliseconds as m:ss with a zero-padded seconds field', () => {
+		expect(msToMinSec(0)).toBe('0:00');
+		expect(msToMinSec(5000)).toBe('0:05');
+		expect(msToMinSec(65000)).toBe('1:05');
+		expect(msToMinSec(600000)).toBe('10:00');
+	});
+
+	it('rounds to the nearest second and floors negatives at zero', () => {
+		expect(msToMinSec(1499)).toBe('0:01');
+		expect(msToMinSec(1500)).toBe('0:02');
+		expect(msToMinSec(-4000)).toBe('0:00');
+	});
+
+	it('parses a well-formed m:ss back to milliseconds', () => {
+		expect(parseMinSec('0:00')).toBe(0);
+		expect(parseMinSec('1:05')).toBe(65000);
+		expect(parseMinSec('10:30')).toBe(630000);
+		expect(parseMinSec('  2:07 ')).toBe(127000);
+	});
+
+	it('rejects malformed timestamps', () => {
+		expect(parseMinSec('')).toBeNull();
+		expect(parseMinSec('90')).toBeNull();
+		expect(parseMinSec('1:60')).toBeNull();
+		expect(parseMinSec('1:5')).toBe(65000);
+		expect(parseMinSec('a:bb')).toBeNull();
+		expect(parseMinSec('1:2:3')).toBeNull();
+	});
+
+	it('round-trips a value through format then parse', () => {
+		expect(parseMinSec(msToMinSec(93000))).toBe(93000);
 	});
 });
 

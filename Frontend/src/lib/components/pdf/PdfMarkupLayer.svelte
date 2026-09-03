@@ -98,6 +98,35 @@
 				>
 					<StampShape type={mark.stampType} />
 				</g>
+			{:else if mark.kind === 'cue' && mark.x !== null && mark.y !== null}
+				<!-- F22: tap to jump the reference recording to `mark.timeMs`.
+				     Tappable even outside annotation mode (a plain "play from
+				     here"); drag-to-move + select-to-edit only when the cue is
+				     interactive for this caller. -->
+				<g
+					class="cue-mark"
+					class:cue-mark--selected={markup.selectedCueId === mark.id}
+					class:cue-mark--editable={markup.annotationMode && markup.isMarkInteractive(mark)}
+					class:markup-mark--director={directorLook(mark)}
+					style:color={mark.color}
+					transform={`translate(${mark.x} ${mark.y})`}
+					role="button"
+					tabindex="0"
+					aria-label={m.markup_cue_jump()}
+					onpointerdown={(e) => markup.handleCuePointerDown(e, mark, pageIndex)}
+					onpointermove={markup.handleCuePointerMove}
+					onpointerup={(e) => markup.handleCuePointerUp(e, mark)}
+					onpointercancel={() => markup.handleCuePointerCancel(mark)}
+					onkeydown={(event) => {
+						if (event.key === 'Enter' || event.key === ' ') {
+							event.preventDefault();
+							void markup.handleCuePointerUp(new PointerEvent('pointerup'), mark);
+						}
+					}}
+				>
+					<circle class="cue-disc" r="0.016" fill="currentColor" />
+					<path class="cue-play" d="M -0.005 -0.007 L -0.005 0.007 L 0.008 0 Z" />
+				</g>
 			{:else if mark.kind === 'text' && mark.x !== null && mark.y !== null && mark.text}
 				<g
 					class="text-mark"
@@ -231,6 +260,27 @@
 
 	.stamp-mark {
 		pointer-events: none;
+	}
+
+	/* F22: a cue is tappable even when annotation mode is off (a plain "jump
+	   the recording here"), so it opts back into pointer events regardless of
+	   the layer's `pointer-events: none`. */
+	.cue-mark {
+		pointer-events: auto;
+		cursor: pointer;
+	}
+
+	.cue-mark--editable {
+		cursor: move;
+	}
+
+	.cue-play {
+		fill: var(--surface);
+	}
+
+	.cue-mark--selected .cue-disc {
+		stroke: var(--text);
+		stroke-width: 0.004;
 	}
 
 	.text-mark {

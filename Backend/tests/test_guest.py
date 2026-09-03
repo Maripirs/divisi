@@ -293,6 +293,84 @@ def test_guest_file_routes_404_for_unknown_join_code(client):
     assert client.get("/guest/NOTAREAL/pieces/whatever/pdf").status_code == 404
 
 
+def _add_director_note(client, admin_headers, group_id, piece_id, body="Watch the cutoff at m. 40"):
+    return client.post(
+        f"/groups/{group_id}/pieces/{piece_id}/rehearsal-notes",
+        json={"body": body},
+        headers=admin_headers,
+    )
+
+
+def test_guest_sees_director_rehearsal_notes_when_tracks_is_public(client):
+    admin_headers = _register_and_login(client, "grn-admin@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    assert _add_director_note(client, admin_headers, group["id"], piece_id).status_code == 201
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/rehearsal-notes")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["body"] == "Watch the cutoff at m. 40"
+
+
+def test_guest_rehearsal_notes_404_when_tracks_disabled(client):
+    admin_headers = _register_and_login(client, "grn-admin2@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_director_note(client, admin_headers, group["id"], piece_id)
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": False, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/rehearsal-notes")
+    assert response.status_code == 404
+
+
+def test_guest_rehearsal_notes_404_when_tracks_members_only(client):
+    admin_headers = _register_and_login(client, "grn-admin3@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_director_note(client, admin_headers, group["id"], piece_id)
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": True, "audience": "members"}]},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/rehearsal-notes")
+    assert response.status_code == 404
+
+
+def test_guest_rehearsal_notes_reject_wrong_or_absent_password(client):
+    admin_headers = _register_and_login(client, "grn-admin4@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_director_note(client, admin_headers, group["id"], piece_id)
+    client.put(
+        "/groups/" + group["id"] + "/guest-settings",
+        json={"guest_password": "s3cret"},
+        headers=admin_headers,
+    )
+    base = f"/guest/{group['join_code']}/pieces/{piece_id}/rehearsal-notes"
+
+    assert client.get(base).status_code == 401
+    assert client.get(base, params={"password": "nope"}).status_code == 401
+    assert client.get(base, params={"password": "s3cret"}).status_code == 200
+
+
+def test_guest_rehearsal_notes_404_for_piece_not_distributed_to_group(client):
+    admin_headers = _register_and_login(client, "grn-admin5@example.com")
+    group, _piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    # A group-owned piece from a *different* group, never distributed here.
+    other_admin = _register_and_login(client, "grn-other@example.com")
+    other_group, other_piece_id, _ov = _create_group_with_distributed_midi_piece(
+        client, other_admin, title="Elsewhere"
+    )
+    _add_director_note(client, other_admin, other_group["id"], other_piece_id)
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{other_piece_id}/rehearsal-notes")
+    assert response.status_code == 404
+
+
 def test_guest_endpoints_are_rate_limited(client):
     admin_headers = _register_and_login(client, "admin4@example.com")
     group = client.post("/groups", json={"name": "Choir4"}, headers=admin_headers).json()

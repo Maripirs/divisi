@@ -11,6 +11,8 @@
 		MIN_TEXT_SIZE,
 		MAX_TEXT_SIZE,
 		TEXT_SIZE_STEP,
+		msToMinSec,
+		parseMinSec,
 		type PdfMarkupController
 	} from './pdfMarkup.svelte';
 
@@ -34,8 +36,15 @@
 	const stampType = $derived(markup.stampType);
 	const stampSize = $derived(markup.stampSize);
 	const textSize = $derived(markup.textSize);
+	const canPlaceCue = $derived(markup.canPlaceCue);
+	const selectedCue = $derived(markup.selectedCue);
 	const recentMarkIds = $derived(markup.recentMarkIds);
 	const markupError = $derived(markup.markupError);
+
+	function commitCueTime(value: string): void {
+		const ms = parseMinSec(value);
+		if (ms !== null) markup.setSelectedCueTime(ms);
+	}
 </script>
 
 <!-- F12: bottom-left. The master on/off button sits at the bottom;
@@ -107,6 +116,17 @@
 		>
 			T
 		</button>
+		{#if canPlaceCue}
+			<button
+				class="tool-btn"
+				class:active={tool === 'cue'}
+				onclick={() => markup.setTool('cue')}
+				aria-label={m.markup_tool_cue()}
+				aria-pressed={tool === 'cue'}
+			>
+				▶
+			</button>
+		{/if}
 		<button
 			class="tool-btn"
 			class:active={tool === 'eraser'}
@@ -120,7 +140,7 @@
 			↺
 		</button>
 	</div>
-	{#if tool === 'pen' || tool === 'stamp' || tool === 'text'}
+	{#if tool === 'pen' || tool === 'stamp' || tool === 'text' || tool === 'cue'}
 		<div class="option-row">
 			{#each PEN_COLORS as color (color)}
 				<button
@@ -193,6 +213,34 @@
 				aria-label={m.markup_text_size()}
 			/>
 			<span class="text-size-preview text-size-preview--large" aria-hidden="true">T</span>
+		</div>
+	{/if}
+	{#if tool === 'cue'}
+		<p class="cue-hint">{m.markup_cue_hint()}</p>
+	{/if}
+	{#if selectedCue}
+		<!-- F22: re-time / delete the selected cue. Only shown while a cue is
+		     selected in annotation mode and editable by this caller. -->
+		<div class="cue-edit">
+			<label class="cue-edit-label" for="cue-time-input">{m.markup_cue_time_label()}</label>
+			<input
+				id="cue-time-input"
+				class="cue-time-input"
+				type="text"
+				inputmode="numeric"
+				value={msToMinSec(selectedCue.timeMs ?? 0)}
+				placeholder={m.markup_cue_time_placeholder()}
+				aria-label={m.markup_cue_time_label()}
+				onchange={(event) => commitCueTime((event.currentTarget as HTMLInputElement).value)}
+			/>
+			<button
+				type="button"
+				class="cue-edit-delete"
+				onclick={() => markup.deleteSelectedCue()}
+				aria-label={m.markup_text_delete()}
+			>
+				×
+			</button>
 		</div>
 	{/if}
 	{#if markupError}
@@ -532,5 +580,61 @@
 		max-width: 14rem;
 		font-size: 0.75rem;
 		color: var(--danger);
+	}
+
+	.cue-hint {
+		margin: 0;
+		max-width: 14rem;
+		padding: 0 0.25rem;
+		font-size: 0.72rem;
+		color: var(--text-muted);
+	}
+
+	.cue-edit {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.1rem 0.25rem 0.15rem;
+	}
+
+	.cue-edit-label {
+		font-size: 0.7rem;
+		font-weight: 650;
+		color: var(--text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.cue-time-input {
+		width: 4.5rem;
+		font: inherit;
+		font-size: 0.8rem;
+		font-variant-numeric: tabular-nums;
+		text-align: center;
+		color: var(--text);
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		padding: 0.2rem 0.3rem;
+	}
+
+	.cue-edit-delete {
+		width: 1.75rem;
+		height: 1.75rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		background: transparent;
+		color: var(--danger);
+		border-radius: var(--radius-full);
+		font-size: 1.05rem;
+		font-weight: 700;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.cue-edit-delete:hover {
+		background: var(--surface-2);
 	}
 </style>

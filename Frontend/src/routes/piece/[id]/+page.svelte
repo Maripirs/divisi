@@ -39,6 +39,7 @@
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
+	import { listGuestGroupNotes, type PieceNote } from '$lib/api/pieceNotes';
 	import { createAnnotationController } from '$lib/player/annotations.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -82,6 +83,16 @@
 	// guest-accessible demo library), so "back" can return there instead of
 	// the generic library.
 	const guestJoinCode = page.url.searchParams.get('code');
+	// B10 guest password, threaded through the same `?password=` query param
+	// the join page's form uses. Only relevant on the guest path below.
+	const guestPassword = page.url.searchParams.get('password');
+
+	/** F20 guest expansion: the "From the director" notes for a guest
+	 * viewing this piece via a join code. Read-only; the "My notes" section
+	 * is omitted (no session for per-member B5 annotations). */
+	function loadGuestDirectorNotes(): Promise<PieceNote[]> {
+		return listGuestGroupNotes(guestJoinCode ?? '', remoteMeta?.pieceId ?? '', guestPassword ?? undefined);
+	}
 
 	// The admin's chosen tempo for this piece (`PUT
 	// /library/pieces/{id}/default-tempo`, set from a group's Tracks tab),
@@ -225,6 +236,10 @@
 	// "Show director markup" only applies to a group-owned piece.
 	let showMineMarkup = $state(false);
 	let showDirectorMarkup = $state(false);
+	// Gate for the markup-toggle persist `$effect` below: stays false until
+	// `bootstrap()` has restored the stored toggle values, so the effect
+	// can't clobber a stored `true` with the `false` default on first run.
+	let markupPersistReady = false;
 	let tempoBpm = $state(120);
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
@@ -371,6 +386,19 @@
 		if (stored.viewMode && availableViewModes.includes(stored.viewMode)) viewMode = stored.viewMode;
 		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
 		if (stored.pdfZoomLevel !== undefined) pdfZoomLevel = Math.min(2, Math.max(0.5, stored.pdfZoomLevel));
+		// F21: restore the markup layer toggles (the persisted visibility
+		// state, not the transient armed-pencil/tool state).
+		if (stored.showMineMarkup !== undefined) showMineMarkup = stored.showMineMarkup;
+		if (stored.showDirectorMarkup !== undefined) showDirectorMarkup = stored.showDirectorMarkup;
+		// F13: only bring back a stored `'reference'` pick when it can
+		// actually mean something on open: PDF view, and the piece has a
+		// reference recording. Otherwise stay on `'mix'`. Done after
+		// `viewMode` is restored above. The `!hasPlayer` PDF-only case is
+		// already forced to `'reference'` by its own `$effect`.
+		if (stored.audioSource === 'reference' && viewMode === 'pdf' && piece?.youtubeUrl) {
+			audioSource = 'reference';
+		}
+		markupPersistReady = true;
 		// F5: PDF-only piece — no music file to parse or play, so there's
 		// nothing left for the MIDI/audio pipeline below to do. Captured to a
 		// local rather than narrowing `piece.load` itself, which TS won't
@@ -511,6 +539,9 @@
 		if (audioSource === 'reference') referencePlayer?.pause();
 		else player?.pause();
 		audioSource = source;
+		// F13: remember the pick per piece (restored on reopen only under
+		// the PDF-view + reference-recording guard in `bootstrap()`).
+		persistSettings();
 	}
 
 	async function togglePlay() {
@@ -551,7 +582,10 @@
 			balance,
 			viewMode,
 			zoomLevel,
-			pdfZoomLevel
+			pdfZoomLevel,
+			showMineMarkup,
+			showDirectorMarkup,
+			audioSource
 		});
 	}
 
@@ -763,6 +797,18 @@
 		persistSettings();
 	});
 
+	// F21: `showMineMarkup` / `showDirectorMarkup` are two-way-bound into
+	// `PdfView` (Practice Setup drawer + the view itself), so like the zoom
+	// levels above they have no page-level setter to hang a `persistSettings()`
+	// call off. Guarded on `markupPersistReady` so it doesn't write the
+	// `false` defaults before `bootstrap()` has restored the stored values.
+	$effect(() => {
+		showMineMarkup;
+		showDirectorMarkup;
+		if (!markupPersistReady) return;
+		persistSettings();
+	});
+
 	function formatTime(ms: number): string {
 		const totalSeconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
@@ -870,6 +916,12 @@
 				groupId={remoteMeta.groupId}
 				canManage={canManagePieceNotes}
 			/>
+		{:else if guestJoinCode && remoteMeta && !page.data.user}
+			<!-- F20 guest expansion: a guest viewing this piece via a join
+			     code sees the "From the director" notes read-only (Backend
+			     B16 guest route, gated on the group's Tracks page being
+			     public). No "My notes" section — a guest has no session. -->
+			<PieceNotesPanel pieceId={remoteMeta.pieceId} directorLoader={loadGuestDirectorNotes} />
 		{/if}
 
 		{#if piece?.youtubeUrl && !hasPdfPane}
@@ -963,6 +1015,14 @@
 						isOwningGroupAdmin={isOwningGroupAdmin && !!remoteMeta?.groupId}
 						bind:showMineMarkup
 						bind:showDirectorMarkup
+						audioSourceIsReference={audioSource === 'reference'}
+						getReferencePositionMs={() => referencePlayer?.positionMs ?? null}
+						canPlaceCue={() => !!piece?.youtubeUrl && audioSource === 'reference'}
+						onCueTap={(ms) => {
+							if (audioSource !== 'reference') setAudioSource('reference');
+							referencePlayer?.seek(ms);
+							referencePlayer?.play();
+						}}
 					/>
 					</div>
 				</div>

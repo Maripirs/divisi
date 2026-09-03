@@ -77,6 +77,19 @@ export interface GuestWeeklyNote {
 	noteDate: string;
 }
 
+/** Mirrors the Backend's `PieceRehearsalNoteOut` (B16), as seen via the
+ * guest `/guest/{code}/pieces/{pieceId}/rehearsal-notes` route — the
+ * "From the director" notes, read-only. Only returned at all when the
+ * group's `tracks` page is enabled *and* `audience: everyone` (B16's
+ * 2026-09-02 guest expansion; deliberately a different gate from the
+ * member list, which uses `weekly_notes`). Only the `body`/`created_at`
+ * fields are surfaced — a piece note is just a line of text. */
+export interface GuestPieceRehearsalNote {
+	id: string;
+	body: string;
+	createdAt: string;
+}
+
 export class JoinCodeNotFoundError extends Error {
 	constructor(code: string) {
 		super(`No group found for join code "${code}"`);
@@ -157,6 +170,12 @@ interface GuestWeeklyNoteResponse {
 	title: string;
 	body: string;
 	note_date: string;
+}
+
+interface GuestPieceRehearsalNoteResponse {
+	id: string;
+	body: string;
+	created_at: string;
 }
 
 interface GuestRequestOptions {
@@ -287,4 +306,29 @@ export async function listGuestWeeklyNotes(
 		body: n.body,
 		noteDate: n.note_date
 	}));
+}
+
+/** A piece's "From the director" rehearsal notes (Backend B16), guest-visible
+ * only when the group's `tracks` page is enabled and `audience: everyone`.
+ * Same "only call after `resolveJoinCode` confirmed the code/password"
+ * convention as `listGuestHomework` — a 404 here means "this group doesn't
+ * expose these notes to guests" (or the piece isn't distributed to it), not
+ * a real error. */
+export async function listGuestPieceRehearsalNotes(
+	code: string,
+	pieceId: string,
+	{ password, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestPieceRehearsalNote[]> {
+	const res = await guestFetch(
+		guestUrl(
+			`/guest/${encodeURIComponent(code)}/pieces/${encodeURIComponent(pieceId)}/rehearsal-notes`,
+			password
+		),
+		fetchFn
+	);
+	if (res.status === 401) throw new GuestPasswordRequiredError();
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestPieceRehearsalNoteResponse[] = await res.json();
+	return body.map((n) => ({ id: n.id, body: n.body, createdAt: n.created_at }));
 }

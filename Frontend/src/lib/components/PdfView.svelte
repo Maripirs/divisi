@@ -45,7 +45,11 @@
 		currentUserId,
 		isOwningGroupAdmin = false,
 		showMineMarkup = $bindable(false),
-		showDirectorMarkup = $bindable(false)
+		showDirectorMarkup = $bindable(false),
+		audioSourceIsReference = false,
+		getReferencePositionMs = () => null,
+		canPlaceCue = () => false,
+		onCueTap = () => {}
 	}: {
 		pdfUrl: string;
 		zoom?: number;
@@ -79,6 +83,18 @@
 		 * floating on the PDF. */
 		showMineMarkup?: boolean;
 		showDirectorMarkup?: boolean;
+		/** F22: whether the bottom bar's audio source is the reference
+		 * recording. Cues only render (and the cue tool only appears) then. */
+		audioSourceIsReference?: boolean;
+		/** F22: the reference recording's current playhead in ms (or `null`
+		 * before its player exists), captured when a cue is dropped. */
+		getReferencePositionMs?: () => number | null;
+		/** F22: whether the cue tool may be used right now (piece has a
+		 * reference recording and it is the selected audio source). */
+		canPlaceCue?: () => boolean;
+		/** F22: tapping an existing cue asks the host (which owns the reference
+		 * player) to seek there and play. */
+		onCueTap?: (timeMs: number) => void;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -122,7 +138,11 @@
 		setShowDirector: (value) => (showDirectorMarkup = value),
 		isOwningGroupAdmin: () => isOwningGroupAdmin,
 		aspectFor: (pageIndex) => pageAspects[pageIndex] ?? 1.4142,
-		canvasFor: (pageIndex) => canvasRefs[pageIndex]
+		canvasFor: (pageIndex) => canvasRefs[pageIndex],
+		getReferencePositionMs: () => getReferencePositionMs(),
+		canPlaceCue: () => canPlaceCue() && !!pieceId,
+		audioSourceIsReference: () => audioSourceIsReference,
+		onCueTap: (timeMs) => onCueTap(timeMs)
 	});
 
 	// Load marks for the current `(pieceId, showMine, showDirector)`, and

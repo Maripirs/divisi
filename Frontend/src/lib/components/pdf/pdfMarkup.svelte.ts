@@ -22,6 +22,7 @@
 
 import {
 	MarkupApiError,
+	createCue,
 	createStamp,
 	createStroke,
 	createText,
@@ -39,7 +40,15 @@ import { m } from '$lib/paraglide/messages';
  * on the shared layer by accident. */
 export type MarkupDrawTarget = 'mine' | 'director';
 
-export type MarkupTool = 'pen' | 'stamp' | 'text' | 'eraser' | null;
+export type MarkupTool = 'pen' | 'stamp' | 'text' | 'eraser' | 'cue' | null;
+
+type ActiveCueDrag = {
+	markId: string;
+	pageIndex: number;
+	start: [number, number];
+	origin: [number, number];
+	moved: boolean;
+} | null;
 
 // `null` closed; otherwise a brand-new text being written (`markId` unset) or
 // an existing text mark being edited.
@@ -123,6 +132,25 @@ export function distanceToStroke(points: [number, number][], point: [number, num
 	return min;
 }
 
+/** F22 cue-point time helpers. A cue stores milliseconds into the reference
+ * recording; the edit UI shows/takes plain `m:ss`. Pure and exported so the
+ * branch table is unit-testable without the runes factory (same split as the
+ * geometry helpers above). */
+export function msToMinSec(ms: number): string {
+	const total = Math.max(0, Math.round(ms / 1000));
+	const minutes = Math.floor(total / 60);
+	const seconds = total % 60;
+	return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** Parses `m:ss` (seconds 0-59) into milliseconds, or `null` when the string
+ * isn't a well-formed timestamp. */
+export function parseMinSec(value: string): number | null {
+	const match = value.trim().match(/^(\d+):([0-5]?\d)$/);
+	if (!match) return null;
+	return (Number(match[1]) * 60 + Number(match[2])) * 1000;
+}
+
 /** F21 gating, pulled out as a pure fn so the branch matrix is unit-testable
  * without instantiating the runes factory (same split as the geometry
  * helpers above). A `personal` mark is its creator's to move / edit / erase;
@@ -182,6 +210,20 @@ export interface PdfMarkupControllerDeps {
 	/** `canvasRefs[pageIndex]`. The controller cannot see `canvasRefs`
 	 * directly. */
 	canvasFor: (pageIndex: number) => HTMLCanvasElement | undefined;
+	/** F22: the reference recording's current playhead in ms, or `null` when
+	 * no reference player exists yet. Captured when a cue is dropped. */
+	getReferencePositionMs: () => number | null;
+	/** F22: whether the cue tool may be used — the piece has a reference
+	 * recording and the bottom bar's audio source is that recording. Gates
+	 * the toolbar button and cue placement. */
+	canPlaceCue: () => boolean;
+	/** F22: whether the bottom bar's audio source is the reference recording.
+	 * Cues are meaningless against "My mix", so they are hidden (not just
+	 * un-editable) when this is false. */
+	audioSourceIsReference: () => boolean;
+	/** F22: tapping an existing cue jumps the reference recording here and
+	 * plays. The host owns the reference player, so it does the seek/play. */
+	onCueTap: (timeMs: number) => void;
 }
 
 export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
@@ -221,6 +263,11 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 	let markupError = $state<string | null>(null);
 	let textEditor = $state<TextEditorState>(null);
 	let activeTextDrag = $state<ActiveTextDrag>(null);
+	// F22: an in-progress cue drag, and which cue's mm:ss editor is open in
+	// the toolbar. `selectedCueId` only means anything while annotation mode
+	// is on and the cue is interactive (see `selectedCue`).
+	let activeCueDrag = $state<ActiveCueDrag>(null);
+	let selectedCueId = $state<string | null>(null);
 	// Bumped on every focus request. `PdfMarkupLayer` owns the text input's ref
 	// and re-focuses off an `$effect` that depends on this counter, so the
 	// blur-guard re-focus path works without the controller touching the DOM.
@@ -286,6 +333,8 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			activeStrokePage = -1;
 			textEditor = null;
 			activeTextDrag = null;
+			activeCueDrag = null;
+			selectedCueId = null;
 		}
 		if (drawTarget === 'director' && !(annotationMode && deps.isOwningGroupAdmin())) {
 			drawTarget = 'mine';
@@ -301,10 +350,14 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		const pageNumber = pageIndex + 1;
 		const showMine = deps.getShowMine();
 		const showDirector = deps.getShowDirector();
+		// F22: a cue's timestamp only means anything against the reference
+		// recording — hide cues entirely under "My mix" and in score view.
+		const showCues = deps.audioSourceIsReference();
 		return marks.filter(
 			(mark) =>
 				mark.pageNumber === pageNumber &&
-				(mark.scope === 'group' ? showDirector : showMine)
+				(mark.scope === 'group' ? showDirector : showMine) &&
+				(mark.kind === 'cue' ? showCues : true)
 		);
 	}
 
@@ -461,6 +514,8 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		tool = tool === next ? null : next;
 		activeStroke = null;
 		activeTextDrag = null;
+		activeCueDrag = null;
+		selectedCueId = null;
 	}
 
 	/** Flips the master toggle. Arming it turns "Show my markup" on if it was
@@ -478,6 +533,8 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			activeStrokePage = -1;
 			textEditor = null;
 			activeTextDrag = null;
+			activeCueDrag = null;
+			selectedCueId = null;
 			drawTarget = 'mine';
 		}
 	}
@@ -528,6 +585,9 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 			// it before anything could be typed.
 			event.preventDefault();
 			openTextEditorForCreate(pageIndex, point);
+		} else if (tool === 'cue') {
+			event.preventDefault();
+			void placeCue(pageIndex, point);
 		} else if (tool === 'eraser') {
 			eraseNear(pageIndex, point);
 		}
@@ -580,6 +640,136 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		} catch (err) {
 			markupError = markupErrorMessage(err);
 		}
+	}
+
+	/** F22: drop a cue at `point`, capturing the reference recording's
+	 * current playhead. A null playhead (no reference player yet) saves at
+	 * `0`; the mm:ss editor can re-time it afterward. Same scope as any other
+	 * new mark (`personal`, or `group` when the draw target is the director
+	 * layer). */
+	async function placeCue(pageIndex: number, point: [number, number]): Promise<void> {
+		const pieceId = deps.pieceId();
+		if (!pieceId || !deps.canPlaceCue()) return;
+		markupError = null;
+		try {
+			const created = await createCue(
+				pieceId,
+				pageIndex + 1,
+				penColor,
+				point[0],
+				point[1],
+				Math.max(0, Math.round(deps.getReferencePositionMs() ?? 0)),
+				currentScope()
+			);
+			marks = [...marks, created];
+			recentMarkIds = [...recentMarkIds, created.id];
+			selectedCueId = created.id;
+		} catch (err) {
+			markupError = markupErrorMessage(err);
+		}
+	}
+
+	/** Whether tapping this cue right now should edit it (annotation mode +
+	 * interactive) rather than jump the recording. */
+	function cueIsEditable(mark: MarkupMark): boolean {
+		return annotationMode && isMarkInteractive(mark);
+	}
+
+	function handleCuePointerDown(event: PointerEvent, mark: MarkupMark, pageIndex: number): void {
+		if (mark.kind !== 'cue') return;
+		// A cue is always its own interaction (play or edit), never a canvas
+		// draw underneath it.
+		event.stopPropagation();
+		if (!cueIsEditable(mark) || mark.x === null || mark.y === null) return;
+		event.preventDefault();
+		const point = pointFromEvent(event, pageIndex);
+		if (!point) return;
+		(event.currentTarget as Element).setPointerCapture(event.pointerId);
+		activeCueDrag = {
+			markId: mark.id,
+			pageIndex,
+			start: point,
+			origin: [mark.x, mark.y],
+			moved: false
+		};
+	}
+
+	function handleCuePointerMove(event: PointerEvent): void {
+		const drag = activeCueDrag;
+		if (!drag) return;
+		event.stopPropagation();
+		const point = pointFromEvent(event, drag.pageIndex);
+		if (!point) return;
+		const nextX = Math.max(0, Math.min(1, drag.origin[0] + point[0] - drag.start[0]));
+		const aspect = deps.aspectFor(drag.pageIndex);
+		const nextY = Math.max(0, Math.min(aspect, drag.origin[1] + point[1] - drag.start[1]));
+		const moved = drag.moved || Math.hypot(nextX - drag.origin[0], nextY - drag.origin[1]) > 0.006;
+		activeCueDrag = { ...drag, moved };
+		marks = marks.map((candidate) =>
+			candidate.id === drag.markId ? { ...candidate, x: nextX, y: nextY } : candidate
+		);
+	}
+
+	async function handleCuePointerUp(event: PointerEvent, mark: MarkupMark): Promise<void> {
+		if (mark.kind !== 'cue') return;
+		event.stopPropagation();
+		const drag = activeCueDrag;
+		if (!drag || drag.markId !== mark.id) {
+			// No drag was started: a plain tap.
+			if (!cueIsEditable(mark)) deps.onCueTap(mark.timeMs ?? 0);
+			else selectedCueId = selectedCueId === mark.id ? null : mark.id;
+			return;
+		}
+		activeCueDrag = null;
+		if (!drag.moved) {
+			selectedCueId = selectedCueId === mark.id ? null : mark.id;
+			return;
+		}
+		const current = marks.find((candidate) => candidate.id === mark.id) ?? mark;
+		const pieceId = deps.pieceId();
+		if (!pieceId || current.x === null || current.y === null) return;
+		markupError = null;
+		try {
+			const updated = await updateMark(pieceId, current.id, { x: current.x, y: current.y });
+			marks = marks.map((candidate) => (candidate.id === updated.id ? updated : candidate));
+		} catch (err) {
+			marks = marks.map((candidate) =>
+				candidate.id === mark.id ? { ...candidate, x: drag.origin[0], y: drag.origin[1] } : candidate
+			);
+			markupError = markupErrorMessage(err);
+		}
+	}
+
+	function handleCuePointerCancel(mark: MarkupMark): void {
+		const drag = activeCueDrag;
+		if (!drag || drag.markId !== mark.id) return;
+		activeCueDrag = null;
+		marks = marks.map((candidate) =>
+			candidate.id === mark.id ? { ...candidate, x: drag.origin[0], y: drag.origin[1] } : candidate
+		);
+	}
+
+	/** Re-time the cue whose mm:ss editor is open. Optimistic, with a Backend
+	 * round trip that reconciles. */
+	async function setSelectedCueTime(ms: number): Promise<void> {
+		const id = selectedCueId;
+		const pieceId = deps.pieceId();
+		if (!id || !pieceId) return;
+		const safe = Math.max(0, Math.round(ms));
+		marks = marks.map((mark) => (mark.id === id ? { ...mark, timeMs: safe } : mark));
+		markupError = null;
+		try {
+			const updated = await updateMark(pieceId, id, { timeMs: safe });
+			marks = marks.map((mark) => (mark.id === updated.id ? updated : mark));
+		} catch (err) {
+			markupError = markupErrorMessage(err);
+		}
+	}
+
+	function deleteSelectedCue(): void {
+		const id = selectedCueId;
+		selectedCueId = null;
+		if (id) void removeMark(id);
 	}
 
 	function handleTextPointerDown(event: PointerEvent, mark: MarkupMark, pageIndex: number): void {
@@ -727,6 +917,23 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		get showDirector() {
 			return deps.getShowDirector();
 		},
+		/** F22: whether the cue tool should appear (reference recording present
+		 * and selected as the audio source). */
+		get canPlaceCue() {
+			return deps.canPlaceCue();
+		},
+		get selectedCueId() {
+			return selectedCueId;
+		},
+		/** The cue whose mm:ss editor the toolbar should show: a selected cue
+		 * that is genuinely editable right now (annotation mode + interactive).
+		 * `null` otherwise, so the toolbar row simply isn't rendered. */
+		get selectedCue(): MarkupMark | null {
+			if (!selectedCueId) return null;
+			const mark = marks.find((candidate) => candidate.id === selectedCueId);
+			if (!mark || mark.kind !== 'cue' || !cueIsEditable(mark)) return null;
+			return mark;
+		},
 		get tool() {
 			return tool;
 		},
@@ -787,6 +994,12 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		handleTextPointerMove,
 		handleTextPointerUp,
 		handleTextPointerCancel,
+		handleCuePointerDown,
+		handleCuePointerMove,
+		handleCuePointerUp,
+		handleCuePointerCancel,
+		setSelectedCueTime,
+		deleteSelectedCue,
 		undoLastMark,
 		setPenColor,
 		setPenWidth,

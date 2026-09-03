@@ -39,15 +39,24 @@
 	 * centered global in `shell.css`. */
 	let {
 		pieceId,
-		groupId,
+		groupId = '',
 		canManage = false,
-		chrome = 'details'
+		chrome = 'details',
+		directorLoader = null
 	}: {
 		pieceId: string;
-		groupId: string;
+		groupId?: string;
 		canManage?: boolean;
 		chrome?: 'details' | 'bare';
+		/** F20 guest expansion: when set, the panel is read-only and shows
+		 * *only* the "From the director" section, sourced from this loader
+		 * instead of the authenticated client. The "My notes" section is
+		 * omitted entirely (a guest has no session for per-member B5
+		 * annotations), and every add/edit/delete affordance is gone. */
+		directorLoader?: (() => Promise<PieceNote[]>) | null;
 	} = $props();
+
+	const directorOnly = $derived(!!directorLoader);
 
 	let groupNotes = $state<PieceNote[]>([]);
 	let personalNotes = $state<PieceNote[]>([]);
@@ -76,9 +85,26 @@
 	}
 
 	onMount(async () => {
-		await Promise.all([loadGroup(), loadPersonal()]);
+		if (directorLoader) await loadDirectorOnly();
+		else await Promise.all([loadGroup(), loadPersonal()]);
 		loaded = true;
 	});
+
+	function statusOf(err: unknown): number | undefined {
+		return typeof err === 'object' && err !== null && 'status' in err
+			? (err as { status?: number }).status
+			: undefined;
+	}
+
+	async function loadDirectorOnly() {
+		try {
+			groupNotes = await directorLoader!();
+		} catch (err) {
+			const st = statusOf(err);
+			if (st === 403 || st === 404) groupUnavailable = true;
+			else groupFailed = true;
+		}
+	}
 
 	async function loadGroup() {
 		try {
@@ -189,9 +215,17 @@
 			<p class="pn-muted">{m.piece_notes_loading()}</p>
 		{:else}
 			{#if !groupUnavailable}
-				{@render section('group', m.piece_notes_from_director(), groupNotes, groupFailed, canManage)}
+				{@render section(
+					'group',
+					m.piece_notes_from_director(),
+					groupNotes,
+					groupFailed,
+					directorOnly ? false : canManage
+				)}
 			{/if}
-			{@render section('personal', m.piece_notes_mine(), personalNotes, personalFailed, true)}
+			{#if !directorOnly}
+				{@render section('personal', m.piece_notes_mine(), personalNotes, personalFailed, true)}
+			{/if}
 		{/if}
 	</div>
 {/snippet}

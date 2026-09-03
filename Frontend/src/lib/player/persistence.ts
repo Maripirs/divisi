@@ -21,6 +21,14 @@ export interface PersistedSettings {
 	viewMode: ViewMode;
 	zoomLevel: number;
 	pdfZoomLevel: number;
+	// F21 markup layer visibility toggles + F13 audio source, persisted
+	// per piece so reopening restores the layers and reference/mix pick you
+	// last used. All optional: older stored blobs predate them, and the
+	// audio source is only ever restored under the guard in the piece page
+	// (PDF view + a reference recording actually present).
+	showMineMarkup?: boolean;
+	showDirectorMarkup?: boolean;
+	audioSource?: 'mix' | 'reference';
 }
 
 export function settingsStorageKey(id: string): string {

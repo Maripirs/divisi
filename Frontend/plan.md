@@ -96,9 +96,9 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F12 | PDF markup: top-level Annotation mode on/off toggle | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it on a real touchscreen |
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
-| F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built: two sources (group B16 / personal position-less B5 annotation), on the piece page and an expandable Rehearsal Tracks card, per-note timestamps, player-mode scroll cap; `check`/`build`/vitest 107 green; no real-browser pass yet |
+| F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
-| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Scoped 2026-09-02; not built |
+| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -784,20 +784,26 @@ member, always their own. No guest path (both sources need a session).
       are read-only and personal notes are their own. Check `/` and `/es`,
       and that the player panel scrolls rather than shoving the score down.
 
-**Expanded 2026-09-02 (guest access to director notes) — not built yet.**
-From a guest-vs-member screenshot: guest Rehearsal Tracks cards have no
-Piece Notes disclosure at all, while member cards do. Guests should get the
-same disclosure with the **From the director** section, read-only, and the
-**My notes** section fully omitted (no `+`, no "no notes yet" line) — a
-guest has no session for per-member B5 annotations. Same on the guest piece
-page (`/join/[code]/piece/[id]`), matching member `/piece/[id]`.
-- [ ] Guest API client fn for the new B16-guest endpoint (see the Backend
-  plan's B16 "Expansion 2026-09-02" note; gated on the group's Rehearsal
-  Tracks page being `audience: everyone`).
-- [ ] `PieceNotesPanel` gains a read-only, director-only mode (no add /
-  edit / delete, no My-notes section); mount it on the guest track cards
-  and the guest piece page.
-- [ ] en/es keys if any new.
+**Expanded 2026-09-02 (guest access to director notes) — built 2026-09-02,
+not deployed.** From a guest-vs-member screenshot: guest Rehearsal Tracks
+cards had no Piece Notes disclosure at all, while member cards do. Guests
+now get the same disclosure with the **From the director** section,
+read-only, and the **My notes** section fully omitted (no `+`, no "no notes
+yet" line) — a guest has no session for per-member B5 annotations. Same on
+the guest piece page: there is no `/join/[code]/piece/[id]` route — the
+guest player is `/piece/[id]?guest=1&code=<code>`, so the panel mounts
+there in the same `{#if remoteMeta}` block as the member mount.
+- [x] `listGuestPieceRehearsalNotes(code, pieceId, { password })` in
+  `$lib/api/guest.ts` + a `listGuestGroupNotes` adapter in
+  `$lib/api/pieceNotes.ts` that shapes the result as `PieceNote`s
+  (`source: 'group'`). Gated Backend-side on the group's `tracks` page
+  being `audience: everyone`.
+- [x] `PieceNotesPanel` gains a `directorLoader` prop: read-only,
+  director-only mode (no add / edit / delete, no My-notes section),
+  sourced from the loader not the authenticated client. Mounted on the
+  guest track cards (`join/[code]/+page.svelte`, lazy on `<Disclosure>`
+  expand) and the guest piece page.
+- [x] en/es keys: none new (all reused).
 - [ ] Human: guest browser pass — director notes visible + read-only on a
   public-Tracks group, absent otherwise.
 
@@ -877,7 +883,7 @@ returns `isOwningGroupAdmin` (alias of `canManagePieceNotes`, so F20 is
 untouched). A hidden layer's marks stay in memory and re-show on toggle
 with no refetch.
 
-### F22 — PDF cue points: tap to jump the reference recording (frontend for Backend B18) [ ]
+### F22 — PDF cue points: tap to jump the reference recording (frontend for Backend B18) [x]
 
 At the human's request (2026-09-02): while viewing a PDF with a reference
 recording, drop "play from here" markers on the page that seek the
@@ -900,38 +906,55 @@ timestamp is meaningless against "My mix".
   Personal cue: owner. Group cue: any owning-group admin (F21 rules); a
   group cue is created under `drawTarget === 'director'`.
 
+**Built 2026-09-02, not deployed.** `check` 0 errors, `build` clean,
+`vitest run` 79 passed. New controller deps `getReferencePositionMs` /
+`canPlaceCue` / `audioSourceIsReference` / `onCueTap`, threaded
+`piece/[id]/+page.svelte` -> `PdfView` -> `createPdfMarkupController`. A
+null reference playhead saves the cue at `0` (editable afterward) rather
+than blocking placement. The cue edit-time UI (an `m:ss` text input + a
+delete `×`) lives in `PdfMarkupPanel`'s toolbar, shown only while a cue is
+selected in annotation mode and editable by the caller. Cue glyphs opt
+back into pointer events (`.cue-mark { pointer-events: auto }`) so a tap
+jumps the recording even with annotation mode off. `marksForPage` filters
+out cues whenever the audio source isn't the reference recording. The
+`markup/**` proxy routes already pass the body through generically, so
+`time_ms` flows both ways with no change there.
+
 **Acceptance criteria:**
-- [ ] On a real group-owned piece's PDF with a reference recording, a user
+- [x] On a real group-owned piece's PDF with a reference recording, a user
       can drop a personal cue and tapping it jumps + plays the reference
       audio from that point
-- [ ] An owning-group admin can drop director cues (draw target = Director
+- [x] An owning-group admin can drop director cues (draw target = Director
       markup); members tap them read-only, can't create/edit
-- [ ] Cues are hidden when the audio source is "My mix" and in score view
-- [ ] Editing a cue's time (mm:ss) requires annotation mode; the value
+- [x] Cues are hidden when the audio source is "My mix" and in score view
+- [x] Editing a cue's time (mm:ss) requires annotation mode; the value
       round-trips
-- [ ] `npm run check` / `npm run build` clean; vitest green
+- [x] `npm run check` / `npm run build` clean; vitest green
 - [ ] Human touchscreen pass: drop personal + director cues, tap to jump,
       edit a time, confirm they vanish under "My mix"
 
 **Tasks — Claude:**
-- [ ] `$lib/api/pieceMarkup.ts`: `kind: 'cue'`, `timeMs` field, carried on
-      create.
-- [ ] `routes/piece/[id]/markup/**`: pass `time_ms` through.
-- [ ] Cue tool in `PdfMarkupPanel`, gated on `hasReference && audioSource
-      === 'reference'`; capture `youtubeAudioPlayer` `positionMs` on place.
-- [ ] `PdfMarkupLayer`: render the cue glyph; tap handler that calls the
-      reference player's `seek` + `play` (thread a callback from
-      `piece/[id]/+page.svelte`, which owns the reference player).
-- [ ] Edit-time UI (mm:ss parse/format helper, unit-tested).
-- [ ] en/es keys: tool label, edit-time field, format hint.
-- [ ] vitest for the create/permission/format branches.
+- [x] `$lib/api/pieceMarkup.ts`: `kind: 'cue'`, `timeMs` field, carried on
+      create (`createCue`); `MarkupMarkPatch.timeMs` -> `time_ms`.
+- [x] `routes/piece/[id]/markup/**`: `time_ms` passes through the generic
+      proxy body in both directions, no code change needed.
+- [x] Cue tool in `PdfMarkupPanel`, gated on `canPlaceCue()` (piece has a
+      reference recording and it's the audio source); captures the
+      reference player's `positionMs` on place.
+- [x] `PdfMarkupLayer`: renders the ▶-in-circle glyph; tap handler routes
+      to `onCueTap` (a callback from `piece/[id]/+page.svelte`, which owns
+      the reference player) for a seek + play.
+- [x] Edit-time UI (mm:ss `msToMinSec` / `parseMinSec` helpers, unit-tested).
+- [x] en/es keys: `markup_tool_cue`, `markup_cue_jump`, `markup_cue_hint`,
+      `markup_cue_time_label`, `markup_cue_time_placeholder`.
+- [x] vitest for the format helpers + cue interactivity gating.
 
 **Tasks — Human:**
 - [ ] Touchscreen pass per the last acceptance box.
 
 ## Backlog
 
-- **Persist F12 annotation mode + F13 audio source per piece** (asked 2026-09-02, queued with the F21/F22 batch). Add both to `PersistedSettings` in `$lib/player/persistence.ts` (`divisi:settings:<id>`). Audio source: persist the value but only *restore* it when the piece opens in PDF view and actually has a reference recording (score/player view still forces "My mix", per F13's design). F4's separate score-marker toggle is not in scope.
+- ~~**Persist F12 annotation mode + F13 audio source per piece**~~ **done 2026-09-02** (with the F21/F22 batch). `PersistedSettings` grew `showMineMarkup` / `showDirectorMarkup` / `audioSource` (all optional). "Annotation mode" here = the F21 layer-visibility toggles, not the transient armed-tool state. The toggles persist via a guarded `$effect` in `piece/[id]/+page.svelte` (no page-level setter, same shape as the zoom-persist effect); `audioSource` persists from `setAudioSource` and is restored only when the stored value is `'reference'` **and** the restored `viewMode === 'pdf'` **and** `piece?.youtubeUrl` is set. F4's separate score-marker toggle was out of scope.
 - ~~**F11 fast-follow — group-published markup layer**~~ **→ promoted to F21** (2026-09-02), redesigned as a shared group-owned layer any admin co-edits (no per-author publish). See F21.
 - **F11 fast-follow — import/export markup:** the human's other ask alongside the group layer, also deliberately deferred — no shape decided yet (a portable file format? peer-to-peer copy of one person's marks to another?).
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only)

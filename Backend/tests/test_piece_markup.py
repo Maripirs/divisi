@@ -351,6 +351,115 @@ def test_owner_can_delete_others_cannot(client):
     assert remaining.json() == []
 
 
+def _cue_body(piece_id, scope=None, time_ms=12345, x=0.3, y=0.4):
+    body = {
+        "piece_id": piece_id,
+        "page_number": 1,
+        "kind": "cue",
+        "color": "#2563eb",
+        "x": x,
+        "y": y,
+        "time_ms": time_ms,
+    }
+    if scope is not None:
+        body["scope"] = scope
+    return body
+
+
+def test_create_personal_cue_with_time_ms(client):
+    headers = _register_and_login(client, "cue-owner@example.com")
+    piece_id = _upload_piece(client, headers)
+
+    resp = client.post("/piece-markup", json=_cue_body(piece_id, time_ms=45000), headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["kind"] == "cue"
+    assert body["time_ms"] == 45000
+    assert body["scope"] == "personal"
+
+    listed = client.get("/piece-markup", params={"piece_id": piece_id}, headers=headers)
+    assert [m["time_ms"] for m in listed.json()] == [45000]
+
+
+def test_create_group_cue_as_owning_group_admin(client):
+    admin_headers = _register_and_login(client, "cue-gadmin@example.com")
+    _, piece_id = _make_group_piece(client, admin_headers)
+
+    resp = client.post(
+        "/piece-markup", json=_cue_body(piece_id, scope="group", time_ms=8000), headers=admin_headers
+    )
+    assert resp.status_code == 201
+    assert resp.json()["scope"] == "group"
+    assert resp.json()["time_ms"] == 8000
+
+
+def test_cue_requires_time_ms(client):
+    headers = _register_and_login(client, "cue-owner2@example.com")
+    piece_id = _upload_piece(client, headers)
+
+    body = _cue_body(piece_id)
+    del body["time_ms"]
+    assert client.post("/piece-markup", json=body, headers=headers).status_code == 422
+
+    negative = _cue_body(piece_id, time_ms=-1)
+    assert client.post("/piece-markup", json=negative, headers=headers).status_code == 422
+
+
+def test_time_ms_rejected_on_a_stroke(client):
+    headers = _register_and_login(client, "cue-owner3@example.com")
+    piece_id = _upload_piece(client, headers)
+
+    resp = client.post(
+        "/piece-markup",
+        json={
+            "piece_id": piece_id,
+            "page_number": 1,
+            "kind": "stroke",
+            "color": "#000",
+            "width": 0.003,
+            "points": [[0, 0], [1, 1]],
+            "time_ms": 1000,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_member_cannot_write_group_cue_but_can_read_it(client):
+    admin_headers = _register_and_login(client, "cue-gadmin2@example.com")
+    member_headers = _register_and_login(client, "cue-member2@example.com")
+    _, piece_id = _make_group_piece(client, admin_headers, ["cue-member2@example.com"])
+
+    cue = client.post(
+        "/piece-markup", json=_cue_body(piece_id, scope="group", time_ms=5000), headers=admin_headers
+    ).json()
+
+    # A plain member can read the group cue...
+    group = client.get(
+        "/piece-markup", params={"piece_id": piece_id, "scope": "group"}, headers=member_headers
+    )
+    assert group.status_code == 200
+    assert {m["id"] for m in group.json()} == {cue["id"]}
+
+    # ...but can't create or re-time one.
+    assert client.post(
+        "/piece-markup", json=_cue_body(piece_id, scope="group", time_ms=6000), headers=member_headers
+    ).status_code == 403
+    assert client.patch(
+        f"/piece-markup/{cue['id']}", json={"time_ms": 9999}, headers=member_headers
+    ).status_code == 403
+
+
+def test_patch_a_cue_time_ms(client):
+    headers = _register_and_login(client, "cue-owner4@example.com")
+    piece_id = _upload_piece(client, headers)
+
+    cue = client.post("/piece-markup", json=_cue_body(piece_id, time_ms=1000), headers=headers).json()
+    patched = client.patch(f"/piece-markup/{cue['id']}", json={"time_ms": 73210}, headers=headers)
+    assert patched.status_code == 200
+    assert patched.json()["time_ms"] == 73210
+
+
 def test_owner_can_update_text_others_cannot(client):
     owner_headers = _register_and_login(client, "owner6@example.com")
     peer_headers = _register_and_login(client, "peer6@example.com")

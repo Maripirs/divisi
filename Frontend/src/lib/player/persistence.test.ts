@@ -60,4 +60,24 @@ describe('loadPersistedSettings', () => {
 		savePersistedSettings('p1', sample);
 		expect(loadPersistedSettings('p2')).toEqual({});
 	});
+	it('round-trips the F21/F13 markup + audio-source fields', () => {
+		savePersistedSettings('p3', {
+			...sample,
+			showMineMarkup: true,
+			showDirectorMarkup: false,
+			audioSource: 'reference'
+		});
+		expect(loadPersistedSettings('p3')).toMatchObject({
+			showMineMarkup: true,
+			showDirectorMarkup: false,
+			audioSource: 'reference'
+		});
+	});
+	it('loads a pre-F21 blob (no markup / audio-source keys) unchanged', () => {
+		localStorage.setItem(settingsStorageKey('old'), JSON.stringify(sample));
+		const loaded = loadPersistedSettings('old');
+		expect(loaded.showMineMarkup).toBeUndefined();
+		expect(loaded.showDirectorMarkup).toBeUndefined();
+		expect(loaded.audioSource).toBeUndefined();
+	});
 });

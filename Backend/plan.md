@@ -86,7 +86,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B15 | Piece markup: freehand pen strokes + stamps | ✅ Built + live on prod (Neon at head `f9d4c1a7b2e8`) |
 | B16 | Piece rehearsal notes (durable per-piece reminders) | ✅ Built (`f08c969`); migration `d7e3a9c1f6b4` live on prod (Neon at head `f9d4c1a7b2e8`) — frontend is `Frontend/plan.md`'s F20 |
 | B17 | Group markup layer (shared, admin-co-edited) | ⏳ Built 2026-09-02 (`e75f79c`), migration `b1c3d5e7f9a2`, pytest 229 green; not pushed/deployed |
-| B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Scoped 2026-09-02; not built |
+| B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Built 2026-09-02, migration `c3e5a7b9d1f4` (`down_revision = b1c3d5e7f9a2`), single linear head; pytest 240 green; not pushed/deployed |
 
 ### B1 — Backend scaffold [x]
 
@@ -486,23 +486,26 @@ No `source_weekly_note_id` column yet — it only earns its place once
 - [x] Deploy: push `main` — done. Prod Neon is at head `f9d4c1a7b2e8`
   (`alembic current` via `Backend/.env`), so `d7e3a9c1f6b4` is live.
 
-**Expansion 2026-09-02 (guest access to director notes) — not built yet.**
-A guest viewing a group's piece should see the "From the director"
-rehearsal notes read-only (the frontend ask is `Frontend/plan.md`'s F20
-"Expanded" note; principle: guest UX matches member UX minus privacy /
+**Expansion 2026-09-02 (guest access to director notes) — built 2026-09-02,
+not pushed/deployed.** A guest viewing a group's piece sees the "From the
+director" rehearsal notes read-only (the frontend ask is `Frontend/plan.md`'s
+F20 "Expanded" note; principle: guest UX matches member UX minus privacy /
 per-user storage). Personal notes have no guest path.
-- [ ] Guest endpoint in `app/api/routes/guest.py`:
+- [x] Guest endpoint in `app/api/routes/guest.py`:
   `GET /guest/{join_code}/pieces/{piece_id}/rehearsal-notes`. Guest
   password check (same as the other guest routes); the piece must be
-  distributed to that group; returns the piece's `PieceRehearsalNote`
-  list read-only.
-- [ ] Gate: the group's **`tracks` `GroupPage`** must be `enabled` and
-  `audience == everyone` (the human's call, 2026-09-02). Deliberate
+  distributed to that group (`_latest_distributed_version` -> 404);
+  returns the piece's `PieceRehearsalNote` list read-only, filtered to
+  `group_id == group.id`, oldest first (matches the member list).
+- [x] Gate: the group's **`tracks` `GroupPage`** must be `enabled` and
+  `audience == everyone` (the human's call, 2026-09-02) — reuses
+  `require_guest_page_access(..., GroupPage.tracks, ...)`. Deliberate
   asymmetry: the member list still gates on `GroupPage.weekly_notes`
   (B16, unchanged). Unify later if it grates.
-- [ ] Tests: guest sees notes when `tracks` is public, 404 when it isn't,
-  wrong/absent guest password rejected, a piece not distributed to the
-  group 404s.
+- [x] Tests: guest sees notes when `tracks` is public, 404 when it's
+  disabled or members-only, wrong/absent guest password rejected, a piece
+  not distributed to the group 404s. `tests/test_guest.py` +5, suite 240
+  green.
 
 ### B17 — Group markup layer (shared, admin-co-edited) [x]
 
@@ -554,7 +557,7 @@ audit). `scope=personal` list now also filters `scope == 'personal'` so an
 admin's own group mark can't leak into their personal list. Reaches prod
 on the next `main` push.
 
-### B18 — PDF cue points (time anchors on `PieceMarkupMark`) [ ]
+### B18 — PDF cue points (time anchors on `PieceMarkupMark`) [x]
 
 Depends on B17. Feeds `Frontend/plan.md`'s **F22** — tap a marker on the
 PDF to jump the reference recording to a timestamp. A PDF has no inherent
@@ -564,23 +567,30 @@ the reference recording's own timeline.
 (`B17`/`B18` were also used on the `omr-editor` branch for paged-OMR work;
 on `main`, `B18` is this.)
 
+**Built 2026-09-02, not pushed/deployed.** Migration `c3e5a7b9d1f4`
+(`down_revision = b1c3d5e7f9a2`), one linear head. `time_ms` nullable int,
+no server_default (only a `cue` ever sets it). `MarkupMarkUpdate` also
+grew a `time_ms >= 0` validator; the route's `model_dump(exclude_unset=True)`
+loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
+`tests/test_piece_markup.py` +6, full suite 240 green.
+
 **Acceptance criteria:**
-- [ ] `piece_markup_marks.time_ms` (nullable int, milliseconds into the
+- [x] `piece_markup_marks.time_ms` (nullable int, milliseconds into the
   reference recording). Set only for `kind='cue'`.
-- [ ] New `kind` value `cue`. Pydantic validation: a `cue` requires
+- [x] New `kind` value `cue`. Pydantic validation: a `cue` requires
   `time_ms` (>= 0) plus `x`/`y`/`page_number` (positioned like a stamp);
   a non-`cue` kind must leave `time_ms` null.
-- [ ] `time_ms` is on `MarkupMarkCreate` / `MarkupMarkUpdate` /
+- [x] `time_ms` is on `MarkupMarkCreate` / `MarkupMarkUpdate` /
   `MarkupMarkOut`. Editing a cue's `time_ms` follows B17's per-scope edit
   rules (personal → creator, group → any owning-group admin).
-- [ ] `list_marks` returns cues alongside strokes/stamps/text, no query
+- [x] `list_marks` returns cues alongside strokes/stamps/text, no query
   change; both `scope`s carry cues.
 
 **Tasks — Claude:**
-- [ ] Migration: add `time_ms` nullable int to `piece_markup_marks`.
-- [ ] `MarkKind` gains `cue`; `MarkupMarkCreate`/`...Update`/`...Out` gain
+- [x] Migration: add `time_ms` nullable int to `piece_markup_marks`.
+- [x] `MarkKind` gains `cue`; `MarkupMarkCreate`/`...Update`/`...Out` gain
   `time_ms`; extend the existing `model_validator` for the cue field rules.
-- [ ] `tests/test_piece_markup.py`: create a personal cue + an admin group
+- [x] `tests/test_piece_markup.py`: create a personal cue + an admin group
   cue; `time_ms` required for `cue` / rejected for `stroke`; a member reads
   a group cue but can't create/edit one; edit a cue's time.
 

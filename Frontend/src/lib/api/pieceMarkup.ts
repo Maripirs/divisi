@@ -6,7 +6,7 @@ import { ApiError, jsonInit, makeCall } from './client';
  * session-stays-server-side pattern as `$lib/api/annotations.ts`. `x`/`y`/
  * `points` are fractions of the PDF page's own rendered width — see
  * `app.db.models.PieceMarkupMark`'s doc comment for why. */
-export type MarkKind = 'stroke' | 'stamp' | 'text';
+export type MarkKind = 'stroke' | 'stamp' | 'text' | 'cue';
 /** `personal`: the caller's own marks. `group`: the shared director layer on
  * a group-owned piece (any member reads it, any owning-group admin edits it,
  * see Backend B17). */
@@ -26,6 +26,9 @@ export interface MarkupMark {
 	x: number | null;
 	y: number | null;
 	text: string | null;
+	/** F22 / Backend B18: milliseconds into the reference recording a
+	 * `kind: 'cue'` marker seeks to. `null` for every other kind. */
+	timeMs: number | null;
 	createdAt: string;
 }
 
@@ -43,6 +46,7 @@ interface MarkupMarkResponse {
 	x: number | null;
 	y: number | null;
 	text: string | null;
+	time_ms: number | null;
 	created_at: string;
 }
 
@@ -52,6 +56,8 @@ export interface MarkupMarkPatch {
 	text?: string;
 	x?: number;
 	y?: number;
+	/** F22: re-time a cue. Sent to the Backend as `time_ms`. */
+	timeMs?: number;
 }
 
 export class MarkupApiError extends ApiError {
@@ -78,6 +84,7 @@ function toMark(body: MarkupMarkResponse): MarkupMark {
 		x: body.x,
 		y: body.y,
 		text: body.text,
+		timeMs: body.time_ms,
 		createdAt: body.created_at
 	};
 }
@@ -137,8 +144,27 @@ export async function createText(
 	return toMark(await res.json());
 }
 
+export async function createCue(
+	pieceId: string,
+	pageNumber: number,
+	color: string,
+	x: number,
+	y: number,
+	timeMs: number,
+	scope: MarkupScope = 'personal'
+): Promise<MarkupMark> {
+	const res = await call(
+		`/piece/${encodeURIComponent(pieceId)}/markup`,
+		jsonInit('POST', { page_number: pageNumber, kind: 'cue', color, x, y, time_ms: timeMs, scope })
+	);
+	return toMark(await res.json());
+}
+
 export async function updateMark(pieceId: string, markId: string, patch: MarkupMarkPatch): Promise<MarkupMark> {
-	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup/${markId}`, jsonInit('PATCH', patch));
+	const { timeMs, ...rest } = patch;
+	const body: Record<string, unknown> = { ...rest };
+	if (timeMs !== undefined) body.time_ms = timeMs;
+	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup/${markId}`, jsonInit('PATCH', body));
 	return toMark(await res.json());
 }
 
