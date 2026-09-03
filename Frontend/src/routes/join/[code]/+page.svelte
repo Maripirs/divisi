@@ -58,9 +58,16 @@
 			</form>
 		</section>
 	{:else if data.error === 'server'}
+		<!-- Nearly always a cold-started backend (Render free tier, ~30s to
+		     wake): the request that landed here just triggered the wake-up,
+		     so an immediate retry usually succeeds. Offer that inline rather
+		     than making the visitor guess that a manual refresh fixes it. -->
 		<section class="card">
 			<p class="card-title">{m.join_something_went_wrong()}</p>
 			<p class="card-meta">{m.errors_could_not_reach_server()}</p>
+			<button type="button" class="btn btn-primary btn-block" onclick={() => location.reload()}>
+				{m.piece_retry()}
+			</button>
 			<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_back()}</a>
 		</section>
 	{:else if data.group}

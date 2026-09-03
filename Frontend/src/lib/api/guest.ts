@@ -189,15 +189,26 @@ function guestUrl(path: string, password?: string): string {
 	return url.toString();
 }
 
+/** Hard ceiling on a single guest API call, mirroring
+ * `$lib/server/backend.ts`'s `BACKEND_TIMEOUT_MS`. Without it, an SSR
+ * `load` (this module's main caller) hitting a cold-started Render free
+ * instance sits on the `fetch` for 30s+, holding the Cloudflare Worker's
+ * SSR response open until an upstream proxy/browser gives up with an
+ * opaque "can't reach the site" error. Past this we bail and surface the
+ * same synthetic 503 a flat network failure produces, which `+page.ts`
+ * already renders as a clean "try again" card. */
+const GUEST_TIMEOUT_MS = 20_000;
+
 /** Wraps the raw `fetch` call so a genuine network failure (Backend down,
- * DNS/connection error — `fetch` itself throwing rather than resolving to
- * any response) surfaces as the same `GuestApiError` shape every caller
- * already knows how to handle, instead of an unhandled exception. Distinct
- * from a resolved-but-non-2xx response, which callers check via `res.ok`/
- * `res.status` themselves afterward (which is why this stays a thin wrapper
- * over `fetchOr503` and not the shared `makeCall`). */
+ * DNS/connection error, or our own timeout above firing — `fetch` itself
+ * throwing rather than resolving to any response) surfaces as the same
+ * `GuestApiError` shape every caller already knows how to handle, instead
+ * of an unhandled exception. Distinct from a resolved-but-non-2xx
+ * response, which callers check via `res.ok`/`res.status` themselves
+ * afterward (which is why this stays a thin wrapper over `fetchOr503` and
+ * not the shared `makeCall`). */
 async function guestFetch(url: string, fetchFn: typeof fetch): Promise<Response> {
-	return fetchOr503(GuestApiError, url, undefined, fetchFn);
+	return fetchOr503(GuestApiError, url, { signal: AbortSignal.timeout(GUEST_TIMEOUT_MS) }, fetchFn);
 }
 
 async function throwForStatus(res: Response, code: string): Promise<never> {
