@@ -1,0 +1,15 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "divisi-keepwarm",
+	"main": "src/index.js",
+	"compatibility_date": "2026-08-27",
+	// Every 10 minutes. Render free tier spins down after ~15 min idle, so
+	// this keeps a margin. Cloudflare's Cron Triggers are on the free plan
+	// (up to 5 per account) and fire on time, unlike GitHub Actions cron.
+	"triggers": {
+		"crons": ["*/10 * * * *"]
+	},
+	"observability": {
+		"enabled": true
+	}
+}
