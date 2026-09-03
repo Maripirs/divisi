@@ -83,8 +83,9 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B12 | Group page configuration | ✅ Done |
 | B13 | Responsibilities (+ regular rehearsal schedule) | ✅ Done |
 | B14 | Account security (password reset, OAuth scaffold) | ✅ Done (Google OAuth built but hidden pending consent-screen publish; Apple honestly unimplemented) |
-| B15 | Piece markup: freehand pen strokes + stamps | ✅ Built; migration not yet run against production |
-| B16 | Piece rehearsal notes (durable per-piece reminders) | ✅ Built (`f08c969`); migration `d7e3a9c1f6b4` not yet on production (unpushed with the rest of `main`) — frontend is `Frontend/plan.md`'s F20 |
+| B15 | Piece markup: freehand pen strokes + stamps | ✅ Built + live on prod (Neon at head `f9d4c1a7b2e8`) |
+| B16 | Piece rehearsal notes (durable per-piece reminders) | ✅ Built (`f08c969`); migration `d7e3a9c1f6b4` live on prod (Neon at head `f9d4c1a7b2e8`) — frontend is `Frontend/plan.md`'s F20 |
+| B17 | Group markup layer (shared, admin-co-edited) | ⏳ Scoped 2026-09-02; not built |
 
 ### B1 — Backend scaffold [x]
 
@@ -406,7 +407,7 @@ fast-follow (see Backlog), deliberately not built this pass.
 - [x] Tests: create both kinds, Pydantic validation (a stroke needs points+width, a stamp needs type+position), personal-only listing, cross-user access denial, owner-only delete. `pytest` 5/5 in `test_piece_markup.py`, 143/145 full suite (2 pre-existing FluidSynth-on-PATH gaps, unrelated)
 
 **Tasks — Human:**
-- [ ] Deploy this to production — push to `backend/deploy`, and run the new migration against the real Neon Postgres DB. Nothing in the Frontend's F11 can actually save/load until this happens.
+- [x] Deploy this to production — done. `main` is pushed, Render redeployed, prod Neon is at head `f9d4c1a7b2e8`, so B15's markup migrations are live.
 
 ### B16 — Piece rehearsal notes (durable per-piece reminders) [x]
 
@@ -481,9 +482,48 @@ No `source_weekly_note_id` column yet — it only earns its place once
   acceptance criterion above
 
 **Tasks — Human:**
-- [ ] Deploy: push `main` (Render then runs migration `d7e3a9c1f6b4`).
-  Nothing in Frontend F20 can load until this lands or B16 is run against a
-  local Backend.
+- [x] Deploy: push `main` — done. Prod Neon is at head `f9d4c1a7b2e8`
+  (`alembic current` via `Backend/.env`), so `d7e3a9c1f6b4` is live.
+
+### B17 — Group markup layer (shared, admin-co-edited) [ ]
+
+(`B17`/`B18` were also used on the `omr-editor` branch for paged-OMR work,
+see `OMR_EDITOR_PLAN.md`; on `main`, `B17` is this.)
+
+Supersedes the "B15 fast-follow — group-published markup layer" Backlog
+item. That item (and F11's matching note) described a per-author *publish*
+step with a `published_at` flag. What we're building instead: the group
+markup is **its own scope**, owned by the group, not by the admin who drew
+each mark. Any admin of the owning group can add / move / edit / delete any
+mark in it; members see it read-only. No publish action.
+
+Note: an earlier partial `scope=group` in `piece_markup.py` returned *every
+member's* personal marks on a group piece with no opt-in — that's the
+behavior this milestone replaces (the human flagged it as wrong, 2026-09-02).
+
+**Acceptance criteria:**
+- [ ] `piece_markup_marks.scope` (`personal` | `group`, default `personal`);
+  existing rows backfill to `personal`. `user_id` stays NOT NULL and now
+  means creator / last editor (audit only for group-scoped marks).
+- [ ] `GET /piece-markup?scope=group` returns the group layer for a
+  group-owned piece to any member of that group; `[]` for a personal piece.
+  `scope=personal` (the default) is unchanged — still only the caller's own.
+- [ ] `POST /piece-markup` accepts `scope` (default `personal`). `scope=group`
+  is rejected (403) unless the piece is group-owned **and** the caller is an
+  admin of that group.
+- [ ] `PATCH` / `DELETE /piece-markup/{id}`: a `personal` mark stays
+  creator-only; a `group` mark is editable/deletable by any admin of the
+  owning group (not just whoever created it).
+- [ ] A non-member gets 403 on any scope for that piece; nothing leaks.
+
+**Tasks — Claude:**
+- [ ] Alembic migration: add `scope` column, backfill `personal`.
+- [ ] `MarkupMarkCreate.scope`; scope-aware access checks in
+  `piece_markup.py` (reuse the group-admin helper shape from
+  `piece_rehearsal_notes.py` / `services/groups.py`).
+- [ ] `tests/test_piece_markup.py`: admin A edits/deletes a group mark admin
+  B created; member reads the group layer but 403s writing it; non-member
+  403; personal scope regression-covered.
 
 ## Backlog
 
@@ -500,7 +540,7 @@ No `source_weekly_note_id` column yet — it only earns its place once
   `structured` column on `weekly_notes` is the cheaper first step if so.
 - **Markdown links in the Frontend weekly-note renderer** (`[text](url)`)
   — frontend-only, no backend change; tracked here so it isn't lost.
-- **B15 fast-follow — group-published markup layer**: an admin publishes their `PieceMarkupMark`s for a piece, group members opt in to see them layered on top of their own personal marks (Frontend's own Backlog note has the full ask). Needs a `published_at`-style flag (or a parallel table) + a publish endpoint + loosening `list_marks`'s per-user filter for the published case.
+- ~~**B15 fast-follow — group-published markup layer**~~ **→ promoted to B17** (2026-09-02), redesigned: no per-author publish / `published_at`, instead a group-owned `scope` any admin co-edits. See B17.
 - Decide diff/patch vs. full-reupload semantics for what a group "modification" actually contains
 - Group invite flow (email invite vs. join code) — not designed yet
 - ~~Wire `app/storage/files.py` to Neon's Object Storage~~ **DONE 2026-08-31** (committed 9d7ef53; credential verified 8bc2e31). `save_file` → `uploads` bucket (`obj/…` keys) when `AWS_*` set, else local disk; `resolve_source_path` materializes via a local cache; serving routes 404 (not 500) on missing bytes. **Remaining human step:** set `AWS_ENDPOINT_URL_S3` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_BUCKET` on Render, redeploy, then re-upload the 6 lost modification-version PDFs.

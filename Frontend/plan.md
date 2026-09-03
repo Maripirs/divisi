@@ -27,8 +27,9 @@ their phones.
 `check`/`build`-clean but each still has at least one open "human confirms in a real
 browser / on a real touchscreen" item — much of this Frontend's recent work was built
 on a machine with no browser/Playwright available, so that's the recurring blocker
-across the board, not a code gap. F11's markup layer also can't fully work on the
-preview until Backend B15's migration runs against production. The in-app notation
+across the board, not a code gap. (Backend B15 and B16 migrations are now live on
+prod — Neon is at head `f9d4c1a7b2e8` — so F11 and F20 are no longer deploy-blocked;
+the live Frontend Worker was redeployed from `main` on 2026-09-02.) The in-app notation
 editor and the OMR-review milestones live in their own plan, `OMR_EDITOR_PLAN.md`
 (E1–E10), and now only on the `omr-editor` branch — the frontend surface of that
 work was deleted from `main` as unverified WIP (the Backend OMR code stays, dormant
@@ -83,7 +84,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 |---|---|---|
 | F1 | Standalone playback + notation prototype | ✅ Approved — reads as more accurate/pleasant than PlayScore |
 | F2 | Guest access to real pieces via the Backend | ⏳ Built; human hasn't confirmed the join flow in a real browser yet |
-| F3 | App-shell UI screens (fixture data) | ⏳ Built; human hasn't looked over the screens yet |
+| F3 | App-shell UI screens (fixture data) | ✅ Screens confirmed in a real browser, light + dark (2026-09-02) |
 | F4 | Login + wire groups/home/library to the real Backend | ⏳ Built, incl. score-position annotation create/share UI; `check`/`build`-clean; human hasn't confirmed login/groups/homework/annotations yet |
 | F5 | Wire the player to real Backend pieces (+ real uploads: MIDI/PDF/YouTube) | ⏳ Built and curl/check-verified; nobody has clicked through the actual upload/practice flow yet (no browser on the build machine) |
 | F6 | Group page settings + Responsibilities | ✅ Built; human hasn't done a live-app walkthrough (`check`/`build` only) |
@@ -96,6 +97,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F13 | Audio-only reference recording, driving the bottom bar in PDF view | ⏳ Built, `check`/`build`-clean; human hasn't confirmed it in a real browser |
 | — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built: two sources (group B16 / personal position-less B5 annotation), on the piece page and an expandable Rehearsal Tracks card, per-note timestamps, player-mode scroll cap; `check`/`build`/vitest 107 green; no real-browser pass yet |
+| F21 | Group markup layer (frontend for Backend B17) | ⏳ Scoped 2026-09-02; not built |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -164,7 +166,7 @@ Backend B10), and a password-protected group prompts for it.
 **Tasks — Human:**
 - [ ] Look over `/join` and `/join/[code]` in a real browser before this is considered done
 
-### F3 — App-shell UI screens (fixture data) [?]
+### F3 — App-shell UI screens (fixture data) [x]
 
 Built every screen from `UX_WIREFRAME.md` other than the already-approved practice
 player, as real routes against local fixture data — same "prove the UI before wiring
@@ -176,7 +178,7 @@ was written.
 - [x] Every UX_WIREFRAME.md screen besides the practice player has a real route, styled with the same design tokens as the rest of the app, reachable via the bottom nav / in-page links, not just a direct URL
 - [x] All new routes read from local fixture data only (`lib/fixtures/appData.ts`) — no Backend calls added, consistent with F2 not being wired yet
 - [x] `npm run check` and `npm run build` both clean
-- [ ] Human confirms the screens read as intended in a real browser, light and dark
+- [x] Human confirms the screens read as intended in a real browser, light and dark (2026-09-02)
 
 **Tasks — Claude:**
 - [x] Recolored the flat-black `divisi-logo` source into a CSS-mask asset painted via `background-color: var(--accent)`, so it tracks the live accent token
@@ -187,7 +189,7 @@ was written.
 - [x] `BottomNav.svelte` shared across Home/Library/Groups/Me
 
 **Tasks — Human:**
-- [ ] Look over the new screens in a real browser (light + dark) and flag anything to change before this becomes the real navigation
+- [x] Look over the new screens in a real browser (light + dark) — confirmed 2026-09-02, no changes flagged
 
 ### F4 — Login + wire groups/home/library to the real Backend [~]
 
@@ -497,7 +499,7 @@ it draw/erase depending on the active tool.
 - [x] `piece/[id]/+page.svelte`: passes `pieceId`/`canMarkup` (same gate as F4's annotations — logged in + a real Backend piece) into `PdfView`
 
 **Tasks — Human:**
-- [ ] Deploy the Backend (new migration needs to run against the real production DB) — the Frontend preview can't actually save/load marks until this lands
+- [x] Deploy the Backend — done (prod Neon at head `f9d4c1a7b2e8`); markup saves/loads against prod now
 - [ ] Click through pen/stamp/eraser/undo on a real device and confirm it reads right
 
 ### F12 — PDF markup: top-level Annotation mode on/off toggle [~]
@@ -781,9 +783,75 @@ member, always their own. No guest path (both sources need a session).
       are read-only and personal notes are their own. Check `/` and `/es`,
       and that the player panel scrolls rather than shoving the score down.
 
+### F21 — Group markup layer (frontend for Backend B17) [ ]
+
+Frontend for B17's group-owned markup `scope`. Replaces the stale "F11
+fast-follow — group-published markup layer" Backlog item, redesigned: no
+publish step, the group layer is shared and any owning-group admin
+co-edits it; members see it read-only.
+
+**Restructures F11/F12's visibility control.** Today the PDF markup
+"Annotation visibility" segmented picker in Practice Setup is None / Mine /
+Group and is *exclusive* — you can't show your own marks and a shared
+layer at once, which this needs. And its "Group" option currently loads
+*every member's* personal marks (the B17 note explains why that's wrong).
+
+**New shape:**
+- Two **independent, session-local** toggles in Practice Setup (PDF view),
+  both default off: **Show my markup**, **Show director markup**. Additive.
+- The floating pencil (F12 annotation mode) stays. Arming it turns on
+  "Show my markup" if it was off.
+- When annotation mode is on **and** the user is an admin of the owning
+  group, a **Drawing into: My markup / Director markup** segmented control
+  appears, defaulting to **My markup** (so an admin never scribbles on the
+  shared layer by accident).
+- While the draw target is **Director markup**, a **persistent, always-
+  visible reminder** (a coloured bar / pill near the toolbar, not a
+  dismissible toast) states that edits go to the shared group layer that
+  everyone sees. It stays up the whole time that target is active.
+- Group-layer marks render in F20's director treatment (muted / dashed
+  edge), non-interactive for a member; interactive only for an admin whose
+  draw target is Director markup.
+
+**Acceptance criteria:**
+- [ ] A member on a real group-owned piece's PDF can turn on "Show director
+      markup" and see the shared layer read-only, on top of / beside their
+      own marks, both toggles working independently
+- [ ] An owning-group admin can pick "Director markup" as the draw target
+      and add / move / edit / delete marks in the shared layer, including
+      marks another admin made
+- [ ] The persistent "editing the shared layer" reminder is visible the
+      entire time the draw target is Director markup, and gone otherwise
+- [ ] A non-admin never sees the draw-target control or a way to write the
+      group layer; a personal piece never shows "Show director markup"
+- [ ] `npm run check` / `npm run build` clean; vitest green
+- [ ] Human confirms on a real touchscreen: the two toggles, the admin
+      draw-target switch + reminder, and that a member can't edit the
+      shared layer
+
+**Tasks — Claude:**
+- [ ] `$lib/api/pieceMarkup.ts`: `scope` on create; keep `listMarks(pieceId,
+      scope)`; drop the dead `MarkupScope = 'mine' | 'group'` exclusivity
+      assumptions where they leak into the UI
+- [ ] `routes/piece/[id]/markup/**`: thread `scope` on POST
+- [ ] `pdfMarkup.svelte.ts` / `PdfView.svelte` / `PdfMarkupPanel.svelte`:
+      replace `markupVisibility` (`none|mine|group`) with `showMine` /
+      `showDirector` booleans + `drawTarget` (`mine|director`); load both
+      mark sets when their toggle is on; gate `drawTarget` on
+      `isOwningGroupAdmin`
+- [ ] Persistent draw-target reminder element
+- [ ] `resolve/+server.ts`: generalize F20's `canManagePieceNotes` to an
+      `isOwningGroupAdmin` flag (or add alongside) for the piece route
+- [ ] en/es keys for the toggles, the draw-target control, the reminder
+- [ ] vitest for the new load/permission branches where practical
+
+**Tasks — Human:**
+- [ ] Touchscreen pass per the last acceptance box, against a Backend with
+      B17
+
 ## Backlog
 
-- **F11 fast-follow — group-published markup layer:** an admin publishes their own PDF markup for a piece to the whole group; each member independently toggles "show group markup" on top of their own personal marks (per the human's explicit ask, 2026-08-29). Needs a `published_at`/similar flag on `PieceMarkupMark` (or a parallel table) plus a publish action and a per-viewer visibility toggle — deliberately not built alongside F11 itself, personal-only marks first.
+- ~~**F11 fast-follow — group-published markup layer**~~ **→ promoted to F21** (2026-09-02), redesigned as a shared group-owned layer any admin co-edits (no per-author publish). See F21.
 - **F11 fast-follow — import/export markup:** the human's other ask alongside the group layer, also deliberately deferred — no shape decided yet (a portable file format? peer-to-peer copy of one person's marks to another?).
 - Track "last opened piece" server-side, to power a real Home "Continue practice" card (currently fixture/bundled-demo-only)
 - Admin default tempo only rides along on the group Tracks tab's and personal Library's practice links so far — the guest join page's practice link doesn't carry `?defaultTempo=` yet since `GuestPieceOut` doesn't expose `default_tempo_bpm`
