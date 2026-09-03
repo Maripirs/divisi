@@ -2046,4 +2046,43 @@
 			gap: 0.5rem;
 		}
 	}
+
+	/* Landscape phones have almost no vertical room, so the score gets
+	   squeezed between the top and bottom chrome. Trim that chrome: cut the
+	   top/bottom bar padding, drop the composer subtitle, and inline the
+	   scrubber so its time readout sits beside the slider instead of on a
+	   second stacked line. Scoped tight (landscape + very short viewport) so
+	   portrait phones, tablets, and desktop keep the roomier layout. */
+	@media (orientation: landscape) and (max-height: 500px) {
+		.top-bar {
+			padding-top: calc(0.3rem + env(safe-area-inset-top, 0px));
+			padding-bottom: 0.3rem;
+		}
+
+		.top-bar-title p {
+			display: none;
+		}
+
+		.bottom-bar {
+			padding-top: 0.4rem;
+			padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
+		}
+
+		.scrubber {
+			flex-direction: row;
+			align-items: center;
+			gap: 0.6rem;
+		}
+
+		.time-row {
+			flex: 0 0 auto;
+			justify-content: flex-start;
+			gap: 0.35rem;
+		}
+
+		.play-btn {
+			width: 40px;
+			height: 40px;
+		}
+	}
 </style>

@@ -101,4 +101,19 @@
 	.disclosure--inline[open] > summary {
 		margin-bottom: 0.5rem;
 	}
+
+	/* Landscape phones have very little height. The panel variant is only
+	   ever the piece-page Piece Notes strip, which shares the screen with
+	   the score, so shave its outer margin and summary padding to hand
+	   those pixels back to the music. */
+	@media (orientation: landscape) and (max-height: 500px) {
+		.disclosure--panel {
+			margin-top: 0.25rem;
+		}
+
+		.disclosure--panel > summary {
+			padding-top: 0.3rem;
+			padding-bottom: 0.3rem;
+		}
+	}
 </style>

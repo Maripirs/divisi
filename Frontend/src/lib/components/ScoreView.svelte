@@ -695,6 +695,11 @@
 
 <style>
 	.score-view {
+		/* Positioning context for the landscape-phone floating zoom pill
+		   (see the landscape media block at the end of this style block).
+		   Safe unconditionally: no other descendant is absolutely positioned
+		   against it (`.render-status` uses `position: fixed`). */
+		position: relative;
 		--score-page: var(--surface);
 		--score-chrome: var(--surface-2);
 		--score-chrome-border: var(--border);
@@ -848,5 +853,44 @@
 		font-size: 0.8125rem;
 		margin: 0;
 		padding: 0.5rem 0.75rem;
+	}
+
+	/* Landscape phones have almost no vertical room. Rather than spend a
+	   full-width sticky strip on the zoom bar, float it as a compact pill
+	   over the top-right corner of the score. It will overlap the top-right
+	   of the first system, and that overlap is the accepted trade-off, so no
+	   compensating padding is added to the score container. */
+	@media (orientation: landscape) and (max-height: 500px) {
+		.zoom-controls {
+			position: absolute;
+			top: 0.35rem;
+			right: 0.35rem;
+			left: auto;
+			width: auto;
+			margin: 0;
+			padding: 0;
+			gap: 0.2rem;
+			border-bottom: none;
+			background: transparent;
+			z-index: 4;
+		}
+		.zoom-controls button {
+			min-width: 1.9rem;
+			padding: 0.15rem 0.5rem;
+			font-size: 0.75rem;
+			/* Legible over the score: translucent chrome fill so the pill
+			   reads as floating UI, not part of the engraving. */
+			background: color-mix(in srgb, var(--score-chrome) 90%, transparent);
+			backdrop-filter: blur(4px);
+		}
+		.zoom-level {
+			min-width: 3.2rem;
+		}
+		/* In annotate mode the placement hint shares this row; hide it here
+		   so the floating pill stays compact (the parent's transport toggle
+		   still signals annotate mode). */
+		.annotate-hint {
+			display: none;
+		}
 	}
 </style>
