@@ -73,6 +73,20 @@ async function fetchWithTimeout(fetchFn: typeof fetch, url: string): Promise<Res
 	}
 }
 
+/** Whether a Backend status means "ask again in a moment", not "the answer
+ * is genuinely no". `backendFetch` normalizes a thrown fetch (connection
+ * refused, DNS, our own timeout) into a synthetic 503, but a Render
+ * free-tier instance waking from an idle spin-down also serves real
+ * 502/504 (and sometimes 500 off a cold DB) HTML from its edge for a few
+ * seconds before the app is ready. Treating those as "no such piece in
+ * your library" is the bug behind the "No piece found with that id" card
+ * that a refresh then clears — none of them are an actual answer about
+ * this piece, so they map to `unreachable` (retry) instead. A 401/403/404
+ * still falls through to `notFound`, which is correct for those. */
+function isTransientBackendStatus(status: number): boolean {
+	return status >= 500 || status === 429 || status === 408;
+}
+
 async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof fetch): Promise<RemoteResolution> {
 	let res: Response;
 	try {
@@ -80,7 +94,7 @@ async function resolveGuestRemote(pieceId: string, code: string, fetchFn: typeof
 	} catch {
 		return { remote: null, unreachable: true };
 	}
-	if (!res.ok) return { remote: null, unreachable: false };
+	if (!res.ok) return { remote: null, unreachable: isTransientBackendStatus(res.status) };
 	const body = (await res.json()) as { pieces: GuestPieceResponse[] };
 	const entry = body.pieces.find((p) => p.piece_id === pieceId);
 	if (!entry) return { remote: null, unreachable: false };
@@ -138,11 +152,14 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url }) => {
 		} satisfies RemoteResolution);
 	} catch (err) {
 		if (err instanceof BackendApiError) {
-			// `backendFetch` normalizes a genuine network failure into a
-			// synthetic 503 — everything else (403/404/etc.) is a real answer
-			// from the Backend, just not one with this piece in the caller's
-			// library.
-			return json({ remote: null, unreachable: err.status === 503 } satisfies RemoteResolution);
+			// A synthetic 503 (network failure) or a real 5xx/429/408 off a
+			// cold-starting Backend both mean "no answer yet", not "this
+			// piece isn't yours" (see isTransientBackendStatus). A 403/404 is
+			// a real answer and still lands on the notFound card.
+			return json({
+				remote: null,
+				unreachable: isTransientBackendStatus(err.status)
+			} satisfies RemoteResolution);
 		}
 		throw err;
 	}
