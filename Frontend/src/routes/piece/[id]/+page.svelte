@@ -124,7 +124,17 @@
 	 * per-group guest-token cookie; the code comes from the server-resolved
 	 * `data.guestGate` rather than the URL. On success, navigate to the
 	 * piece *with* `?code=` so the normal guest flow (and this component's
-	 * `resolveRemote()`) takes over. */
+	 * `resolveRemote()`) takes over.
+	 *
+	 * This is a full-document navigation, not a `goto()`: the whole page is
+	 * wrapped in `{#key data.id}`, so adding `?code=` to the same route would
+	 * reuse this component instance and never re-run `onMount` — which is the
+	 * only place `resolveRemote()` (and the render loop) is kicked off. The
+	 * gate card would swap for the player, but `loadState` would sit on its
+	 * initial `'loading'` forever ("Loading score..." that only a manual
+	 * refresh cleared). A hard nav remounts clean with `?code=` already
+	 * present. It is a one-time step per browser (30-day cookie), so the
+	 * extra full load costs nothing. */
 	async function submitGuestGatePassword(event: SubmitEvent) {
 		event.preventDefault();
 		if (!data.guestGate) return;
@@ -139,7 +149,9 @@
 			const body = (await res.json()) as { ok: boolean };
 			if (body.ok) {
 				gatePassword = '';
-				await goto(lh(`/piece/${data.id}?code=${encodeURIComponent(data.guestGate.code)}`));
+				window.location.href = lh(
+					`/piece/${data.id}?code=${encodeURIComponent(data.guestGate.code)}`
+				);
 			} else {
 				gatePasswordWrong = true;
 			}
