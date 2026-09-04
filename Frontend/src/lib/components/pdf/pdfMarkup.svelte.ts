@@ -177,6 +177,21 @@ export function scopeForDrawTarget(drawTarget: MarkupDrawTarget): MarkupScope {
 	return drawTarget === 'director' ? 'group' : 'personal';
 }
 
+/** F22 per-mark visibility rule, pulled out as a pure fn so its branch matrix
+ * is unit-testable without instantiating the runes factory (same split as
+ * `markInteractivity`). A `cue` is gated *only* by `showCues` (the bottom
+ * bar's audio source being the reference recording) — never by the mine /
+ * director layer toggles, so cue glyphs are always shown in the player for
+ * every viewer, members and guests alike. Every other kind still follows its
+ * own layer toggle. The caller has already matched the page. */
+export function markVisibleOnPage(
+	mark: Pick<MarkupMark, 'kind' | 'scope'>,
+	ctx: { showMine: boolean; showDirector: boolean; showCues: boolean }
+): boolean {
+	if (mark.kind === 'cue') return ctx.showCues;
+	return mark.scope === 'group' ? ctx.showDirector : ctx.showMine;
+}
+
 export interface PdfMarkupControllerDeps {
 	/** `pieceId` prop: the real Backend piece id marks are stored against,
 	 * `undefined` for a bundled fixture PDF (no real `Piece` row to key marks
@@ -224,6 +239,12 @@ export interface PdfMarkupControllerDeps {
 	/** F22: tapping an existing cue jumps the reference recording here and
 	 * plays. The host owns the reference player, so it does the seek/play. */
 	onCueTap: (timeMs: number) => void;
+	/** F22: a loader for the group-layer cue glyphs, shown in the player for
+	 * every viewer independent of the "Show director markup" toggle and of
+	 * `canMarkup` (so guests get them too). Returns the loader fn for a real
+	 * group piece that has a reference recording, or `null` for a fixture / a
+	 * piece with no reference recording (no cues to show). */
+	cueLoader: () => (() => Promise<MarkupMark[]>) | null;
 }
 
 export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
@@ -236,6 +257,10 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 	// marks of that scope are currently loaded, one per layer.
 	let personalLoadedKey: string | undefined;
 	let groupLoadedKey: string | undefined;
+	// F22: the `${pieceId}:cues` key whose group cue glyphs are currently
+	// loaded into `marks` for the player. Separate from `groupLoadedKey`: cues
+	// load unconditionally (not behind "Show director markup"), for guests too.
+	let cuesLoadedKey: string | undefined;
 
 	// F12: a master edit-mode toggle separate from which tool is armed. The
 	// visibility toggles (in the piece route's Practice Setup drawer) decide
@@ -320,6 +345,41 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		}
 	}
 
+	/** F22: load the group-layer cue glyphs for the player, independent of the
+	 * "Show director markup" toggle and of `canMarkup` (guests included). The
+	 * host supplies a `cueLoader` only for a real group piece with a reference
+	 * recording; a fixture or a piece without one passes `null` and no cues
+	 * load. `PdfView` calls this from an `$effect`.
+	 *
+	 * Interplay with `loadScope(id, 'group', …)`: if "Show director markup"
+	 * later pulls the full group scope, that swap replaces every
+	 * `scope === 'group'` mark with the server list (cues included), so there
+	 * is no duplication and the cues persist. `loadCues`'s own id `Set` covers
+	 * the reverse order (cues already in `marks` when the group scope loads on
+	 * top would be filtered by `loadScope`'s replace, then re-added here on the
+	 * next `syncCues` only if the key changed — it will not, so no churn). */
+	function syncCues(): void {
+		const id = deps.pieceId();
+		const loader = deps.cueLoader();
+		if (!id || !loader) return;
+		const key = `${id}:cues`;
+		if (cuesLoadedKey === key) return;
+		cuesLoadedKey = key;
+		void loadCues(loader, key);
+	}
+
+	async function loadCues(loader: () => Promise<MarkupMark[]>, key: string): Promise<void> {
+		try {
+			const loaded = await loader();
+			if (cuesLoadedKey !== key) return;
+			const have = new Set(marks.map((mark) => mark.id));
+			marks = [...marks, ...loaded.filter((cue) => !have.has(cue.id))];
+		} catch {
+			// Same rationale as `loadScope`: a failed load just means no cues
+			// show yet, not worth a blocking error state over the PDF's own.
+		}
+	}
+
 	// The visibility toggles + admin flag live on the host. When nothing is
 	// visible anymore, disarm the master toggle and any in-progress mark (the
 	// same cleanup `toggleAnnotationMode` does when turned off directly); and
@@ -355,17 +415,16 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 
 	function marksForPage(pageIndex: number): MarkupMark[] {
 		const pageNumber = pageIndex + 1;
-		const showMine = deps.getShowMine();
-		const showDirector = deps.getShowDirector();
-		// F22: a cue's timestamp only means anything against the reference
-		// recording — hide cues entirely under "My mix" and in score view.
-		const showCues = deps.audioSourceIsReference();
-		return marks.filter(
-			(mark) =>
-				mark.pageNumber === pageNumber &&
-				(mark.scope === 'group' ? showDirector : showMine) &&
-				(mark.kind === 'cue' ? showCues : true)
-		);
+		const ctx = {
+			showMine: deps.getShowMine(),
+			showDirector: deps.getShowDirector(),
+			// F22: a cue's timestamp only means anything against the reference
+			// recording — hide cues entirely under "My mix" and in score view.
+			// A cue is gated *only* by this, never the layer toggles, so cue
+			// glyphs are always in the player for members and guests alike.
+			showCues: deps.audioSourceIsReference()
+		};
+		return marks.filter((mark) => mark.pageNumber === pageNumber && markVisibleOnPage(mark, ctx));
 	}
 
 	function isOwnMark(mark: MarkupMark): boolean {
@@ -938,6 +997,13 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		get showDirector() {
 			return deps.getShowDirector();
 		},
+		/** F22: whether cue glyphs are on the page right now — the reference
+		 * recording is the selected audio source and at least one cue is
+		 * loaded. `PdfMarkupLayer` mounts its SVG off this for cue-only viewers
+		 * (guests included), independent of `canMarkup` and the layer toggles. */
+		get cuesVisible() {
+			return deps.audioSourceIsReference() && marks.some((mark) => mark.kind === 'cue');
+		},
 		/** F22: whether the cue tool should appear. Director-layer only: a
 		 * usable reference recording, an owning-group admin caller, and the
 		 * director draw target selected. `PdfMarkupPanel` shows/hides the button
@@ -1030,6 +1096,7 @@ export function createPdfMarkupController(deps: PdfMarkupControllerDeps) {
 		setStampSize,
 		setTextSize,
 		syncMarksForVisibility,
+		syncCues,
 		syncAnnotationModeWithVisibility
 	};
 }

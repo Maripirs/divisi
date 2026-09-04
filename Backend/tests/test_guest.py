@@ -488,6 +488,108 @@ def test_guest_rehearsal_notes_404_for_piece_not_distributed_to_group(client):
     assert response.status_code == 404
 
 
+def _add_group_cue(client, admin_headers, piece_id, time_ms=12000, x=0.3, y=0.4):
+    return client.post(
+        "/piece-markup",
+        json={
+            "piece_id": piece_id,
+            "page_number": 1,
+            "kind": "cue",
+            "color": "#2563eb",
+            "scope": "group",
+            "x": x,
+            "y": y,
+            "time_ms": time_ms,
+        },
+        headers=admin_headers,
+    )
+
+
+def _add_group_stamp(client, admin_headers, piece_id):
+    return client.post(
+        "/piece-markup",
+        json={
+            "piece_id": piece_id,
+            "page_number": 1,
+            "kind": "stamp",
+            "color": "#0a0",
+            "scope": "group",
+            "stamp_type": "breath",
+            "width": 0.04,
+            "x": 0.5,
+            "y": 0.5,
+        },
+        headers=admin_headers,
+    )
+
+
+def test_guest_sees_group_cues_when_tracks_is_public(client):
+    admin_headers = _register_and_login(client, "gcue-admin@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    assert _add_group_cue(client, admin_headers, piece_id, time_ms=8000).status_code == 201
+    # Director pen/stamp ink shares the group layer but has no guest path.
+    assert _add_group_stamp(client, admin_headers, piece_id).status_code == 201
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{piece_id}/cues")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["kind"] == "cue"
+    assert body[0]["scope"] == "group"
+    assert body[0]["time_ms"] == 8000
+
+
+def test_guest_cues_404_when_tracks_members_only_or_disabled(client):
+    admin_headers = _register_and_login(client, "gcue-admin2@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_group_cue(client, admin_headers, piece_id)
+    base = f"/guest/{group['join_code']}/pieces/{piece_id}/cues"
+
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": True, "audience": "members"}]},
+        headers=admin_headers,
+    )
+    assert client.get(base).status_code == 404
+
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "tracks", "enabled": False, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+    assert client.get(base).status_code == 404
+
+
+def test_guest_cues_404_for_piece_not_distributed_to_group(client):
+    admin_headers = _register_and_login(client, "gcue-admin3@example.com")
+    group, _piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    other_admin = _register_and_login(client, "gcue-other@example.com")
+    other_group, other_piece_id, _ov = _create_group_with_distributed_midi_piece(
+        client, other_admin, title="Elsewhere"
+    )
+    _add_group_cue(client, other_admin, other_piece_id)
+
+    response = client.get(f"/guest/{group['join_code']}/pieces/{other_piece_id}/cues")
+    assert response.status_code == 404
+
+
+def test_guest_cues_require_a_valid_token_when_group_has_a_password(client):
+    admin_headers = _register_and_login(client, "gcue-admin4@example.com")
+    group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    _add_group_cue(client, admin_headers, piece_id, time_ms=3000)
+    client.put(
+        "/groups/" + group["id"] + "/guest-settings",
+        json={"guest_password": "s3cret"},
+        headers=admin_headers,
+    )
+    base = f"/guest/{group['join_code']}/pieces/{piece_id}/cues"
+
+    assert client.get(base).status_code == 401
+    token = client.post(f"/guest/{group['join_code']}/auth", json={"password": "s3cret"}).json()["token"]
+    assert client.get(base, params={"token": token}).status_code == 200
+    assert client.get(base, params={"password": "s3cret"}).status_code == 200
+
+
 def test_guest_endpoints_are_rate_limited(client):
     admin_headers = _register_and_login(client, "admin4@example.com")
     group = client.post("/groups", json={"name": "Choir4"}, headers=admin_headers).json()

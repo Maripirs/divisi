@@ -95,6 +95,20 @@ export async function listMarks(pieceId: string, scope: MarkupScope = 'personal'
 	return body.map(toMark);
 }
 
+/** F22: the cue subset of a piece's shared `group` (director) markup layer,
+ * loaded unconditionally for the PDF player — cue glyphs render for every
+ * viewer whenever the reference recording is the audio source, not gated
+ * behind the "Show director markup" toggle the rest of that layer sits under.
+ * Passing `guestCode` (a group join code) routes the request through the
+ * markup proxy's guest branch, so a not-logged-in join-link viewer gets them
+ * too (the group's guest token is injected server-side). */
+export async function listGroupCues(pieceId: string, guestCode?: string): Promise<MarkupMark[]> {
+	const suffix = guestCode ? `&code=${encodeURIComponent(guestCode)}` : '';
+	const res = await call(`/piece/${encodeURIComponent(pieceId)}/markup?scope=group${suffix}`);
+	const body = (await res.json()) as MarkupMarkResponse[];
+	return body.map(toMark).filter((mark) => mark.kind === 'cue');
+}
+
 export async function createStroke(
 	pieceId: string,
 	pageNumber: number,

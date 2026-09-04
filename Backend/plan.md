@@ -572,6 +572,17 @@ creates `scope='group'` cues (Director-layer only). The schema here still
 permits a cue at any scope; nothing sends a personal one. No backend code
 or migration change.
 
+Guest cues endpoint (2026-09-03): F22 was changed again so cue glyphs
+always render in the PDF player for every viewer, including not-logged-in
+join-link guests. Added `GET /guest/{join_code}/pieces/{piece_id}/cues`
+(`response_model=list[MarkupMarkOut]`), cue-only on purpose: the director
+pen/stamp/text ink on the same `scope='group'` layer has no guest path and
+stays members-only, but a cue is a "jump the recording here" navigation aid
+that rides along with the guest PDF. Same `tracks` page gate (enabled +
+`audience == everyone`) and join-code/password/distribution scoping as the
+guest PDF and rehearsal-notes routes; mirrors `list_guest_piece_rehearsal_notes`.
+No schema or migration change. `tests/test_guest.py` +4.
+
 **Built 2026-09-02, not pushed/deployed.** Migration `c3e5a7b9d1f4`
 (`down_revision = b1c3d5e7f9a2`), one linear head. `time_ms` nullable int,
 no server_default (only a `cue` ever sets it). `MarkupMarkUpdate` also
@@ -590,6 +601,11 @@ loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
   rules (personal → creator, group → any owning-group admin).
 - [x] `list_marks` returns cues alongside strokes/stamps/text, no query
   change; both `scope`s carry cues.
+- [x] 2026-09-03: `GET /guest/{join_code}/pieces/{piece_id}/cues` — cue-only
+  guest read of the group layer, `tracks` page enabled + `audience ==
+  everyone`, mirrors the guest rehearsal-notes route. `tests/test_guest.py`
+  +4 (public read; 404 when tracks members-only/disabled; 404 when the piece
+  isn't distributed; password group needs a valid token).
 
 **Tasks — Claude:**
 - [x] Migration: add `time_ms` nullable int to `piece_markup_marks`.
@@ -633,6 +649,8 @@ loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-03: B18 follow-up — added `GET /guest/{join_code}/pieces/{piece_id}/cues` so F22 cue glyphs can render for not-logged-in join-link guests. Cue-only read of the `scope='group'` markup layer (director pen/stamp/text ink has no guest path, stays members-only); same `tracks` page enabled + `audience == everyone` gate and join-code/password/distribution scoping as the guest rehearsal-notes route it mirrors. No schema or migration change. `tests/test_guest.py` +4; `pytest` 250 green.
 
 - 2026-09-03: Added `Piece.presentation` (nullable `score_reference` / `play_along`, null = automatic), an admin-set hint for how a piece first presents to a viewer who has never opened it. Mirrors `default_tempo_bpm` end to end: migration `a2f6c1e4d9b7` (add nullable column), exposed on `PieceOut` / `LibraryEntryOut` / `GuestPieceOut`, accepted (and value-validated) by `PATCH /library/pieces/{id}` and the piece-upload form. `pytest` 245/245; migration up/down SQL verified offline (not run against prod, which Render does on deploy).
 

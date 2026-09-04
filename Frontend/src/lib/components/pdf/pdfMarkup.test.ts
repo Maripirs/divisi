@@ -3,6 +3,7 @@ import {
 	distanceToSegment,
 	distanceToStroke,
 	markInteractivity,
+	markVisibleOnPage,
 	msToMinSec,
 	parseMinSec,
 	scopeForDrawTarget,
@@ -101,6 +102,38 @@ describe('markInteractivity', () => {
 		expect(markInteractivity('group', admin)).toBe(true);
 		expect(markInteractivity('group', { ...admin, drawTarget: 'mine' })).toBe(false);
 		expect(markInteractivity('group', { ...admin, isOwningGroupAdmin: false })).toBe(false);
+	});
+});
+
+describe('markVisibleOnPage', () => {
+	const toggles = { showMine: false, showDirector: false, showCues: false };
+
+	it('shows a cue whenever the reference recording is the audio source, whatever the layer toggles', () => {
+		// The new F22 contract: a cue loaded for the player (e.g. via the
+		// controller's `cueLoader`) renders with "Show director markup" off, as
+		// long as the audio source is the reference recording.
+		expect(
+			markVisibleOnPage({ kind: 'cue', scope: 'group' }, { ...toggles, showCues: true })
+		).toBe(true);
+		expect(
+			markVisibleOnPage(
+				{ kind: 'cue', scope: 'group' },
+				{ showMine: false, showDirector: false, showCues: true }
+			)
+		).toBe(true);
+	});
+
+	it('hides a cue when the audio source is not the reference recording, even with the director layer on', () => {
+		expect(
+			markVisibleOnPage({ kind: 'cue', scope: 'group' }, { ...toggles, showDirector: true, showCues: false })
+		).toBe(false);
+	});
+
+	it('still gates a group stroke on the director toggle and a personal mark on the mine toggle', () => {
+		expect(markVisibleOnPage({ kind: 'stroke', scope: 'group' }, { ...toggles, showCues: true })).toBe(false);
+		expect(markVisibleOnPage({ kind: 'stroke', scope: 'group' }, { ...toggles, showDirector: true })).toBe(true);
+		expect(markVisibleOnPage({ kind: 'text', scope: 'personal' }, { ...toggles, showDirector: true })).toBe(false);
+		expect(markVisibleOnPage({ kind: 'text', scope: 'personal' }, { ...toggles, showMine: true })).toBe(true);
 	});
 });
 

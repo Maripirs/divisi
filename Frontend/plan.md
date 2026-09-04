@@ -98,7 +98,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | — | In-app notation editor + OMR review | Lives on the `omr-editor` branch only (`OMR_EDITOR_PLAN.md`, milestones E1–E10); frontend surface deleted from `main` as unverified WIP |
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
-| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'` |
+| F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -276,7 +276,7 @@ server-side, so the session token never reaches client JS.
 - [ ] A logged-in group member can open a real Backend-distributed piece from `/groups/[id]`'s Rehearsal Tracks tab or `/`'s per-group section and hear it play, in sync, for the whole piece's length — same accuracy bar as the bundled demo, because it's the same player
 - [ ] The same piece's notation renders with a moving cursor, using the existing `musicXmlConverter`/`ScoreView` path unchanged
 - [ ] The existing per-part balance/mute controls, display modes, and tempo slider all work against a real Backend piece exactly like they do against the bundled demo
-- [ ] A guest who joined via `/join/[code]` can open and fully practice any of that group's distributed pieces the same way, with no login — including a password-protected group's pieces
+- [x] A guest who joined via `/join/[code]` can open and fully practice any of that group's distributed pieces the same way, with no login — including a password-protected group's pieces (2026-09-03: closed by the signed httpOnly guest-token cookie, commit `62c2e58`; the token is minted on `/join/[code]/auth` and forwarded by the piece proxy routes, and a cold piece link now shows a password/login gate instead of 404ing)
 - [ ] A real Backend piece whose title happens to match a bundled registry entry still resolves to the bundled asset, not a redundant Backend fetch
 - [ ] `npm run check` and `npm run build` both clean
 - [ ] Human confirms a real distributed piece sounds and looks right, played both as a logged-in member and as a guest via a join code
@@ -901,10 +901,13 @@ timestamp is meaningless against "My mix".
   auto-switch). Armed + tap the page = drop a cue at `(page, x, y)`
   capturing the reference player's current `positionMs`, always saved with
   `scope='group'`.
-- Render: a small ▶-in-circle at the cue's `(page, x, y)`. Visible only in
-  PDF view with audio source = reference; hidden under "My mix".
-- **Tap a cue** (its layer toggle on, no annotation mode needed) → the
-  reference player `seek(time_ms)` then `play()`. Unchanged for everyone.
+- Render: a small ▶-in-circle at the cue's `(page, x, y)`. **Always visible**
+  in PDF view whenever the audio source is the reference recording, for every
+  viewer (logged-in members and not-logged-in join-link guests), independent
+  of the "Show director markup" toggle. Hidden under "My mix" and in score
+  view (a cue's timestamp is meaningless there).
+- **Tap a cue** (no annotation mode needed) → the reference player
+  `seek(time_ms)` then `play()`. Unchanged for everyone.
 - **Edit** a cue's time (mm:ss field) or delete it → needs annotation mode
   + owning-group admin + draw target = Director (F21 group-mark rules).
   Personal cues are no longer a thing on the frontend.
@@ -930,12 +933,41 @@ out cues whenever the audio source isn't the reference recording. The
 `markup/**` proxy routes already pass the body through generically, so
 `time_ms` flows both ways with no change there.
 
+**Always-visible cues + guest path — 2026-09-03 (human's request).** Cue
+glyphs previously only rendered when a viewer manually enabled "Show
+director markup" (per-viewer, default off, and unavailable to guests).
+Now they render for everyone whenever the bottom-bar audio source is the
+reference recording, decoupled from the toggle. A new controller dep
+`cueLoader` returns a loader fn (real group piece + reference recording,
+member or guest) or `null` (fixture / no reference recording);
+`syncCues` loads the cue subset of the group layer into `marks` once,
+independent of `syncMarksForVisibility` (which stays gated on
+`canMarkup`). `marksForPage`'s per-mark rule moved to a pure
+`markVisibleOnPage(mark, {showMine, showDirector, showCues})` helper
+(unit-tested): a `cue` is gated only by `showCues`, every other kind
+still follows its layer toggle. `PdfMarkupLayer` mounts its SVG when
+`markup.cuesVisible` even for a cue-only viewer where `canMarkup` is
+false. Editing cues is unchanged (owning-group admin + annotation mode +
+Director draw target). Director pen/stamp/text ink is untouched: still
+behind the toggle, still members-only. Guests read cues via a new
+Backend `GET /guest/{join_code}/pieces/{piece_id}/cues` (cue-only,
+`tracks` page enabled + `audience == everyone`, mirrors the guest
+rehearsal-notes route); `piece/[id]/markup/+server.ts`'s GET gained a
+guest branch (`?code=` + `scope=group`, guest token injected server-side)
+matching `notes/+server.ts`. New client fn `listGroupCues(pieceId,
+guestCode?)`. `check`/`build` clean, vitest 82.
+
 **Acceptance criteria:**
 - [x] On a real group-owned piece's PDF with a reference recording, an
       owning-group admin with draw target = Director can drop a cue
       (`scope='group'`) and tapping it jumps + plays the reference audio
       from that point; the button is hidden on "mine" and for non-admins
 - [x] Members / guests tap group cues read-only, can't create/edit
+- [x] Cue glyphs render for every viewer (members + not-logged-in join-link
+      guests) whenever the audio source is the reference recording,
+      independent of the "Show director markup" toggle; guests read them via
+      `GET /guest/{code}/pieces/{id}/cues` (cue-only). Director pen/stamp/text
+      ink stays behind the toggle and members-only
 - [x] Cues are hidden when the audio source is "My mix" and in score view
 - [x] Editing a cue's time (mm:ss) requires annotation mode; the value
       round-trips
@@ -960,9 +992,18 @@ out cues whenever the audio source isn't the reference recording. The
 - [x] en/es keys: `markup_tool_cue`, `markup_cue_jump`, `markup_cue_hint`,
       `markup_cue_time_label`, `markup_cue_time_placeholder`.
 - [x] vitest for the format helpers + cue interactivity gating.
+- [x] 2026-09-03: always-visible cues + guest path. `cueLoader` dep +
+      `syncCues` in `pdfMarkup.svelte.ts`; `markVisibleOnPage` pure helper
+      (cue gated only on `showCues`); `PdfMarkupLayer` mounts on
+      `markup.cuesVisible`; `listGroupCues` + the `markup/+server.ts` GET
+      guest branch; `cueLoader` wired `piece/[id]/+page.svelte` -> `PdfView`.
+      vitest +3 for `markVisibleOnPage`.
 
 **Tasks — Human:**
-- [ ] Touchscreen pass per the last acceptance box.
+- [ ] Touchscreen pass per the last acceptance box (now also: open the piece
+      as a plain member with "Show director markup" off, and as a join-link
+      guest, and confirm cue glyphs still show + jump when the reference
+      recording is the audio source).
 
 ## Backlog
 
@@ -1012,6 +1053,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-03: F22 — PDF cue glyphs now always render in the player for every viewer (logged-in members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the per-viewer "Show director markup" toggle. New `cueLoader` controller dep + `syncCues` load the cue subset of the group layer unconditionally; `markVisibleOnPage` pure helper gates a `cue` only on `showCues`; `PdfMarkupLayer` mounts its SVG on `markup.cuesVisible` even where `canMarkup` is false. Guests read cues via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only, tracks/everyone gate) behind a `?code=` guest branch added to `piece/[id]/markup/+server.ts`'s GET; new client fn `listGroupCues`. Director pen/stamp/text ink unchanged (toggle-gated, members-only); editing cues unchanged. `check` 0 errors, `build` clean, vitest 82; not browser-exercised (standing blocker).
 
 - 2026-09-03: Wired the Backend's new `Piece.presentation` hint ("Opens as: Auto / Score + reference recording / Play-along mix", set from the Rehearsal Tracks edit panel). Threaded `presentation` through `RemotePieceMeta` / `LibraryEntryOut` / `resolve/+server.ts` (both authed and guest branches) and `buildRemotePiece`. `piece/[id]/+page.svelte` gained `seededPresentation()`: on a first-ever open of a piece carrying the hint, and only when the piece actually has the panes it needs (PDF + reference recording, or a player), it seeds `viewMode`/`audioSource` accordingly; any viewer who has opened the piece before (a persisted settings blob exists) gets the unchanged pane-shape default and `bootstrap()` restores their own pick. `bootstrap()` itself untouched. 5 en+es keys (`groups_presentation_*`, `groups_invalid_presentation`). `check` 0 errors, vitest 79, `build` clean; not browser-exercised (standing blocker).
 

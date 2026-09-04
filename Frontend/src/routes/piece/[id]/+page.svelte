@@ -40,6 +40,7 @@
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes, type PieceNote } from '$lib/api/pieceNotes';
+	import { listGroupCues } from '$lib/api/pieceMarkup';
 	import { createAnnotationController } from '$lib/player/annotations.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -312,6 +313,19 @@
 		pieceId: () => remoteMeta?.pieceId,
 		currentUser: () => page.data.user ?? undefined,
 		timeSignature: () => parsed?.timeSignature
+	});
+
+	// F22: cue glyphs render in the PDF player for everyone with the reference
+	// recording selected — members through the authed markup proxy, guests
+	// through its `?code=` guest branch. A bundled fixture or a piece with no
+	// reference recording resolves to `null`, so no cues load. Independent of
+	// the "Show director markup" toggle (which still gates the rest of the
+	// director ink) and of `canAnnotate`.
+	const cueLoader = $derived(() => {
+		if (!remoteMeta || !piece?.youtubeUrl) return null;
+		if (canAnnotate) return () => listGroupCues(remoteMeta!.pieceId);
+		if (guestJoinCode) return () => listGroupCues(remoteMeta!.pieceId, guestJoinCode);
+		return null;
 	});
 
 	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
@@ -1133,6 +1147,7 @@
 							referencePlayer?.seek(ms);
 							referencePlayer?.play();
 						}}
+						cueLoader={cueLoader}
 					/>
 					</div>
 				</div>

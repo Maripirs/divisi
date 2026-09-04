@@ -65,7 +65,12 @@
 	}
 </script>
 
-{#if canMarkup && (markup.showMine || markup.showDirector)}
+<!-- F22: the SVG also mounts for a cue-only viewer (guests included, where
+     `canMarkup` is false) whenever cues are on the page. `marksForPage` still
+     filters non-cue marks out when their layer toggle is off, so nothing else
+     needs guarding; the text-editor `<form>` below stays behind `textEditor`,
+     which only exists in annotation mode (⇒ `canMarkup`). -->
+{#if (canMarkup && (markup.showMine || markup.showDirector)) || markup.cuesVisible}
 	<svg
 		class="markup-layer"
 		class:markup-layer--editable={markup.annotationMode}

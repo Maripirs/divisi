@@ -21,6 +21,7 @@ from app.api.schemas import (
     GuestGroupOut,
     GuestPieceOut,
     HomeworkOut,
+    MarkupMarkOut,
     PieceRehearsalNoteOut,
     RenderManifestOut,
     ResponsibilityGuestDateOut,
@@ -36,6 +37,7 @@ from app.db.models import (
     GroupPage,
     Homework,
     Piece,
+    PieceMarkupMark,
     PieceRehearsalNote,
     PieceVersion,
     ResponsibilityDate,
@@ -308,6 +310,45 @@ def list_guest_piece_rehearsal_notes(
             PieceRehearsalNote.group_id == group.id,
         )
         .order_by(PieceRehearsalNote.created_at.asc())
+        .all()
+    )
+
+
+@router.get(
+    "/{join_code}/pieces/{piece_id}/cues",
+    response_model=list[MarkupMarkOut],
+)
+def list_guest_piece_cues(
+    join_code: str,
+    piece_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[PieceMarkupMark]:
+    """F22 / B18: the reference-recording "jump here" cue glyphs on a group's
+    piece PDF, read-only for a guest (no session). Cue-only on purpose — the
+    director pen/stamp/text ink that shares the `scope == "group"` markup layer
+    has no guest path and stays members-only; a cue is a navigation aid ("jump
+    the recording to here") rather than private markup, so it rides along with
+    the guest PDF itself and renders for every viewer regardless of the
+    member-facing "Show director markup" toggle. Same `tracks` page gate as the
+    guest PDF and rehearsal-notes routes (page enabled *and*
+    `audience == everyone`, the human's call), plus the usual
+    join-code/password/distribution scoping. Ordering matches the member markup
+    list (oldest first)."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    require_guest_page_access(group.id, GroupPage.tracks, db)
+    if _latest_distributed_version(group.id, piece_id, db) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found for this group")
+    return (
+        db.query(PieceMarkupMark)
+        .filter(
+            PieceMarkupMark.piece_id == piece_id,
+            PieceMarkupMark.scope == "group",
+            PieceMarkupMark.kind == "cue",
+        )
+        .order_by(PieceMarkupMark.created_at)
         .all()
     )
 

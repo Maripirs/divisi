@@ -9,6 +9,7 @@
 	import PdfMarkupLayer from '$lib/components/pdf/PdfMarkupLayer.svelte';
 	import PdfMarkupPanel from '$lib/components/pdf/PdfMarkupPanel.svelte';
 	import { createPdfMarkupController } from '$lib/components/pdf/pdfMarkup.svelte';
+	import type { MarkupMark } from '$lib/api/pieceMarkup';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
 	import { m } from '$lib/paraglide/messages';
 
@@ -49,7 +50,8 @@
 		audioSourceIsReference = false,
 		getReferencePositionMs = () => null,
 		canPlaceCue = () => false,
-		onCueTap = () => {}
+		onCueTap = () => {},
+		cueLoader = () => null
 	}: {
 		pdfUrl: string;
 		zoom?: number;
@@ -95,6 +97,13 @@
 		/** F22: tapping an existing cue asks the host (which owns the reference
 		 * player) to seek there and play. */
 		onCueTap?: (timeMs: number) => void;
+		/** F22: returns a loader for the group-layer cue glyphs when they should
+		 * show for this piece (a real group piece with a reference recording,
+		 * member or guest), or `null` otherwise (fixture / no reference
+		 * recording). Cues render for every viewer whenever the audio source is
+		 * the reference recording, independent of the `showDirectorMarkup`
+		 * toggle and of `canMarkup`. */
+		cueLoader?: () => (() => Promise<MarkupMark[]>) | null;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -142,7 +151,8 @@
 		getReferencePositionMs: () => getReferencePositionMs(),
 		canPlaceCue: () => canPlaceCue() && !!pieceId,
 		audioSourceIsReference: () => audioSourceIsReference,
-		onCueTap: (timeMs) => onCueTap(timeMs)
+		onCueTap: (timeMs) => onCueTap(timeMs),
+		cueLoader: () => cueLoader()
 	});
 
 	// Load marks for the current `(pieceId, showMine, showDirector)`, and
@@ -152,6 +162,9 @@
 	// step 4.
 	$effect(() => {
 		markup.syncMarksForVisibility();
+	});
+	$effect(() => {
+		markup.syncCues();
 	});
 	$effect(() => {
 		markup.syncAnnotationModeWithVisibility();
