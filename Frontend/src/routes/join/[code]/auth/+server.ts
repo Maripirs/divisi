@@ -5,11 +5,13 @@ import type { RequestHandler } from './$types';
 
 /** Exchanges a group's guest password for an opaque signed guest token and
  * stashes it in the per-group httpOnly cookie (`$lib/server/guestSession.ts`).
- * Backs both the `/join/[code]` password prompt and the `/piece/[id]` gate:
- * either posts `{ password }` here, then re-runs its own load (which now
- * finds the cookie). A group with no guest password still 200s here with a
- * usable token, so the same flow works even when the prompt was shown
- * spuriously.
+ *
+ * Sole remaining caller is the bare `/piece/[id]` link gate (no `?code=`,
+ * owning group has a guest password — see `routes/piece/[id]/+page.svelte`):
+ * it posts `{ password }` here, then on `{ ok: true }` navigates to
+ * `/piece/[id]?code=...`. The old `/join/[code]` password prompt that also
+ * used this is gone (a valid join code now authorizes the guest view on its
+ * own). A group with no guest password still 200s here with a usable token.
  *
  * Always answers HTTP 200 with `{ ok }` (never 401/500) so the client form
  * reads a boolean rather than having to catch: `ok: false` means wrong

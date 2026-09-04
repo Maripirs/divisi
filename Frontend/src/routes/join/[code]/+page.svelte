@@ -9,7 +9,6 @@
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
-	import { invalidateAll } from '$app/navigation';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -31,38 +30,13 @@
 	// card is expanded.
 	let notesExpanded = $state<Record<string, boolean>>({});
 
-	// B10 password gate (the `result.error === 'password-required'` branch
-	// below). The password is POSTed to `/join/[code]/auth`, which mints the
-	// per-group httpOnly guest-token cookie; on success we `invalidateAll()`
-	// so `+page.ts` re-runs `/join/[code]/data`, which now sees the cookie.
-	// Nothing sensitive ever lands in the URL or history.
-	let guestPassword = $state('');
-	let passwordWrong = $state(false);
-	let passwordSubmitting = $state(false);
-
-	async function submitGuestPassword(event: SubmitEvent) {
-		event.preventDefault();
-		passwordSubmitting = true;
-		passwordWrong = false;
-		try {
-			const res = await fetch(`/join/${data.code}/auth`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ password: guestPassword })
-			});
-			const body = (await res.json()) as { ok: boolean };
-			if (body.ok) {
-				guestPassword = '';
-				await invalidateAll();
-			} else {
-				passwordWrong = true;
-			}
-		} catch {
-			passwordWrong = true;
-		} finally {
-			passwordSubmitting = false;
-		}
-	}
+	// The old B10 guest-password gate that lived here is gone: a valid join
+	// code now authorizes the group's guest view on its own, so
+	// `/join/[code]/data` never comes back "password-required". The guest
+	// password survives only on the bare `/piece/[id]` link (no `?code=`),
+	// handled in `routes/piece/[id]/+page.server.ts` +
+	// `routes/piece/[id]/+page.svelte`. `/join/[code]/auth/+server.ts` stays
+	// as the endpoint that gate POSTs to.
 </script>
 
 <!-- Shared between the resolved `error: 'server'` case and the `{:catch}`
@@ -95,9 +69,9 @@
 		<LoadingBlock />
 	{:then result}
 		{#if result.error !== null}
-			<!-- No group to head the page (not-found / password-required /
-			     server), so lead with the logo instead. `error === null` is
-			     exactly the "has a group" variant of the union. -->
+			<!-- No group to head the page (not-found / server), so lead with
+			     the logo instead. `error === null` is exactly the "has a
+			     group" variant of the union. -->
 			<div class="hero">
 				<Logo size={48} />
 			</div>
@@ -110,30 +84,6 @@
 					{m.join_code_not_found_body({ code: data.code })}
 				</p>
 				<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_try_another_code()}</a>
-			</section>
-		{:else if result.error === 'password-required'}
-			<section class="card">
-				<p class="card-title">{m.join_password_required()}</p>
-				<p class="card-meta">{m.join_password_required_body()}</p>
-				<form onsubmit={submitGuestPassword}>
-					<label class="field">
-						<span>{m.login_password()}</span>
-						<!-- svelte-ignore a11y_autofocus -->
-						<input
-							type="password"
-							bind:value={guestPassword}
-							required
-							autofocus
-							autocomplete="current-password"
-						/>
-					</label>
-					{#if passwordWrong}
-						<p class="error">{m.join_password_wrong()}</p>
-					{/if}
-					<button class="btn btn-primary btn-block" type="submit" disabled={passwordSubmitting}>
-						{m.join_continue()}
-					</button>
-				</form>
 			</section>
 		{:else if result.error === 'server'}
 			{@render serverErrorCard()}

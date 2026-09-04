@@ -45,7 +45,20 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 
-	let { data }: { data: { id: string } } = $props();
+	let {
+		data
+	}: {
+		data: { id: string; guestGate?: { groupName: string; code: string } };
+	} = $props();
+
+	// A bare `/piece/{id}` link opened logged-out, when the owning group has
+	// a guest password: `+page.server.ts` resolved the group and handed us
+	// its name + join code instead of the piece. Show a gate card that names
+	// the group rather than mounting the player or kicking off a codeless
+	// `resolveRemote()` (which would just 404). A logged-in user is never
+	// gated — `page.data.user` being set means the server returned the plain
+	// `{ id }` shape and the normal logged-in path applies.
+	const showGuestGate = $derived(!!data.guestGate && !page.data.user);
 	// The keyed markup remounts this component whenever the route id changes,
 	// so capturing the matching piece once per mount is intentional. Bundled
 	// fixtures win a same-id collision (can't happen in practice — fixture
@@ -94,21 +107,31 @@
 		return listGuestGroupNotes(guestJoinCode ?? '', remoteMeta?.pieceId ?? '');
 	}
 
-	// B10 password gate: shown (in the player pane) when `resolve/+server.ts`
-	// reports the group has a guest password and this browser has no valid
-	// guest-token cookie for it yet. The password is POSTed to
-	// `/join/[code]/auth`, which mints that cookie; on success we retry
-	// `resolveRemote()`. Nothing sensitive is ever put in the URL.
+	// Guest password gate state, for the `data.guestGate` card only (a bare
+	// `/piece/{id}` link, no `?code=`, whose owning group has a guest
+	// password — see `+page.server.ts`). A join-code link never reaches this:
+	// the code alone authorizes the guest routes now, so `resolve/+server.ts`
+	// no longer has a "password required" outcome. The entered password is
+	// POSTed to `/join/{code}/auth`; on success we navigate to the piece
+	// *with* `?code=` and the normal guest flow takes over. Nothing sensitive
+	// is ever put in the URL.
 	let gatePassword = $state('');
 	let gatePasswordWrong = $state(false);
 	let gateSubmitting = $state(false);
 
-	async function submitPiecePassword(event: SubmitEvent) {
+	/** Submit handler for the `data.guestGate` card (bare piece link,
+	 * password group, before any `?code=`). `/join/{code}/auth` mints the
+	 * per-group guest-token cookie; the code comes from the server-resolved
+	 * `data.guestGate` rather than the URL. On success, navigate to the
+	 * piece *with* `?code=` so the normal guest flow (and this component's
+	 * `resolveRemote()`) takes over. */
+	async function submitGuestGatePassword(event: SubmitEvent) {
 		event.preventDefault();
+		if (!data.guestGate) return;
 		gateSubmitting = true;
 		gatePasswordWrong = false;
 		try {
-			const res = await fetch(`/join/${guestJoinCode ?? ''}/auth`, {
+			const res = await fetch(`/join/${data.guestGate.code}/auth`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ password: gatePassword })
@@ -116,8 +139,7 @@
 			const body = (await res.json()) as { ok: boolean };
 			if (body.ok) {
 				gatePassword = '';
-				loadState = { kind: 'loading' };
-				await resolveRemote();
+				await goto(lh(`/piece/${data.id}?code=${encodeURIComponent(data.guestGate.code)}`));
 			} else {
 				gatePasswordWrong = true;
 			}
@@ -200,11 +222,6 @@
 		// "not found" would be actively misleading — the piece is very
 		// likely fine, the server just hasn't responded yet.
 		| { kind: 'unreachable' }
-		// B10: this piece's group has a guest password and this browser has
-		// no valid guest-token cookie for it yet. A small password gate in
-		// the player pane recovers it, rather than the misleading `notFound`
-		// card a 401 used to land on.
-		| { kind: 'passwordRequired' }
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
 		| { kind: 'noVisibleTracks' }
@@ -358,6 +375,11 @@
 	let destroyed = false;
 
 	onMount(() => {
+		// `data.guestGate` (logged-out bare link to a password-protected
+		// group's piece): the gate card below is all this mount shows — no
+		// player, and crucially no `resolveRemote()`, which with no `?code=`
+		// would 404. `bootstrap()`/`tick` have nothing to drive either.
+		if (showGuestGate) return;
 		if (piece) void bootstrap();
 		else void resolveRemote();
 		rafHandle = requestAnimationFrame(tick);
@@ -426,14 +448,9 @@
 			const body = (await res.json()) as {
 				remote: RemotePieceMeta | null;
 				unreachable: boolean;
-				passwordRequired?: boolean;
 				isOwningGroupAdmin?: boolean;
 				canManagePieceNotes?: boolean;
 			};
-			if (body.passwordRequired) {
-				loadState = { kind: 'passwordRequired' };
-				return;
-			}
 			if (!body.remote) {
 				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
 				return;
@@ -970,6 +987,52 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 {#key data.id}
+	{#if showGuestGate && data.guestGate}
+		<!-- Bare `/piece/{id}` link, logged out, owning group has a guest
+		     password (`data.guestGate` from `+page.server.ts`): this gate card
+		     is the whole page — no player, and no header controls that would
+		     reference a `piece` we never resolved. It reuses the same
+		     `.status-card` / `.gate-form` shell the player's own status cards
+		     use. Entering the right password mints the guest-token cookie and
+		     navigates to `/piece/{id}?code=...`, where the normal guest flow
+		     takes over (the code alone authorizes from there — the password
+		     only ever gates this no-`?code=` entry point). A join-code link
+		     never lands here. -->
+		<div class="player-shell">
+			<main class="score-area">
+				<div class="view-pane">
+					<div class="status-card">
+						<p>{m.piece_password_gate_group_title({ group: data.guestGate.groupName })}</p>
+						<p class="status-detail-text">{m.piece_password_gate_group_body()}</p>
+						<form class="gate-form" onsubmit={submitGuestGatePassword}>
+							<input
+								type="password"
+								bind:value={gatePassword}
+								placeholder={m.login_password()}
+								aria-label={m.login_password()}
+								required
+								autocomplete="current-password"
+							/>
+							{#if gatePasswordWrong}
+								<p class="status-note status-note--error">{m.join_password_wrong()}</p>
+							{/if}
+							<button class="gate-submit" type="submit" disabled={gateSubmitting}>
+								{m.piece_password_gate_submit()}
+							</button>
+						</form>
+						<a
+							class="text-link"
+							href={lh(
+								`/login?redirectTo=${encodeURIComponent(`/piece/${data.id}?code=${data.guestGate.code}`)}`
+							)}
+						>
+							{m.piece_password_gate_login()}
+						</a>
+					</div>
+				</div>
+			</main>
+		</div>
+	{:else}
 	<div class="player-shell">
 		<header class="top-bar">
 			<button class="icon-btn" onclick={backToLibrary} aria-label={m.piece_back_to_library()}>
@@ -1067,33 +1130,6 @@
 					<div class="status-card status-card--error">
 						<p>{m.errors_could_not_reach_server()}</p>
 						<button class="text-link" onclick={() => location.reload()}>{m.piece_retry()}</button>
-					</div>
-				{:else if loadState.kind === 'passwordRequired'}
-					<div class="status-card">
-						<p>{m.piece_password_gate_title()}</p>
-						<p class="status-detail-text">{m.piece_password_gate_body()}</p>
-						<form class="gate-form" onsubmit={submitPiecePassword}>
-							<input
-								type="password"
-								bind:value={gatePassword}
-								placeholder={m.login_password()}
-								aria-label={m.login_password()}
-								required
-								autocomplete="current-password"
-							/>
-							{#if gatePasswordWrong}
-								<p class="status-note status-note--error">{m.join_password_wrong()}</p>
-							{/if}
-							<button class="gate-submit" type="submit" disabled={gateSubmitting}>
-								{m.piece_password_gate_submit()}
-							</button>
-						</form>
-						<a
-							class="text-link"
-							href={lh(`/login?redirectTo=${encodeURIComponent(`/piece/${data.id}?code=${guestJoinCode ?? ''}`)}`)}
-						>
-							{m.piece_password_gate_login()}
-						</a>
 					</div>
 				{:else if loadState.kind === 'error'}
 					<div class="status-card status-card--error">
@@ -1505,6 +1541,7 @@
 			onUnshare={ann.unshare}
 		/>
 	</div>
+	{/if}
 {/key}
 
 <style>
@@ -1717,8 +1754,9 @@
 		word-break: break-word;
 	}
 
-	/* B10 password gate (`loadState.kind === 'passwordRequired'`). Sits in a
-	   plain `.status-card`; this is just the little form inside it. */
+	/* Guest password gate (`data.guestGate` — a bare `/piece/{id}` link
+	   whose owning group has a guest password). Sits in a plain
+	   `.status-card`; this is just the little form inside it. */
 	.status-detail-text {
 		font-size: 0.8125rem;
 	}

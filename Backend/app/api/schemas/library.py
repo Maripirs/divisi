@@ -170,6 +170,19 @@ class GuestGroupOut(BaseModel):
     pieces: list[GuestPieceOut]
 
 
+class GuestPieceOwnerOut(BaseModel):
+    """The group a bare piece id belongs to, for an unauthenticated caller.
+    Name + join code only, never any piece content: it exists so a bare
+    `/piece/{id}` link can show a gate that names the owning group instead
+    of an unexplained bounce to login. `guest_password_required` tells the
+    Frontend whether to draw that gate at all or send the visitor straight
+    into the guest player (a group with no guest password gates nothing)."""
+
+    group_name: str
+    join_code: str
+    guest_password_required: bool
+
+
 class GuestAuthIn(BaseModel):
     """Body of POST /guest/{join_code}/auth: the group's guest password,
     exchanged for a signed guest token. Optional so a group with no guest

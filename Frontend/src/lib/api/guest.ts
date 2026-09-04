@@ -97,20 +97,17 @@ export class JoinCodeNotFoundError extends Error {
 	}
 }
 
-/** B10: the group has a guest password set and none (or the wrong one) was
- * given — distinct from `JoinCodeNotFoundError` so the UI can prompt for a
- * password instead of saying the code itself is wrong. */
-export class GuestPasswordRequiredError extends Error {
-	constructor() {
-		super('This group requires a password');
-		this.name = 'GuestPasswordRequiredError';
-	}
-}
-
 /** Any other non-2xx response from the guest API (rate-limited, server
- * error, etc.) — distinct from the two errors above so callers can show
- * "check your code"/"enter a password" only for the cases actually about
- * those. */
+ * error, etc.) — distinct from `JoinCodeNotFoundError` so callers can show
+ * "check your code" only for that one case.
+ *
+ * There is no longer a "password required" variant: a valid join code
+ * authorizes the guest routes on its own (the Backend's `_authorize_guest`
+ * is a no-op now), so these routes never answer 401. The guest password
+ * survives only at `POST /guest/{code}/auth`, used by the bare
+ * `/piece/{id}` link gate (see `routes/piece/[id]/+page.server.ts`); a
+ * stray 401 from anywhere else is just a `GuestApiError` -> the generic
+ * "try again" card. */
 export class GuestApiError extends ApiError {
 	constructor(status: number, message: string) {
 		super(status, message);
@@ -179,13 +176,17 @@ interface GuestPieceRehearsalNoteResponse {
 }
 
 interface GuestRequestOptions {
+	/** Legacy `?password=` param. The guest routes no longer check it (a
+	 * valid join code authorizes on its own), so nothing passes this any
+	 * more; kept only so the `guestUrl` signature and call sites don't
+	 * churn. The password now lives solely at `POST /guest/{code}/auth`. */
 	password?: string;
 	/** An opaque signed guest token (from the per-group httpOnly cookie,
 	 * `$lib/server/guestSession.ts`), read server-side and threaded through
-	 * here. Supplying it is equivalent to supplying the right `?password=`;
-	 * a group with no guest password ignores both. This is how a
-	 * password-protected group's guest routes stay reachable without ever
-	 * putting the password in a browser-visible URL. */
+	 * here. Harmless to send and harmless to omit: the guest routes accept
+	 * the join code alone now, and simply ignore this. Retained so the
+	 * cookie set by `POST /guest/{code}/auth` (the no-`?code=` piece-link
+	 * gate) still gets forwarded rather than silently dropped. */
 	token?: string;
 	fetchFn?: typeof fetch;
 }
@@ -224,7 +225,6 @@ async function guestFetch(url: string, fetchFn: typeof fetch): Promise<Response>
 
 async function throwForStatus(res: Response, code: string): Promise<never> {
 	if (res.status === 404) throw new JoinCodeNotFoundError(code);
-	if (res.status === 401) throw new GuestPasswordRequiredError();
 	throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 }
 
@@ -261,7 +261,6 @@ export async function resolveJoinCode(code: string, { password, token, fetchFn =
  * rather than a real error. */
 export async function listGuestHomework(code: string, { password, token, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestHomework[]> {
 	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/homework`, { password, token }), fetchFn);
-	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestHomeworkResponse[] = await res.json();
@@ -288,7 +287,6 @@ export async function listGuestResponsibilityDates(
 		guestUrl(`/guest/${encodeURIComponent(code)}/responsibilities/dates`, { password, token }),
 		fetchFn
 	);
-	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestResponsibilityDateResponse[] = await res.json();
@@ -321,7 +319,6 @@ export async function listGuestWeeklyNotes(
 	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestWeeklyNote[]> {
 	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/weekly-notes`, { password, token }), fetchFn);
-	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestWeeklyNoteResponse[] = await res.json();
@@ -351,7 +348,6 @@ export async function listGuestPieceRehearsalNotes(
 		),
 		fetchFn
 	);
-	if (res.status === 401) throw new GuestPasswordRequiredError();
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestPieceRehearsalNoteResponse[] = await res.json();

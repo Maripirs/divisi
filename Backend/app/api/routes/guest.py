@@ -9,6 +9,14 @@ actual `Distribution` rows, so a guest can never reach a piece id that
 wasn't genuinely pushed to this group (no guessing a piece id into
 arbitrary access). Rate-limited (`app/core/rate_limit.py`) as the
 brute-force hardening called for in B6's plan.
+
+A valid join code is now the guest credential on its own: holding the code
+is treated as equivalent to having entered the group's guest password, so
+these routes no longer gate on a password or a guest token (see
+`_authorize_guest`). The guest password survives on exactly one path,
+`POST /guest/{join_code}/auth`, which a no-`?code=` piece link calls to
+check a visitor's entered member password before letting them in with the
+code.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,6 +28,7 @@ from app.api.schemas import (
     GuestAuthOut,
     GuestGroupOut,
     GuestPieceOut,
+    GuestPieceOwnerOut,
     HomeworkOut,
     MarkupMarkOut,
     PieceRehearsalNoteOut,
@@ -30,7 +39,7 @@ from app.api.schemas import (
     WeeklyNoteOut,
 )
 from app.core.rate_limit import rate_limit_guest
-from app.core.security import create_guest_token, decode_guest_token, verify_password
+from app.core.security import create_guest_token, verify_password
 from app.db.models import (
     Distribution,
     Group,
@@ -78,18 +87,20 @@ def _get_group_by_join_code_or_404(join_code: str, db: Session) -> Group:
 
 
 def _authorize_guest(group: Group, password: str | None, token: str | None) -> None:
-    """A guest route passes when the group has no guest password, when the
-    right password is supplied, or when a valid guest token for this group
-    is supplied (minted by POST /guest/{join_code}/auth after a password
-    check). One generic 401 either way, same as before: nothing here should
-    tell an unauthorized caller which case they are in."""
-    if group.guest_password_hash is None:
-        return
-    if password is not None and verify_password(password, group.guest_password_hash):
-        return
-    if token is not None and decode_guest_token(token) == group.id:
-        return
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect or missing group password")
+    """No-op now: a valid join code is the guest credential on its own, so
+    reaching one of these routes with the right code is already enough. It
+    is treated as equivalent to having entered the group's guest password.
+
+    The function and its call sites (and the `password`/`token` query params
+    they pass) are kept deliberately: re-introducing a per-route check later
+    becomes a one-function change, and the routes' query-string shape does
+    not churn in the meantime. The guest password itself lives on exactly
+    one path now, `POST /guest/{join_code}/auth`, which the no-`?code=`
+    piece-link gate calls to verify a visitor's entered member password
+    before sending them in with the code.
+    """
+    # `group`/`password`/`token` are intentionally unused: see docstring.
+    return
 
 
 def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> PieceVersion | None:
@@ -103,15 +114,73 @@ def _latest_distributed_version(group_id: str, piece_id: str, db: Session) -> Pi
     return row
 
 
+# Registered before the `/{join_code}/...` routes on purpose: the literal
+# `pieces` first segment can never collide with a join code (8 uppercase
+# alphanumerics), and no `/{join_code}/...` route has `pieces` as its second
+# segment with this segment count, but keeping it first removes any doubt
+# about which route a `/guest/pieces/...` path resolves to.
+@router.get("/pieces/{piece_id}/owner", response_model=GuestPieceOwnerOut)
+def get_guest_piece_owner(piece_id: str, db: Session = Depends(get_db)) -> GuestPieceOwnerOut:
+    """Map a bare piece id to the group it was distributed to: that group's
+    name, its join code, and whether the group has a guest password
+    (`guest_password_required`).
+
+    Deliberately name + join code only — never any piece content — and no
+    auth of any kind: no `get_current_user`, no `_authorize_guest`, no
+    `require_guest_page_access`. It has to answer before the visitor has a
+    password, so a bare `/piece/{id}` link (no `?code=`) can show a gate
+    that names the owning group instead of an unexplained bounce to
+    `/login`.
+
+    The Frontend uses `guest_password_required` to decide what that gate
+    does: `false` -> redirect straight into the guest player with
+    `?code={join_code}` (a group with no guest password gates nothing);
+    `true` -> show a "this piece belongs to {group}" card whose password
+    field is checked against `POST /guest/{join_code}/auth`. Note that once
+    the visitor is in with the code, the join code alone authorizes every
+    read route (see `_authorize_guest`) — the guest password only ever
+    gates this one no-`?code=` entry point. Accepted tradeoff: a piece id
+    now reveals its owning group's name and join code to any caller, the
+    same trust level as a shared join link (piece ids are non-guessable).
+    """
+    latest = (
+        db.query(Distribution)
+        .join(PieceVersion, Distribution.piece_version_id == PieceVersion.id)
+        .filter(PieceVersion.piece_id == piece_id)
+        .order_by(Distribution.distributed_at.desc())
+        .first()
+    )
+    if latest is None:
+        # Personal piece, or one never pushed to any group. Same generic
+        # phrasing as `_get_group_by_join_code_or_404` — nothing here should
+        # help tell "no such piece" apart from "piece exists but private".
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+    group = db.query(Group).filter(Group.id == latest.group_id).first()
+    if group is None:
+        # A distribution pointing at no group is a data-integrity
+        # impossibility; fail closed rather than 500 if it ever happens.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
+    return GuestPieceOwnerOut(
+        group_name=group.name,
+        join_code=group.join_code,
+        guest_password_required=group.guest_password_hash is not None,
+    )
+
+
 @router.post("/{join_code}/auth")
 def authenticate_guest(join_code: str, payload: GuestAuthIn, db: Session = Depends(get_db)) -> GuestAuthOut:
-    """Exchange the group's guest password for a signed guest token the
-    caller can then send as `token=` on every other guest route, so a
-    leaked join-code link still is not enough on its own (B10). Rate
-    limited by the router-wide `rate_limit_guest` dependency. A group with
-    no guest password set still returns a token (the token just always
-    passes `_authorize_guest`), so the frontend can treat "has a guest
-    cookie" uniformly."""
+    """Verify the group's guest password and mint a signed guest token.
+
+    This is the one place the guest password is still checked (B10 used to
+    gate every guest route on it; the join code alone authorizes those
+    now). Its sole caller is the bare `/piece/{join-code-less}` link gate on
+    the Frontend: a visitor who has a piece link but no join code enters the
+    member password here, gets the token cookie, and is then sent into the
+    piece with `?code=`. Wrong or missing password on a protected group ->
+    401; correct -> 200 with a token. A group with no guest password still
+    returns a token (nothing to check), so the Frontend can treat "has a
+    guest cookie" uniformly. Rate limited by the router-wide
+    `rate_limit_guest` dependency."""
     group = _get_group_by_join_code_or_404(join_code, db)
     if group.guest_password_hash is not None:
         pw = payload.password
@@ -172,7 +241,7 @@ def list_guest_homework(
     scoped by join code the same way, no membership required. Also gated
     by B12's `homework` page settings (default: enabled, members-only
     audience) — unlike tracks, homework isn't guest-visible by default
-    even with the right join code/password."""
+    even with a valid join code."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.homework, db)
@@ -295,9 +364,9 @@ def list_guest_piece_rehearsal_notes(
     with the member list (`GET /groups/{id}/pieces/{id}/rehearsal-notes`,
     gated on `GroupPage.weekly_notes`): the guest path gates on the group's
     `tracks` page being enabled *and* `audience == everyone`, the human's
-    call. Personal notes have no guest path. Same
-    join-code/password/distribution scoping as the other guest piece
-    routes; ordering matches the member list (oldest first)."""
+    call. Personal notes have no guest path. Same join-code + distribution
+    scoping as the other guest piece routes; ordering matches the member
+    list (oldest first)."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
@@ -333,9 +402,9 @@ def list_guest_piece_cues(
     the guest PDF itself and renders for every viewer regardless of the
     member-facing "Show director markup" toggle. Same `tracks` page gate as the
     guest PDF and rehearsal-notes routes (page enabled *and*
-    `audience == everyone`, the human's call), plus the usual
-    join-code/password/distribution scoping. Ordering matches the member markup
-    list (oldest first)."""
+    `audience == everyone`, the human's call), plus the usual join-code +
+    distribution scoping. Ordering matches the member markup list (oldest
+    first)."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)
@@ -403,8 +472,8 @@ def get_guest_piece_file(
     db: Session = Depends(get_db),
 ) -> FileResponse:
     """F5: raw music-file bytes for this group's currently-distributed
-    version of a piece. Same join-code/password/page-settings gate as the
-    manifest route; 404s cleanly when that version has no music file."""
+    version of a piece. Same join-code + page-settings gate as the manifest
+    route; 404s cleanly when that version has no music file."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     require_guest_page_access(group.id, GroupPage.tracks, db)

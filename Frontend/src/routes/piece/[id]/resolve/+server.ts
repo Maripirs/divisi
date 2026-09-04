@@ -34,11 +34,6 @@ interface RemoteResolution {
 	 * back-compat alias of the same value. */
 	isOwningGroupAdmin?: boolean;
 	canManagePieceNotes?: boolean;
-	/** Guest path only: the piece's group has a guest password set and this
-	 * browser has no valid guest-token cookie for it yet (the Backend's
-	 * `/guest/{code}` answered 401). `+page.svelte` shows an inline password
-	 * gate for this rather than the misleading "no piece found" card. */
-	passwordRequired?: boolean;
 }
 
 /** The caller's role in this piece's owning group, or `null` for a
@@ -101,10 +96,12 @@ async function resolveGuestRemote(
 	token: string | null,
 	fetchFn: typeof fetch
 ): Promise<RemoteResolution> {
-	// A valid guest token proves this browser cleared the group's password
-	// gate on `/join/[code]`; forwarding it here is what makes a
-	// password-protected group's piece links resolve at all. A group with no
-	// guest password ignores it.
+	// The `?code=` in the URL is now the whole guest credential: a valid
+	// join code authorizes the Backend's guest routes on its own, so this
+	// call no longer expects a 401. The `token` (guest-token cookie, minted
+	// by the bare-piece-link password gate at `/join/[code]/auth`) is still
+	// forwarded when present so it isn't dropped, but nothing here depends
+	// on it.
 	const url = new URL(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}`);
 	if (token) url.searchParams.set('token', token);
 	let res: Response;
@@ -113,10 +110,9 @@ async function resolveGuestRemote(
 	} catch {
 		return { remote: null, unreachable: true };
 	}
-	// 401 == the group has a guest password and this browser has no (valid)
-	// token for it yet. Distinct from "no such piece": prompt for the
-	// password instead of claiming the link is dead.
-	if (res.status === 401) return { remote: null, unreachable: false, passwordRequired: true };
+	// No special-casing for 401 any more (it shouldn't happen). Like any
+	// other non-OK status it maps to `unreachable` when transient, else
+	// `notFound`.
 	if (!res.ok) return { remote: null, unreachable: isTransientBackendStatus(res.status) };
 	const body = (await res.json()) as { pieces: GuestPieceResponse[] };
 	const entry = body.pieces.find((p) => p.piece_id === pieceId);

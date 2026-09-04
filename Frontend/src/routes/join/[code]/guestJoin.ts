@@ -1,6 +1,5 @@
 import {
 	GuestApiError,
-	GuestPasswordRequiredError,
 	JoinCodeNotFoundError,
 	listGuestHomework,
 	listGuestResponsibilityDates,
@@ -15,8 +14,13 @@ import {
 /** The resolved shape of the streamed guest promise. A discriminated union
  * on `error` so `./$types` infers `data.result` as a single consistent
  * `Promise<GuestJoinResult>` for the `{:then result}` branch in
- * +page.svelte. The three string variants map one-to-one to the known
- * guest errors; the `error: null` variant carries the full guest view.
+ * +page.svelte. The two string variants map one-to-one to the known guest
+ * errors; the `error: null` variant carries the full guest view.
+ *
+ * There is no `'password-required'` variant any more: a valid join code
+ * authorizes the guest routes on its own, so `/guest/{code}` never answers
+ * 401. The guest password now only gates the bare `/piece/{id}` link (no
+ * `?code=`) via `routes/piece/[id]/+page.server.ts`.
  *
  * Lives here (not in `+page.ts`) so both `+page.ts` and the
  * `./data/+server.ts` endpoint that actually runs the fan-out can import it
@@ -24,7 +28,6 @@ import {
  * re-exports it for `./$types` inference. */
 export type GuestJoinResult =
 	| { error: 'not-found' }
-	| { error: 'password-required' }
 	| { error: 'server' }
 	| {
 			error: null;
@@ -38,13 +41,16 @@ export type GuestJoinResult =
 	  };
 
 /** Runs every guest fetch and resolves (never rejects) to a `GuestJoinResult`
- * for the three known guest errors. Anything else still throws, so the
- * caller (`./data/+server.ts`) can map it to `{ error: 'server' }`.
+ * for the known guest errors (`not-found`, `server`). Anything else still
+ * throws, so the caller (`./data/+server.ts`) can map it to
+ * `{ error: 'server' }`.
  *
  * `token` is the opaque guest token from the per-group httpOnly cookie
- * (`$lib/server/guestSession.ts`), read server-side by the `data` endpoint —
- * equivalent to having supplied the right `?password=`. Undefined for a
- * group with no guest password (the token is simply ignored there). */
+ * (`$lib/server/guestSession.ts`), read server-side by the `data` endpoint.
+ * The guest routes authorize on the join code alone now, so the token is no
+ * longer required for access — it is still forwarded when present (set by
+ * `POST /guest/{code}/auth`, the no-`?code=` piece-link gate) so it isn't
+ * silently dropped. */
 export async function loadGuestJoin(
 	code: string,
 	token: string | undefined,
@@ -102,7 +108,10 @@ export async function loadGuestJoin(
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };
-		if (err instanceof GuestPasswordRequiredError) return { error: 'password-required' };
+		// A 401 can't reach here any more (the join code authorizes on its
+		// own), but if one ever did it arrives as a `GuestApiError` and maps
+		// to the same "try again" card as any other API failure — never a
+		// password prompt.
 		if (err instanceof GuestApiError) return { error: 'server' };
 		throw err;
 	}
