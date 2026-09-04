@@ -233,6 +233,14 @@
 		// spin-down — see `+page.server.ts`'s `RemoteResolution`), so saying
 		// "not found" would be actively misleading — the piece is very
 		// likely fine, the server just hasn't responded yet.
+		//
+		// `waking` is that same "no answer yet" case while `resolveRemote()`
+		// is still auto-retrying it — a Render free-tier cold start takes
+		// ~30s, and the request that failed is the one that triggered the
+		// wake-up, so a retry almost always succeeds. Only once retries have
+		// run past `WAKE_RETRY_DEADLINE_MS` with no answer do we fall back to
+		// the terminal `unreachable` card (manual "Try again").
+		| { kind: 'waking' }
 		| { kind: 'unreachable' }
 		| { kind: 'error'; message: string }
 		| { kind: 'ready' }
@@ -442,6 +450,37 @@
 		return paneDefault;
 	}
 
+	/** Wall-clock budget for auto-retrying a Backend that hasn't answered
+	 * yet. A Render free-tier cold start is ~30s; the resolve proxy itself
+	 * waits up to 20s per attempt (see `resolve/+server.ts`), so this leaves
+	 * room for a slow wake plus a couple of retries before we give up and
+	 * show the manual "Try again" card. */
+	const WAKE_RETRY_DEADLINE_MS = 90_000;
+	/** Gap between auto-retries while the Backend is still waking. */
+	const WAKE_RETRY_GAP_MS = 2_500;
+	let wakeRetryUntil = 0;
+	let wakeRetryTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** A transient resolve failure means the Backend hasn't answered yet —
+	 * nearly always Render's free-tier instance waking from a spin-down, and
+	 * the request that just failed is the one that triggered the wake-up. So
+	 * keep the `waking` card up and retry `resolveRemote()` on a short loop
+	 * rather than telling the user we couldn't load the piece. Only after
+	 * `WAKE_RETRY_DEADLINE_MS` of no answer do we fall back to the terminal
+	 * `unreachable` card. */
+	function retryWhileBackendWakes() {
+		if (wakeRetryUntil === 0) wakeRetryUntil = Date.now() + WAKE_RETRY_DEADLINE_MS;
+		if (Date.now() >= wakeRetryUntil) {
+			loadState = { kind: 'unreachable' };
+			return;
+		}
+		loadState = { kind: 'waking' };
+		clearTimeout(wakeRetryTimer);
+		wakeRetryTimer = setTimeout(() => {
+			if (!destroyed) void resolveRemote();
+		}, WAKE_RETRY_GAP_MS);
+	}
+
 	/** Fetches `resolve/+server.ts` for a real Backend piece — deliberately
 	 * from here, not `+page.server.ts`'s `load` (which returns instantly
 	 * now): by the time this runs, the component has already mounted and
@@ -454,7 +493,7 @@
 			const code = page.url.searchParams.get('code');
 			const res = await fetch(`/piece/${encodeURIComponent(data.id)}/resolve${code ? `?code=${encodeURIComponent(code)}` : ''}`);
 			if (!res.ok) {
-				loadState = { kind: 'unreachable' };
+				retryWhileBackendWakes();
 				return;
 			}
 			const body = (await res.json()) as {
@@ -464,9 +503,16 @@
 				canManagePieceNotes?: boolean;
 			};
 			if (!body.remote) {
-				loadState = body.unreachable ? { kind: 'unreachable' } : { kind: 'notFound' };
+				if (body.unreachable) {
+					retryWhileBackendWakes();
+				} else {
+					loadState = { kind: 'notFound' };
+				}
 				return;
 			}
+			// The Backend answered — stop any wake-retry loop.
+			wakeRetryUntil = 0;
+			clearTimeout(wakeRetryTimer);
 			remoteMeta = body.remote;
 			isOwningGroupAdmin = body.isOwningGroupAdmin ?? body.canManagePieceNotes ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
@@ -482,13 +528,14 @@
 			loadState = hasPlayer ? { kind: 'loading' } : { kind: 'pdfOnly' };
 			void bootstrap();
 		} catch {
-			loadState = { kind: 'unreachable' };
+			retryWhileBackendWakes();
 		}
 	}
 
 	onDestroy(() => {
 		destroyed = true;
 		cancelAnimationFrame(rafHandle);
+		clearTimeout(wakeRetryTimer);
 		player?.destroy();
 		player = undefined;
 		referencePlayer?.destroy();
@@ -915,11 +962,12 @@
 	// gesture), not through a page-level setter like the other settings, so
 	// it needs its own persist effect. Guarded on `loadState` so it doesn't
 	// fire — and clobber a real stored value with the "1" default — before
-	// `bootstrap()`'s restore has actually run.
+	// `bootstrap()`'s restore has actually run (`waking` is another
+	// pre-`bootstrap()` state: the Backend hasn't resolved the piece yet).
 	$effect(() => {
 		zoomLevel;
 		pdfZoomLevel;
-		if (loadState.kind === 'loading') return;
+		if (loadState.kind === 'loading' || loadState.kind === 'waking') return;
 		persistSettings();
 	});
 
@@ -1137,6 +1185,11 @@
 					<div class="status-card status-card--error">
 						<p>{m.piece_not_found()}</p>
 						<button class="text-link" onclick={backToLibrary}>{m.piece_back_to_library()}</button>
+					</div>
+				{:else if loadState.kind === 'waking'}
+					<div class="status-card">
+						<div class="spinner" aria-hidden="true"></div>
+						<p>{m.piece_backend_waking()}</p>
 					</div>
 				{:else if loadState.kind === 'unreachable'}
 					<div class="status-card status-card--error">

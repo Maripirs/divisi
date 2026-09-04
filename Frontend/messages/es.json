@@ -483,6 +483,7 @@
 	"piece_reference_unavailable": "No se pudo cargar la grabación de referencia.",
 	"piece_loading_score": "Cargando partitura...",
 	"piece_updating_score": "Actualizando la partitura…",
+	"piece_backend_waking": "Iniciando el servidor… esto puede tardar hasta un minuto. Reintentando automáticamente.",
 	"piece_not_found": "No se encontró ninguna pieza con ese id.",
 	"piece_retry": "Intentar de nuevo",
 	"piece_load_error": "No se pudo cargar la pieza.",
