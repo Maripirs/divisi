@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TypeVar
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 _T = TypeVar("_T")
+
+
+def as_utc(value: datetime) -> datetime:
+    """SQLite (the test DB) round-trips a `DateTime(timezone=True)` column
+    back as naive, unlike real Postgres. Normalize before comparing
+    against a freshly-made `datetime.now(timezone.utc)`, which is always
+    aware, or the comparison raises `TypeError` rather than just being
+    wrong."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def get_or_404(db: Session, model: type[_T], pk: str, detail: str) -> _T:

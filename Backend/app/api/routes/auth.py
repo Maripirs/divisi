@@ -7,16 +7,18 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import PARTICIPANT_COOKIE, get_current_user, get_optional_participant
 from app.api.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
     ResetPasswordRequest,
+    SaveAccountRequest,
     Token,
     UserCreate,
     UserLogin,
@@ -51,7 +53,14 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
+from app.services.common import as_utc
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
+from app.services.participants import (
+    merge_participant,
+    mint_anonymous_participant,
+    resolve_participant,
+    set_participant_cookie,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger("divisi.auth")
@@ -78,6 +87,64 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise invalid
     return Token(access_token=create_access_token(subject=user.id))
+
+
+@router.post("/save", response_model=Token)
+def save_account(
+    payload: SaveAccountRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> Token:
+    """B19 "Save across devices": attach a name + PIN to the caller's
+    anonymous participant row. If that name + PIN already maps to a saved
+    account, fold the caller into it (`merge_participant`) and hand back
+    that account's session; otherwise promote the anonymous row in place.
+    Also how a second device "signs in": it mints a local row there first
+    (via a shared action, or right here), then merges. Name + PIN login is
+    a deliberate launch-only compromise (a global "Sarah" + "1234" would
+    merge two unrelated people); Google / email magic link are the robust
+    cross-device follow-ups (Backlog)."""
+    actor = resolve_participant(db, maybe_participant, payload.local_id)
+    if actor is None:
+        actor = mint_anonymous_participant(db, payload.name, payload.local_id)
+    if not actor.is_anonymous:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This device already has a saved account"
+        )
+
+    normalized = payload.name.strip()
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
+
+    existing = (
+        db.query(User)
+        .filter(
+            func.lower(User.name) == normalized.lower(),
+            User.is_anonymous.is_(False),
+            User.pin_hash.isnot(None),
+        )
+        .first()
+    )
+    if existing is not None and verify_password(payload.pin, existing.pin_hash):
+        merge_participant(db, source=actor, target=existing)
+        session_user = existing
+    elif existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="That name is taken. Pick a different name."
+        )
+    else:
+        actor.is_anonymous = False
+        actor.pin_hash = hash_password(payload.pin)
+        actor.name = normalized
+        db.query(GroupMembership).filter(GroupMembership.user_id == actor.id).update(
+            {"is_guest": False}, synchronize_session=False
+        )
+        session_user = actor
+
+    db.commit()
+    response.delete_cookie(PARTICIPANT_COOKIE, path="/")
+    return Token(access_token=create_access_token(subject=session_user.id))
 
 
 @router.get("/me", response_model=UserOut)
@@ -236,22 +303,13 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     return {"detail": "If that email has an account, a reset link has been sent."}
 
 
-def _as_utc(value: datetime) -> datetime:
-    """SQLite (the test DB) round-trips a `DateTime(timezone=True)` column
-    back as naive, unlike real Postgres — normalize before comparing
-    against a freshly-made `datetime.now(timezone.utc)`, which is always
-    aware, or the comparison raises `TypeError` rather than just being
-    wrong."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-
-
 @router.post("/reset-password")
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict[str, str]:
     invalid = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
     record = (
         db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == hash_reset_token(payload.token)).first()
     )
-    if record is None or record.used_at is not None or _as_utc(record.expires_at) < datetime.now(timezone.utc):
+    if record is None or record.used_at is not None or as_utc(record.expires_at) < datetime.now(timezone.utc):
         raise invalid
     user = db.get(User, record.user_id)
     if user is None:
@@ -345,12 +403,12 @@ def oauth_callback(
         assert user is not None
     else:
         # Link to an existing password account with the same email rather
-        # than creating a duplicate — otherwise someone who registered
+        # than creating a duplicate: otherwise someone who registered
         # with a password and later tries "Continue with Google" on the
         # same address ends up with two unrelated accounts.
         user = db.query(User).filter(User.email == profile["email"]).first()
         if user is None:
-            # A real, unguessable password the user will never need — the
+            # A real, unguessable password the user will never need: the
             # account is only ever unlocked via OAuth from here on, but
             # `hashed_password` is a required column, and using a random
             # value (never told to anyone) is simpler and safer than

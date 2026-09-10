@@ -87,6 +87,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B16 | Piece rehearsal notes (durable per-piece reminders) | ✅ Built (`f08c969`); migration `d7e3a9c1f6b4` live on prod (Neon at head `f9d4c1a7b2e8`) — frontend is `Frontend/plan.md`'s F20 |
 | B17 | Group markup layer (shared, admin-co-edited) | ⏳ Built 2026-09-02 (`e75f79c`), migration `b1c3d5e7f9a2`, pytest 229 green; not pushed/deployed |
 | B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Built 2026-09-02, migration `c3e5a7b9d1f4` (`down_revision = b1c3d5e7f9a2`), single linear head; pytest 240 green; not pushed/deployed |
+| B19 | Progressive accounts: anonymous participants + "Save across devices" | ⏳ Built 2026-09-09, migration `d4a9f2c7e1b8` (`down_revision = a2f6c1e4d9b7`), single linear head; pytest 271 green. Not pushed/deployed |
 
 ### B1 — Backend scaffold [x]
 
@@ -618,6 +619,202 @@ loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
 **Tasks — Human:**
 - [ ] Deploy: push `main` (Render runs the migration).
 
+### B19 Progressive accounts: anonymous participants + "Save across devices" [x]
+
+Lowers the account barrier for the singer path. A member who joins via a
+link can already read everything (guest routes, B6/B10/B12); the wall is
+the first *stateful* action: signing up for a responsibility slot, saving
+an annotation, showing up on a roster. Today that means "go register",
+which is a hard stop mid-flow. Brainstormed with the human 2026-09-09. The
+conductor authoring path (create a group, upload a score) is deliberately
+untouched: a full account is still required there.
+
+Design: identity starts client-side (Frontend F23 owns the local profile).
+The Backend only gets involved when a local-only singer performs a shared
+action, at which point it mints a durable *anonymous participant* bound to
+that client's local id. "Save across devices" later attaches a real
+credential to that same row in place, so nothing the singer already did is
+lost. This is the pattern the OAuth code already uses (`app/api/routes/
+auth.py`'s callback: a `User` row whose password is a value nobody knows,
+unlocked by another mechanism), except the mechanism here is a signed
+device token (same primitive as `create_guest_token`), not a password.
+
+**Two build-time decisions (settled 2026-09-09):**
+1. **Anonymous participant = a `User` row with `is_anonymous = true` plus a
+   `GroupMembership` flagged `is_guest = true`.** Confirmed the lean over a
+   separate `participants` table: signups / annotations already FK to
+   `users.id`, promotion is an in-place field flip with no row copy, and
+   existing membership / roster queries pick it up for free. The guest tier
+   lives on `GroupMembership.is_guest` (bool) rather than a third
+   `GroupRole` value, because `GroupRole` feeds dozens of `== admin` /
+   `!= admin` checks a new enum value would all have to be re-audited;
+   `is_guest` is a clean audit signal that touches nothing existing.
+2. **"Require a saved account" gate = a new
+   `GroupPageSettings.min_identity` (`anyone` | `saved`) column.** Confirmed
+   over overloading `audience`: `audience` (members | everyone) is about
+   login state, this is about credential state, and a conductor may want
+   "everyone can see it, but you must Save before you claim a slot".
+
+**Design (settled 2026-09-09):**
+- **Schema (one migration, `down_revision = a2f6c1e4d9b7`, the current
+  single head):** `users.is_anonymous` (bool, NOT NULL, server_default
+  `false`); `users.anonymous_local_id` (varchar, nullable, indexed, a
+  fallback resolver when the device cookie is lost but localStorage
+  survives); `users.pin_hash` (varchar, nullable, set only by a PIN Save,
+  distinct from `hashed_password` so a PIN account can never collide with a
+  real email/password account); `group_memberships.is_guest` (bool, NOT
+  NULL, server_default `false`); `group_page_settings.min_identity`
+  (`SAEnum(PageMinIdentity, native_enum=False)`, NOT NULL, server_default
+  `anyone`, mirroring the sibling `audience` column's DDL from migration
+  `3d1749b04685`). Backfill is entirely via server_defaults.
+- **Device token:** `create_participant_token(user_id, local_id)` /
+  `decode_participant_token` in `app/core/security.py` next to the guest
+  helpers. Distinct `scope = "participant"` claim, `psub` = user id, `lid`
+  = local id, one-year life (`participant_token_expire_minutes`, new
+  setting): it is the singer's only identity until they Save, so a short
+  expiry would silently orphan their work. Carried in a `divisi_participant`
+  httpOnly cookie, `secure=True`, `samesite="none"` (the API is a
+  cross-site origin from the Frontend), `path="/"`. F23 forwards the
+  backend's `Set-Cookie` through its proxy layer, same as it already does
+  for the guest token.
+- **`get_optional_participant`** dependency in `app/api/deps.py`: resolves
+  that cookie to its `User` (anonymous or since-promoted) or `None`, never
+  raises. Plus `get_current_user_optional` (bearer, `auto_error=False`) so
+  one route can accept "real member, or participant, or neither".
+- **`app/services/participants.py`** (new, same shape as `services/
+  groups.py`): `mint_anonymous_participant` (synthetic unique
+  `anon-<uuid>@participants.divisi.invalid` email, `name` from the lazily
+  collected display name or `"Guest"`, unguessable random password nobody
+  knows exactly like the OAuth callback, `is_anonymous = True`),
+  `resolve_participant` (cookie user, else `anonymous_local_id` lookup, else
+  `None`), `ensure_guest_membership` (`role = member`, `is_guest =
+  user.is_anonymous`), `set_participant_cookie`, and `merge_participant`
+  (below).
+- **Mint-on-first-shared-action, wired into `create_signup`
+  (`app/api/routes/responsibilities.py`) first:** the self-signup branch
+  (no `payload.user_id` / `payload.name`) resolves an actor as bearer user
+  -> participant cookie -> `local_id` lookup -> mint. `ResponsibilitySignupCreate`
+  gains `local_id` / `display_name` (ignored for authenticated or
+  admin-assignment calls). An anonymous actor is gated by
+  `require_guest_page_access(group_id, responsibilities, db)` (the page must
+  be `audience = everyone` for a local-only singer to act, a deliberate
+  constraint: a local-only client is effectively a guest) plus
+  `require_saved_identity` (the `min_identity` check, raises 403 whose
+  detail starts `SAVE_REQUIRED:` for the Frontend to match), then
+  `ensure_guest_membership`, then the cookie is set on the response. The
+  admin-assignment branches (`user_id` / `name`) stay bearer-only,
+  unchanged. Factored so a future annotation route calls the same
+  resolve-or-mint helper.
+- **`POST /auth/save` (name + PIN):** PIN is 4-8 digits, numeric only
+  (Pydantic validator), hashed with `hash_password` into `pin_hash`.
+  Resolve-or-mint the caller's anonymous row; 409 if it is already saved.
+  If a saved user exists with the same normalized (`lower`, trimmed) name
+  and a `pin_hash` that verifies, `merge_participant` folds the caller into
+  it and returns that account's session `Token`; otherwise promote in place
+  (`is_anonymous = False`, store `pin_hash` + name, clear `is_guest` on
+  every membership) and return its `Token`. The participant cookie is
+  deleted on the response. This same endpoint is therefore also how a
+  second device "signs in": it mints a local row there, then merges. Login
+  by name + PIN is a deliberate launch-only compromise (a global "Sarah" +
+  "1234" collision would merge two unrelated people); the email-magic-link
+  fast-follow in Backlog is the more robust cross-device path. A PIN
+  account keeps its synthetic email and cannot use `POST /auth/login`.
+- **`merge_participant(db, source, target)`:** annotations reconcile
+  last-writer-wins per `piece_id` (newer `created_at` wins, loser deleted
+  with its shares); `GroupMembership` unions per group (repoint if target
+  has none, else drop source's; `is_guest` cleared on the survivors);
+  `ResponsibilitySignup` repoints, dropping a source row that would collide
+  on `(date_id, role_id, user_id)`; personal `PieceMarkupMark` rows
+  repoint; then `source` is deleted.
+- **OAuth callback:** deliberately untouched. Third-party sign-in is not a
+  Save method for a participant (decided 2026-09-09); the callback keeps
+  its B14 behavior of always creating / linking a plain `User`. A
+  participant who later signs in with a real credential just ends up with a
+  second account, same as any other returning user, until the email
+  magic-link fast-follow gives them a real merge path.
+- **Roster badge:** `GroupMemberOut.is_anonymous` (default `False`),
+  populated in `list_members`.
+- **`min_identity` admin read/write:** `GroupPageSettingOut.min_identity`
+  (always present) and `GroupPageSettingUpdate.min_identity`
+  (`PageMinIdentity | None = None`, applied only when sent, so F6's
+  existing PUT payloads that omit it are undisturbed), on the existing
+  `GET/PUT /groups/{id}/page-settings`.
+- **Sweep:** `Backend/scripts/prune_anonymous_participants.py`, a manual
+  command (`python Backend/scripts/prune_anonymous_participants.py --days N
+  [--dry-run]`), mirroring `seed_demo.py`'s bootstrap. Deletes
+  `is_anonymous` users older than N days with zero `ResponsibilitySignup`
+  and zero `Annotation` rows (their memberships / personal markup go too).
+  No scheduled runner exists (Backlog).
+
+**Acceptance criteria:**
+- [x] A shared action from a local-only client (first one wired:
+  responsibility self-signup) mints exactly one anonymous `User` bound to
+  the client's local id, with a guest-tier `GroupMembership` in the acting
+  group, and the signup FKs to it. A second shared action from the same
+  client reuses that row.
+- [x] "Save across devices" attaches a credential (name + PIN) to the
+  existing anonymous row, sets `is_anonymous = false`, and every signup /
+  annotation already attached carries over with no data migration.
+- [x] Saving from a second device with the same credential folds into the
+  one account: annotations reconcile last-writer-wins per `piece_id`, group
+  memberships union, the duplicate anonymous row is deleted.
+- [x] An anonymous participant appears in the group's member list flagged
+  unverified; a conductor can tell it apart from a real account at a glance.
+- [x] A conductor can set a page to `min_identity = saved`; a local-only
+  client is refused the write on that page with a distinct error the
+  Frontend can act on ("Save your account first"), but still reads it per
+  the normal `audience` rules.
+- [x] Deleting an anonymous participant with no signups and no annotations
+  is safe and lossless; one with either is kept.
+- [x] No change to the existing authenticated flows, the guest read routes,
+  or `/join`.
+
+**Tasks — Claude:**
+- [x] `User.is_anonymous` (bool, default false) + a guest-tier membership
+  role (new `GroupRole` value or a membership flag) + migration; backfill
+  existing users `false`. (Shipped as `GroupMembership.is_guest`; also
+  `users.anonymous_local_id` + `users.pin_hash`, migration `d4a9f2c7e1b8`.)
+- [x] Device-token issue / verify in `app/core/security.py` next to the
+  guest-token helpers: signed, carries the client local id, set as an
+  httpOnly cookie. A `get_optional_participant` dependency resolving it to
+  a `User` or `None`. (Also `get_current_user_optional` for the one route
+  that accepts member-or-participant-or-neither.)
+- [x] Mint-on-first-shared-action helper: no session and no participant
+  cookie on a shared-action route creates the anonymous `User` +
+  `GroupMembership`, sets the cookie, then proceeds. Wired into the
+  responsibility self-signup route first; factored (`app/services/
+  participants.py`) so annotations can call it next.
+- [x] `POST /auth/save` (name + PIN): promotes the caller's anonymous row
+  in place. PIN hashed via `hash_password`; `is_anonymous = false`. Reject
+  if the row is already saved.
+- Dropped: OAuth-callback promote/merge of the anonymous row. Third-party
+  sign-in is not a Save method for a participant (decided 2026-09-09); the
+  callback keeps its plain B14 behavior.
+- [x] Merge-on-save: when the credential already maps to a saved `User`,
+  fold the anonymous row into it (annotations last-writer-wins per
+  `piece_id`, `GroupMembership` union, `ResponsibilitySignup` /
+  `PieceMarkupMark` repoint, delete the anonymous row).
+- [x] `GroupPageSettings.min_identity` (`anyone` | `saved`) column +
+  migration (default `anyone`, nothing changes for existing groups) +
+  admin read / write on the existing page-settings endpoint; enforced in
+  the shared-action routes (`require_saved_identity`).
+- [x] Surface `is_anonymous` on the member-list schema for the roster badge.
+- [x] Sweep: a `scripts/` management command deleting anonymous users with
+  no signups / annotations older than N days. No scheduled-job runner
+  exists (Backlog), so it is manual / host cron for now
+  (`scripts/prune_anonymous_participants.py`, core factored to a
+  test-callable `prune_anonymous_participants(db, days, dry_run)`).
+- [x] Tests: mint on first signup, reuse on second (cookie + `local_id`
+  fallback), promote via PIN, merge from a second device (annotation
+  conflict, membership union, anon row gone), roster badge, `min_identity
+  = saved` refuses a local-only write but not a read, `audience = members`
+  gives a 404, sweep keeps a participant that has a signup. `tests/
+  test_participants.py` (+13), `tests/test_auth.py` (+3), `tests/
+  test_guest.py` (+1).
+
+**Tasks — Human:**
+- [ ] Decide N (anonymous-row retention window) for the sweep.
+
 ## Backlog
 
 - **B16 fast-follow — promote a weekly note into a piece note**: an admin
@@ -645,10 +842,16 @@ loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
 - No `pytest` coverage yet for `PUT /groups/{id}/description`, `PUT /groups/{id}/members/{user_id}/role`, or `DELETE /responsibilities/schedules/{id}`/`.../roles/{id}` (added post-B13, live in production)
 - Pick a transactional email provider so password-reset links actually work for someone who isn't reading server logs (`FRONTEND_BASE_URL` itself is already set on Render — see B14)
 - Re-enable Google Sign-In for real users: publish the OAuth consent screen out of Testing status in Cloud Console (project `divisi-506916`, non-sensitive scopes so this shouldn't need Google's full verification review), then re-add `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` on Render and restart the service
+- **B19 fast-follow: email magic link as a second Save method**, once a transactional email provider is wired (see the email-provider item above). Also the cleanest recovery path for a PIN a singer forgets, and the robust cross-device story name + PIN only approximates.
+- **B19: scheduled runner for the anonymous-participant sweep.** Ships as a manual `scripts/` command; wants the same real job runner the Responsibilities recurrence / reminders items need.
 
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-09: Built B19 (progressive accounts). Migration `d4a9f2c7e1b8` adds `users.is_anonymous` / `anonymous_local_id` / `pin_hash`, `group_memberships.is_guest`, and `group_page_settings.min_identity` (`anyone` | `saved`), all backfilled by server defaults. A local-only singer's first responsibility self-signup mints an anonymous `User` + guest-tier membership and sets a one-year `divisi_participant` cookie (`app/services/participants.py`, new `create_participant_token` + `get_optional_participant`); `POST /auth/save` (name + numeric PIN) promotes that row in place or `merge_participant`s it into a matching saved account (annotations last-writer-wins per piece, memberships union, signups/markup repoint). `min_identity = saved` refuses a local-only write with a `SAVE_REQUIRED:` 403 but leaves reads and real-member writes alone; roster carries `is_anonymous`; `scripts/prune_anonymous_participants.py` sweeps bare anonymous rows. Google as a Save method was dropped (decided 2026-09-09): the OAuth callback keeps its plain B14 behavior, name + PIN is the only Save method, email magic link is the fast-follow. pytest 271 green; migration up/down/up verified on a throwaway SQLite. Not pushed/deployed.
+
+- 2026-09-09: Brainstormed lowering the account barrier (chat only, no code). Guests already read everything via a join code, so the real wall is the singer's first stateful action (a responsibility signup, an annotation, roster presence). Agreed a progressive-account design: client-side local profile, the Backend mints an anonymous participant on the first shared action, "Save across devices" in Settings promotes that row in place (name + PIN, email magic link later; Google was considered and dropped 2026-09-09); merge is last-writer-wins per piece. Roster shows anon participants badged; a per-page `min_identity` lets a conductor require a saved account for high-trust pages. Captured as Backend B19 / Frontend F23. Conductor authoring path out of scope.
 
 - 2026-09-03: B18 follow-up — added `GET /guest/{join_code}/pieces/{piece_id}/cues` so F22 cue glyphs can render for not-logged-in join-link guests. Cue-only read of the `scope='group'` markup layer (director pen/stamp/text ink has no guest path, stays members-only); same `tracks` page enabled + `audience == everyone` gate and join-code/password/distribution scoping as the guest rehearsal-notes route it mirrors. No schema or migration change. `tests/test_guest.py` +4; `pytest` 250 green.
 

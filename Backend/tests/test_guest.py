@@ -657,3 +657,62 @@ def test_guest_endpoints_are_rate_limited(client):
 
     throttled = client.get(f"/guest/{group['join_code']}")
     assert throttled.status_code == 429
+
+
+def test_min_identity_saved_does_not_disturb_guest_reads_or_member_signup(client):
+    """B19: `min_identity = saved` only gates a *write* by a local-only
+    participant. Guest reads (dates / manifest / homework) and a normal
+    authenticated member self-signup are untouched by it."""
+    admin_headers = _register_and_login(client, "b19-guest-admin@example.com")
+    group, piece_id, version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    member_headers = _register_and_login(client, "b19-guest-member@example.com")
+    client.post(
+        "/groups/" + group["id"] + "/members",
+        json={"email": "b19-guest-member@example.com"},
+        headers=admin_headers,
+    )
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={
+            "pages": [
+                {"page": "homework", "enabled": True, "audience": "everyone"},
+                {
+                    "page": "responsibilities",
+                    "enabled": True,
+                    "audience": "everyone",
+                    "min_identity": "saved",
+                },
+            ]
+        },
+        headers=admin_headers,
+    )
+    client.post(
+        "/groups/" + group["id"] + "/homework",
+        json={"title": "Kyrie", "range": "mm. 1-20"},
+        headers=admin_headers,
+    )
+    schedule = client.post(
+        "/groups/" + group["id"] + "/responsibilities/schedules",
+        json={"name": "Sunday", "roles": [{"name": "Cantor", "needed_count": 2}]},
+        headers=admin_headers,
+    ).json()
+    date = client.post(
+        "/groups/" + group["id"] + "/responsibilities/dates",
+        json={"date": "2026-09-06T10:00:00Z", "schedule_ids": [schedule["id"]]},
+        headers=admin_headers,
+    ).json()
+    code = group["join_code"]
+
+    # Reads: unaffected.
+    assert client.get(f"/guest/{code}/responsibilities/dates").status_code == 200
+    assert client.get(f"/guest/{code}/homework").status_code == 200
+    assert client.get(f"/guest/{code}/pieces/{piece_id}/manifest").status_code == 200
+
+    # A real authenticated member can still self-sign-up on the gated page.
+    ok = client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": schedule["roles"][0]["id"]},
+        headers=member_headers,
+    )
+    assert ok.status_code == 201
+    _cleanup_render(version_id)

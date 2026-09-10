@@ -76,6 +76,13 @@ class ResponsibilitySignupCreate(BaseModel):
     role_id: str
     user_id: str | None = None
     name: str | None = None
+    # B19 self-signup only: the local-only singer's client identity (F23's
+    # localStorage profile). `local_id` binds the minted anonymous
+    # participant so a later action from the same client resolves back to
+    # it; `display_name` seeds its `name`. Both ignored for an
+    # authenticated call or an admin assignment (`user_id`/`name`).
+    local_id: str | None = None
+    display_name: str | None = None
 
 
 class ResponsibilitySignupOut(BaseModel):

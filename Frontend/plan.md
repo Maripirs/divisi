@@ -99,6 +99,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
 | F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
+| F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Planned (brainstormed 2026-09-09, not started) |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1005,6 +1006,95 @@ guestCode?)`. `check`/`build` clean, vitest 82.
       guest, and confirm cue glyphs still show + jump when the reference
       recording is the audio source).
 
+### F23 Local profile + "Save across devices" (frontend for Backend B19) [ ]
+
+The account barrier a singer actually hits: they open a join link, can
+already play and read everything, then try to save an annotation, check off
+homework, or sign up for a responsibility slot, and get bounced to
+register. Brainstormed with the human 2026-09-09. Fix: everyone gets a
+local profile from the first visit with no prompt, and "Save across
+devices" (Settings) is how that becomes a real cross-device account.
+Backend counterpart: B19. The conductor authoring path is out of scope
+(still a full account).
+
+**Shape:**
+- On first visit, generate a local profile: `{ localId (uuid), displayName
+  (empty) }` in localStorage. Annotation / homework state and prefs live in
+  the client store guests already use; this gives them an owner key and
+  makes them durable per device.
+- `displayName` is prompted lazily, only at the first action other people
+  see (a responsibility signup, or landing on a roster), never up front.
+- A shared action sends `localId` to the Backend, which mints the shadow
+  participant (B19) and sets its device cookie. Purely local actions
+  (annotations, homework checkmarks) never hit the Backend and need no name.
+- Settings drawer gains a **Save across devices** section: "You're only on
+  this device." plus a Save action. Save = set a name + PIN (email magic
+  link is the planned second method; Google was considered and dropped
+  2026-09-09), then push the local annotation / homework state up. From
+  then on the device is a normal logged-in session.
+- One dismissible banner, shown once after the first responsibility signup
+  (not on every page, not a modal), linking to that Settings section:
+  until they Save, a cache clear wipes their name, annotations, and
+  homework progress.
+
+**Two things to confirm at build time:**
+1. Where the local annotation / homework store lives today and whether it
+   already survives a reload (localStorage vs. in-memory). If in-memory,
+   that move is part of this milestone.
+2. PIN input UX (length, numeric-only) and whether "name + PIN" reads
+   clearly as a credential to a non-technical singer or needs a one-line
+   "so you can sign back in on your phone" explanation.
+
+**Acceptance criteria:**
+- [ ] A brand-new visitor with no session gets a local profile silently;
+  annotations and homework checkmarks they make survive a page reload on
+  that device with no account.
+- [ ] The first responsibility signup prompts for a display name, then
+  completes; the name is reused for later shared actions without re-asking.
+- [ ] Settings shows "Save across devices" for a local-only profile; after
+  Save via the PIN path, the same local annotations / homework are readable
+  on a second browser after signing in there with the same name + PIN.
+- [ ] The "you're only on this device" banner appears once after the first
+  signup, is dismissible, and does not reappear once dismissed or once the
+  profile is Saved.
+- [ ] A profile that has already been Saved shows a normal account section
+  in Settings, not the Save prompt.
+- [ ] A shared action on a `min_identity = saved` page surfaces B19's
+  "Save your account first" as an inline prompt to Save, not a generic
+  failure.
+- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [ ] Human confirms in a real browser: silent local profile, lazy name
+  prompt on signup, Save via PIN, same data on a second browser, the
+  one-time banner.
+
+**Tasks — Claude:**
+- [ ] `$lib/localProfile.svelte.ts` (or similar): create / read the local
+  profile, expose `localId` + `displayName`, `setDisplayName`, and a
+  `needsName` check for shared actions.
+- [ ] Persist the guest annotation / homework store to localStorage keyed
+  by `localId` if it does not already (confirm-at-build item 1).
+- [ ] Thread `localId` onto the responsibility self-signup call; add the
+  lazy name-prompt step in that flow.
+- [ ] Settings drawer: "Save across devices" section, name + PIN form
+  calling B19's `POST /auth/save`.
+- [ ] On Save, upload the local annotation / homework state (B19 owns the
+  merge); on success store the returned session token and drop the local
+  profile's "unsaved" state.
+- [ ] The one-time post-signup banner (persist "dismissed" + "saved" flags
+  in the same local store).
+- [ ] Roster / member list: render B19's unverified badge for anonymous
+  participants.
+- [ ] Handle B19's "this page needs a saved account" error on a gated
+  shared action as an inline Save prompt.
+- [ ] en / es keys for the name prompt, the Save section, the banner, the
+  badge, the gated-action prompt.
+- [ ] vitest for the local-profile lifecycle and the `needsName` / gating
+  branches.
+
+**Tasks — Human:**
+- [ ] Real-browser pass per the last acceptance box.
+- [ ] Decide the PIN UX details (confirm-at-build item 2).
+
 ## Backlog
 
 - ~~**Persist F12 annotation mode + F13 audio source per piece**~~ **done 2026-09-02** (with the F21/F22 batch). `PersistedSettings` grew `showMineMarkup` / `showDirectorMarkup` / `audioSource` (all optional). "Annotation mode" here = the F21 layer-visibility toggles, not the transient armed-tool state. The toggles persist via a guarded `$effect` in `piece/[id]/+page.svelte` (no page-level setter, same shape as the zoom-persist effect); `audioSource` persists from `setAudioSource` and is restored only when the stored value is `'reference'` **and** the restored `viewMode === 'pdf'` **and** `piece?.youtubeUrl` is set. F4's separate score-marker toggle was out of scope.
@@ -1019,6 +1109,8 @@ guestCode?)`. `check`/`build` clean, vitest 82.
 - Live tempo control for F5's stem-backed pieces — a real time-stretching problem, not a rate multiplier like the MIDI-synth player has
 - Guest-side wiring for genuinely-new real pieces via join code (see F5's "Expanded" note) — closed via the fix logged 2026-08-29 below; kept here only if a similar gap resurfaces for a future upload path
 - **Fix the live production Backend URL if it ever regresses**: the deployed Worker was once built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in — always deploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy`, never a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold
+- **F23 fast-follow: email magic link as a second Save method** once a transactional email provider exists (Backend Backlog). Also the recovery path for a forgotten PIN, and the robust cross-device story name + PIN only approximates. (Google was considered as a Save method and dropped 2026-09-09.)
+- **F23: extra nudges toward "Save across devices"** beyond the one-time post-signup banner (a second-session prompt, or one when the app is opened on a new device) if the single banner does not convert.
 
 ## iOS app (paused 2026-08-27, moved here from root `plan.md`)
 
@@ -1053,6 +1145,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-09: Brainstormed lowering the account barrier with the human (chat only, no code). Guests already read everything, so the wall is the singer's first stateful action. Agreed a local-first identity: a silent local profile (localId + name in localStorage) from the first visit, the Backend mints an anonymous participant on the first shared action, and "Save across devices" in Settings promotes it to a real cross-device account (name + PIN, email magic link later; Google was considered and dropped 2026-09-09). One dismissible post-signup nudge; roster badges unverified participants. Captured as Frontend F23 / Backend B19.
 
 - 2026-09-03: F22 — PDF cue glyphs now always render in the player for every viewer (logged-in members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the per-viewer "Show director markup" toggle. New `cueLoader` controller dep + `syncCues` load the cue subset of the group layer unconditionally; `markVisibleOnPage` pure helper gates a `cue` only on `showCues`; `PdfMarkupLayer` mounts its SVG on `markup.cuesVisible` even where `canMarkup` is false. Guests read cues via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only, tracks/everyone gate) behind a `?code=` guest branch added to `piece/[id]/markup/+server.ts`'s GET; new client fn `listGroupCues`. Director pen/stamp/text ink unchanged (toggle-gated, members-only); editing cues unchanged. `check` 0 errors, `build` clean, vitest 82; not browser-exercised (standing blocker).
 

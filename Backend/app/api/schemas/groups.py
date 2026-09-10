@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, EmailStr
 
-from app.db.models import GroupPage, GroupRole, PageAudience
+from app.db.models import GroupPage, GroupRole, PageAudience, PageMinIdentity
 
 
 class GroupCreate(BaseModel):
@@ -61,6 +61,9 @@ class GroupPageSettingOut(BaseModel):
     page: GroupPage
     enabled: bool
     audience: PageAudience
+    # B19: credential-state floor for writes on this page. Always present;
+    # `anyone` for every group that predates B19.
+    min_identity: PageMinIdentity
 
     model_config = {"from_attributes": True}
 
@@ -69,6 +72,9 @@ class GroupPageSettingUpdate(BaseModel):
     page: GroupPage
     enabled: bool
     audience: PageAudience
+    # B19: applied only when sent, so F6's existing PUT payloads that omit
+    # it are undisturbed.
+    min_identity: PageMinIdentity | None = None
 
 
 class GroupPageSettingsUpdate(BaseModel):
@@ -98,9 +104,16 @@ class GroupMemberTitleUpdate(BaseModel):
 
 class GroupMemberOut(BaseModel):
     user_id: str
-    email: EmailStr
+    # Plain `str`, not `EmailStr`: an anonymous participant (B19) carries a
+    # synthetic `anon-<uuid>@participants.divisi.invalid` address that is
+    # deliberately non-routable and fails RFC-6761 email validation.
+    email: str
     name: str
     role: GroupRole
     title: str | None = None
+    # B19 roster badge: True for an anonymous participant (a local-only
+    # singer who acted before registering), so a conductor can tell them
+    # apart from a real account at a glance.
+    is_anonymous: bool = False
 
     model_config = {"from_attributes": True}

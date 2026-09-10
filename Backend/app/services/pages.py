@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.db.models import GroupPage, GroupPageSettings, GroupRole, PageAudience
+from app.db.models import GroupPage, GroupPageSettings, GroupRole, PageAudience, PageMinIdentity
 from app.services.groups import group_role
 
 # Matches today's pre-B12 behavior exactly, so seeding a brand-new group and
@@ -35,7 +35,15 @@ def seed_default_page_settings(group_id: str, db: Session) -> None:
     """Called once at group creation (`app/api/routes/groups.py`) — the
     migration's own backfill covers groups that already existed."""
     for page, audience in DEFAULT_AUDIENCE.items():
-        db.add(GroupPageSettings(group_id=group_id, page=page, enabled=True, audience=audience))
+        db.add(
+            GroupPageSettings(
+                group_id=group_id,
+                page=page,
+                enabled=True,
+                audience=audience,
+                min_identity=PageMinIdentity.anyone,
+            )
+        )
 
 
 def _get_settings(group_id: str, page: GroupPage, db: Session) -> GroupPageSettings | None:
@@ -67,6 +75,20 @@ def require_guest_page_access(group_id: str, page: GroupPage, db: Session) -> No
         page_label = page.value.replace("_", " ").capitalize()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"{page_label} not available for this group"
+        )
+
+
+def require_saved_identity(group_id: str, page: GroupPage, db: Session) -> None:
+    """B19 gate for a *write* by an anonymous participant: if the page's
+    `min_identity` is `saved`, a local-only client must run "Save across
+    devices" first. The 403 detail starts with `SAVE_REQUIRED:` so the
+    Frontend can match on it and route the user into the Save flow rather
+    than showing a generic error."""
+    settings = _get_settings(group_id, page, db)
+    if settings is not None and settings.min_identity == PageMinIdentity.saved:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SAVE_REQUIRED: Save your account first",
         )
 
 

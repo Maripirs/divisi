@@ -55,7 +55,10 @@ class OAuthProviderStatusOut(BaseModel):
 
 class UserOut(BaseModel):
     id: str
-    email: EmailStr
+    # Plain `str`, not `EmailStr`: a participant promoted by a PIN Save
+    # (B19) keeps its synthetic `@participants.divisi.invalid` address,
+    # which is intentionally non-routable and fails email validation.
+    email: str
     name: str
 
     model_config = {"from_attributes": True}
@@ -90,3 +93,22 @@ class ChangePasswordRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class SaveAccountRequest(BaseModel):
+    """B19 "Save across devices": attaches a name + PIN credential to the
+    caller's anonymous participant row (or, if that name+PIN already maps
+    to a saved account, folds the caller into it). `local_id` is the
+    client's F23 profile id, used to resolve/mint the anonymous row when
+    the device cookie is absent."""
+
+    name: str
+    pin: str
+    local_id: str | None = None
+
+    @field_validator("pin")
+    @classmethod
+    def _pin_shape(cls, value: str) -> str:
+        if not (4 <= len(value) <= 8) or not value.isdigit():
+            raise ValueError("PIN must be 4 to 8 digits")
+        return value

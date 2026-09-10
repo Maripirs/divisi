@@ -245,6 +245,10 @@ def update_page_settings(
             rows_by_page[update.page] = row
         row.enabled = update.enabled
         row.audience = update.audience
+        # B19: applied only when the caller sent it, so an existing PUT
+        # payload that omits `min_identity` leaves the page's floor as-is.
+        if update.min_identity is not None:
+            row.min_identity = update.min_identity
     db.commit()
     return (
         db.query(GroupPageSettings)
@@ -271,7 +275,14 @@ def list_members(
         .all()
     )
     return [
-        GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=role, title=title)
+        GroupMemberOut(
+            user_id=user.id,
+            email=user.email,
+            name=user.name,
+            role=role,
+            title=title,
+            is_anonymous=user.is_anonymous,
+        )
         for user, role, title in rows
     ]
 

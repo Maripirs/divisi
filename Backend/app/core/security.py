@@ -71,3 +71,34 @@ def decode_guest_token(token: str) -> str | None:
     if payload.get("scope") != "guest":
         return None
     return payload.get("gsub")
+
+
+def create_participant_token(user_id: str, local_id: str) -> str:
+    """B19: a signed device token for an anonymous participant. Same
+    secret/algorithm as the member and guest tokens, but a distinct
+    `scope = "participant"` marker plus `psub` (the participant's user id)
+    and `lid` (the client's own local id) claims. Carried in the
+    `divisi_participant` httpOnly cookie; it is the singer's only identity
+    until they Save, hence the one-year life."""
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.participant_token_expire_minutes)
+    payload = {"psub": user_id, "lid": local_id, "scope": "participant", "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_participant_token(token: str) -> tuple[str, str] | None:
+    """Return `(user_id, local_id)` if the token is a valid participant
+    token, else None. `local_id` is `""` when the claim was empty. The
+    `scope == "participant"` check stops a member or guest token from ever
+    being accepted here."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        return None
+    if payload.get("scope") != "participant":
+        return None
+    user_id = payload.get("psub")
+    if not user_id:
+        return None
+    return user_id, payload.get("lid") or ""

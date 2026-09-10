@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     # (30 days) because the frontend stores it in an httpOnly cookie and
     # forwards it on every guest route in place of re-sending the password.
     guest_token_expire_minutes: int = 60 * 24 * 30
+    # B19: lifetime of the `divisi_participant` device token. One year:
+    # until the singer runs "Save across devices" this token is their only
+    # identity, so a short expiry would silently orphan every signup /
+    # annotation they made.
+    participant_token_expire_minutes: int = 60 * 24 * 365
     # bcrypt work factor for password hashing. 12 is a sane production
     # default (~0.4s/hash). Tests set BCRYPT_ROUNDS=4 via the root
     # conftest.py so the auth-heavy suite isn't dominated by hashing

@@ -30,6 +30,21 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    # B19: a lazily minted "anonymous participant" (a local-only singer who
+    # performed a shared action before registering). Its `email` is a
+    # synthetic `anon-<uuid>@participants.divisi.invalid` value and its
+    # `hashed_password` is a random string nobody knows. Flipped to False in
+    # place when the singer runs "Save across devices" (name+PIN, or Google),
+    # so nothing they already did is lost.
+    is_anonymous: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    # The acting client's own local id (Frontend F23's localStorage profile),
+    # a fallback resolver for when the `divisi_participant` cookie is lost but
+    # localStorage survives. Only ever set on an anonymous participant row.
+    anonymous_local_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    # Set only by a PIN-based "Save across devices". Kept distinct from
+    # `hashed_password` so a PIN account can never collide with a real
+    # email/password account. `None` for every account that never used a PIN.
+    pin_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -133,6 +148,12 @@ class GroupMembership(Base):
     # per-account, since the same person can hold a different role/section
     # in a different group. Admin-editable, `None` means nothing set.
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    # B19: this membership was created for an anonymous participant (a
+    # local-only singer). A clean audit signal for the roster badge and the
+    # sweep, kept off `GroupRole` on purpose so the dozens of `== admin` /
+    # `!= admin` checks a new enum value would touch stay untouched. Cleared
+    # to False when the participant runs "Save across devices".
+    is_guest: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -148,6 +169,18 @@ class GroupPage(str, enum.Enum):
 class PageAudience(str, enum.Enum):
     members = "members"
     everyone = "everyone"
+
+
+class PageMinIdentity(str, enum.Enum):
+    """B19: the credential-state floor for *writing* on a page. `anyone`
+    (the default, today's behavior) lets a local-only anonymous participant
+    act; `saved` requires the caller to have run "Save across devices"
+    first. Orthogonal to `audience`, which is about login state, not
+    credential state (a conductor may want "everyone can see it, but you
+    must Save before you claim a slot")."""
+
+    anyone = "anyone"
+    saved = "saved"
 
 
 class GroupPageSettings(Base):
@@ -169,6 +202,15 @@ class GroupPageSettings(Base):
     enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
     audience: Mapped[PageAudience] = mapped_column(
         SAEnum(PageAudience, native_enum=False), nullable=False, default=PageAudience.members
+    )
+    # B19: credential-state floor for writes on this page (see
+    # `PageMinIdentity`). `anyone` is today's behavior for every existing
+    # group, backfilled via server_default.
+    min_identity: Mapped[PageMinIdentity] = mapped_column(
+        SAEnum(PageMinIdentity, native_enum=False),
+        nullable=False,
+        default=PageMinIdentity.anyone,
+        server_default="anyone",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

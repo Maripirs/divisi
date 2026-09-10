@@ -179,3 +179,39 @@ def test_delete_account_blocked_as_sole_group_admin(client):
 
     # Account still works afterward.
     assert client.get("/auth/me", headers=headers).status_code == 200
+
+
+# --- B19: "Save across devices" -------------------------------------------------
+
+
+def test_save_account_mints_and_promotes_in_place_then_the_token_works(client):
+    # With no participant cookie / local_id, `POST /auth/save` mints the
+    # anonymous row and promotes it in one shot.
+    res = client.post("/auth/save", json={"name": "Robin", "pin": "1357"})
+    assert res.status_code == 200
+    token = res.json()["access_token"]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["name"] == "Robin"
+
+
+def test_save_account_rejects_a_second_save_from_an_already_saved_device(client):
+    from app.core.security import create_participant_token
+
+    token = client.post("/auth/save", json={"name": "Pat", "pin": "2468"}).json()["access_token"]
+    user_id = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["id"]
+
+    # The save deleted the cookie; re-attach one pointing at the now-saved
+    # row so the second call resolves a non-anonymous actor.
+    client.cookies.set("divisi_participant", create_participant_token(user_id, ""))
+    again = client.post("/auth/save", json={"name": "Pat Again", "pin": "9999"})
+    assert again.status_code == 409
+
+
+def test_save_account_pin_must_be_four_to_eight_digits(client):
+    for bad in ("abc", "12", "123456789"):
+        res = client.post("/auth/save", json={"name": "Sky", "pin": bad})
+        assert res.status_code == 422, bad
+    ok = client.post("/auth/save", json={"name": "Sky", "pin": "1234"})
+    assert ok.status_code == 200

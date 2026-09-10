@@ -13,11 +13,11 @@ for the member-facing signup/removal actions.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional, get_optional_participant
 from app.api.schemas import (
     ResponsibilityDateCreate,
     ResponsibilityDateOut,
@@ -47,7 +47,17 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
-from app.services.pages import require_member_page_access
+from app.services.pages import (
+    require_guest_page_access,
+    require_member_page_access,
+    require_saved_identity,
+)
+from app.services.participants import (
+    ensure_guest_membership,
+    mint_anonymous_participant,
+    resolve_participant,
+    set_participant_cookie,
+)
 from app.services.responsibilities import role_coverage
 
 router = APIRouter(tags=["responsibilities"])
@@ -565,18 +575,25 @@ def list_group_dates(
 def create_signup(
     date_id: str,
     payload: ResponsibilitySignupCreate,
+    request: Request,
+    response: Response,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> ResponsibilitySignupOut:
     """No `user_id`/`name` in the body means "sign myself up" (blocked once
     the date is locked or canceled); an explicit `user_id` for someone else,
     or a `name` with no `user_id` for someone with no account at all, is an
     admin assignment, which bypasses the lock — matching B13's "admin can
-    assign/remove any member's signup regardless of lock state"."""
+    assign/remove any member's signup regardless of lock state".
+
+    B19: self-signup is the first shared action wired to mint-on-demand. An
+    unauthenticated caller with no participant cookie / `local_id` match
+    gets a fresh anonymous participant (`is_anonymous`), a guest-tier
+    membership, and a `divisi_participant` cookie on the response. The
+    admin-assignment branches stay bearer-only."""
     date = _get_date_or_404(date_id, db)
     group_id = _group_id_for_date(date, db)
-    require_member(group_id, current_user, db)
-    require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
     role = _get_role_or_404(payload.role_id, db)
     attached_schedule_ids = {s.id for s in _schedules_for_date(date.id, db)}
     if role.schedule_id not in attached_schedule_ids:
@@ -584,34 +601,90 @@ def create_signup(
             status_code=status.HTTP_404_NOT_FOUND, detail="Role not found for this date's schedule(s)"
         )
 
-    is_admin = _is_admin(group_id, current_user, db)
     guest_name = (payload.name or "").strip() or None
 
-    if guest_name is not None:
-        # Admin-only: a volunteer with no Divisi account at all — see
-        # `ResponsibilitySignup`'s own docstring for why this and `user_id`
-        # are mutually exclusive.
-        if not is_admin:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to assign a name")
-        if payload.user_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a member or a name, not both")
-        signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=None, guest_name=guest_name)
-        db.add(signup)
-        db.commit()
-        db.refresh(signup)
-        return _signup_out(signup, None)
+    if payload.user_id or payload.name:
+        # Admin assignment (an existing member by `user_id`, or a name-only
+        # volunteer with no account). Bearer-only, logic unchanged from B13.
+        if maybe_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        current_user = maybe_user
+        require_member(group_id, current_user, db)
+        require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
+        is_admin = _is_admin(group_id, current_user, db)
 
-    target_user_id = payload.user_id or current_user.id
-    if target_user_id != current_user.id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to sign up another member"
-        )
-    if target_user_id != current_user.id and group_role(group_id, target_user_id, db) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="That user is not a member of this group")
+        if guest_name is not None:
+            # Admin-only: a volunteer with no Divisi account at all — see
+            # `ResponsibilitySignup`'s own docstring for why this and
+            # `user_id` are mutually exclusive.
+            if not is_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to assign a name"
+                )
+            if payload.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a member or a name, not both"
+                )
+            signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=None, guest_name=guest_name)
+            db.add(signup)
+            db.commit()
+            db.refresh(signup)
+            return _signup_out(signup, None)
+
+        target_user_id = payload.user_id or current_user.id
+        if target_user_id != current_user.id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to sign up another member"
+            )
+        if target_user_id != current_user.id and group_role(group_id, target_user_id, db) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="That user is not a member of this group"
+            )
+        if not is_admin and (date.locked or date.canceled):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This date is locked or canceled")
+
+        signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=target_user_id)
+        db.add(signup)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Already signed up for this role on this date"
+            ) from exc
+        db.refresh(signup)
+        user = db.get(User, target_user_id)
+        assert user is not None
+        return _signup_out(signup, user)
+
+    # Self-signup: a real member, an existing anonymous participant, or a
+    # brand-new one minted right here.
+    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
+    minted = actor is None
+    if minted:
+        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.is_anonymous:
+        # A local-only client is effectively a guest: the page must be
+        # `audience = everyone` for it to act at all, and `min_identity`
+        # may still require a saved account first.
+        require_guest_page_access(group_id, GroupPage.responsibilities, db)
+        require_saved_identity(group_id, GroupPage.responsibilities, db)
+        ensure_guest_membership(db, group_id, actor)
+        is_admin = False
+    else:
+        require_member(group_id, actor, db)
+        require_member_page_access(group_id, GroupPage.responsibilities, actor.id, db)
+        is_admin = _is_admin(group_id, actor, db)
+
     if not is_admin and (date.locked or date.canceled):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This date is locked or canceled")
 
-    signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=target_user_id)
+    signup = ResponsibilitySignup(date_id=date_id, role_id=role.id, user_id=actor.id)
     db.add(signup)
     try:
         db.commit()
@@ -621,9 +694,9 @@ def create_signup(
             status_code=status.HTTP_409_CONFLICT, detail="Already signed up for this role on this date"
         ) from exc
     db.refresh(signup)
-    user = db.get(User, target_user_id)
-    assert user is not None
-    return _signup_out(signup, user)
+    if actor.is_anonymous:
+        set_participant_cookie(response, actor, payload.local_id)
+    return _signup_out(signup, actor)
 
 
 @router.delete("/responsibilities/signups/{signup_id}", status_code=status.HTTP_204_NO_CONTENT)
