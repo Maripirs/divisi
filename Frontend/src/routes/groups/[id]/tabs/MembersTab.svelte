@@ -20,7 +20,13 @@
 	{#each data.members as member (member.user_id)}
 		<div class="member-row">
 			<div class="member-identity">
-				<span>{member.name}{member.role === 'admin' ? ` (${m.groups_role_admin()})` : ''}</span>
+				<span class="member-name-line">
+					{member.name}{member.role === 'admin' ? ` (${m.groups_role_admin()})` : ''}
+					{#if member.is_anonymous}
+						<!-- B19: signed up from a local-only device, no Saved account yet. -->
+						<span class="badge-unverified" title={m.roster_unverified_hint()}>{m.roster_unverified_badge()}</span>
+					{/if}
+				</span>
 				{#if editingTitleUserId === member.user_id}
 					<form
 						method="POST"
@@ -138,6 +144,25 @@
 		flex-direction: column;
 		gap: 0.1rem;
 		min-width: 0;
+	}
+
+	.member-name-line {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.badge-unverified {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		padding: 0.1rem 0.45rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--danger) 15%, transparent);
+		color: var(--danger);
+		white-space: nowrap;
 	}
 
 	.member-actions {

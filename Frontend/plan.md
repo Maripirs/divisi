@@ -99,7 +99,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
 | F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
-| F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Planned (brainstormed 2026-09-09, not started) |
+| F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. No real-browser pass yet. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1041,9 +1041,24 @@ Backend counterpart: B19. The conductor authoring path is out of scope
 1. Where the local annotation / homework store lives today and whether it
    already survives a reload (localStorage vs. in-memory). If in-memory,
    that move is part of this milestone.
+   **Resolved 2026-09-09:** there is no guest annotation / homework *write*
+   store. Annotations are Backend-only and gated on `canAnnotate`
+   (logged-in members); guest homework and PDF markup are read-only views.
+   The client stores a guest does touch (`playerDefaults`, per-piece
+   `player/persistence`) are already `localStorage`-backed and already
+   survive a reload. So nothing in-memory needed migrating; `localProfile`
+   just contributes the `localId` owner key for a future guest write path.
 2. PIN input UX (length, numeric-only) and whether "name + PIN" reads
    clearly as a credential to a non-technical singer or needs a one-line
    "so you can sign back in on your phone" explanation.
+   **Resolved 2026-09-09:** PIN field is `inputmode="numeric"`
+   `pattern="[0-9]*"` `minlength=4` `maxlength=8`, client-validated against
+   `/^[0-9]{4,8}$/` (matches the Backend's 422 rule), submit disabled until
+   valid. Copy spells out the credential: section lead "You're only on this
+   device. Add a name and a PIN so you can sign back in on your phone or
+   another browser…" plus a help line "4 to 8 digits. You'll enter your
+   name and this PIN to sign back in on another device, so pick something
+   you'll remember." Final wording still open for the human's browser pass.
 
 **Acceptance criteria:**
 - [ ] A brand-new visitor with no session gets a local profile silently;
@@ -1062,34 +1077,58 @@ Backend counterpart: B19. The conductor authoring path is out of scope
 - [ ] A shared action on a `min_identity = saved` page surfaces B19's
   "Save your account first" as an inline prompt to Save, not a generic
   failure.
-- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [x] `npm run check` / `npm run build` clean; vitest green. (`check` 0
+  errors, `build` clean, vitest 114 — 2026-09-09.)
 - [ ] Human confirms in a real browser: silent local profile, lazy name
   prompt on signup, Save via PIN, same data on a second browser, the
   one-time banner.
 
 **Tasks — Claude:**
-- [ ] `$lib/localProfile.svelte.ts` (or similar): create / read the local
-  profile, expose `localId` + `displayName`, `setDisplayName`, and a
-  `needsName` check for shared actions.
-- [ ] Persist the guest annotation / homework store to localStorage keyed
-  by `localId` if it does not already (confirm-at-build item 1).
-- [ ] Thread `localId` onto the responsibility self-signup call; add the
-  lazy name-prompt step in that flow.
-- [ ] Settings drawer: "Save across devices" section, name + PIN form
-  calling B19's `POST /auth/save`.
-- [ ] On Save, upload the local annotation / homework state (B19 owns the
+- [x] `$lib/localProfile.ts` (plain `.ts`, `svelte/store`-backed like
+  `theme.ts` so it stays unit-testable): `localId` + `displayName` +
+  `saved`/`signedUp`/`bannerDismissed` flags in `localStorage`
+  (`divisi:localProfile`), `setDisplayName`, `ensureLocalId`, `needsName`,
+  `shouldShowSignupBanner`, and the mutators, plus pure `parseStoredProfile`.
+- [x] Persist the guest annotation / homework store to localStorage keyed
+  by `localId` (confirm-at-build item 1). **Finding: there is no guest
+  annotation / homework write store to migrate.** Annotations are
+  Backend-only and members-only (`canAnnotate`); guest homework and PDF
+  markup are read-only. The stores a guest actually uses today
+  (`playerDefaults`, per-piece `player/persistence`) are already
+  `localStorage`-backed and already survive a reload. Nothing in-memory
+  needed moving; the local profile just adds the owner key for when a
+  guest write path is built.
+- [x] Thread `localId` onto the responsibility self-signup call; add the
+  lazy name-prompt step in that flow. New guest signup UI on the
+  `/join/[code]` Responsibilities tab (per-role "Sign me up" in
+  `ResponsibilityDateCard`'s `roleExtra` slot) → new proxy
+  `POST /join/[code]/responsibilities/signups` that mints via B19 and
+  threads the `divisi_participant` cookie first-party
+  (`$lib/server/participantSession.ts`). Name prompted only when
+  `needsName`, then reused silently.
+- [x] Settings drawer: "Save across devices" section, name + PIN form
+  calling B19's `POST /auth/save` via `/settings?/saveAcrossDevices`
+  (forwards the participant cookie, stores the returned bearer token as
+  the session, retires the participant cookie).
+- [x] On Save, upload the local annotation / homework state (B19 owns the
   merge); on success store the returned session token and drop the local
-  profile's "unsaved" state.
-- [ ] The one-time post-signup banner (persist "dismissed" + "saved" flags
+  profile's "unsaved" state. (Token stored + `markProfileSaved()` +
+  `invalidateAll()`; no local write store to push — B19's
+  `merge_participant` folds the anon row's server-side annotations /
+  signups.)
+- [x] The one-time post-signup banner (persist "dismissed" + "saved" flags
   in the same local store).
-- [ ] Roster / member list: render B19's unverified badge for anonymous
-  participants.
-- [ ] Handle B19's "this page needs a saved account" error on a gated
-  shared action as an inline Save prompt.
-- [ ] en / es keys for the name prompt, the Save section, the banner, the
+- [x] Roster / member list: render B19's unverified badge for anonymous
+  participants (`MembersTab.svelte`, `GroupMemberOut.is_anonymous`).
+- [x] Handle B19's "this page needs a saved account" error on a gated
+  shared action as an inline Save prompt (proxy maps the `SAVE_REQUIRED:`
+  403 to `{ error: 'save-required' }`; the tab shows an inline "needs a
+  saved account" line linking to the Settings Save section).
+- [x] en / es keys for the name prompt, the Save section, the banner, the
   badge, the gated-action prompt.
-- [ ] vitest for the local-profile lifecycle and the `needsName` / gating
-  branches.
+- [x] vitest for the local-profile lifecycle and the `needsName` / gating
+  branches (`localProfile.test.ts`, `server/participantSession.test.ts`;
+  +32 tests).
 
 **Tasks — Human:**
 - [ ] Real-browser pass per the last acceptance box.
@@ -1145,6 +1184,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-09: F23 built. New `$lib/localProfile.ts` (svelte/store-backed, unit-testable): a silent `localStorage` profile (`localId` + lazy `displayName` + `saved`/`signedUp`/`bannerDismissed` flags) from the first visit. Guest responsibility self-signup is now wired on the `/join/[code]` tab (per-role "Sign me up" via `ResponsibilityDateCard`'s `roleExtra`), through a new `/join/[code]/responsibilities/signups` proxy that mints B19's anonymous participant and re-sets its `divisi_participant` cookie first-party (`$lib/server/participantSession.ts`); the display name is prompted once, then reused. Settings drawer gained a "Save across devices" section (name + numeric PIN → `/settings?/saveAcrossDevices` → B19 `POST /auth/save`, stores the returned bearer as the session). Plus the one-time post-signup banner, the roster "Unverified" badge (`GroupMemberOut.is_anonymous`), and an inline "needs a saved account" prompt for the `SAVE_REQUIRED:` 403. Build-time findings: no guest annotation/homework write store exists to migrate (annotations are members-only, guest homework/markup read-only); PIN is 4-8 digits, `inputmode=numeric`, client-validated. en+es keys added. `check` 0 errors, `build` clean, vitest 114 (+32). Needs a real-browser pass (silent profile, lazy prompt, Save via PIN, same data on a 2nd browser, the banner).
 
 - 2026-09-09: Brainstormed lowering the account barrier with the human (chat only, no code). Guests already read everything, so the wall is the singer's first stateful action. Agreed a local-first identity: a silent local profile (localId + name in localStorage) from the first visit, the Backend mints an anonymous participant on the first shared action, and "Save across devices" in Settings promotes it to a real cross-device account (name + PIN, email magic link later; Google was considered and dropped 2026-09-09). One dismissible post-signup nudge; roster badges unverified participants. Captured as Frontend F23 / Backend B19.
 

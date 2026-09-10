@@ -9,11 +9,23 @@
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
+	import {
+		localProfile,
+		ensureLocalId,
+		setDisplayName,
+		markSignedUp,
+		dismissSignupBanner,
+		shouldShowSignupBanner
+	} from '$lib/localProfile';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import { formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
+	import type { ResponsibilityRole } from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
 
@@ -24,6 +36,76 @@
 	// (plain `$state`, not `localStorage`), so it reappears every visit
 	// since guests aren't tracked across sessions at all.
 	let bannerDismissed = $state(false);
+
+	// F23: local-only responsibility self-signup. A visitor with no account
+	// signs themselves up straight from this read-only guest view; the
+	// Backend (B19) mints their anonymous participant on the first such
+	// action and sets a device cookie (threaded first-party by
+	// `/join/[code]/responsibilities/signups`). The display name is
+	// prompted lazily, once, then reused from the local profile.
+	const roleKey = (dateId: string, roleId: string) => `${dateId}:${roleId}`;
+	let promptingKey = $state<string | null>(null);
+	let nameDraft = $state('');
+	let busyKey = $state<string | null>(null);
+	let doneKeys = $state<Set<string>>(new Set());
+	let errorByKey = $state<Record<string, string>>({});
+	let saveRequiredKey = $state<string | null>(null);
+
+	async function requestSignup(dateId: string, roleId: string) {
+		if ($localProfile.displayName.trim().length === 0) {
+			promptingKey = roleKey(dateId, roleId);
+			nameDraft = '';
+			return;
+		}
+		await doSignup(dateId, roleId);
+	}
+
+	async function confirmName(dateId: string, roleId: string) {
+		const name = nameDraft.trim();
+		if (!name) return;
+		setDisplayName(name);
+		promptingKey = null;
+		await doSignup(dateId, roleId);
+	}
+
+	async function doSignup(dateId: string, roleId: string) {
+		const key = roleKey(dateId, roleId);
+		busyKey = key;
+		saveRequiredKey = null;
+		errorByKey = { ...errorByKey, [key]: '' };
+		try {
+			const res = await fetch(`/join/${data.code}/responsibilities/signups`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					dateId,
+					roleId,
+					localId: ensureLocalId(),
+					displayName: $localProfile.displayName
+				})
+			});
+			const body = (await res.json()) as
+				| { ok: true }
+				| { ok: false; error: 'save-required' }
+				| { ok: false; error: 'conflict'; message?: string }
+				| { ok: false; error: 'server' };
+			if (body.ok) {
+				markSignedUp();
+				doneKeys = new Set([...doneKeys, key]);
+				await invalidateAll();
+			} else if (body.error === 'save-required') {
+				saveRequiredKey = key;
+			} else if (body.error === 'conflict') {
+				errorByKey = { ...errorByKey, [key]: body.message || m.responsibilities_signup_conflict() };
+			} else {
+				errorByKey = { ...errorByKey, [key]: m.responsibilities_signup_failed() };
+			}
+		} catch {
+			errorByKey = { ...errorByKey, [key]: m.responsibilities_signup_failed() };
+		} finally {
+			busyKey = null;
+		}
+	}
 
 	// F20 guest expansion: which track cards have their "Piece Notes"
 	// disclosure open. Lazy — the panel only mounts (and fetches) once a
@@ -104,6 +186,23 @@
 				</section>
 			{/if}
 
+			{#if shouldShowSignupBanner($localProfile)}
+				<!-- F23: shown once, after the first responsibility signup, until
+				     dismissed or the profile is Saved (flags persist in the
+				     local profile store, so it does not reappear). -->
+				<section class="card card--highlight">
+					<p class="card-note">{m.local_only_banner_body()}</p>
+					<div class="btn-row">
+						<button type="button" class="btn btn-primary" onclick={() => (settingsDrawer.open = true)}>
+							{m.save_action()}
+						</button>
+						<button type="button" class="btn btn-outline" onclick={dismissSignupBanner} aria-label={m.join_dismiss()}>
+							{m.join_not_now()}
+						</button>
+					</div>
+				</section>
+			{/if}
+
 			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible}
 				<div class="tabs" role="tablist">
 					<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
@@ -144,13 +243,74 @@
 					{/each}
 				{/if}
 			{:else if tab === 'responsibilities' && result.responsibilitiesVisible}
-				<!-- Guest coverage view only — no signup identities (see the
-				     Backend's `ResponsibilityGuestRoleCoverageOut`), so this is
-				     read-only, no sign-up action like the member group page has. -->
+				<!-- Guest coverage view: no signup identities (see the Backend's
+				     `ResponsibilityGuestRoleCoverageOut`), but F23 adds a
+				     local-only "Sign me up" per role for an open/unlocked date. -->
 				{#if result.responsibilities.length === 0}
 					<p class="empty">{m.join_no_responsibilities()}</p>
 				{:else}
 					{#each result.responsibilities as d (d.id)}
+						{#snippet signupControl(role: ResponsibilityRole)}
+							{@const key = roleKey(d.id, role.roleId)}
+							{#if !d.locked && !d.canceled && !page.data.user}
+								<div class="signup-control">
+									{#if doneKeys.has(key)}
+										<p class="signup-done">{m.responsibilities_signup_done()}</p>
+									{:else if promptingKey === key}
+										<form
+											class="signup-name-form"
+											onsubmit={(e) => {
+												e.preventDefault();
+												void confirmName(d.id, role.roleId);
+											}}
+										>
+											<label class="field">
+												<span>{m.responsibilities_name_prompt()}</span>
+												<input bind:value={nameDraft} required autocomplete="name" />
+											</label>
+											<div class="btn-row">
+												<button
+													type="button"
+													class="text-link"
+													onclick={() => (promptingKey = null)}
+													disabled={busyKey === key}
+												>
+													{m.join_not_now()}
+												</button>
+												<button
+													type="submit"
+													class="btn btn-primary"
+													disabled={busyKey === key || nameDraft.trim().length === 0}
+												>
+													{busyKey === key ? m.responsibilities_signing_up() : m.responsibilities_sign_me_up()}
+												</button>
+											</div>
+										</form>
+									{:else}
+										<button
+											type="button"
+											class="btn btn-outline"
+											onclick={() => void requestSignup(d.id, role.roleId)}
+											disabled={busyKey === key}
+										>
+											{busyKey === key ? m.responsibilities_signing_up() : m.responsibilities_sign_me_up()}
+										</button>
+									{/if}
+
+									{#if saveRequiredKey === key}
+										<p class="signup-save-required">
+											{m.responsibilities_save_required()}
+											<button type="button" class="text-link" onclick={() => (settingsDrawer.open = true)}>
+												{m.save_action()}
+											</button>
+										</p>
+									{/if}
+									{#if errorByKey[key]}
+										<p class="error">{errorByKey[key]}</p>
+									{/if}
+								</div>
+							{/if}
+						{/snippet}
 						<ResponsibilityDateCard
 							item={{
 								id: d.id,
@@ -164,6 +324,7 @@
 									roles: s.roles
 								}))
 							}}
+							roleExtra={signupControl}
 						/>
 					{/each}
 				{/if}
@@ -264,5 +425,37 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+
+	/* F23: the per-role local-only signup control, sitting under a role's
+	   coverage row inside `ResponsibilityDateCard`'s `roleExtra` slot. */
+	.signup-control {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		margin-top: 0.4rem;
+	}
+
+	.signup-name-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.signup-done {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 700;
+		color: var(--accent);
+	}
+
+	.signup-save-required {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
 	}
 </style>

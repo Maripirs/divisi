@@ -28,11 +28,18 @@ export interface GroupOut {
  * `guest_homework_visible` flag — one row per page, always all 5. */
 export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities' | 'weekly_notes';
 export type PageAudience = 'members' | 'everyone';
+/** B19: whether a shared *write* on this page requires a Saved account.
+ * `anyone` (default) lets an anonymous local-only participant act;
+ * `saved` makes the Backend answer a `SAVE_REQUIRED:` 403. Reads are
+ * unaffected either way. F23 only consumes this gate; the admin toggle to
+ * set it is out of F23 scope. */
+export type PageMinIdentity = 'anyone' | 'saved';
 
 export interface GroupPageSettingOut {
 	page: GroupPage;
 	enabled: boolean;
 	audience: PageAudience;
+	min_identity: PageMinIdentity;
 }
 
 /** B13: a named volunteer program inside a group (e.g. "Snack and rehearsal
@@ -98,8 +105,12 @@ export interface GroupMemberOut {
 	name: string;
 	role: GroupRole;
 	/** Free-text context shown next to this member on the Members page,
-	 * e.g. "Soprano 2 — Section leader" — admin-editable, null means unset. */
+	 * e.g. "Soprano 2, Section leader" — admin-editable, null means unset. */
 	title: string | null;
+	/** B19: true for a local-only participant who signed up for something
+	 * but has not Saved an account yet. The roster shows an "unverified"
+	 * badge for these. */
+	is_anonymous: boolean;
 }
 
 export interface HomeworkOut {
