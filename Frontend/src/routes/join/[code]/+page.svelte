@@ -32,11 +32,6 @@
 	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities';
 	let tab = $state<Tab>('tracks');
 
-	// Nudges an anonymous guest toward creating an account — no persistence
-	// (plain `$state`, not `localStorage`), so it reappears every visit
-	// since guests aren't tracked across sessions at all.
-	let bannerDismissed = $state(false);
-
 	// F23: local-only responsibility self-signup. A visitor with no account
 	// signs themselves up straight from this read-only guest view; the
 	// Backend (B19) mints their anonymous participant on the first such
@@ -172,19 +167,12 @@
 		{:else if result.group}
 			<AppHeader title={result.group.groupName} homeHref={lh(`/join/${data.code}`)} />
 
-			{#if !bannerDismissed}
-				<section class="card card--highlight">
-					<p class="card-note">
-						{m.join_guest_banner()}
-					</p>
-					<div class="btn-row">
-						<a class="btn btn-primary" href={lh(`/login?redirectTo=/join/${data.code}`)}>{m.join_sign_in()}</a>
-						<button type="button" class="btn btn-outline" onclick={() => (bannerDismissed = true)} aria-label={m.join_dismiss()}>
-							{m.join_not_now()}
-						</button>
-					</div>
-				</section>
-			{/if}
+			<!-- The persistent "browsing as a guest, sign in" banner used to live
+			     here (removed 2026-09-11: the human found it redundant now that
+			     Settings already covers the same ground for a guest -
+			     `settings_guest_note` plus Save-across-devices / Log in / Create
+			     account, see `SettingsDrawer.svelte`). The gear icon in
+			     `AppHeader` is the one, quieter way in now. -->
 
 			{#if shouldShowSignupBanner($localProfile)}
 				<!-- F23: shown once, after the first responsibility signup, until
