@@ -188,7 +188,7 @@
 		{:else if result.error === 'server'}
 			{@render serverErrorCard()}
 		{:else if result.group}
-			<AppHeader title={result.group.groupName} homeHref={lh(`/join/${data.code}`)} />
+			<AppHeader title={result.group.groupName} homeHref={lh('/welcome')} />
 
 			<!-- The persistent "browsing as a guest, sign in" banner used to live
 			     here (removed 2026-09-11: the human found it redundant now that
