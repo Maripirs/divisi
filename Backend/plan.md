@@ -88,6 +88,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B17 | Group markup layer (shared, admin-co-edited) | ⏳ Built 2026-09-02 (`e75f79c`), migration `b1c3d5e7f9a2`, pytest 229 green; not pushed/deployed |
 | B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Built 2026-09-02, migration `c3e5a7b9d1f4` (`down_revision = b1c3d5e7f9a2`), single linear head; pytest 240 green; not pushed/deployed |
 | B19 | Progressive accounts: anonymous participants + "Save across devices" | ⏳ Built 2026-09-09, migration `d4a9f2c7e1b8` (`down_revision = a2f6c1e4d9b7`), single linear head; pytest 271 green. Not pushed/deployed |
+| B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
 
 ### B1 — Backend scaffold [x]
 
@@ -815,6 +816,74 @@ device token (same primitive as `create_guest_token`), not a password.
 **Tasks — Human:**
 - [ ] Decide N (anonymous-row retention window) for the sweep.
 
+### B20 — Demo "Preview Admin" (public, read-only) [x]
+
+Requested by the human 2026-09-11 while testing B19/F23 locally, alongside
+moving F23's "browsing as a guest" banner into Settings (Frontend-only, see
+`Frontend/plan.md`'s F24). The ask: let a visitor to the public demo choir
+(`DEMO_SETUP.md`) see what the Admin/conductor experience looks like,
+without any risk of a stranger actually changing the shared public demo
+data. Scoped to the demo group only, not every guest on every group
+(confirmed with the human): a real conductor's group never offers this.
+
+**Design:** rather than building a second, fake-write "mock admin" UI,
+the demo group's real admin gets a genuine, but read-only, session. A new
+token type carries the real demo-admin's `sub` (so every existing
+admin-only screen renders exactly as it would for them, zero new
+Frontend admin UI needed) plus a `scope = "admin_preview"` marker a single
+process-wide middleware checks: any request that isn't
+GET/HEAD/OPTIONS and carries that scope is rejected before it reaches its
+handler, regardless of which route. A normal member/admin token has no
+`scope` claim at all (see `create_access_token`), so this can never affect
+a real session.
+
+No new table, no migration: which group (if any) offers this is a single
+`Settings.demo_join_code` env var, empty by default (feature off
+everywhere). Sets on Render only after `DEMO_SETUP.md`'s Step 3 (the demo
+group's join code is hand-set); see that doc's note under Step 3.
+
+**Acceptance criteria:**
+- [x] `Settings.demo_join_code` unset (default): `GET
+  /guest/{any_code}/admin-preview` 404s for every join code, real or not.
+- [x] Set to a real group's join code: `GET /guest/{code}/admin-preview`
+  returns a token that resolves (`GET /auth/me`, and every other
+  admin-only read) as that group's real admin account.
+- [x] Any non-GET/HEAD/OPTIONS request carrying that token, on any route,
+  is rejected with a 403 whose `detail` starts `PREVIEW_READ_ONLY:` —
+  verified against both a plain field update and a resource-create route,
+  not just the one the feature was built for.
+- [x] A real admin/member session sitting alongside a preview session is
+  completely unaffected; nothing the preview session did persists.
+- [x] `GuestGroupOut.admin_preview_available` reports whether the
+  currently-viewed guest group is the one `demo_join_code` names, so the
+  Frontend never needs its own copy of that code.
+- [x] A join code that happens to equal `demo_join_code` but doesn't
+  belong to any group (not yet seeded, typo'd env var) fails closed: a
+  plain 404, not a 500.
+
+**Tasks — Claude:**
+- [x] `Settings.demo_join_code` (`app/core/config.py`).
+- [x] `create_admin_preview_token` / `decode_token_scope` in
+  `app/core/security.py`, next to the guest/participant token helpers.
+- [x] `app.main`'s `block_admin_preview_writes` middleware: the single
+  process-wide guard, so no future admin-only endpoint can forget it.
+- [x] `GET /guest/{join_code}/admin-preview` (`app/api/routes/guest.py`):
+  404 unless `join_code` matches `demo_join_code` *and* a real group with
+  a real admin membership exists for it; else mints the token for that
+  admin's user id.
+- [x] `GuestGroupOut.admin_preview_available`, computed in
+  `resolve_join_code`.
+- [x] Tests (`tests/test_guest.py`, +5): unset always 404s, a non-demo
+  real code 404s, the full preview-session round trip (reads resolve as
+  the real admin, two different non-GET routes both reject with the
+  `PREVIEW_READ_ONLY:` detail, the real admin's own session is untouched
+  and a real write from it still lands), and a `demo_join_code` naming no
+  real group failing closed. `pytest` 275 green (was 271).
+
+**Tasks — Human:**
+- [ ] Set `DEMO_JOIN_CODE=DEMOSATB` on Render once the demo group's join
+  code is set (`DEMO_SETUP.md` Step 3), then restart the service.
+
 ## Backlog
 
 - **B16 fast-follow — promote a weekly note into a piece note**: an admin
@@ -848,6 +917,8 @@ device token (same primitive as `create_guest_token`), not a password.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-11: Built B20 (demo "Preview Admin", read-only). While testing B19/F23 locally end to end (docker compose + a seeded test group + a real Playwright walkthrough with two simulated devices), the human asked to let the public demo choir show what the Admin view looks like without risking a stranger changing the shared demo data. No mock UI: a new `admin_preview` JWT scope resolves as the demo's real admin for every read, and a single process-wide middleware rejects every non-GET request carrying it. Gated entirely by `Settings.demo_join_code` (env var, empty by default, no schema change). `pytest` 275 green (was 271); the local B19/F23 walkthrough itself surfaced no defects, only a pre-existing B6 rate-limiter artifact from hammering two "devices" through the same local proxy IP. Not pushed/deployed.
 
 - 2026-09-09: Built B19 (progressive accounts). Migration `d4a9f2c7e1b8` adds `users.is_anonymous` / `anonymous_local_id` / `pin_hash`, `group_memberships.is_guest`, and `group_page_settings.min_identity` (`anyone` | `saved`), all backfilled by server defaults. A local-only singer's first responsibility self-signup mints an anonymous `User` + guest-tier membership and sets a one-year `divisi_participant` cookie (`app/services/participants.py`, new `create_participant_token` + `get_optional_participant`); `POST /auth/save` (name + numeric PIN) promotes that row in place or `merge_participant`s it into a matching saved account (annotations last-writer-wins per piece, memberships union, signups/markup repoint). `min_identity = saved` refuses a local-only write with a `SAVE_REQUIRED:` 403 but leaves reads and real-member writes alone; roster carries `is_anonymous`; `scripts/prune_anonymous_participants.py` sweeps bare anonymous rows. Google as a Save method was dropped (decided 2026-09-09): the OAuth callback keeps its plain B14 behavior, name + PIN is the only Save method, email magic link is the fast-follow. pytest 271 green; migration up/down/up verified on a throwaway SQLite. Not pushed/deployed.
 

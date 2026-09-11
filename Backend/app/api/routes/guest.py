@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    AdminPreviewOut,
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupOut,
@@ -38,12 +39,15 @@ from app.api.schemas import (
     ResponsibilityGuestScheduleGroupOut,
     WeeklyNoteOut,
 )
+from app.core.config import get_settings
 from app.core.rate_limit import rate_limit_guest
-from app.core.security import create_guest_token, verify_password
+from app.core.security import create_admin_preview_token, create_guest_token, verify_password
 from app.db.models import (
     Distribution,
     Group,
+    GroupMembership,
     GroupPage,
+    GroupRole,
     Homework,
     Piece,
     PieceMarkupMark,
@@ -189,6 +193,32 @@ def authenticate_guest(join_code: str, payload: GuestAuthIn, db: Session = Depen
     return GuestAuthOut(token=create_guest_token(group.id))
 
 
+@router.get("/{join_code}/admin-preview", response_model=AdminPreviewOut)
+def start_admin_preview(join_code: str, db: Session = Depends(get_db)) -> AdminPreviewOut:
+    """B20: mints a read-only "preview Admin" session for the public demo
+    group only (`Settings.demo_join_code`, unset means this always 404s).
+    The token's subject is that group's real admin account, so every
+    existing admin-only screen renders exactly as it would for them; a
+    process-wide middleware (`app.main.block_admin_preview_writes`) rejects
+    every non-GET request carrying it, so nothing a demo visitor does
+    actually persists. 404, not 403, for a non-demo join code: this route
+    shouldn't reveal which codes are real. `group_id` rides along so the
+    Frontend can navigate straight into it."""
+    settings = get_settings()
+    if not settings.demo_join_code or join_code.upper() != settings.demo_join_code.upper():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    group = _get_group_by_join_code_or_404(join_code, db)
+    admin_membership = (
+        db.query(GroupMembership)
+        .filter(GroupMembership.group_id == group.id, GroupMembership.role == GroupRole.admin)
+        .order_by(GroupMembership.created_at.asc())
+        .first()
+    )
+    if admin_membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return AdminPreviewOut(access_token=create_admin_preview_token(admin_membership.user_id), group_id=group.id)
+
+
 @router.get("/{join_code}", response_model=GuestGroupOut)
 def resolve_join_code(
     join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
@@ -228,7 +258,9 @@ def resolve_join_code(
             )
         )
 
-    return GuestGroupOut(group_name=group.name, pieces=pieces)
+    settings = get_settings()
+    admin_preview_available = bool(settings.demo_join_code) and join_code.upper() == settings.demo_join_code.upper()
+    return GuestGroupOut(group_name=group.name, pieces=pieces, admin_preview_available=admin_preview_available)
 
 
 @router.get("/{join_code}/homework", response_model=list[HomeworkOut])

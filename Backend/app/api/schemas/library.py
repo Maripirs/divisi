@@ -168,6 +168,21 @@ class GuestPieceOut(BaseModel):
 class GuestGroupOut(BaseModel):
     group_name: str
     pieces: list[GuestPieceOut]
+    # B20: true only for the one group `Settings.demo_join_code` names (the
+    # public demo choir) — tells the Frontend whether to offer "Preview
+    # Admin" at all, so it never needs its own copy of that join code.
+    admin_preview_available: bool = False
+
+
+class AdminPreviewOut(BaseModel):
+    """B20: the read-only "preview Admin" session. `group_id` (unlike the
+    plain `Token` other flows return) is here so the Frontend can navigate
+    straight to `/groups/{group_id}` without a follow-up `GET /groups`
+    round trip to work out which one it just became an admin of."""
+
+    access_token: str
+    token_type: str = "bearer"
+    group_id: str
 
 
 class GuestPieceOwnerOut(BaseModel):

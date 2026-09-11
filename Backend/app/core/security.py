@@ -102,3 +102,32 @@ def decode_participant_token(token: str) -> tuple[str, str] | None:
     if not user_id:
         return None
     return user_id, payload.get("lid") or ""
+
+
+def create_admin_preview_token(user_id: str) -> str:
+    """B20: a signed session token for the public demo's "preview Admin"
+    mode. Same `sub` claim as a real access token, so `get_current_user`
+    resolves the demo group's real admin account and every existing
+    admin-only read renders exactly as it would for them. The
+    `scope = "admin_preview"` marker is what `app.main`'s middleware
+    checks to reject every non-GET request carrying this token, so nothing
+    a demo visitor does actually writes anywhere. Short-lived (2 hours):
+    this is a look-around session, not an account."""
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(hours=2)
+    payload = {"sub": user_id, "scope": "admin_preview", "exp": expire}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_token_scope(token: str) -> str | None:
+    """The token's `scope` claim if it decodes validly, else `None`. A real
+    member access token has no `scope` claim at all (see
+    `create_access_token`), so this reliably tells a guest / participant /
+    admin-preview token apart from a normal session without caring which
+    of those it turns out to be."""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        return None
+    return payload.get("scope")

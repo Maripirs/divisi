@@ -106,7 +106,11 @@ def test_guest_sees_no_pieces_for_a_group_with_nothing_distributed(client):
 
     response = client.get(f"/guest/{group['join_code']}")
     assert response.status_code == 200
-    assert response.json() == {"group_name": "Empty Choir", "pieces": []}
+    assert response.json() == {
+        "group_name": "Empty Choir",
+        "pieces": [],
+        "admin_preview_available": False,
+    }
 
 
 def test_piece_owner_endpoint_names_the_group_and_reports_password_required(client):
@@ -716,3 +720,81 @@ def test_min_identity_saved_does_not_disturb_guest_reads_or_member_signup(client
     )
     assert ok.status_code == 201
     _cleanup_render(version_id)
+
+
+def test_admin_preview_404_when_demo_join_code_unset(client):
+    """B20: `Settings.demo_join_code` defaults to "" — no join code, real or
+    fake, can ever reach the preview."""
+    admin_headers = _register_and_login(client, "b20-unset@example.com")
+    group = client.post("/groups", json={"name": "Real Choir"}, headers=admin_headers).json()
+    resp = client.get(f"/guest/{group['join_code']}/admin-preview")
+    assert resp.status_code == 404
+
+
+def test_admin_preview_404_for_non_demo_code(client, monkeypatch):
+    """A real group's join code is never the demo's, so it 404s the same
+    as an unknown code — this route shouldn't out a real group as "not the
+    demo" vs. "doesn't exist"."""
+    monkeypatch.setattr(get_settings(), "demo_join_code", "SOMEDEMO")
+    admin_headers = _register_and_login(client, "b20-notdemo@example.com")
+    group = client.post("/groups", json={"name": "Real Choir"}, headers=admin_headers).json()
+    resp = client.get(f"/guest/{group['join_code']}/admin-preview")
+    assert resp.status_code == 404
+
+
+def test_admin_preview_mints_a_read_only_admin_session(client, monkeypatch):
+    """The one group named by `demo_join_code`: the returned token reads as
+    its real admin (every GET renders like a real admin session), but any
+    write is rejected process-wide with the PREVIEW_READ_ONLY detail — and
+    a real admin session sitting right next to it is completely unaffected."""
+    admin_headers = _register_and_login(client, "b20-demo-admin@example.com")
+    group = client.post("/groups", json={"name": "Divisi Demo Choir"}, headers=admin_headers).json()
+    monkeypatch.setattr(get_settings(), "demo_join_code", group["join_code"])
+
+    resolved = client.get(f"/guest/{group['join_code']}")
+    assert resolved.json()["admin_preview_available"] is True
+
+    started = client.get(f"/guest/{group['join_code']}/admin-preview")
+    assert started.status_code == 200
+    assert started.json()["group_id"] == group["id"]
+    preview_headers = {"Authorization": f"Bearer {started.json()['access_token']}"}
+
+    # Reads resolve as the real admin, same as a normal admin session would.
+    me = client.get("/auth/me", headers=preview_headers)
+    assert me.status_code == 200
+    assert me.json()["email"] == "b20-demo-admin@example.com"
+    assert client.get(f"/groups/{group['id']}/page-settings", headers=preview_headers).status_code == 200
+
+    # Every non-GET verb is rejected, regardless of the route.
+    blocked = client.put(
+        f"/groups/{group['id']}/description",
+        json={"description": "hacked"},
+        headers=preview_headers,
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"].startswith("PREVIEW_READ_ONLY:")
+    blocked_create = client.post("/groups", json={"name": "New"}, headers=preview_headers)
+    assert blocked_create.status_code == 403
+    assert blocked_create.json()["detail"].startswith("PREVIEW_READ_ONLY:")
+
+    # Nothing actually changed.
+    unchanged = client.get(f"/groups/{group['id']}/page-settings", headers=admin_headers)
+    assert unchanged.status_code == 200
+
+    # A real admin session, untouched by any of this, still writes fine.
+    real_write = client.put(
+        f"/groups/{group['id']}/description",
+        json={"description": "for real"},
+        headers=admin_headers,
+    )
+    assert real_write.status_code == 200
+    assert real_write.json()["description"] == "for real"
+
+
+def test_admin_preview_404_when_no_group_has_that_join_code(client, monkeypatch):
+    """`demo_join_code` naming a code no group actually has (e.g. not yet
+    seeded) fails closed as a plain 404, not a 500 — same generic message
+    as any other unknown join code."""
+    monkeypatch.setattr(get_settings(), "demo_join_code", "GHOST123")
+    resp = client.get("/guest/GHOST123/admin-preview")
+    assert resp.status_code == 404

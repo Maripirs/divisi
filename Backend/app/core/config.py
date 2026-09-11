@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     apple_client_id: str = ""
     apple_client_secret: str = ""
 
+    # B20: the one group (if any) that offers a public, read-only "preview
+    # Admin" mode from its guest join page — the seeded public demo choir
+    # (see Backend/scripts/seed_demo.py, Backend/DEMO_SETUP.md), never a
+    # real conductor's group. Empty (the default) turns the feature off
+    # everywhere: no join code can ever match. Set on Render only after the
+    # demo group's join code is hand-set (see DEMO_SETUP.md's Step 3).
+    demo_join_code: str = ""
+
     @property
     def oauth_configured(self) -> dict[str, bool]:
         return {

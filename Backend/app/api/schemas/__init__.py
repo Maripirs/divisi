@@ -40,6 +40,7 @@ from app.api.schemas.groups import (
 )
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
+    AdminPreviewOut,
     DistributionOut,
     GuestAuthIn,
     GuestAuthOut,
@@ -93,6 +94,7 @@ from app.api.schemas.weekly_notes import WeeklyNoteCreate, WeeklyNoteOut, Weekly
 
 __all__ = [
     "MIN_PASSWORD_LENGTH",
+    "AdminPreviewOut",
     "AnnotationCreate",
     "AnnotationOut",
     "AnnotationShareCreate",
