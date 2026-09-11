@@ -29,6 +29,11 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql+psycopg2://divisi:divisi@postgres:5432/divisi
+      # Public demo join code, not a secret (it's on the /welcome page).
+      # .dockerignore excludes .env from this build context entirely, so
+      # this is the only way the container ever sees it locally, keeping
+      # docker-compose behavior matching prod (Render has the same var).
+      DEMO_JOIN_CODE: DEMOSATB
     ports:
       - "8000:8000"
     depends_on:
