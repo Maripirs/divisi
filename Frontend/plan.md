@@ -99,7 +99,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F20 | Piece Notes panel — director + personal notes (frontend for Backend B16 + B5) | ⏳ Built (2 sources on the piece page + an expandable Rehearsal Tracks card); guest expansion 2026-09-02 adds a director-only read-only mode on the guest piece page + guest Tracks cards; `check`/`build`/vitest 79 green; no real-browser pass yet |
 | F21 | Group markup layer (frontend for Backend B17) | ⏳ Built 2026-09-02 (`e75f79c`), check/build/vitest 70 green; not deployed; no touchscreen pass |
 | F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
-| F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. No real-browser pass yet. |
+| F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. Verified 2026-09-11 end to end (signup, save, cross-device merge, the `min_identity` gate) in a real local browser; still no human/phone pass. |
+| F24 | Guest chrome cleanup + demo "Preview Admin" entry point | ⏳ Banner removal shipped 2026-09-11 (`0e47174`); the Settings "Preview Admin" entry point (frontend for Backend B20) not started |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1079,9 +1080,18 @@ Backend counterpart: B19. The conductor authoring path is out of scope
   failure.
 - [x] `npm run check` / `npm run build` clean; vitest green. (`check` 0
   errors, `build` clean, vitest 114 — 2026-09-09.)
-- [ ] Human confirms in a real browser: silent local profile, lazy name
-  prompt on signup, Save via PIN, same data on a second browser, the
-  one-time banner.
+- [x] Confirmed 2026-09-11 by Claude, real browser (headless Chromium via
+  Playwright, not a human/phone pass): a local docker-compose Backend +
+  `npm run dev`, two separate browser contexts simulating two devices.
+  Lazy name prompt on first signup, the one-time banner, Save via PIN
+  (promote in place), and a second device signing up + saving with the
+  *same* name+PIN correctly merging into the first (verified against the
+  API, not just the UI: the second device's signup repointed to the
+  merged account, its anonymous row deleted). `min_identity = saved` also
+  confirmed: a fresh guest's signup attempt surfaced the inline "needs a
+  saved account" prompt, reads stayed unaffected. No console/page errors.
+  Still open: an actual human pass on a real phone/second physical
+  browser (touch input, real network conditions).
 
 **Tasks — Claude:**
 - [x] `$lib/localProfile.ts` (plain `.ts`, `svelte/store`-backed like
@@ -1133,6 +1143,104 @@ Backend counterpart: B19. The conductor authoring path is out of scope
 **Tasks — Human:**
 - [ ] Real-browser pass per the last acceptance box.
 - [ ] Decide the PIN UX details (confirm-at-build item 2).
+
+### F24 Guest chrome cleanup + demo "Preview Admin" entry point [ ]
+
+Two asks from the human 2026-09-11 while reviewing the B19/F23 local
+walkthrough, bundled since both touch the guest join page's chrome:
+
+1. **Hide the "browsing as a guest" banner.** Done (`0e47174`): removed
+   the on-page card entirely. `SettingsDrawer.svelte` already carried the
+   same ground for a guest (`settings_guest_note` plus Save across
+   devices / Log in / Create account, built for F23) — the banner was a
+   second, louder copy of it. The gear icon into Settings is the one way
+   in now.
+2. **Let the public demo show what Admin looks like, without writing
+   anything to the Backend.** Backend half is B20 (built, not deployed):
+   `GET /guest/{code}/admin-preview` mints a real session for the demo's
+   actual admin account, but a process-wide middleware rejects every
+   non-GET request that session makes. No mock admin UI needed on this
+   side either — the existing `/groups/[id]` admin screens render as-is
+   once the session is set; a failed write just needs to read clearly
+   given the Backend's `PREVIEW_READ_ONLY:`-prefixed 403 (most of this
+   codebase's actions already forward `BackendApiError.message` straight
+   into their visible error slot, so this should mostly show up for free).
+   Scoped to the demo group only (confirmed with the human) — a real
+   conductor's group never offers this.
+
+**Shape (Preview Admin half):**
+- `GuestGroupOut.adminPreviewAvailable` (via `resolve join code` /
+  `join/[code]/data`) says whether the group currently being viewed is
+  the demo. Thread it into a small store (e.g. `$lib/demoPreview.ts`) the
+  globally-mounted `SettingsDrawer` can read, set/cleared by the join
+  page as that data resolves.
+- Settings drawer, guest section: when the store says the current guest
+  group offers it, a distinct "Preview Admin" block (short explainer —
+  "See what the conductor's view looks like. Nothing you do here is
+  saved." — plus a button), separate from the Save-across-devices form.
+- New proxy route (e.g. `/join/[code]/admin-preview/+server.ts`): calls
+  the Backend endpoint, gets `{ access_token, group_id }`
+  (`AdminPreviewOut`), sets the *normal* session cookie
+  (`$lib/server/session.ts`, same as `/auth/save` and the OAuth callback
+  do) plus a plain first-party marker cookie (e.g. `divisi_demo_preview`,
+  value = the join code, not httpOnly — the app reads it, not just the
+  server) so the rest of the app can tell this session apart from a real
+  login. Frontend then navigates to `/groups/{group_id}`.
+- `hooks.server.ts`: read that marker cookie into `event.locals` alongside
+  the existing token resolution, threaded down through the root
+  `+layout.server.ts` into `PageData`.
+- A slim, persistent, dismiss-proof banner (root layout, only when the
+  marker is set): "Demo preview: read-only, nothing you do here is
+  saved." plus an "Exit preview" action that clears both cookies and
+  redirects to `/join/{code}` (the code comes back out of the marker
+  cookie's value).
+- Spot-check (not a rebuild) that a `PREVIEW_READ_ONLY:` 403 reads
+  acceptably on the highest-visibility admin actions: creating homework,
+  a responsibilities admin action (lock/assign), and the group
+  page-settings toggle. Patch only the ones where the existing error
+  display swallows or mangles the Backend's message.
+
+**Acceptance criteria:**
+- [x] The on-page "browsing as a guest" banner is gone from `/join/[code]`;
+  Settings still offers Sign in / Create account / Save across devices
+  for a guest.
+- [ ] Settings offers "Preview Admin" only when viewing the one guest
+  group the Backend flags as the demo; never for any other group.
+- [ ] Clicking it lands on that group's real `/groups/{id}` admin view,
+  fully populated, indistinguishable from a real admin session for every
+  read.
+- [ ] A persistent banner makes clear this is a read-only preview, with a
+  working "Exit preview" back to the guest join page.
+- [ ] Attempting any write (create/edit/delete anywhere in the admin
+  view) fails with a legible message, not a silent no-op or a raw/ugly
+  error, and nothing it attempted actually changed (spot-checked against
+  the Backend directly, not just "the UI didn't complain").
+- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [ ] Human confirms in a real browser against the deployed demo once
+  `DEMO_JOIN_CODE` is set on Render.
+
+**Tasks — Claude:**
+- [x] Remove the on-page guest banner, its state, and the two orphaned
+  message keys.
+- [ ] `adminPreviewAvailable` plumbed from the guest data fan-out into a
+  small store; Settings drawer's "Preview Admin" block, gated on it.
+- [ ] `/join/[code]/admin-preview` proxy route: mints the session +
+  marker cookie, returns the `group_id` to navigate to.
+- [ ] `hooks.server.ts` / root `+layout.server.ts`: surface the preview
+  marker as `PageData`.
+- [ ] Persistent preview banner + "Exit preview" action (clears both
+  cookies, redirects to `/join/{code}`).
+- [ ] en / es keys for the explainer, the button, the banner, and "Exit
+  preview".
+- [ ] vitest for the store's gating logic and the marker-cookie
+  read/clear helpers.
+- [ ] Spot-check the three admin flows named above against a locally
+  seeded demo-shaped group; patch only where the error display needs it.
+
+**Tasks — Human:**
+- [ ] Once satisfied, set `DEMO_JOIN_CODE` on Render (see
+  `Backend/plan.md`'s B20 and `DEMO_SETUP.md`'s Step 3 note) and do a
+  real-browser pass against the live demo.
 
 ## Backlog
 
