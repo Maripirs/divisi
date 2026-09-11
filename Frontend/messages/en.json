@@ -565,6 +565,14 @@
 	"save_enter_name": "Enter a name.",
 	"save_pin_invalid": "Your PIN must be 4 to 8 digits, numbers only.",
 	"save_failed": "Could not save. Please try again.",
+
+	"demo_preview_explainer": "See what the conductor's view looks like. Nothing you do here is saved.",
+	"demo_preview_button": "Preview Admin",
+	"demo_preview_starting": "Loading preview…",
+	"demo_preview_failed": "Could not start the preview. Please try again.",
+	"demo_preview_banner": "Demo preview: read-only, nothing you do here is saved.",
+	"demo_preview_exit": "Exit preview",
+
 	"local_only_banner_body": "You're signed up, but you're only on this device. Until you Save across devices, clearing your browser wipes your name, notes, and progress.",
 	"responsibilities_sign_me_up": "Sign me up",
 	"responsibilities_signing_up": "Signing up…",

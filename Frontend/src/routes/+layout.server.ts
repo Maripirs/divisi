@@ -36,7 +36,13 @@ const SESSION_RESOLVE_BUDGET_MS = 1500;
  *    The cookie isn't cleared on this path even if the token turns out
  *    expired; that gets caught and cleared on the reconcile pass. */
 export const load: LayoutServerLoad = async ({ locals, cookies, fetch }) => {
-	if (!locals.token) return { user: null as SessionUser | null, sessionPending: false };
+	// F24 / Backend B20: rides along with every branch below unchanged. It
+	// doesn't affect (and isn't affected by) session resolution, it's just
+	// threaded into `PageData` here so `+layout.svelte` can render the
+	// persistent "Preview Admin" banner.
+	const demoPreviewJoinCode = locals.demoPreviewJoinCode;
+
+	if (!locals.token) return { user: null as SessionUser | null, sessionPending: false, demoPreviewJoinCode };
 
 	const resolved = backendJson<SessionUser>(locals.token, '/auth/me', undefined, fetch).then(
 		(user) => ({ kind: 'ok' as const, user }),
@@ -47,13 +53,13 @@ export const load: LayoutServerLoad = async ({ locals, cookies, fetch }) => {
 		new Promise<{ kind: 'timeout' }>((r) => setTimeout(() => r({ kind: 'timeout' }), SESSION_RESOLVE_BUDGET_MS))
 	]);
 
-	if (raced.kind === 'ok') return { user: raced.user, sessionPending: false };
+	if (raced.kind === 'ok') return { user: raced.user, sessionPending: false, demoPreviewJoinCode };
 	if (raced.kind === 'err') {
 		if (raced.err instanceof BackendApiError && raced.err.status === 401) clearSessionCookie(cookies);
-		return { user: null as SessionUser | null, sessionPending: false };
+		return { user: null as SessionUser | null, sessionPending: false, demoPreviewJoinCode };
 	}
 
 	const id = subjectFromToken(locals.token);
-	if (!id) return { user: null as SessionUser | null, sessionPending: false };
-	return { user: { id, email: '', name: '' } as SessionUser, sessionPending: true };
+	if (!id) return { user: null as SessionUser | null, sessionPending: false, demoPreviewJoinCode };
+	return { user: { id, email: '', name: '' } as SessionUser, sessionPending: true, demoPreviewJoinCode };
 };

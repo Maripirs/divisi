@@ -60,6 +60,21 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+{#if data.demoPreviewJoinCode}
+	<!-- F24 / Backend B20: a demo "Preview Admin" session (see
+	     `$lib/server/demoPreviewSession.ts`) is a real, read-only admin
+	     session for the public demo group, and this bar is the one thing
+	     that tells it apart from a real login. Deliberately non-dismissible
+	     (no close button): the whole point is that it never goes away while
+	     the session is one. -->
+	<div class="demo-preview-bar" role="status">
+		<span>{m.demo_preview_banner()}</span>
+		<form method="POST" action="/demo-preview/exit">
+			<button type="submit" class="demo-preview-exit">{m.demo_preview_exit()}</button>
+		</form>
+	</div>
+{/if}
+
 {@render children()}
 
 <!-- Mounted once here (not per-page) so any `AppHeader`'s gear icon opens
@@ -80,6 +95,42 @@
 {/if}
 
 <style>
+	/* F24: a slim, always-visible strip. Sits in normal document flow
+	   (unlike `.backend-status` below, which floats over content) so it
+	   never obscures whatever it's warning about. */
+	.demo-preview-bar {
+		position: sticky;
+		top: 0;
+		z-index: 25;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		padding: calc(0.5rem + env(safe-area-inset-top, 0px)) 1rem 0.5rem;
+		background: var(--accent);
+		color: var(--surface);
+		font-size: 0.8125rem;
+		font-weight: 700;
+		text-align: center;
+	}
+
+	.demo-preview-exit {
+		flex-shrink: 0;
+		border: 1px solid currentColor;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		padding: 0.15rem 0.6rem;
+		cursor: pointer;
+	}
+
+	.demo-preview-exit:hover {
+		background: rgba(255, 255, 255, 0.15);
+	}
+
 	.backend-status {
 		position: fixed;
 		top: calc(0.75rem + env(safe-area-inset-top, 0px));

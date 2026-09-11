@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, goto } from '$app/navigation';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import { localProfile, markProfileSaved } from '$lib/localProfile';
+	import { demoPreviewGuest, shouldShowAdminPreview } from '$lib/demoPreview';
 	import { themeMode, setThemeMode, type ThemeMode } from '$lib/theme';
 	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
 	import { VOICE_PARTS as PLAYER_VOICE_PARTS, type DisplayMode, type MixMode, type VoicePart } from '$lib/midi/types';
@@ -103,6 +104,44 @@
 	let savingProfile = $state(false);
 	let saveError = $state<string | null>(null);
 	const savePinValid = $derived(/^[0-9]{4,8}$/.test(savePin));
+
+	// F24 "Preview Admin": a read-only demo-admin session for the one guest
+	// group the Backend flags as the public demo (`$lib/demoPreview.ts`,
+	// fed by `GuestGroupOut.admin_preview_available` via B20). Posting to
+	// the proxy route sets the session + marker cookies; on success we
+	// navigate straight into the real `/groups/{id}` admin view.
+	const showAdminPreview = $derived(shouldShowAdminPreview($demoPreviewGuest));
+	let startingAdminPreview = $state(false);
+	let adminPreviewError = $state<string | null>(null);
+
+	async function startAdminPreview() {
+		const guestState = $demoPreviewGuest;
+		if (!guestState) return;
+		startingAdminPreview = true;
+		adminPreviewError = null;
+		try {
+			const res = await fetch(`/join/${guestState.joinCode}/admin-preview`, { method: 'POST' });
+			const body = (await res.json()) as
+				| { ok: true; groupId: string }
+				| { ok: false; error: 'not-found' | 'server' };
+			if (body.ok) {
+				close();
+				// The proxy route above set the session + marker cookies via a
+				// plain `fetch`, outside SvelteKit's own invalidation tracking,
+				// so the root layout's server load (which reads them) would
+				// otherwise keep serving its stale pre-preview result (same
+				// reason "Save across devices" above calls `invalidateAll()`
+				// after its own cookie-setting action).
+				await goto(lh(`/groups/${body.groupId}`), { invalidateAll: true });
+			} else {
+				adminPreviewError = m.demo_preview_failed();
+			}
+		} catch {
+			adminPreviewError = m.demo_preview_failed();
+		} finally {
+			startingAdminPreview = false;
+		}
+	}
 
 	// Account section: "Delete account" click-to-confirm, same pattern as a
 	// group's "Leave group".
@@ -323,6 +362,24 @@
 					<a class="btn btn-outline" href={lh('/login?mode=register')} onclick={close}>{m.settings_create_account()}</a>
 					<a class="btn btn-outline" href={lh('/login')} onclick={close}>{m.login_title()}</a>
 				</div>
+
+				{#if showAdminPreview}
+					<!-- F24: distinct from the Save-across-devices form above.
+					     This is about seeing the conductor's view, not attaching
+					     a real identity to this device. -->
+					<div class="admin-preview-block">
+						<p class="card-meta">{m.demo_preview_explainer()}</p>
+						{#if adminPreviewError}<p class="error">{adminPreviewError}</p>{/if}
+						<button
+							type="button"
+							class="btn btn-outline btn-block"
+							onclick={startAdminPreview}
+							disabled={startingAdminPreview}
+						>
+							{startingAdminPreview ? m.demo_preview_starting() : m.demo_preview_button()}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -665,5 +722,13 @@
 		margin: 0.4rem 0 0;
 		font-size: 0.8125rem;
 		color: var(--danger);
+	}
+
+	/* F24: sits under the Save-across-devices form and the login/register
+	   row, set off with a top border so it doesn't read as part of either. */
+	.admin-preview-block {
+		margin-top: 0.75rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--border);
 	}
 </style>

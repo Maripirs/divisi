@@ -565,6 +565,14 @@
 	"save_enter_name": "Ingresa un nombre.",
 	"save_pin_invalid": "Tu PIN debe tener de 4 a 8 dígitos, solo números.",
 	"save_failed": "No se pudo guardar. Inténtalo de nuevo.",
+
+	"demo_preview_explainer": "Mira cómo se ve la vista del director. Nada de lo que hagas aquí se guarda.",
+	"demo_preview_button": "Vista previa de Admin",
+	"demo_preview_starting": "Cargando vista previa…",
+	"demo_preview_failed": "No se pudo iniciar la vista previa. Inténtalo de nuevo.",
+	"demo_preview_banner": "Vista previa de demo: solo lectura, nada de lo que hagas aquí se guarda.",
+	"demo_preview_exit": "Salir de la vista previa",
+
 	"local_only_banner_body": "Ya estás inscrito/a, pero solo en este dispositivo. Hasta que uses Guardar en tus dispositivos, si borras el navegador se pierden tu nombre, tus notas y tu progreso.",
 	"responsibilities_sign_me_up": "Inscribirme",
 	"responsibilities_signing_up": "Inscribiendo…",

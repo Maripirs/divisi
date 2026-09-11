@@ -20,6 +20,7 @@
 		dismissSignupBanner,
 		shouldShowSignupBanner
 	} from '$lib/localProfile';
+	import { clearDemoPreviewGuest, setDemoPreviewGuest } from '$lib/demoPreview';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -28,6 +29,28 @@
 	import type { ResponsibilityRole } from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
+
+	// F24: feeds `$lib/demoPreview.ts`'s store, which the globally-mounted
+	// `SettingsDrawer` reads to decide whether to show "Preview Admin".
+	// Re-runs whenever `data.result` changes (a fresh join code, or an
+	// `invalidateAll()`), and the cleanup clears the store both between
+	// runs and when this page is left entirely, so the drawer never
+	// offers preview for a group the visitor isn't looking at any more.
+	$effect(() => {
+		let cancelled = false;
+		void data.result.then((result) => {
+			if (cancelled) return;
+			if (result.error === null) {
+				setDemoPreviewGuest({ joinCode: data.code, adminPreviewAvailable: result.group.adminPreviewAvailable });
+			} else {
+				clearDemoPreviewGuest();
+			}
+		});
+		return () => {
+			cancelled = true;
+			clearDemoPreviewGuest();
+		};
+	});
 
 	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities';
 	let tab = $state<Tab>('tracks');

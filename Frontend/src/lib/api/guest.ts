@@ -21,6 +21,10 @@ export interface GuestPiece {
 export interface GuestGroup {
 	groupName: string;
 	pieces: GuestPiece[];
+	/** B20: true only for the one group `Settings.demo_join_code` names on
+	 * the Backend (the public demo choir). Gates the Settings drawer's
+	 * "Preview Admin" entry point (F24). `false` for every other group. */
+	adminPreviewAvailable: boolean;
 }
 
 /** Mirrors the Backend's `HomeworkOut` (B9), as seen via the guest
@@ -129,6 +133,7 @@ interface GuestPieceResponse {
 interface GuestGroupResponse {
 	group_name: string;
 	pieces: GuestPieceResponse[];
+	admin_preview_available: boolean;
 }
 
 interface GuestHomeworkResponse {
@@ -248,7 +253,8 @@ export async function resolveJoinCode(code: string, { password, token, fetchFn =
 			youtubeUrl: p.youtube_url,
 			hasMusic: p.has_music,
 			hasPdf: p.has_pdf
-		}))
+		})),
+		adminPreviewAvailable: body.admin_preview_available
 	};
 }
 

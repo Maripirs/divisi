@@ -392,12 +392,23 @@
 							<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
 						</form>
 					</div>
+					<!-- Signup/assign share the `signUp` form key with the
+					     member self-signup form below. A demo "Preview Admin"
+					     session (F24 / Backend B20) surfaces its
+					     `PREVIEW_READ_ONLY:` rejection here rather than
+					     silently no-opping. -->
+					{#if form?.form === 'signUp' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
 				{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
 					<form method="POST" action="?/signUpResponsibility" use:enhance>
 						<input type="hidden" name="dateId" value={d.id} />
 						<input type="hidden" name="roleId" value={role.roleId} />
 						<button type="submit" class="text-link">{m.groups_sign_up()}</button>
 					</form>
+					{#if form?.form === 'signUp' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
 				{/if}
 			{/snippet}
 
@@ -423,6 +434,13 @@
 						{m.responsibilities_duplicate_next_week()}
 					</button>
 				</div>
+				<!-- Only shown outside the edit panel above (which already
+				     renders `editDate` errors via `EditableCard`'s `error`
+				     prop): the Cancel/Reinstate button posts the same
+				     `editDate` form key from here, one level up. -->
+				{#if form?.form === 'editDate' && form?.error}
+					<p class="error">{form.error}</p>
+				{/if}
 				<!-- Delete lives inside the Edit panel (EditableCard's built-in
 				     confirm-then-delete), not in this action row. -->
 				{#if data.schedules.length > 0}
