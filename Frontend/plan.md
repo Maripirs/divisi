@@ -104,6 +104,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
 | F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
+| F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ⏳ Planned 2026-09-12 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1562,6 +1563,68 @@ for proxying a guest write through to a mint-or-resolve Backend endpoint.
 - Two small new i18n keys not enumerated in the plan text:
   `carpool_save_required` and `carpool_guest_action_failed` (a guest-path
   generic retry message covering create/edit/delete alike).
+
+### F30 — Move custom-page create + visibility into Settings, alongside built-in Page Visibility [ ]
+
+Human feedback 2026-09-12, looking at the Settings screen's existing
+"Page Visibility" card (`AboutTab.svelte`, admin mode: a checkbox +
+audience dropdown per built-in page, one shared "Save page settings"
+form): custom pages (carpool, and whatever templates follow it) should
+live there too, not in a separate admin flow inside the Pages tab. And
+"Create page" should move there as well, not stay a Pages-tab-only form.
+
+**Design:** purely a frontend move, no Backend change. `PagesTab.svelte`'s
+"Create page" form and per-page admin controls (edit/publish/unpublish/
+archive/delete, `EditableCard`) already call actions
+(`createCustomPage`, `updateCustomPage`, `publishCustomPage`,
+`unpublishCustomPage`, `archiveCustomPage`, `deleteCustomPage`) that are
+registered once on the shared `/groups/[id]/+page.server.ts` (`...customPageActions`
+spread into `export const actions`), not per-tab, so relocating the
+markup from `PagesTab.svelte` into `AboutTab.svelte` needs no server-side
+rewiring, both components already receive the same `data`/`form` props.
+
+`PagesTab.svelte` becomes a pure list after the move (same for member and
+admin: title, status label for admin, a "View" link), matching how a
+built-in page's own tab (Homework, Responsibilities, ...) never carries
+its own visibility controls either, those live in Settings only.
+
+The built-in grid's checkbox is a plain boolean; a custom page has three
+states (draft/published/archived). Map the checkbox to
+draft<->published (checked = published) via the existing publish/
+unpublish actions, and keep Archive as a separate explicit action per
+row (not foldable into the checkbox) since it's a more final state than
+"currently off," matching the distinction `PagesTab.svelte` already drew
+between "unpublish" and "archive."
+
+**Acceptance criteria:**
+- [ ] The Settings screen's Page Visibility area lists custom pages
+  alongside the six built-in ones (or in a clearly-labeled adjacent
+  section if mixing them into one literal list/form is awkward given the
+  different action-per-row vs. one-shared-form shape), each with a
+  published/draft toggle and an audience dropdown.
+- [ ] "Create page" (template picker, title, audience, min_identity) is
+  reachable from Settings, not from the Pages tab.
+- [ ] Archive and delete remain available per custom page, from Settings.
+- [ ] The Pages tab still shows the list of pages (drafts included for an
+  admin, published-only for a member/guest) with a working "View" link,
+  but no create/edit/publish/archive/delete controls.
+- [ ] No Backend route or schema changes.
+- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+  parity maintained (reuse existing `pages_*`/`groups_page_visibility*`
+  keys where the copy still fits, add new ones only where it doesn't).
+
+**Tasks — Claude:**
+- [ ] Move the create-page form from `PagesTab.svelte` into
+  `AboutTab.svelte`'s admin section.
+- [ ] Add a per-custom-page visibility row (published/draft toggle,
+  audience dropdown, archive/delete) to the same area, reusing
+  `EditableCard`/existing action wiring rather than a new pattern.
+- [ ] Strip `PagesTab.svelte` down to a read-only list.
+- [ ] i18n: audit which existing keys still read correctly in the new
+  location vs. need a Settings-specific variant.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 
