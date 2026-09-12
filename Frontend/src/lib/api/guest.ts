@@ -504,6 +504,16 @@ export interface GuestCarpoolEvent {
 	updated_at: string;
 }
 
+/** B27: same `CarpoolSeatClaimOut` shape `$lib/server/backendTypes.ts`
+ * carries for the member route, mirrored here for the same "no adapter in
+ * between" reason as `GuestCarpoolPost` below. */
+export interface GuestCarpoolSeatClaim {
+	id: string;
+	user_id: string;
+	display_name: string;
+	created_at: string;
+}
+
 export interface GuestCarpoolPost {
 	id: string;
 	event_id: string;
@@ -516,6 +526,7 @@ export interface GuestCarpoolPost {
 	seats_available: number | null;
 	leave_time_text: string | null;
 	notes: string | null;
+	claims: GuestCarpoolSeatClaim[];
 	created_at: string;
 	updated_at: string;
 }

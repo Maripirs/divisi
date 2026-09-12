@@ -188,10 +188,25 @@ export interface CarpoolEventOut {
 export type CarpoolPostKind = 'driver' | 'rider';
 export type CarpoolPostStatus = 'open' | 'hidden' | 'cancelled';
 
+/** B27: one seat claim against a driver's `CarpoolPost`. `user_id` is the
+ * claimant (a real member or an anonymous participant, same actor shapes
+ * `CarpoolPostOut.user_id` already carries). */
+export interface CarpoolSeatClaimOut {
+	id: string;
+	user_id: string;
+	display_name: string;
+	created_at: string;
+}
+
 /** B24/F28: one member's ride offer/request against a `CarpoolEvent`.
  * `seats_total`/`seats_available`/`leave_time_text` are null for a rider
  * post; a driver post always has the first two set. `display_name` is
- * captured at post time, not resolved live from the user. */
+ * captured at post time, not resolved live from the user.
+ *
+ * B27: `seats_available` is now computed by the Backend from active claims
+ * (no longer client-settable, see `carpool.ts`'s create/edit bodies), and
+ * `claims` carries the driver post's current claimants; always empty for a
+ * rider post. */
 export interface CarpoolPostOut {
 	id: string;
 	event_id: string;
@@ -204,6 +219,7 @@ export interface CarpoolPostOut {
 	seats_available: number | null;
 	leave_time_text: string | null;
 	notes: string | null;
+	claims: CarpoolSeatClaimOut[];
 	created_at: string;
 	updated_at: string;
 }

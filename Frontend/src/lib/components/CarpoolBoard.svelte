@@ -5,11 +5,17 @@
 	import ConfirmButton from './ConfirmButton.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
 	import { driverOfferError, riderRequestError } from '$lib/utils/carpool';
-	import { isOwnedCarpoolPost, rememberCarpoolPost } from '$lib/utils/carpoolOwnership';
+	import {
+		forgetCarpoolClaim,
+		isOwnedCarpoolClaim,
+		isOwnedCarpoolPost,
+		rememberCarpoolClaim,
+		rememberCarpoolPost
+	} from '$lib/utils/carpoolOwnership';
 	import { ensureLocalId, localProfile, markSignedUp, needsName, setDisplayName } from '$lib/localProfile';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
-	import type { CarpoolEventOut, CarpoolPostOut } from '$lib/server/backendTypes';
+	import type { CarpoolEventOut, CarpoolPostOut, CarpoolSeatClaimOut } from '$lib/server/backendTypes';
 
 	/** B24/F28: the real content behind a carpool-template `GroupCustomPage`
 	 * (event selector, driver/rider lists, the "I can drive"/"I need a
@@ -77,6 +83,15 @@
 	// Admin always bypasses the lock/archive gate when posting (the Backend
 	// does the same); a member can only post to a genuinely open event.
 	let canPost = $derived(isAdmin || selectedEvent?.status === 'open');
+
+	/** F33/B27: this viewer's own active claim on a driver post, if any —
+	 * a member compares `user_id` (same as post ownership), a guest checks
+	 * `carpoolOwnership.ts`'s claim-id tracking instead, for the same
+	 * "the Backend never says 'this one is yours'" reason post ownership
+	 * already works around. */
+	function myClaimFor(p: CarpoolPostOut): CarpoolSeatClaimOut | undefined {
+		return p.claims.find((c) => (isGuest ? isOwnedCarpoolClaim(c.id) : c.user_id === userId));
+	}
 
 	const STATUS_LABELS: Record<CarpoolEventOut['status'], () => string> = {
 		open: m.carpool_status_open,
@@ -155,9 +170,14 @@
 	let guestSaveRequired = $state(false);
 	// Which write is waiting on a name before it can proceed — the ride
 	// form itself only appears once a name is on file, same "prompt first,
-	// then act" order the responsibility self-signup uses.
-	let guestNamePromptFor = $state<'offer' | 'request' | null>(null);
+	// then act" order the responsibility self-signup uses. F33: 'claim'
+	// reuses the same prompt for a driver post's seat claim, with
+	// `guestClaimTargetPostId` pinning it to the specific post that was
+	// clicked (offer/request have no such target — there's only ever one
+	// open offer/request form at a time).
+	let guestNamePromptFor = $state<'offer' | 'request' | 'claim' | null>(null);
 	let guestNameDraft = $state('');
+	let guestClaimTargetPostId = $state<string | null>(null);
 
 	let guestOfferOrigin = $state('');
 	let guestOfferSeats = $state<number | undefined>(undefined);
@@ -195,9 +215,12 @@
 		if (!name) return;
 		setDisplayName(name);
 		const target = guestNamePromptFor;
+		const claimTargetPostId = guestClaimTargetPostId;
 		guestNamePromptFor = null;
+		guestClaimTargetPostId = null;
 		if (target === 'offer') offeringRide = true;
 		else if (target === 'request') requestingRide = true;
+		else if (target === 'claim' && claimTargetPostId) void submitGuestClaim(claimTargetPostId);
 	}
 
 	type GuestWriteResult =
@@ -338,6 +361,99 @@
 			savingPostEdit = false;
 		}
 	}
+
+	// --- F33 guest claim/release path -----------------------------------
+	// Same `fetch`-backed proxy shape as the guest offer/request path above,
+	// against `/join/[code]/carpool/posts/{id}/claims` and `/join/[code]/
+	// carpool/claims/{id}`. `claimActionBusyId` doubles as a driver-post id
+	// (a claim in flight) or a claim id (a release in flight) — the two
+	// button states never render for the same post at once, so there's no
+	// ambiguity reading it back in the markup below.
+
+	let claimActionBusyId = $state<string | null>(null);
+	// Which post the last claim/release error (or save-required prompt)
+	// belongs to, so it renders under that post specifically rather than
+	// every driver post at once.
+	let claimActionErrorFor = $state<string | null>(null);
+	let claimActionError = $state('');
+	let claimActionSaveRequired = $state(false);
+
+	type GuestClaimResult =
+		| { ok: true; claim: CarpoolSeatClaimOut }
+		| { ok: false; error: 'save-required' }
+		| { ok: false; error: 'conflict'; message?: string }
+		| { ok: false; error: 'server' };
+
+	function startClaimSeat(postId: string) {
+		if (needsName($localProfile)) {
+			guestNamePromptFor = 'claim';
+			guestClaimTargetPostId = postId;
+			guestNameDraft = '';
+			return;
+		}
+		void submitGuestClaim(postId);
+	}
+
+	async function submitGuestClaim(postId: string) {
+		if (!guest) return;
+		claimActionErrorFor = null;
+		claimActionError = '';
+		claimActionSaveRequired = false;
+		claimActionBusyId = postId;
+		try {
+			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/claims`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ localId: ensureLocalId(), displayName: $localProfile.displayName })
+			});
+			const result = (await res.json()) as GuestClaimResult;
+			if (result.ok) {
+				rememberCarpoolClaim(result.claim.id);
+				markSignedUp();
+				await invalidateAll();
+			} else if (result.error === 'save-required') {
+				claimActionErrorFor = postId;
+				claimActionSaveRequired = true;
+			} else {
+				claimActionErrorFor = postId;
+				claimActionError = result.error === 'conflict' && result.message ? result.message : m.carpool_guest_action_failed();
+			}
+		} catch {
+			claimActionErrorFor = postId;
+			claimActionError = m.carpool_guest_action_failed();
+		} finally {
+			claimActionBusyId = null;
+		}
+	}
+
+	type GuestReleaseResult = { ok: true } | { ok: false; error: 'forbidden' | 'server' };
+
+	async function releaseGuestClaim(postId: string, claimId: string) {
+		if (!guest) return;
+		claimActionErrorFor = null;
+		claimActionError = '';
+		claimActionSaveRequired = false;
+		claimActionBusyId = claimId;
+		try {
+			const res = await fetch(
+				`/join/${guest.code}/carpool/claims/${claimId}?localId=${encodeURIComponent(ensureLocalId())}`,
+				{ method: 'DELETE' }
+			);
+			const result = (await res.json()) as GuestReleaseResult;
+			if (result.ok) {
+				forgetCarpoolClaim(claimId);
+				await invalidateAll();
+			} else {
+				claimActionErrorFor = postId;
+				claimActionError = m.carpool_guest_action_failed();
+			}
+		} catch {
+			claimActionErrorFor = postId;
+			claimActionError = m.carpool_guest_action_failed();
+		} finally {
+			claimActionBusyId = null;
+		}
+	}
 </script>
 
 {#snippet postRow(p: CarpoolPostOut)}
@@ -451,6 +567,7 @@
 				</EditableCard>
 			{/if}
 		{:else}
+			{@const myClaim = p.kind === 'driver' ? myClaimFor(p) : undefined}
 			<div class="carpool-post-main">
 				<p class="card-title">
 					{p.display_name}
@@ -462,6 +579,14 @@
 						{m.carpool_seats_left({ available: p.seats_available ?? 0, total: p.seats_total ?? 0 })}
 						{#if p.leave_time_text}· {p.leave_time_text}{/if}
 					</p>
+					{#if p.claims.length > 0}
+						<!-- F33: claimant names, same "posted content is visible to
+						     whoever can see the board" stance the rest of carpool
+						     already takes — no ownership check gates this. -->
+						<p class="card-meta">
+							{m.carpool_claimed_by({ names: p.claims.map((c) => c.display_name).join(', ') })}
+						</p>
+					{/if}
 				{/if}
 				{#if p.notes}<p class="card-note">{p.notes}</p>{/if}
 			</div>
@@ -495,6 +620,62 @@
 			</div>
 			{#if isOwner && form?.form === 'editPost' && form?.error}
 				<p class="error">{form.error}</p>
+			{/if}
+			{#if p.kind === 'driver'}
+				<!-- F33/B27: first-come-first-served claim/release. `canPost`
+				     (same admin-bypasses-lock gate the offer/request forms use)
+				     only governs a *new* claim — the Backend never blocks a
+				     release on a locked/archived event, so that button ignores
+				     it. A full post with no claim from this viewer renders
+				     nothing here at all, just the seat count/claimant list above. -->
+				<div class="btn-row">
+					{#if myClaim}
+						{#if isGuest}
+							<button
+								type="button"
+								class="btn btn-outline"
+								disabled={claimActionBusyId === myClaim.id}
+								onclick={() => releaseGuestClaim(p.id, myClaim.id)}
+							>
+								{claimActionBusyId === myClaim.id ? m.carpool_releasing() : m.carpool_release_seat()}
+							</button>
+						{:else}
+							<form method="POST" action="?/releaseSeat" use:enhance>
+								<input type="hidden" name="claimId" value={myClaim.id} />
+								<button type="submit" class="btn btn-outline">{m.carpool_release_seat()}</button>
+							</form>
+						{/if}
+					{:else if canPost && isGuest && guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
+						{@render guestNamePrompt(m.carpool_claim_seat())}
+					{:else if canPost && (p.seats_available ?? 0) > 0}
+						{#if isGuest}
+							<button
+								type="button"
+								class="btn btn-outline"
+								disabled={claimActionBusyId === p.id}
+								onclick={() => startClaimSeat(p.id)}
+							>
+								{claimActionBusyId === p.id ? m.carpool_claiming() : m.carpool_claim_seat()}
+							</button>
+						{:else}
+							<form method="POST" action="?/claimSeat" use:enhance>
+								<input type="hidden" name="driverPostId" value={p.id} />
+								<button type="submit" class="btn btn-outline">{m.carpool_claim_seat()}</button>
+							</form>
+						{/if}
+					{/if}
+				</div>
+				{#if isGuest}
+					{#if claimActionErrorFor === p.id && claimActionSaveRequired}
+						{@render guestSaveRequiredNotice()}
+					{:else if claimActionErrorFor === p.id && claimActionError}
+						<p class="error">{claimActionError}</p>
+					{/if}
+				{:else if form?.form === `claimSeat:${p.id}` && form?.error}
+					<p class="error">{form.error}</p>
+				{:else if myClaim && form?.form === `releaseSeat:${myClaim.id}` && form?.error}
+					<p class="error">{form.error}</p>
+				{/if}
 			{/if}
 		{/if}
 	</div>

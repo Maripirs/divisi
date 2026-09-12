@@ -183,5 +183,35 @@ export const carpoolActions = {
 		if (!postId) return fail(400, { error: m.carpool_missing_post(), form: 'editPost' });
 
 		return runAction('editPost', () => backendFetch(locals.token, `/carpool/posts/${postId}`, { method: 'DELETE' }, fetch));
+	},
+
+	// F33/B27: claim one seat on a driver's post. No body fields at all for
+	// a bearer member (identity comes from the token, same as `offerRide`);
+	// the Backend's own rejections (wrong kind, full, already claimed, event
+	// locked) all surface as `BackendApiError` via `runAction`. `form` is
+	// keyed by the post id rather than a fixed string so a rejection on one
+	// driver post's claim button doesn't render under a different one.
+	claimSeat: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const driverPostId = String(form.get('driverPostId') ?? '');
+		if (!driverPostId) return fail(400, { error: m.carpool_missing_post(), form: 'claimSeat' });
+
+		return runAction(`claimSeat:${driverPostId}`, () =>
+			backendFetch(locals.token, `/carpool/posts/${driverPostId}/claims`, { method: 'POST', body: JSON.stringify({}) }, fetch)
+		);
+	},
+
+	// The claimant, the driver post's own owner, or an admin may release a
+	// seat; the Backend 403s anyone else. Same per-row `form` keying as
+	// `claimSeat` above, keyed by the claim id instead since that's what
+	// identifies the specific "Release your seat" button that was clicked.
+	releaseSeat: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const claimId = String(form.get('claimId') ?? '');
+		if (!claimId) return fail(400, { error: m.carpool_missing_claim(), form: 'releaseSeat' });
+
+		return runAction(`releaseSeat:${claimId}`, () =>
+			backendFetch(locals.token, `/carpool/claims/${claimId}`, { method: 'DELETE' }, fetch)
+		);
 	}
 } satisfies Actions;

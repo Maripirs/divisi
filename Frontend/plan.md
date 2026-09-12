@@ -107,7 +107,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12, corrected same day: custom-page rows now live inside the same Page Visibility card as siblings of the built-in rows (not a separate "Custom pages" card); "Create page" stays its own card below. `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
 | F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Built 2026-09-12: `PagesTab.svelte` deleted; a new `+layout.server.ts` under `/groups/[id]` shares the group/role/custom-pages/built-in-enabled-flags data between the main page and `pages/[slug]`, and a pure `groupTabs.ts` (`joinTabs.ts` on the guest side) computes the ordered/filtered/labeled tab list both routes render. Built-in tabs stay local `$state` buttons on the main page; every custom-page tab, and every tab at all from a custom page's own route, is a real link. `check` 0 errors (13 pre-existing warnings, unrelated), `build` clean, vitest 146 green (was 138; +8 new, `groupTabs.test.ts`/`joinTabs.test.ts`). Not deployed; no real-browser pass yet. |
 | F32 | Carpool: standing board by default, dated events for exceptions (frontend for Backend B26) | ✅ Built 2026-09-12; `npm run check` 0 errors, `npm run build` clean, vitest 151 passed (was 146; +5 new) |
-| F33 | Carpool: claim a seat in a driver's post (frontend for Backend B27) | ⏳ Planned 2026-09-12, starts after B27 |
+| F33 | Carpool: claim a seat in a driver's post (frontend for Backend B27) | ✅ Built 2026-09-12; check 0 errors, build clean, vitest 155 green |
 | F34 | Guests can remove their own responsibility signup (frontend for Backend B28) | ⏳ Planned 2026-09-12, starts after B28 |
 
 ### F1 — Standalone playback + notation prototype [x]
@@ -1920,45 +1920,71 @@ New key `carpool_posting_as`, en/es. `check` 0 errors, `build` clean,
 vitest 151 green (unchanged, no new test surface for a pure display
 string).
 
-### F33 — Carpool: claim a seat in a driver's post (frontend for Backend B27) [ ]
+### F33 — Carpool: claim a seat in a driver's post (frontend for Backend B27) [x]
 
 Frontend half of B27. `CarpoolBoard.svelte`'s driver list currently just
 shows each post's static `seats_available`; this makes it a real
 first-come-first-served claim.
 
 **Acceptance criteria:**
-- [ ] Each driver post shows its computed `seats_available` (from the
+- [x] Each driver post shows its computed `seats_available` (from the
   Backend, not client-derived) and, when there's at least one, a "Claim a
   seat" action, member and guest both.
-- [ ] After claiming, that same button becomes "Release your seat" for
+- [x] After claiming, that same button becomes "Release your seat" for
   the claimant specifically (not shown as claimable-by-you to anyone
   else); a full post (no seats left) shows neither for a non-claimant.
-- [ ] Claimants are visible under the driver's post (names), same
+- [x] Claimants are visible under the driver's post (names), same
   "posted content is visible to whoever can see the board" stance the
   rest of carpool already takes.
-- [ ] A guest's claim goes through the same local-profile/lazy-name-
+- [x] A guest's claim goes through the same local-profile/lazy-name-
   prompt/`SAVE_REQUIRED` handling every other guest carpool write already
   uses, not a separate flow.
-- [ ] Owner edit/delete on a driver's own post still works; deleting a
+- [x] Owner edit/delete on a driver's own post still works; deleting a
   driver post the normal way (existing behavior) is unaffected by
   whether it has claims (not attempting cascade-cleanup UI here beyond
   whatever the Backend already does).
-- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+- [x] `npm run check` / `npm run build` clean; vitest green; i18n key
   parity maintained.
 
 **Tasks — Claude:**
-- [ ] `CarpoolPostOut`/`GuestCarpoolPost` types gain `claims` and the
+- [x] `CarpoolPostOut`/`GuestCarpoolPost` types gain `claims` and the
   (now computed, not client-set) `seats_available`.
-- [ ] Claim/release actions: a form action for the member route
+- [x] Claim/release actions: a form action for the member route
   (`actions/carpool.ts`), a proxy route for the guest route, following
   the exact pattern the existing offer/request actions and
   `/join/[code]/carpool/...` proxies already use.
-- [ ] Driver post rendering: claimant list, the claim/release button
+- [x] Driver post rendering: claimant list, the claim/release button
   with the three states above (claim / release / full-not-yours).
-- [ ] i18n: new strings for claim/release/claimed-by, en/es.
+- [x] i18n: new strings for claim/release/claimed-by, en/es.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Status:** Built 2026-09-12. `npm run check` 0 errors (13 pre-existing
+warnings, none new); `npm run build` clean; vitest 155 green (151 baseline
++ 4 new tests for `carpoolOwnership.ts`'s generalized claim-id tracking).
+
+Deviations from the plan text:
+- `carpoolOwnership.ts` was generalized in place (shared `readOwnedIds`/
+  `writeOwnedIds` keyed by a storage key) rather than adding a parallel
+  module, per the plan's own "generalize... whichever reads cleaner"
+  latitude: `isOwnedCarpoolClaim`/`rememberCarpoolClaim`/`forgetCarpoolClaim`
+  track a claim id the same way the existing post-id functions do, under a
+  separate `divisi:myCarpoolClaimIds` storage key.
+- The member form actions (`claimSeat`/`releaseSeat`) key their `runAction`
+  `form` string by the post/claim id (`` `claimSeat:${driverPostId}` ``)
+  rather than a fixed string, so a rejection on one driver post's button
+  (already full, already claimed, event locked) renders under that post
+  specifically instead of every driver post at once.
+- The Backend's `create_claim` rejects the domain checks (wrong kind, full,
+  already claimed) with 400 and the event lock/archive check with 409; both
+  guest proxy routes fold either into the same `conflict` verdict, since
+  the client just surfaces the Backend's own message either way.
+- No UI lets a driver or admin release someone *else's* claim, even though
+  the Backend allows both (see `release_claim`'s own docstring) — F33's
+  acceptance criteria only ever describe the claimant's own button, and
+  that moderation surface wasn't asked for, so it's left out rather than
+  guessed at.
 
 ### F34 — Guests can remove their own responsibility signup (frontend for Backend B28) [ ]
 

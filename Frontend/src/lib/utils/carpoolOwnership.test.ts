@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { forgetCarpoolPost, isOwnedCarpoolPost, rememberCarpoolPost } from './carpoolOwnership';
+import {
+	forgetCarpoolClaim,
+	forgetCarpoolPost,
+	isOwnedCarpoolClaim,
+	isOwnedCarpoolPost,
+	rememberCarpoolClaim,
+	rememberCarpoolPost
+} from './carpoolOwnership';
 
 // Same Map-backed Web Storage shim as `localProfile.test.ts`.
 beforeEach(() => {
@@ -50,5 +57,31 @@ describe('isOwnedCarpoolPost', () => {
 	it('tolerates a stored value that is not an array', () => {
 		localStorage.setItem('divisi:myCarpoolPostIds', JSON.stringify({ foo: 'bar' }));
 		expect(isOwnedCarpoolPost('p1')).toBe(false);
+	});
+});
+
+// F33: the parallel claim-ownership tracking, same shape, separate storage
+// key so a post id and a claim id never collide.
+describe('isOwnedCarpoolClaim', () => {
+	it('is false for an id nothing has remembered', () => {
+		expect(isOwnedCarpoolClaim('c1')).toBe(false);
+	});
+
+	it('is true once remembered, and survives a fresh read (page reload)', () => {
+		rememberCarpoolClaim('c1');
+		expect(isOwnedCarpoolClaim('c1')).toBe(true);
+	});
+
+	it('forgetCarpoolClaim drops just that one id', () => {
+		rememberCarpoolClaim('c1');
+		rememberCarpoolClaim('c2');
+		forgetCarpoolClaim('c1');
+		expect(isOwnedCarpoolClaim('c1')).toBe(false);
+		expect(isOwnedCarpoolClaim('c2')).toBe(true);
+	});
+
+	it('does not confuse a claim id with a post id remembered under the other key', () => {
+		rememberCarpoolPost('shared-id');
+		expect(isOwnedCarpoolClaim('shared-id')).toBe(false);
 	});
 });
