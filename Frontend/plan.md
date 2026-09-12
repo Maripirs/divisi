@@ -106,6 +106,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
 | F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12, corrected same day: custom-page rows now live inside the same Page Visibility card as siblings of the built-in rows (not a separate "Custom pages" card); "Create page" stays its own card below. `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
 | F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Built 2026-09-12: `PagesTab.svelte` deleted; a new `+layout.server.ts` under `/groups/[id]` shares the group/role/custom-pages/built-in-enabled-flags data between the main page and `pages/[slug]`, and a pure `groupTabs.ts` (`joinTabs.ts` on the guest side) computes the ordered/filtered/labeled tab list both routes render. Built-in tabs stay local `$state` buttons on the main page; every custom-page tab, and every tab at all from a custom page's own route, is a real link. `check` 0 errors (13 pre-existing warnings, unrelated), `build` clean, vitest 146 green (was 138; +8 new, `groupTabs.test.ts`/`joinTabs.test.ts`). Not deployed; no real-browser pass yet. |
+| F32 | Carpool: standing board by default, dated events for exceptions (frontend for Backend B26) | ⏳ Planned 2026-09-12, starts after B26 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1810,6 +1811,48 @@ built-ins stay buttons, its custom-page tabs are links to
 `/join/[code]/pages/[slug]`, and that route's own load now fetches the
 same three visibility flags + discovery list to render its own strip.
 Not deployed; no real-browser pass yet (standing blocker).
+
+### F32 — Carpool: standing board by default, dated events for exceptions (frontend for Backend B26) [ ]
+
+Frontend half of B26. `CarpoolBoard.svelte`'s event chip strip and
+default-selection logic assumed every event is dated (sorted/labeled by
+`starts_at`); now the list always includes exactly one non-dated
+standing event too (`is_standing`, `starts_at: null`).
+
+**Acceptance criteria:**
+- [ ] The standing event is the default selected/shown event on first
+  load (not "soonest `starts_at`", which no longer makes sense once a
+  `null` is in the mix).
+- [ ] Its chip (when the strip shows at all, i.e. ≥2 events exist) reads
+  as an ongoing label (e.g. "Ongoing"), not a formatted date, since it
+  has none.
+- [ ] With only the standing event and no dated ones yet, the chip strip
+  doesn't show at all (matches today's "only show the selector past one
+  event" rule) and the board's content renders directly.
+- [ ] Admin's event-creation form is relabeled to make clear it's for a
+  one-off exception (e.g. "Add a one-time event"), not the thing that
+  creates the ongoing board (which the admin never explicitly creates).
+- [ ] The standing event's admin controls never show an Archive action
+  (Backend rejects it anyway; don't offer a button that 400s); Lock/
+  Unlock and Edit (title/destination) still show.
+- [ ] Guest carpool view gets the identical treatment (default to
+  standing, same chip label, same hidden Archive).
+- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+  parity maintained.
+
+**Tasks — Claude:**
+- [ ] Update default-event-selection logic (member and guest load paths)
+  to prefer `is_standing` over "first by `starts_at`".
+- [ ] Chip label: standing renders an "Ongoing"-style string; dated
+  events render their existing formatted date, unchanged.
+- [ ] Relabel the admin create-event form/button.
+- [ ] Hide Archive for a standing event in the moderation controls
+  (member and guest views both use `CarpoolBoard.svelte`, so this should
+  be one change, not two).
+- [ ] i18n: new "Ongoing" label and updated create-event copy, en/es.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 

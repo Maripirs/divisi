@@ -110,6 +110,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
+| B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ⏳ Planned 2026-09-12 |
 
 ### B1 — Backend scaffold [x]
 
@@ -1229,6 +1230,82 @@ the guest-read mirror routes every other page type already has under
   prior bearer-only test still passes unmodified against the reworked
   `maybe_user`/`maybe_participant` dependencies, since a valid bearer
   token still resolves `maybe_user` exactly as `get_current_user` did.
+
+**Tasks — Human:**
+- [ ] None expected.
+
+### B26 — Carpool: a standing (non-dated) board by default, dated events stay for exceptions [ ]
+
+Human feedback 2026-09-12: carpool should be an ongoing thing for
+rehearsals, not a one-time thing, i.e. not something that forces an admin
+to create a fresh dated `CarpoolEvent` every single week just to have
+somewhere for "I drive from Mission most weeks" to live. Presented three
+shapes; the human picked the middle ground: **a standing board that's
+always there for regular rehearsals, plus the ability to still create a
+one-off dated event for something like a concert call.**
+
+**Design:** don't introduce a new post-less/event-less concept.
+`CarpoolPost.event_id` stays exactly as it is (no schema change to
+`CarpoolPost` at all): every post still belongs to *some* `CarpoolEvent`,
+it's `CarpoolEvent` itself that gains a second shape. A new
+`CarpoolEvent.is_standing` boolean marks the one, page-scoped, non-dated
+board (`starts_at = NULL`); everything an admin creates through the
+existing `create_event` route stays a normal dated one
+(`is_standing = False`, `starts_at` required, exactly today's behavior,
+this is the "occasional dated exception" path). The standing event isn't
+admin-created at all: it's lazily get-or-created the first time anyone
+(admin, member, or guest) lists a carpool page's events, so a
+brand-new carpool page has its standing board from the very first view,
+with zero admin setup step. One shared helper
+(`app/services/carpool.py`, new, small) does the get-or-create so the
+member (`list_events` in `carpool.py`) and guest (`guest.py`) read paths
+can't drift out of sync on this.
+
+Invariants once created: `is_standing` never flips after creation (not
+in `CarpoolEventUpdate`'s field set at all), a standing event can't be
+archived (its whole point is that it doesn't go away) though it *can*
+still be locked/unlocked (temporarily pause new posts, e.g. over a
+break) and have its title/destination edited like any event. `starts_at`
+can't be set on a standing event via update either, keeping "standing"
+and "dated" from drifting into a half-state.
+
+**Acceptance criteria:**
+- [ ] A carpool page's very first `GET .../carpool/events` call (admin,
+  member, or guest) returns a standing event even though nobody created
+  one; a second call returns the same row, not a duplicate.
+- [ ] `CarpoolEvent.starts_at` and `destination_label` are nullable at
+  the schema level (the standing event has neither by default) but
+  `CarpoolEventCreate` (the admin-facing dated-event creation payload)
+  still requires both, unchanged, so creating a dated exception works
+  exactly as it does today.
+- [ ] `PATCH /carpool/events/{id}` rejects `status=archived` for a
+  standing event (400) but still allows `status=locked`/`open` and
+  title/destination edits; `starts_at` and `is_standing` are not
+  patchable fields at all.
+- [ ] Listing events orders the standing one first, then dated events by
+  `starts_at` ascending (a `NULL starts_at` naturally sorts oddly, so
+  order explicitly rather than relying on that).
+- [ ] Guest reads (`guest.py`) get the same standing-event bootstrap and
+  ordering as the member route; guest writes (B25's post create/edit/
+  delete) work unchanged against either kind of event.
+- [ ] Existing B24/B25 tests for dated events still pass unmodified
+  (dated-event behavior doesn't change at all); new tests cover the
+  standing-event bootstrap, idempotency, ordering, and the
+  archive-rejected/lock-allowed distinction.
+- [ ] `pytest` green.
+
+**Tasks — Claude:**
+- [ ] Migration: `carpool_events.starts_at` and `destination_label`
+  become nullable; add `carpool_events.is_standing` (boolean, not null,
+  default false).
+- [ ] `app/services/carpool.py` (new): `get_or_create_standing_event(page_id, db)`.
+- [ ] Wire that helper into `list_events` (`carpool.py`) and the guest
+  events-list route (`guest.py`); both should return the standing event
+  plus any dated ones, standing first.
+- [ ] `update_event`: reject `status=archived` when `event.is_standing`;
+  drop `starts_at` from what's patchable on a standing event (or reject
+  the attempt outright, whichever reads cleaner in the actual diff).
+- [ ] Tests per the acceptance criteria above.
 
 **Tasks — Human:**
 - [ ] None expected.
