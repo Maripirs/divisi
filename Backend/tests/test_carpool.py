@@ -171,7 +171,8 @@ def test_member_can_create_driver_and_rider_posts(client):
     body = driver.json()
     assert body["kind"] == "driver"
     assert body["seats_total"] == 3
-    assert body["seats_available"] == 3  # defaults to seats_total when omitted
+    assert body["seats_available"] == 3  # computed: no claims yet
+    assert body["claims"] == []
     assert body["status"] == "open"
 
     rider = client.post(
@@ -180,6 +181,8 @@ def test_member_can_create_driver_and_rider_posts(client):
     assert rider.status_code == 201
     assert rider.json()["kind"] == "rider"
     assert rider.json()["seats_total"] is None
+    assert rider.json()["seats_available"] is None
+    assert rider.json()["claims"] == []
 
 
 def test_driver_post_requires_seats(client):
@@ -867,3 +870,219 @@ def test_standing_event_can_still_accept_posts(client):
         "/carpool/events/" + standing["id"] + "/posts", json=_rider_post(), headers=admin_headers
     )
     assert post.status_code == 201
+
+
+# --- B27: claiming a seat in a driver's post ---
+
+
+def _setup_driver_post(client, admin_email_prefix, seats_total=2):
+    admin_headers = _register_and_login(client, admin_email_prefix + "-admin@example.com")
+    driver_headers = _register_and_login(client, admin_email_prefix + "-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], admin_email_prefix + "-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    driver_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(seats_total=seats_total),
+        headers=driver_headers,
+    ).json()
+    return admin_headers, driver_headers, group, page, event, driver_post
+
+
+def test_member_can_claim_a_seat(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl1")
+    rider_headers = _register_and_login(client, "cp-cl1-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl1-rider@example.com")
+
+    claimed = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+    assert claimed.status_code == 201
+    body = claimed.json()
+    assert body["display_name"] == "Name"
+
+    listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=driver_headers).json()
+    post = next(p for p in listing if p["id"] == driver_post["id"])
+    assert post["seats_available"] == 1
+    assert len(post["claims"]) == 1
+    assert post["claims"][0]["id"] == body["id"]
+
+
+def test_double_claim_rejected(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl2")
+    rider_headers = _register_and_login(client, "cp-cl2-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl2-rider@example.com")
+
+    first = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+    assert first.status_code == 201
+    second = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+    assert second.status_code == 400
+
+
+def test_claiming_a_full_post_rejected(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(
+        client, "cp-cl3", seats_total=1
+    )
+    rider1 = _register_and_login(client, "cp-cl3-rider1@example.com")
+    rider2 = _register_and_login(client, "cp-cl3-rider2@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl3-rider1@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl3-rider2@example.com")
+
+    first = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider1)
+    assert first.status_code == 201
+    second = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider2)
+    assert second.status_code == 400
+
+
+def test_claiming_a_rider_post_rejected(client):
+    admin_headers = _register_and_login(client, "cp-cl4-admin@example.com")
+    member_headers = _register_and_login(client, "cp-cl4-member@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-cl4-member@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers
+    ).json()
+
+    rejected = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/claims", json={}, headers=member_headers
+    )
+    assert rejected.status_code == 400
+
+
+def test_claiming_on_locked_event_rejected_for_non_admin(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl5")
+    rider_headers = _register_and_login(client, "cp-cl5-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl5-rider@example.com")
+    client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
+
+    rejected = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    )
+    assert rejected.status_code == 409
+
+
+def test_admin_can_claim_on_locked_event(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl6")
+    client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
+
+    allowed = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=admin_headers
+    )
+    assert allowed.status_code == 201
+
+
+def test_claimant_can_release_own_claim(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl7")
+    rider_headers = _register_and_login(client, "cp-cl7-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl7-rider@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    ).json()
+
+    released = client.delete("/carpool/claims/" + claim["id"], headers=rider_headers)
+    assert released.status_code == 204
+
+    listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=driver_headers).json()
+    post = next(p for p in listing if p["id"] == driver_post["id"])
+    assert post["seats_available"] == 2
+    assert post["claims"] == []
+
+    # Released, not gone: a second release attempt reads as already-gone.
+    assert client.delete("/carpool/claims/" + claim["id"], headers=rider_headers).status_code == 404
+
+
+def test_driver_can_release_someone_elses_claim(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl8")
+    rider_headers = _register_and_login(client, "cp-cl8-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl8-rider@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    ).json()
+
+    released = client.delete("/carpool/claims/" + claim["id"], headers=driver_headers)
+    assert released.status_code == 204
+
+
+def test_admin_can_release_any_claim(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl9")
+    rider_headers = _register_and_login(client, "cp-cl9-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl9-rider@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    ).json()
+
+    released = client.delete("/carpool/claims/" + claim["id"], headers=admin_headers)
+    assert released.status_code == 204
+
+
+def test_unrelated_member_cannot_release_a_claim(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl10")
+    rider_headers = _register_and_login(client, "cp-cl10-rider@example.com")
+    other_headers = _register_and_login(client, "cp-cl10-other@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl10-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl10-other@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    ).json()
+
+    forbidden = client.delete("/carpool/claims/" + claim["id"], headers=other_headers)
+    assert forbidden.status_code == 403
+
+
+def test_seats_total_cannot_drop_below_active_claims(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(
+        client, "cp-cl11", seats_total=2
+    )
+    rider_headers = _register_and_login(client, "cp-cl11-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-cl11-rider@example.com")
+    client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+
+    rejected = client.patch(
+        "/carpool/posts/" + driver_post["id"], json={"seats_total": 0}, headers=driver_headers
+    )
+    assert rejected.status_code == 400
+
+    allowed = client.patch(
+        "/carpool/posts/" + driver_post["id"], json={"seats_total": 1}, headers=driver_headers
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["seats_available"] == 0
+
+
+def test_guest_can_claim_and_release_a_seat(client):
+    admin_headers = _register_and_login(client, "cp-cl12-admin@example.com")
+    driver_headers = _register_and_login(client, "cp-cl12-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-cl12-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    driver_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_driver_post(), headers=driver_headers
+    ).json()
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    claimed = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims",
+        json={"local_id": "dev-hana", "display_name": "Hana"},
+    )
+    assert claimed.status_code == 201
+    claim = claimed.json()
+    assert claim["display_name"] == "Hana"
+    assert "divisi_participant" in claimed.headers.get("set-cookie", "")
+
+    posts = client.get("/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts").json()
+    post = next(p for p in posts if p["id"] == driver_post["id"])
+    assert post["seats_available"] == 2
+    assert len(post["claims"]) == 1
+
+    released = client.delete("/carpool/claims/" + claim["id"])
+    assert released.status_code == 204
+
+    posts_after = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts"
+    ).json()
+    post_after = next(p for p in posts_after if p["id"] == driver_post["id"])
+    assert post_after["seats_available"] == 3
+    assert post_after["claims"] == []

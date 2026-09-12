@@ -768,10 +768,54 @@ class CarpoolPost(Base):
     )
     origin_label: Mapped[str] = mapped_column(String, nullable=False)
     # Null for a rider post (seat counts don't apply); a driver post always
-    # has both set (`CarpoolPostCreate` validates this at the schema layer).
+    # has this set (`CarpoolPostCreate` validates this at the schema layer).
+    # B27: `seats_available` used to live here too, a plain number a driver
+    # typed in with no relationship to anything real. Dropped once
+    # `CarpoolSeatClaim` existed to make it a lie waiting to happen (the
+    # driver says "2 open" while 3 people have actually claimed) — it's
+    # now computed on read (`app.services.carpool.seats_available_for`).
     seats_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    seats_available: Mapped[int | None] = mapped_column(Integer, nullable=True)
     leave_time_text: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class CarpoolSeatClaimStatus(str, enum.Enum):
+    active = "active"
+    removed = "removed"
+
+
+class CarpoolSeatClaim(Base):
+    """B27: one rider claiming one seat on a driver's `CarpoolPost`. Its own
+    table rather than a repurposed `CarpoolPost` row: claiming a seat
+    shouldn't require the claimant to have posted their own "I need a
+    ride" first (someone might just want a ride with no notes/origin of
+    their own to share), so this links a user directly to a driver's post
+    instead. Soft-removed (`status`/`removed_at`) rather than hard-deleted,
+    so a released seat leaves a trace the same way a removed
+    `ResponsibilitySignup` would. `display_name` is captured at claim time,
+    same reasoning as `CarpoolPost.display_name`: a later name change
+    shouldn't rewrite history.
+
+    No DB-level uniqueness on (driver_post_id, user_id): a released claim
+    stays around as a `removed` row, so a plain unique constraint would
+    block re-claiming the same post later. "Already has an active claim on
+    this post" is instead checked at the API layer against `status ==
+    active` only, same general shape as this codebase's other
+    soft-removal checks."""
+
+    __tablename__ = "carpool_seat_claims"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    driver_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[CarpoolSeatClaimStatus] = mapped_column(
+        SAEnum(CarpoolSeatClaimStatus, native_enum=False),
+        nullable=False,
+        default=CarpoolSeatClaimStatus.active,
+        server_default="active",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

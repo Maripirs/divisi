@@ -74,7 +74,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
-from app.services.carpool import list_events_ordered
+from app.services.carpool import list_events_ordered, serialize_post
 from app.services.custom_pages import get_custom_page_by_slug_or_404
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
@@ -493,19 +493,22 @@ def list_guest_carpool_posts(
     password: str | None = None,
     token: str | None = None,
     db: Session = Depends(get_db),
-) -> list[CarpoolPost]:
+) -> list[CarpoolPostOut]:
     """B25: read-only mirror of the member `GET /carpool/events/{id}/posts`
     — a guest is never an admin, so the moderated-out filter the member
-    route only applies to a non-admin caller applies here unconditionally."""
+    route only applies to a non-admin caller applies here unconditionally.
+    B27: `serialize_post` is the same helper the member route uses, so the
+    two can't ship a different `claims`/`seats_available` shape."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     event = _get_guest_carpool_event_or_404(group.id, event_id, db)
-    return (
+    posts = (
         db.query(CarpoolPost)
         .filter(CarpoolPost.event_id == event.id, CarpoolPost.status == CarpoolPostStatus.open)
         .order_by(CarpoolPost.created_at.asc())
         .all()
     )
+    return [serialize_post(post, db) for post in posts]
 
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])

@@ -3,13 +3,19 @@ rather than admin-created, so a brand-new carpool page has one from its
 very first view. One shared helper so the member (`app/api/routes/
 carpool.py`) and guest (`app/api/routes/guest.py`) read paths can't drift
 out of sync on this, same reasoning as `app/services/custom_pages.py`
-being its own small module rather than logic duplicated per route file."""
+being its own small module rather than logic duplicated per route file.
+
+B27: same reasoning extended to seat claims — `seats_available_for` and
+`serialize_post` are the one place `seats_total - active claims` gets
+computed and turned into a `CarpoolPostOut`, so the member and guest post
+listings can't compute (or shape) it differently."""
 
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.db.models import CarpoolEvent
+from app.api.schemas.carpool import CarpoolPostOut, CarpoolSeatClaimOut
+from app.db.models import CarpoolEvent, CarpoolPost, CarpoolPostKind, CarpoolSeatClaim, CarpoolSeatClaimStatus
 
 STANDING_EVENT_TITLE = "Ongoing carpool"
 
@@ -53,3 +59,49 @@ def list_events_ordered(page_id: str, db: Session) -> list[CarpoolEvent]:
         .all()
     )
     return [standing, *dated]
+
+
+def active_claims_for(driver_post_id: str, db: Session) -> list[CarpoolSeatClaim]:
+    """A driver post's active (not released) claims, oldest first — first-
+    come-first-served order, matching how a seat was actually filled."""
+    return (
+        db.query(CarpoolSeatClaim)
+        .filter(CarpoolSeatClaim.driver_post_id == driver_post_id, CarpoolSeatClaim.status == CarpoolSeatClaimStatus.active)
+        .order_by(CarpoolSeatClaim.created_at.asc())
+        .all()
+    )
+
+
+def seats_available_for(post: CarpoolPost, db: Session) -> int | None:
+    """`seats_total` minus active claims. `None` for a rider post (seat
+    counts don't apply, same as `seats_total` itself being `None` there).
+    The one place this subtraction happens, so `CarpoolPostOut`
+    serialization below and any future caller can't drift on it."""
+    if post.kind != CarpoolPostKind.driver or post.seats_total is None:
+        return None
+    return post.seats_total - len(active_claims_for(post.id, db))
+
+
+def serialize_post(post: CarpoolPost, db: Session) -> CarpoolPostOut:
+    """The one place a `CarpoolPost` ORM row turns into a `CarpoolPostOut`,
+    so the member (`carpool.py`) and guest (`guest.py`) routes can't ship a
+    different `claims`/`seats_available` shape for the same post. A rider
+    post's `claims` is always empty, it isn't a driver post, so it can't be
+    claimed."""
+    claims = active_claims_for(post.id, db) if post.kind == CarpoolPostKind.driver else []
+    return CarpoolPostOut(
+        id=post.id,
+        event_id=post.event_id,
+        user_id=post.user_id,
+        display_name=post.display_name,
+        kind=post.kind,
+        status=post.status,
+        origin_label=post.origin_label,
+        seats_total=post.seats_total,
+        seats_available=seats_available_for(post, db),
+        leave_time_text=post.leave_time_text,
+        notes=post.notes,
+        claims=[CarpoolSeatClaimOut.model_validate(c) for c in claims],
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+    )

@@ -60,7 +60,6 @@ class CarpoolPostCreate(BaseModel):
     kind: CarpoolPostKind
     origin_label: str
     seats_total: int | None = None
-    seats_available: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
     # B25: same anonymous-participant identity fields `ResponsibilitySignupCreate`
@@ -74,17 +73,15 @@ class CarpoolPostCreate(BaseModel):
         # Seat counts only make sense for a driver post. A rider setting
         # them is rejected outright rather than silently ignored, so a
         # confused client finds out immediately instead of shipping data
-        # nobody reads.
+        # nobody reads. B27: `seats_available` dropped entirely (it's now
+        # computed from active claims, see `CarpoolPostOut`), so there's
+        # nothing left to validate here but `seats_total`.
         if self.kind == CarpoolPostKind.rider:
-            if self.seats_total is not None or self.seats_available is not None:
+            if self.seats_total is not None:
                 raise ValueError("Riders don't set seat counts")
             return self
         if self.seats_total is None or self.seats_total < 1:
             raise ValueError("Drivers must offer at least 1 seat")
-        if self.seats_available is None:
-            self.seats_available = self.seats_total
-        if self.seats_available < 0 or self.seats_available > self.seats_total:
-            raise ValueError("seats_available must be between 0 and seats_total")
         return self
 
 
@@ -93,14 +90,33 @@ class CarpoolPostUpdate(BaseModel):
     create, same "identity fields don't change" convention as
     `GroupCustomPage.template_key`); `status` is included but admin-only,
     enforced in the route since whether it's allowed depends on who's
-    calling, not on the payload shape."""
+    calling, not on the payload shape. B27: `seats_available` dropped, same
+    reason as `CarpoolPostCreate`; the route rejects lowering `seats_total`
+    below the post's current active-claim count."""
 
     origin_label: str | None = None
     seats_total: int | None = None
-    seats_available: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
     status: CarpoolPostStatus | None = None
+
+
+class CarpoolSeatClaimCreate(BaseModel):
+    """B27: same anonymous-participant identity fields `CarpoolPostCreate`
+    carries, for the same mint-on-demand reason. A guest with no post of
+    their own can still claim a seat."""
+
+    local_id: str | None = None
+    display_name: str | None = None
+
+
+class CarpoolSeatClaimOut(BaseModel):
+    id: str
+    user_id: str
+    display_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class CarpoolPostOut(BaseModel):
@@ -112,9 +128,15 @@ class CarpoolPostOut(BaseModel):
     status: CarpoolPostStatus
     origin_label: str
     seats_total: int | None
+    # B27: computed (`seats_total` minus active claims), not a stored
+    # column, see `app.services.carpool.seats_available_for`. Still `None`
+    # for a rider post, same as `seats_total` itself.
     seats_available: int | None
     leave_time_text: str | None
     notes: str | None
+    # B27: a driver post's active claims (`id`, `user_id`, `display_name`,
+    # `created_at`); always empty for a rider post, which can't be claimed.
+    claims: list[CarpoolSeatClaimOut]
     created_at: datetime
     updated_at: datetime
 

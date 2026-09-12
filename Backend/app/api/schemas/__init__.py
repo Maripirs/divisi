@@ -45,6 +45,8 @@ from app.api.schemas.carpool import (
     CarpoolPostCreate,
     CarpoolPostOut,
     CarpoolPostUpdate,
+    CarpoolSeatClaimCreate,
+    CarpoolSeatClaimOut,
 )
 from app.api.schemas.custom_pages import (
     GroupCustomPageCreate,
@@ -118,6 +120,8 @@ __all__ = [
     "CarpoolPostCreate",
     "CarpoolPostOut",
     "CarpoolPostUpdate",
+    "CarpoolSeatClaimCreate",
+    "CarpoolSeatClaimOut",
     "AnnotationOut",
     "AnnotationShareCreate",
     "AnnotationShareOut",

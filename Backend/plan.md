@@ -120,7 +120,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
 | B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
-| B27 | Carpool: claim a seat in a driver's post | ⏳ Planned 2026-09-12 |
+| B27 | Carpool: claim a seat in a driver's post | ✅ Built 2026-09-12, migration `b3d7f1a9c6e2`; pytest 357 green |
 | B28 | Guests can remove their own responsibility signup | ⏳ Planned 2026-09-12 |
 
 ### B1 — Backend scaffold [x]
@@ -1381,7 +1381,7 @@ brute-forcing impractical, this limiter's actual job. Tests:
 `test_guest_tabs_reports_visibility_and_custom_pages`,
 `test_guest_tabs_unknown_join_code_404s`. `pytest` 345 green (was 343).
 
-### B27 — Carpool: claim a seat in a driver's post [ ]
+### B27 — Carpool: claim a seat in a driver's post [x]
 
 Human feedback 2026-09-12: riders should be able to "claim" a seat in a
 specific driver's post, not just see two disconnected lists and
@@ -1417,28 +1417,28 @@ self-signup branch, `mint_anonymous_participant`/`resolve_participant`,
 seat exactly like a member can, no separate write path.
 
 **Acceptance criteria:**
-- [ ] `POST /carpool/posts/{driver_post_id}/claims` claims one seat:
+- [x] `POST /carpool/posts/{driver_post_id}/claims` claims one seat:
   rejects (400) if the target post isn't `kind=driver`, if it's full
   (active claims == `seats_total`), if the caller already has an active
   claim on that same post, or if the event is locked/archived and the
   caller isn't admin. Works for a member (bearer) or an anonymous
   participant (mint-or-resolve), same as `create_post`.
-- [ ] `DELETE /carpool/claims/{claim_id}` releases a seat: the claimant,
+- [x] `DELETE /carpool/claims/{claim_id}` releases a seat: the claimant,
   the driver post's own owner, or an admin can do this; anyone else gets
   403.
-- [ ] `CarpoolPostOut` for a driver post includes its active claims
+- [x] `CarpoolPostOut` for a driver post includes its active claims
   (`id`, `user_id`, `display_name`, `created_at`) and a computed
   `seats_available`; a rider post's claims field is empty/irrelevant (it
   isn't a driver post, it can't be claimed).
-- [ ] `CarpoolPostCreate`/`CarpoolPostUpdate` no longer accept
+- [x] `CarpoolPostCreate`/`CarpoolPostUpdate` no longer accept
   `seats_available` at all; existing `seats_total`-only behavior for a
   driver post, and the rider "don't set seat fields" validation, are
   unchanged.
-- [ ] `min_identity=saved` and `audience=members` gates apply to claiming
+- [x] `min_identity=saved` and `audience=members` gates apply to claiming
   exactly like they do to posting.
-- [ ] Guest reads (`guest.py`'s carpool posts list) include the same
+- [x] Guest reads (`guest.py`'s carpool posts list) include the same
   claims/computed-`seats_available` shape as the member route.
-- [ ] `pytest` green: claim/release, double-claim rejected, full-post
+- [x] `pytest` green: claim/release, double-claim rejected, full-post
   rejected, `seats_total` can't drop below active claims, guest claim
   parity, existing B24-B26 carpool tests updated for the
   `seats_available` schema change wherever they touched it (updated, not
@@ -1446,23 +1446,71 @@ seat exactly like a member can, no separate write path.
   different assertion).
 
 **Tasks — Claude:**
-- [ ] `CarpoolSeatClaim` model + migration.
-- [ ] `app/services/carpool.py`: `seats_available_for(post, db)` (or
+- [x] `CarpoolSeatClaim` model + migration.
+- [x] `app/services/carpool.py`: `seats_available_for(post, db)` (or
   similar), reused by both the create/list routes and `CarpoolPostOut`
   serialization so member and guest reads can't compute it differently.
-- [ ] `POST /carpool/posts/{driver_post_id}/claims`,
+- [x] `POST /carpool/posts/{driver_post_id}/claims`,
   `DELETE /carpool/claims/{claim_id}` in `app/api/routes/carpool.py`.
-- [ ] Drop `seats_available` from `CarpoolPostCreate`/`CarpoolPostUpdate`;
+- [x] Drop `seats_available` from `CarpoolPostCreate`/`CarpoolPostUpdate`;
   add `claims: list[CarpoolSeatClaimOut]` and a computed
   `seats_available` to `CarpoolPostOut`.
-- [ ] Update `list_guest_carpool_posts` (`guest.py`) to serialize the
+- [x] Update `list_guest_carpool_posts` (`guest.py`) to serialize the
   same shape.
-- [ ] Tests per acceptance criteria; audit existing carpool tests that
+- [x] Tests per acceptance criteria; audit existing carpool tests that
   construct/assert on `seats_available` and update them for the schema
   change.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Built 2026-09-12**, migration `b3d7f1a9c6e2` (chained off B26's
+`a1c9e6f2b7d4`), pytest 357 green (was 345; +12 new). Migration verified
+up/down/up against the local docker-compose Postgres, never prod
+(`docker compose restart api` to apply, since `alembic upgrade head` only
+runs once at container startup).
+
+**Deviations from the plan text:**
+- **Locked/archived event status code.** The plan's acceptance-criteria
+  paragraph lists the locked/archived rejection alongside the other "400"
+  cases, but `create_post` (B25) already uses 409 for "this event is
+  locked or archived", reserving 400 for payload-shape problems. Kept that
+  existing convention: `create_claim` rejects wrong-kind/full/
+  already-claimed with 400, and locked/archived (non-admin) with 409, so
+  claiming and posting return the same status code for the same condition.
+- **`ResponsibilitySignup` doesn't actually have a `status`/`removed_at`
+  soft-removal shape.** The plan's Design section says `CarpoolSeatClaim`
+  matches "`ResponsibilitySignup`'s exact shape"; the live model only has
+  `id`/`date_id`/`role_id`/`user_id`/`guest_name`/`created_at` and
+  `delete_signup` hard-deletes. Built `CarpoolSeatClaim`'s
+  `status`/`removed_at` exactly as the plan's own acceptance criteria and
+  task list specify regardless (that part is unambiguous), just noting the
+  cited precedent doesn't exist in this codebase today.
+- **`seats_available` dropped from the `CarpoolPost` DB column, not just
+  the API schema.** The plan only says the `Create`/`Update` schemas drop
+  it; since nothing writes to the column any more once that happens, kept
+  it dead data instead of shipping unused columns: the migration also
+  drops `carpool_posts.seats_available` (`op.drop_column`), reversible on
+  downgrade (re-added nullable, no data recoverable, same convention as
+  `e5c1a9f3b7d2`'s `pin_hash` drop).
+- **`CarpoolSeatClaim` uniqueness is app-layer, not a DB constraint.** A
+  released claim stays around as a `removed` row, so a plain
+  `UniqueConstraint` on `(driver_post_id, user_id)` would block ever
+  re-claiming the same post. "Already has an active claim" is checked in
+  `create_claim` against `status == active` only, same general shape as
+  this codebase's other soft-removal checks.
+- **A released claim 404s on a second release attempt**, rather than
+  204-no-op or some other idempotent shape (not specified by the plan):
+  `_get_claim_or_404` treats a `removed` claim as gone, matching the
+  "repeat delete 404s" behavior a hard delete would already give elsewhere
+  in this router.
+- **11 existing carpool tests needed no change**; only one assertion in
+  `test_member_can_create_driver_and_rider_posts` (`seats_available == 3`)
+  touched the schema change, and it still holds true under the new
+  computed value (no claims yet), so the assertion itself didn't move,
+  only its comment (from "defaults to seats_total when omitted" to
+  "computed: no claims yet") and two new `claims == []` assertions
+  alongside it.
 
 ### B28 — Guests can remove their own responsibility signup [ ]
 

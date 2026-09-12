@@ -26,6 +26,8 @@ convention every other feature uses).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
@@ -37,19 +39,24 @@ from app.api.schemas import (
     CarpoolPostCreate,
     CarpoolPostOut,
     CarpoolPostUpdate,
+    CarpoolSeatClaimCreate,
+    CarpoolSeatClaimOut,
 )
 from app.db.models import (
     CarpoolEvent,
     CarpoolEventStatus,
     CarpoolPost,
+    CarpoolPostKind,
     CarpoolPostStatus,
+    CarpoolSeatClaim,
+    CarpoolSeatClaimStatus,
     GroupCustomPage,
     GroupCustomPageTemplate,
     GroupRole,
     User,
 )
 from app.db.session import get_db
-from app.services.carpool import list_events_ordered
+from app.services.carpool import active_claims_for, list_events_ordered, serialize_post
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access, require_guest_page_access, require_saved_identity
@@ -88,6 +95,15 @@ def _get_event_or_404(event_id: str, db: Session) -> CarpoolEvent:
 
 def _get_post_or_404(post_id: str, db: Session) -> CarpoolPost:
     return get_or_404(db, CarpoolPost, post_id, "Post not found")
+
+
+def _get_claim_or_404(claim_id: str, db: Session) -> CarpoolSeatClaim:
+    """A released claim reads as gone, same "already removed" 404 a hard
+    delete would give on a second attempt (see `release_claim` below)."""
+    claim = get_or_404(db, CarpoolSeatClaim, claim_id, "Claim not found")
+    if claim.status != CarpoolSeatClaimStatus.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
+    return claim
 
 
 def _page_for_event(event: CarpoolEvent, db: Session) -> GroupCustomPage:
@@ -229,7 +245,7 @@ def create_post(
     db: Session = Depends(get_db),
     maybe_user: User | None = Depends(get_current_user_optional),
     maybe_participant: User | None = Depends(get_optional_participant),
-) -> CarpoolPost:
+) -> CarpoolPostOut:
     """B25: mirrors `create_signup`'s self-signup branch (`app/api/routes/
     responsibilities.py`) — a real member, an existing anonymous
     participant, or a brand-new one minted right here. An anonymous actor
@@ -267,7 +283,6 @@ def create_post(
         kind=payload.kind,
         origin_label=payload.origin_label,
         seats_total=payload.seats_total,
-        seats_available=payload.seats_available,
         leave_time_text=payload.leave_time_text,
         notes=payload.notes,
     )
@@ -276,7 +291,7 @@ def create_post(
     db.refresh(post)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
-    return post
+    return serialize_post(post, db)
 
 
 @router.get("/carpool/events/{event_id}/posts", response_model=list[CarpoolPostOut])
@@ -284,7 +299,7 @@ def list_posts(
     event_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[CarpoolPost]:
+) -> list[CarpoolPostOut]:
     event = _get_event_or_404(event_id, db)
     page = _page_for_event(event, db)
     require_member(page.group_id, current_user, db)
@@ -297,7 +312,8 @@ def list_posts(
         # owner who needs to edit/delete their own hidden or cancelled post
         # still can, directly by id.
         query = query.filter(CarpoolPost.status == CarpoolPostStatus.open)
-    return query.order_by(CarpoolPost.created_at.asc()).all()
+    posts = query.order_by(CarpoolPost.created_at.asc()).all()
+    return [serialize_post(post, db) for post in posts]
 
 
 @router.patch("/carpool/posts/{post_id}", response_model=CarpoolPostOut)
@@ -308,7 +324,7 @@ def update_post(
     db: Session = Depends(get_db),
     maybe_user: User | None = Depends(get_current_user_optional),
     maybe_participant: User | None = Depends(get_optional_participant),
-) -> CarpoolPost:
+) -> CarpoolPostOut:
     """Owner edits their own post's content; only an admin may flip
     `status` (the "hide" moderation action). Content edits are blocked once
     the event is locked/archived for non-admins, same as new posts;
@@ -318,7 +334,10 @@ def update_post(
     B25: the owner can be a real member or an anonymous participant,
     resolved the same way `create_post` does (minus minting: an actor must
     already exist to own a post). `local_id` is a query param rather than
-    part of the body since it's only ever a fallback for a lost cookie."""
+    part of the body since it's only ever a fallback for a lost cookie.
+
+    B27: lowering `seats_total` below the post's current active-claim count
+    is rejected (400) rather than silently going negative on read."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
     page = _page_for_event(event, db)
@@ -341,16 +360,21 @@ def update_post(
     if "origin_label" in fields and payload.origin_label is not None:
         post.origin_label = payload.origin_label
     if "seats_total" in fields:
+        if payload.seats_total is not None:
+            active_count = len(active_claims_for(post.id, db))
+            if payload.seats_total < active_count:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="seats_total can't drop below the number of active claims",
+                )
         post.seats_total = payload.seats_total
-    if "seats_available" in fields:
-        post.seats_available = payload.seats_available
     if "leave_time_text" in fields:
         post.leave_time_text = payload.leave_time_text
     if "notes" in fields:
         post.notes = payload.notes
     db.commit()
     db.refresh(post)
-    return post
+    return serialize_post(post, db)
 
 
 @router.delete("/carpool/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -375,4 +399,99 @@ def delete_post(
     if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only delete your own post")
     db.delete(post)
+    db.commit()
+
+
+@router.post(
+    "/carpool/posts/{driver_post_id}/claims",
+    response_model=CarpoolSeatClaimOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_claim(
+    driver_post_id: str,
+    payload: CarpoolSeatClaimCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> CarpoolSeatClaim:
+    """B27: claim one seat on a driver's post. Actor resolution mirrors
+    `create_post` exactly (bearer member, or mint-or-resolve anonymous
+    participant): a guest with no post of their own at all can still claim
+    a seat, that's the whole reason `CarpoolSeatClaim` is its own table
+    rather than a repurposed `CarpoolPost`.
+
+    Checked in this order: the post must be a driver post (400) before
+    anything else runs (no point minting a participant for a request
+    that's wrong regardless of who's asking); the event's lock/archive
+    state (409, same as `create_post`) only blocks a non-admin; then full
+    (400) and already-claimed (400) are checked against the post's current
+    active claims."""
+    post = _get_post_or_404(driver_post_id, db)
+    if post.kind != CarpoolPostKind.driver:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Only a driver post can be claimed"
+        )
+    event = _event_for_post(post, db)
+    page = _page_for_event(event, db)
+
+    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
+    if actor is None:
+        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.is_anonymous:
+        require_guest_page_access(page.group_id, page, db)
+        require_saved_identity(page.group_id, page, db)
+        ensure_guest_membership(db, page.group_id, actor)
+        is_admin = False
+    else:
+        require_member(page.group_id, actor, db)
+        require_member_page_access(page.group_id, page, actor.id, db)
+        is_admin = _is_admin(page.group_id, actor, db)
+
+    if not is_admin and event.status != CarpoolEventStatus.open:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This event is locked or archived"
+        )
+
+    active = active_claims_for(post.id, db)
+    if any(c.user_id == actor.id for c in active):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You already have a claim on this post"
+        )
+    if post.seats_total is not None and len(active) >= post.seats_total:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This post is full")
+
+    claim = CarpoolSeatClaim(driver_post_id=post.id, user_id=actor.id, display_name=actor.name)
+    db.add(claim)
+    db.commit()
+    db.refresh(claim)
+    if actor.is_anonymous:
+        set_participant_cookie(response, actor, payload.local_id)
+    return claim
+
+
+@router.delete("/carpool/claims/{claim_id}", status_code=status.HTTP_204_NO_CONTENT)
+def release_claim(
+    claim_id: str,
+    local_id: str | None = None,
+    db: Session = Depends(get_db),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> None:
+    """The claimant, the driver post's own owner, or an admin can release a
+    seat; anyone else gets 403. Soft-removed (`status`/`removed_at`), not
+    hard-deleted, so a released seat leaves a trace the same way a removed
+    `ResponsibilitySignup` would. Actor resolution matches `update_post`/
+    `delete_post`: an actor must already exist, nothing is minted here."""
+    claim = _get_claim_or_404(claim_id, db)
+    post = _get_post_or_404(claim.driver_post_id, db)
+    event = _event_for_post(post, db)
+    page = _page_for_event(event, db)
+    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = _is_admin(page.group_id, actor, db)
+    if actor.id != claim.user_id and actor.id != post.user_id and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only release your own claim")
+    claim.status = CarpoolSeatClaimStatus.removed
+    claim.removed_at = datetime.now(timezone.utc)
     db.commit()
