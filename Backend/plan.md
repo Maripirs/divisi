@@ -109,7 +109,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
 | B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
-| B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ⏳ Planned 2026-09-12 |
+| B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1138,7 +1138,7 @@ place that gets reinvented ad hoc.
 **Tasks — Human:**
 - [ ] None expected.
 
-### B25 — Guest carpool access: read + write, via existing anonymous-participant flow [ ]
+### B25 — Guest carpool access: read + write, via existing anonymous-participant flow [x]
 
 Decided with the human 2026-09-12, answering one of `GROUP_PAGES_CARPOOL_PLAN.md`'s
 own open questions ("should carpool pages ever be visible to join-link
@@ -1169,46 +1169,66 @@ the guest-read mirror routes every other page type already has under
 `app/api/routes/guest.py`.
 
 **Acceptance criteria:**
-- [ ] `GET /guest/{join_code}/pages/{slug}/carpool/events` and
+- [x] `GET /guest/{join_code}/pages/{slug}/carpool/events` and
   `GET /guest/{join_code}/carpool/events/{event_id}/posts` work exactly
   when the page is published + `audience=everyone`, same gate
   `get_guest_custom_page` already uses; 404 otherwise (no leaking whether
   a page exists at all to an unauthorized join code, same stance as every
   other guest 404 in this codebase).
-- [ ] `GET /guest/{join_code}/pages` (published + `audience=everyone`
+- [x] `GET /guest/{join_code}/pages` (published + `audience=everyone`
   only) exists so a guest can discover the page without a shared slug
   link, mirroring the member list added in the B23/F27 fast-follow.
-- [ ] `POST /carpool/events/{event_id}/posts` accepts an unauthenticated
+- [x] `POST /carpool/events/{event_id}/posts` accepts an unauthenticated
   caller with no bearer token: mints or resolves an anonymous participant
   exactly like `create_signup`'s self-signup branch, gated by
   `require_guest_page_access` + `require_saved_identity` against the
   post's `GroupCustomPage`, with `ensure_guest_membership` run before the
   post is created.
-- [ ] `PATCH`/`DELETE /carpool/posts/{post_id}` resolve the caller the
+- [x] `PATCH`/`DELETE /carpool/posts/{post_id}` resolve the caller the
   same way, so an anonymous participant can edit/delete their own post
   exactly like a member can (ownership check unchanged: `user_id` must
   match the resolved actor, admin bypasses).
-- [ ] A page with `min_identity=saved` rejects an unsaved anonymous
+- [x] A page with `min_identity=saved` rejects an unsaved anonymous
   caller's post with the existing `SAVE_REQUIRED:`-prefixed 403, not a
   generic error.
-- [ ] A page with `audience=members` still 404s every guest route above,
+- [x] A page with `audience=members` still 404s every guest route above,
   regardless of `min_identity`.
-- [ ] `pytest` green with new tests mirroring `test_responsibilities.py`'s
+- [x] `pytest` green with new tests mirroring `test_responsibilities.py`'s
   guest-signup coverage (mint-on-demand, cookie set, `min_identity` gate,
   own-post edit/delete) plus `test_carpool.py`'s existing
   member/admin/ownership tests re-run against a guest actor.
 
 **Tasks — Claude:**
-- [ ] Guest read routes in `app/api/routes/guest.py`: events list, posts
+- [x] Guest read routes in `app/api/routes/guest.py`: events list, posts
   list (per-event), and the published+everyone pages list.
-- [ ] Rework `POST /carpool/events/{event_id}/posts` (and the
+- [x] Rework `POST /carpool/events/{event_id}/posts` (and the
   `PATCH`/`DELETE /carpool/posts/{post_id}` pair) in
   `app/api/routes/carpool.py` to take `maybe_user`/`maybe_participant`
   optional-auth dependencies instead of a bearer-only `current_user`,
   following `create_signup`'s branch structure.
-- [ ] Schemas: add `local_id`/`display_name` to `CarpoolPostCreate` (same
+- [x] Schemas: add `local_id`/`display_name` to `CarpoolPostCreate` (same
   fields `ResponsibilitySignupCreate` carries for the same reason).
-- [ ] Tests per the acceptance criteria above.
+- [x] Tests per the acceptance criteria above.
+
+**Deviations from this section as originally scoped:**
+- `PATCH`/`DELETE /carpool/posts/{post_id}` take `local_id` as an optional
+  query parameter, not a body field: neither route had a reason to grow a
+  body just to carry it (`DELETE` had no body at all before), and it's
+  only ever a fallback for a lost cookie, same role it plays in
+  `ResponsibilitySignupCreate`. `CarpoolPostUpdate` itself is unchanged.
+- Added one extra event-ownership 401 test
+  (`test_no_actor_resolves_gives_401_on_edit_or_delete`) not explicitly
+  in the acceptance criteria: a caller with no bearer token, no
+  participant cookie, and no matching `local_id` now hits
+  `PATCH`/`DELETE /carpool/posts/{id}` with nobody to resolve, which is
+  a genuinely new case now that those routes accept anonymous callers.
+  It 401s (matching `create_signup`'s own "no actor at all" branch)
+  rather than the ownership 403, since there's no identity to compare
+  the post's `user_id` against yet.
+- No existing `test_carpool.py` assertions changed or removed: every
+  prior bearer-only test still passes unmodified against the reworked
+  `maybe_user`/`maybe_participant` dependencies, since a valid bearer
+  token still resolves `maybe_user` exactly as `get_current_user` did.
 
 **Tasks — Human:**
 - [ ] None expected.
@@ -1247,6 +1267,7 @@ the guest-read mirror routes every other page type already has under
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
+- 2026-09-12: Built B25 (guest carpool access: read + write, via existing anonymous-participant flow). No new mechanism, all wiring: `POST /carpool/events/{id}/posts` and `PATCH`/`DELETE /carpool/posts/{id}` (`app/api/routes/carpool.py`) now take `maybe_user`/`maybe_participant` optional-auth dependencies and resolve the caller exactly like `create_signup`'s self-signup branch (mint-on-demand, `require_guest_page_access` + `require_saved_identity`, `ensure_guest_membership`, `divisi_participant` cookie). Three new guest reads in `app/api/routes/guest.py`: `GET /guest/{join_code}/pages` (published + `audience=everyone`), `.../pages/{slug}/carpool/events`, `.../carpool/events/{event_id}/posts`, all 404ing the same generic way `get_guest_custom_page` does. `CarpoolPostCreate` gained `local_id`/`display_name`; no `CarpoolPost` schema/column change (an anonymous participant is already a real `User` row). `pytest` 334 green (was 321; +13 new). Not pushed/deployed.
 - 2026-09-11: Built B24 (carpool board: events + posts, list only, no map). `CarpoolEvent`/`CarpoolPost` (migration `48a30562ab06`, chained off B23's `33efd3092bff`) scope to a carpool-template `GroupCustomPage` and reuse its `require_member_page_access` gate unchanged. New router `app/api/routes/carpool.py`: admin create/edit/lock/archive an event (one `PATCH` covers all three, following `ResponsibilityDate`'s precedent over `GroupCustomPage`'s separate publish/archive actions); a member posts driver/rider offers on an open event, edits/deletes only their own, and an admin can hide/delete any post regardless of event state. `CarpoolPost.user_id` is non-nullable (no guest/anonymous carpool writes at all, per `GROUP_PAGES_CARPOOL_PLAN.md`'s own deferral). Deliberate asymmetry: a locked/archived event blocks new posts *and* edits, but a member can always delete their own post. `pytest` 319 green (was 299; +20 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
 - 2026-09-11: Built B23 (Custom Group Pages foundation, carpool template only). `GroupCustomPage` (migration `33efd3092bff`) is a dynamic per-group row rather than a fixed `GroupPage` enum member, reusing `PageAudience`/`PageMinIdentity` and a new one-value `GroupCustomPageTemplate` (`carpool_board`). `app/services/pages.py`'s three gate functions were extended in place (`PageLike = GroupPage | GroupCustomPage`) rather than forked, so the new admin CRUD router (`app/api/routes/custom_pages.py`: create/list/get/patch/delete plus `/publish` and `/archive`), the member route `GET /groups/{id}/pages/{slug}`, and the guest route `GET /guest/{join_code}/pages/{slug}` all share the exact same access checks built-in pages use. Slugs are generated from title, unique per group, immutable after create, and rejected with 409 on collision (no auto-suffixing). No `GroupPageBlock`, no HTML field anywhere on the model. `pytest` 299 green (was 279 on top of pre-existing uncommitted work; +20 new). Not pushed/deployed.
 

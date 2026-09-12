@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     AdminPreviewOut,
+    CarpoolEventOut,
+    CarpoolPostOut,
     GroupCustomPageOut,
     GuestAuthIn,
     GuestAuthOut,
@@ -46,13 +48,19 @@ from app.core.config import get_settings
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import create_admin_preview_token, create_guest_token, verify_password
 from app.db.models import (
+    CarpoolEvent,
+    CarpoolPost,
+    CarpoolPostStatus,
     Distribution,
     Group,
     GroupCustomPage,
+    GroupCustomPageStatus,
+    GroupCustomPageTemplate,
     GroupMembership,
     GroupPage,
     GroupRole,
     Homework,
+    PageAudience,
     Piece,
     PieceMarkupMark,
     PieceRehearsalNote,
@@ -359,6 +367,102 @@ def get_guest_custom_page(
     page = get_custom_page_by_slug_or_404(group.id, slug, db)
     require_guest_page_access(group.id, page, db)
     return page
+
+
+@router.get("/{join_code}/pages", response_model=list[GroupCustomPageOut])
+def list_guest_custom_pages(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> list[GroupCustomPage]:
+    """B25: mirrors `list_member_custom_pages`'s published-only list
+    (`app/api/routes/custom_pages.py`) so a guest can discover a page
+    without a shared slug link, further filtered to `audience == everyone`
+    — the member list doesn't filter on audience since audience only ever
+    decides guest reachability, not member visibility."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    return (
+        db.query(GroupCustomPage)
+        .filter(
+            GroupCustomPage.group_id == group.id,
+            GroupCustomPage.status == GroupCustomPageStatus.published,
+            GroupCustomPage.audience == PageAudience.everyone,
+        )
+        .order_by(GroupCustomPage.created_at.asc())
+        .all()
+    )
+
+
+def _get_guest_carpool_page_or_404(group_id: str, slug: str, db: Session) -> GroupCustomPage:
+    """Same by-slug resolution + `require_guest_page_access` gate as
+    `get_guest_custom_page`, plus the same "wrong template is a caller
+    mistake, not a privacy boundary" 400 `carpool.py`'s
+    `_get_carpool_page_or_404` uses for a page reached by id."""
+    page = get_custom_page_by_slug_or_404(group_id, slug, db)
+    require_guest_page_access(group_id, page, db)
+    if page.template_key != GroupCustomPageTemplate.carpool_board:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="This page is not a carpool board"
+        )
+    return page
+
+
+def _get_guest_carpool_event_or_404(group_id: str, event_id: str, db: Session) -> CarpoolEvent:
+    """Same "wrong group -> 404, not 403" shape as `carpool.py`'s own
+    helpers: an event id from another group (or a bare made-up one) 404s
+    exactly like a nonexistent one, then the owning page's guest gate
+    applies on top."""
+    event = db.get(CarpoolEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    page = db.get(GroupCustomPage, event.page_id)
+    if page is None or page.group_id != group_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    require_guest_page_access(group_id, page, db)
+    return event
+
+
+@router.get("/{join_code}/pages/{slug}/carpool/events", response_model=list[CarpoolEventOut])
+def list_guest_carpool_events(
+    join_code: str,
+    slug: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[CarpoolEvent]:
+    """B25: the guest-facing carpool board, same events a member sees via
+    `GET /groups/{id}/pages/{page_id}/carpool/events` — reached by slug
+    since a guest never has a raw page id."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    page = _get_guest_carpool_page_or_404(group.id, slug, db)
+    return (
+        db.query(CarpoolEvent)
+        .filter(CarpoolEvent.page_id == page.id)
+        .order_by(CarpoolEvent.starts_at.asc())
+        .all()
+    )
+
+
+@router.get("/{join_code}/carpool/events/{event_id}/posts", response_model=list[CarpoolPostOut])
+def list_guest_carpool_posts(
+    join_code: str,
+    event_id: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
+) -> list[CarpoolPost]:
+    """B25: read-only mirror of the member `GET /carpool/events/{id}/posts`
+    — a guest is never an admin, so the moderated-out filter the member
+    route only applies to a non-admin caller applies here unconditionally."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    event = _get_guest_carpool_event_or_404(group.id, event_id, db)
+    return (
+        db.query(CarpoolPost)
+        .filter(CarpoolPost.event_id == event.id, CarpoolPost.status == CarpoolPostStatus.open)
+        .order_by(CarpoolPost.created_at.asc())
+        .all()
+    )
 
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])

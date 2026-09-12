@@ -52,6 +52,11 @@ class CarpoolPostCreate(BaseModel):
     seats_available: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
+    # B25: same anonymous-participant identity fields `ResponsibilitySignupCreate`
+    # carries, for the same reason (mint-on-demand, reconnect via local_id).
+    # Ignored for a bearer-authenticated member.
+    local_id: str | None = None
+    display_name: str | None = None
 
     @model_validator(mode="after")
     def _validate_seats(self) -> "CarpoolPostCreate":

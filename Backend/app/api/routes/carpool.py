@@ -12,18 +12,24 @@ addressed directly by id (`/carpool/events/{event_id}`, `/carpool/events/
 that id, same "no group/page prefix once you have an id" convention
 Responsibilities' `/responsibilities/dates/{id}` etc. use.
 
-No guest routes here: join-link guest and anonymous-participant carpool
-writes are explicitly deferred (see GROUP_PAGES_CARPOOL_PLAN.md's
-Permissions section and plan.md's B24), so every route below requires a
-real bearer-authenticated member.
+Event routes (create/list/edit) stay bearer-only, admin or member. B25
+reworked the post routes (create/edit/delete) to also accept an
+unauthenticated caller with no bearer token: `create_post` mints or
+resolves an anonymous participant exactly like `create_signup`'s
+self-signup branch (`app/api/routes/responsibilities.py`), gated by
+`require_guest_page_access` + `require_saved_identity` against the post's
+`GroupCustomPage`. Guest reads for events/posts live in
+`app/api/routes/guest.py`, not here (this router has no `get_db`-only,
+no-bearer-at-all read path, following the "guest routes live in guest.py"
+convention every other feature uses).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_current_user_optional, get_optional_participant
 from app.api.schemas import (
     CarpoolEventCreate,
     CarpoolEventOut,
@@ -45,7 +51,13 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
-from app.services.pages import require_member_page_access
+from app.services.pages import require_member_page_access, require_guest_page_access, require_saved_identity
+from app.services.participants import (
+    ensure_guest_membership,
+    mint_anonymous_participant,
+    resolve_participant,
+    set_participant_cookie,
+)
 
 router = APIRouter(tags=["carpool"])
 
@@ -169,6 +181,27 @@ def update_event(
     return event
 
 
+def _resolve_actor(
+    local_id: str | None,
+    maybe_user: User | None,
+    maybe_participant: User | None,
+    db: Session,
+) -> User:
+    """Bearer member or cookie/`local_id`-resolved anonymous participant,
+    for the edit/delete routes below where there's no create-time minting
+    (an actor must already exist to own a post). 401 when neither
+    resolves, same "not even a guest yet" shape `create_signup`'s
+    admin-assignment branch uses for a missing bearer token."""
+    actor = maybe_user or resolve_participant(db, maybe_participant, local_id)
+    if actor is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return actor
+
+
 @router.post(
     "/carpool/events/{event_id}/posts",
     response_model=CarpoolPostOut,
@@ -177,22 +210,45 @@ def update_event(
 def create_post(
     event_id: str,
     payload: CarpoolPostCreate,
+    response: Response,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> CarpoolPost:
+    """B25: mirrors `create_signup`'s self-signup branch (`app/api/routes/
+    responsibilities.py`) — a real member, an existing anonymous
+    participant, or a brand-new one minted right here. An anonymous actor
+    must clear `require_guest_page_access` (page published, audience
+    everyone) and `require_saved_identity` (page's `min_identity`); a
+    member goes through the usual `require_member`/`require_member_page_access`
+    instead. `ensure_guest_membership` runs before the post is written so a
+    first-time guest shows up on the roster, and the response carries a
+    fresh `divisi_participant` cookie for a minted/resolved anonymous actor."""
     event = _get_event_or_404(event_id, db)
     page = _page_for_event(event, db)
-    require_member(page.group_id, current_user, db)
-    require_member_page_access(page.group_id, page, current_user.id, db)
-    is_admin = _is_admin(page.group_id, current_user, db)
+
+    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
+    if actor is None:
+        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.is_anonymous:
+        require_guest_page_access(page.group_id, page, db)
+        require_saved_identity(page.group_id, page, db)
+        ensure_guest_membership(db, page.group_id, actor)
+        is_admin = False
+    else:
+        require_member(page.group_id, actor, db)
+        require_member_page_access(page.group_id, page, actor.id, db)
+        is_admin = _is_admin(page.group_id, actor, db)
+
     if not is_admin and event.status != CarpoolEventStatus.open:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This event is locked or archived"
         )
     post = CarpoolPost(
         event_id=event_id,
-        user_id=current_user.id,
-        display_name=current_user.name,
+        user_id=actor.id,
+        display_name=actor.name,
         kind=payload.kind,
         origin_label=payload.origin_label,
         seats_total=payload.seats_total,
@@ -203,6 +259,8 @@ def create_post(
     db.add(post)
     db.commit()
     db.refresh(post)
+    if actor.is_anonymous:
+        set_participant_cookie(response, actor, payload.local_id)
     return post
 
 
@@ -231,19 +289,27 @@ def list_posts(
 def update_post(
     post_id: str,
     payload: CarpoolPostUpdate,
+    local_id: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> CarpoolPost:
     """Owner edits their own post's content; only an admin may flip
     `status` (the "hide" moderation action). Content edits are blocked once
     the event is locked/archived for non-admins, same as new posts;
     `delete_post` below deliberately does *not* apply that same block, see
-    its own docstring."""
+    its own docstring.
+
+    B25: the owner can be a real member or an anonymous participant,
+    resolved the same way `create_post` does (minus minting: an actor must
+    already exist to own a post). `local_id` is a query param rather than
+    part of the body since it's only ever a fallback for a lost cookie."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
     page = _page_for_event(event, db)
-    is_admin = _is_admin(page.group_id, current_user, db)
-    if post.user_id != current_user.id and not is_admin:
+    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = _is_admin(page.group_id, actor, db)
+    if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only edit your own post")
     fields = payload.model_fields_set
     if "status" in fields and payload.status is not None:
@@ -275,20 +341,23 @@ def update_post(
 @router.delete("/carpool/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(
     post_id: str,
+    local_id: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> None:
     """Owner delete is always allowed, regardless of the event's lock/
     archive state: withdrawing your own ride shouldn't be blocked by an
     admin's later lock. Deliberate narrower reading of "locked/archived
     events reject new posts" (plan.md's B24), which this extends to edits
     but not to a member deleting their own row. Admin delete always works
-    too, same as admin edit."""
+    too, same as admin edit. B25: actor resolution matches `update_post`."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
     page = _page_for_event(event, db)
-    is_admin = _is_admin(page.group_id, current_user, db)
-    if post.user_id != current_user.id and not is_admin:
+    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = _is_admin(page.group_id, actor, db)
+    if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only delete your own post")
     db.delete(post)
     db.commit()
