@@ -34,6 +34,11 @@ services:
       # this is the only way the container ever sees it locally, keeping
       # docker-compose behavior matching prod (Render has the same var).
       DEMO_JOIN_CODE: DEMOSATB
+      # Docker Desktop on macOS doesn't reliably forward native filesystem
+      # change events across the bind-mount virtualization layer, so
+      # watchfiles (uvicorn --reload's file watcher) never sees an edit
+      # without this: it falls back to polling instead of OS notifications.
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     depends_on:
@@ -41,6 +46,15 @@ services:
         condition: service_healthy
     volumes:
       - ./data/storage:/srv/data/storage
+      # Local dev only: bind-mounts live source over the image's baked-in
+      # copy, so a Backend edit reloads automatically (uvicorn --reload
+      # below) instead of needing `docker compose up -d --build` for
+      # every code change. Still needs a rebuild for a new dependency in
+      # pyproject.toml, and a plain restart (not rebuild) to pick up a
+      # new migration, since `alembic upgrade head` only runs once, at
+      # container startup.
+      - ./app:/srv/app
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
 volumes:
   divisi_postgres_data:
