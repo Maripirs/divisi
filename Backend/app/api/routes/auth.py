@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_optional_participant
 from app.api.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
+    ParticipantNameUpdate,
     ResetPasswordRequest,
     Token,
     UserCreate,
@@ -53,6 +54,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.common import as_utc
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
+from app.services.participants import resolve_participant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger("divisi.auth")
@@ -96,6 +98,31 @@ def update_me(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+
+@router.patch("/participant/name")
+def update_participant_name(
+    payload: ParticipantNameUpdate,
+    db: Session = Depends(get_db),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> dict[str, bool]:
+    """B22: best-effort background sync of a guest's local display name
+    (Frontend Settings drawer) onto their server-side anonymous
+    participant row. A no-op, not an error, when `resolve_participant`
+    finds nothing yet (a shared action hasn't minted a row for this
+    device) or when it resolves to a real, non-anonymous account -- that
+    account's name only ever changes through `PUT /auth/me`, never here."""
+    actor = resolve_participant(db, maybe_participant, payload.local_id)
+    if actor is None or not actor.is_anonymous:
+        return {"updated": False}
+
+    normalized = payload.name.strip()
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
+
+    actor.name = normalized
+    db.commit()
+    return {"updated": True}
 
 
 @router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)

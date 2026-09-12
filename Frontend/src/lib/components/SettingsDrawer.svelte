@@ -4,6 +4,7 @@
 	import { invalidateAll, goto } from '$app/navigation';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import { demoPreviewGuest, shouldShowAdminPreview } from '$lib/demoPreview';
+	import { localProfile, ensureLocalId, setDisplayName } from '$lib/localProfile';
 	import { themeMode, setThemeMode, type ThemeMode } from '$lib/theme';
 	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
 	import { VOICE_PARTS as PLAYER_VOICE_PARTS, type DisplayMode, type MixMode, type VoicePart } from '$lib/midi/types';
@@ -76,6 +77,17 @@
 	let nameDraft = $state('');
 	let savingName = $state(false);
 	let nameError = $state<string | null>(null);
+
+	// Guest-state Account section: same click-to-edit pattern as "Edit
+	// name" above, but for the local profile's `displayName` (F26) rather
+	// than a real account. Posts to the settings route's `updateGuestName`
+	// action, which best-effort syncs the name onto this device's
+	// server-side participant row (if one has been minted yet) while
+	// `setDisplayName` always updates the local store regardless.
+	let editingGuestName = $state(false);
+	let guestNameDraft = $state('');
+	let savingGuestName = $state(false);
+	let guestNameError = $state<string | null>(null);
 
 	// Account section: "Change password" click-to-edit, same pattern as
 	// "Edit name" above — requires the current password (see the Backend's
@@ -297,6 +309,62 @@
 				     you?" step). A real cross-device account is a separate,
 				     ordinary registration below, unrelated to this device's
 				     guest row. -->
+				{#if editingGuestName}
+					<form
+						method="POST"
+						action="/settings?/updateGuestName"
+						class="inline-edit-row"
+						use:enhance={() => {
+							savingGuestName = true;
+							guestNameError = null;
+							return async ({ result }) => {
+								savingGuestName = false;
+								if (result.type === 'failure') {
+									guestNameError =
+										(result.data as { error?: string } | undefined)?.error ?? m.drawer_could_not_update_name();
+									return;
+								}
+								if (result.type === 'success') {
+									setDisplayName(guestNameDraft.trim());
+									editingGuestName = false;
+									await invalidateAll();
+								}
+							};
+						}}
+					>
+						<input type="hidden" name="localId" value={ensureLocalId()} />
+						<input name="name" bind:value={guestNameDraft} required />
+						<button type="submit" class="btn btn-outline" disabled={savingGuestName}>
+							{savingGuestName ? m.reset_password_saving() : m.action_save()}
+						</button>
+						<button
+							type="button"
+							class="text-link"
+							onclick={() => (editingGuestName = false)}
+							disabled={savingGuestName}
+						>
+							{m.action_cancel()}
+						</button>
+					</form>
+					{#if guestNameError}<p class="error">{guestNameError}</p>{/if}
+				{:else}
+					<div class="list-row">
+						<span>{m.login_name()}</span>
+						<span class="value-with-action">
+							<span class="dim">{$localProfile.displayName || m.settings_guest_name_not_set()}</span>
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									guestNameDraft = $localProfile.displayName;
+									editingGuestName = true;
+								}}
+							>
+								{m.drawer_edit()}
+							</button>
+						</span>
+					</div>
+				{/if}
 				<p class="card-meta">{m.settings_guest_local_note()}</p>
 				<div class="btn-row">
 					<a class="btn btn-outline" href={lh('/login?mode=register')} onclick={close}>{m.settings_create_account()}</a>

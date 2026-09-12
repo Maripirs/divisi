@@ -146,6 +146,7 @@
 	"settings_account": "Cuenta",
 	"settings_guest_note": "Estás navegando como invitado/a, así que nada de esto sale de este dispositivo. Crea una cuenta (o inicia sesión en una) para conservarlo y tus grupos en todos lados donde inicies sesión.",
 	"settings_guest_local_note": "La identidad de invitado/a de este dispositivo es local. Únete a este grupo de nuevo desde otro dispositivo con el mismo nombre para reconectarla.",
+	"settings_guest_name_not_set": "Aún no se ha definido",
 	"settings_create_account": "Crear una cuenta",
 	"settings_theme": "Tema",
 	"settings_appearance": "Apariencia",

@@ -72,6 +72,16 @@ class UserUpdate(BaseModel):
     name: str
 
 
+class ParticipantNameUpdate(BaseModel):
+    """B22: best-effort background sync of a guest's local display name
+    onto their server-side anonymous participant row, if one has been
+    minted yet. See `PATCH /auth/participant/name` -- never touches a real
+    (non-anonymous) account, which renames through `UserUpdate` instead."""
+
+    name: str
+    local_id: str | None = None
+
+
 class ChangePasswordRequest(BaseModel):
     """Password change for an already-logged-in user — distinct from
     `ResetPasswordRequest`'s token-based flow (that one's for someone who

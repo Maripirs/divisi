@@ -146,6 +146,7 @@
 	"settings_account": "Account",
 	"settings_guest_note": "You're browsing as a guest, so nothing here leaves this device. Create an account (or log in to one) to keep it and your groups everywhere you sign in.",
 	"settings_guest_local_note": "This device's guest identity is local. Join this group again on another device with the same name to reconnect it.",
+	"settings_guest_name_not_set": "Not set yet",
 	"settings_create_account": "Create an account",
 	"settings_theme": "Theme",
 	"settings_appearance": "Appearance",

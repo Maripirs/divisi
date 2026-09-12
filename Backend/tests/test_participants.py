@@ -11,6 +11,7 @@ drive that route. Helpers mirror `tests/test_responsibilities.py`.
 from datetime import datetime, timedelta, timezone
 
 from app.core import rate_limit
+from app.core.security import create_participant_token
 from app.db.models import Annotation, GroupMembership, ResponsibilitySignup, User
 from app.services.participants import find_guest_matches
 from scripts.prune_anonymous_participants import prune_anonymous_participants
@@ -447,6 +448,95 @@ def test_prune_keeps_a_participant_with_a_signup_and_deletes_a_bare_one(db_sessi
     assert db_session.get(User, keep.id) is not None
     assert db_session.get(User, bare.id) is None
     assert db_session.get(User, real.id) is not None
+
+
+# --- B22: sync a guest's local display name onto the participant row ---
+
+
+def test_update_participant_name_updates_via_the_participant_cookie(client, db_session):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b22-a@example.com")
+    date = _make_date(client, admin_headers, schedule)
+
+    client.cookies.clear()
+    signup = client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-b22a", "display_name": "Wren"},
+    )
+    user_id = signup.json()["user_id"]
+
+    # The client still holds the cookie the signup set -- no local_id needed.
+    res = client.patch("/auth/participant/name", json={"name": "Wren Renamed"})
+    assert res.status_code == 200
+    assert res.json() == {"updated": True}
+
+    db_session.rollback()
+    assert db_session.get(User, user_id).name == "Wren Renamed"
+
+
+def test_update_participant_name_updates_via_local_id_when_the_cookie_is_gone(client, db_session):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b22-b@example.com")
+    date = _make_date(client, admin_headers, schedule)
+
+    client.cookies.clear()
+    signup = client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-b22b", "display_name": "Sol"},
+    )
+    user_id = signup.json()["user_id"]
+
+    client.cookies.clear()  # cookie lost, localStorage (local_id) survives
+    res = client.patch("/auth/participant/name", json={"name": "Sol Renamed", "local_id": "dev-b22b"})
+    assert res.status_code == 200
+    assert res.json() == {"updated": True}
+
+    db_session.rollback()
+    assert db_session.get(User, user_id).name == "Sol Renamed"
+
+
+def test_update_participant_name_is_a_noop_when_no_participant_resolves(client):
+    # A brand-new device: no participant cookie, no local_id (or an
+    # unknown one) -- nothing has been minted yet server-side. Purely
+    # local before the first shared action, so this must succeed, not error.
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    res = client.patch("/auth/participant/name", json={"name": "Nobody Yet"})
+    assert res.status_code == 200
+    assert res.json() == {"updated": False}
+
+    res2 = client.patch(
+        "/auth/participant/name", json={"name": "Nobody Yet", "local_id": "never-seen-before"}
+    )
+    assert res2.status_code == 200
+    assert res2.json() == {"updated": False}
+
+
+def test_update_participant_name_is_a_noop_for_a_real_account(client):
+    # A real, non-anonymous account must never be renamed through this
+    # route (that's `PUT /auth/me`'s job) -- simulate a participant cookie
+    # that resolves to one, and confirm the name is untouched.
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b22-d@example.com")
+    admin_id = client.get("/auth/me", headers=admin_headers).json()["id"]
+
+    client.cookies.set("divisi_participant", create_participant_token(admin_id, ""))
+    res = client.patch("/auth/participant/name", json={"name": "Hijacked Name"})
+    assert res.status_code == 200
+    assert res.json() == {"updated": False}
+
+    assert client.get("/auth/me", headers=admin_headers).json()["name"] == "Name"
+
+
+def test_update_participant_name_rejects_blank_name(client):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b22-e@example.com")
+    date = _make_date(client, admin_headers, schedule)
+
+    client.cookies.clear()
+    client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-b22e", "display_name": "Ash"},
+    )
+
+    res = client.patch("/auth/participant/name", json={"name": "   "})
+    assert res.status_code == 400
 
 
 def test_prune_dry_run_deletes_nothing(db_session):

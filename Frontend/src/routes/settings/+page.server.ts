@@ -1,6 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, BackendApiError } from '$lib/server/backend';
 import { clearSessionCookie } from '$lib/server/session';
+import { backendCookieHeader, readParticipantCookie } from '$lib/server/participantSession';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type { Actions } from './$types';
@@ -25,6 +27,39 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'updateName' as const };
+	},
+
+	// F26: guest counterpart to `updateName` above -- there's no session to
+	// authenticate this with (a guest never logs in), so it forwards the
+	// `divisi_participant` cookie instead, same idiom as the join page's
+	// responsibility-signup proxy (`join/[code]/responsibilities/signups/
+	// +server.ts`). The Backend route no-ops gracefully when no participant
+	// has been minted yet, so this can be called before any shared action.
+	updateGuestName: async ({ request, cookies, fetch }) => {
+		const form = await request.formData();
+		const name = String(form.get('name') ?? '').trim();
+		const localId = String(form.get('localId') ?? '').trim();
+		if (!name) return fail(400, { error: m.settings_enter_name(), form: 'updateGuestName' });
+
+		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+		const forward = backendCookieHeader(readParticipantCookie(cookies));
+		if (forward) headers.Cookie = forward;
+
+		let res: Response;
+		try {
+			res = await fetch(`${PUBLIC_API_BASE_URL}/auth/participant/name`, {
+				method: 'PATCH',
+				headers,
+				body: JSON.stringify({ name, local_id: localId || undefined }),
+				signal: AbortSignal.timeout(20_000)
+			});
+		} catch {
+			return fail(502, { error: m.drawer_could_not_update_name(), form: 'updateGuestName' });
+		}
+		if (!res.ok) {
+			return fail(res.status, { error: m.drawer_could_not_update_name(), form: 'updateGuestName' });
+		}
+		return { success: true, form: 'updateGuestName' as const };
 	},
 
 	changePassword: async ({ request, locals, fetch }) => {
