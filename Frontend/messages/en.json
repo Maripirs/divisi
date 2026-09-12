@@ -602,11 +602,8 @@
 	"pages_delete": "Delete page",
 	"pages_delete_confirm": "Delete this page? This can't be undone.",
 	"pages_view": "View",
-	"pages_no_pages_admin": "No custom pages yet. Create one below.",
 	"pages_no_pages_admin_tab": "No custom pages yet. An admin can create one from Settings.",
 	"pages_no_pages_member": "No pages yet.",
-	"pages_custom_pages": "Custom pages",
-	"pages_custom_pages_note": "Turn a custom page on or off, or archive or delete it. Edit a page to change its title or who can see it.",
 	"pages_back": "Back",
 	"pages_carpool_coming_soon": "Carpool details are coming soon.",
 

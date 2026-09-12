@@ -104,7 +104,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
 | F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
-| F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12: create-page form and per-page publish/archive/delete/edit controls moved from `PagesTab.svelte` into `AboutTab.svelte`'s Settings screen, as two new cards right after the built-in Page Visibility card ("Custom pages" list, then "Create page"). `PagesTab.svelte` is now a pure list (title, status label for admin, "View" link). `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
+| F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12, corrected same day: custom-page rows now live inside the same Page Visibility card as siblings of the built-in rows (not a separate "Custom pages" card); "Create page" stays its own card below. `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
+| F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Planned 2026-09-12 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1626,36 +1627,130 @@ between "unpublish" and "archive."
 **Tasks — Human:**
 - [ ] None expected.
 
-**Built 2026-09-12.** Went with a clearly-labeled adjacent section rather
-than folding custom pages into the built-in grid's literal list/form:
-the built-in card is one shared form submitted via a single "Save page
-settings" button, but each custom page acts through its own per-row
-action call (publish/unpublish/archive/delete/update), so a shared save
-button made no sense for them. `AboutTab.svelte` gained two new cards
-right after the existing Page Visibility card: "Custom pages" (one row
-per page in `data.customPages`, admin sees every status) with a
-checkbox wired straight to `?/publishCustomPage`/`?/unpublishCustomPage`
-(submits on change via `requestSubmit()`, no separate Save button),
-Edit (opens the existing `EditableCard` title/audience/min_identity
-form, wired to `?/updateCustomPage`/`?/deleteCustomPage`) and Archive
-(`?/archiveCustomPage`, hidden once a page is archived, disables the
-checkbox instead of letting the toggle re-check an archived page); then
-"Create page" (the form, unchanged, moved verbatim). `PagesTab.svelte`
-is now title + admin status label + "View" link only.
+**Built 2026-09-12; corrected same day (human feedback: "custom pages
+should be siblings of the normal pages, not their own section").** First
+pass put custom pages in a separate "Custom pages" card below the
+built-in Page Visibility card. Folded that into the same card instead:
+the custom-page rows now render directly inside the existing "Page
+Visibility" section, right after the built-in `<form>` closes, using the
+same `.page-setting-row` styling so they read as one continuous list
+under one heading, not two sections. The one thing that couldn't be
+literally unified is the `<form>` itself: the built-in rows share one
+batch-save form (a single "Save page settings" button), while each
+custom page acts through its own per-row action call
+(publish/unpublish/archive/update/delete via `requestSubmit()` on
+change, no separate Save button) since HTML forbids nesting a `<form>`
+inside another. Visually and structurally (one card, one list, one
+heading) they're siblings; only the submit mechanics differ, same as
+they always had to. "Create page" stays its own card below, unchanged
+from the first pass since the feedback was specifically about the
+visibility list, not page creation.
 
-i18n: reused `pages_*`/`groups_page_visibility*` keys almost entirely
-as-is. Added three: `pages_custom_pages` (the new section heading),
-`pages_custom_pages_note`, and `pages_no_pages_admin_tab` (the old
-`pages_no_pages_admin` says "Create one below," which is only true in
-its new Settings home now that the create form moved out of
-`PagesTab.svelte`; the Pages tab's own empty state needed different
-copy pointing an admin at Settings instead). en/es key counts both
-626, in parity.
+Removed the now-orphaned `pages_custom_pages`/`pages_custom_pages_note`/
+`pages_no_pages_admin` i18n keys added in the first pass (the separate
+heading/note/empty-state they backed no longer exist); kept
+`pages_no_pages_admin_tab` (still used by the Pages tab's own empty
+state). en/es key counts both 623, in parity.
 
 Verification: `npm run check` 0 errors (13 pre-existing warnings,
-unrelated to this change), `npm run build` clean, vitest 138 passed
-(unchanged from baseline, no tests targeted this UI directly). Not
-browser-exercised (standing blocker); no human pass yet.
+unrelated), `npm run build` clean, vitest 138 passed (unchanged, no
+tests target this UI directly). Not browser-exercised (standing
+blocker); no human pass yet.
+
+### F31 — Custom pages as siblings in the main tab bar, not a "Pages" tab [ ]
+
+Human feedback 2026-09-12, same session as F30's correction and pointing
+at the same underlying instinct: no standalone "Pages" list at all,
+neither as its own tab nor as its own settings section. Each custom page
+(carpool, and whatever templates follow it) should be its own tab in the
+group's main nav, a sibling of the built-in ones, in this exact order:
+**Homework, Rehearsal Tracks, Weekly Notes, Members, Responsibilities,
+[custom pages], Info.** That's actually the *same slot* `'pages'`
+already occupies in `+page.svelte`'s `tabsInOrder` today (`['primary',
+'tracks', 'weeklyNotes', 'members', 'responsibilities', 'pages',
+'about']`), so no reordering is needed, only expanding that one
+list-tab into N per-page sibling tabs. `PagesTab.svelte` (the list
+component) goes away entirely.
+
+Same fix applies to the guest join page (`/join/[code]/+page.svelte`),
+which has the identical "pages" list-tab from F29 in the identical
+relative slot (after `responsibilities`). Guest parity principle: don't
+leave the guest side with the exact pattern just rejected on the member
+side.
+
+**Design constraint driving the approach:** a custom page's content
+(`CarpoolBoard`, currently) is loaded by its own route,
+`/groups/[id]/pages/[slug]/+page.server.ts` (`/join/[code]/pages/[slug]`
+for guests), including a soft-nav-on-`?event=` pattern for switching
+which event's posts show. The six built-in tabs, by contrast, are pure
+client-side `$state` with zero navigation, one big load up front,
+switching instantly. Folding a custom page's tab into that same
+zero-navigation model would mean the main page's load fetching every
+custom page's carpool events (and picking a default event's posts) on
+every single load regardless of whether that tab is ever opened, the
+opposite of B24/F28's lazy-load-carpool-only-when-visible cost stance.
+So: keep custom pages as real routes, and make the tab bar itself work
+across both routes, a real (but still SvelteKit-client-routed, not a
+hard reload) navigation when a custom page tab is involved, while the
+six built-in tabs keep switching with zero navigation exactly as today
+when you're already on the main page.
+
+Recommended shape (implementer has latitude on the exact SvelteKit
+mechanism, a `+layout.svelte` for the `/groups/[id]` subtree covering
+both `+page.svelte` and `pages/[slug]/+page.svelte` is probably the
+idiomatic fit, but pick whatever's cleanest): a small shared helper that
+computes the ordered, filtered, labeled tab list (built-ins plus one
+entry per visible custom page, admin sees every status, member/guest see
+published only) from `data`, consumed by both routes so the strip renders
+identically and consistently on either. Built-in tab entries stay
+`<button>`s with local-state switching *only* when rendered from the
+main page (unchanged today); custom-page entries are always `<a href>`
+to their own route. From a custom page's own route, every tab (including
+the built-in ones) is a plain link back to the main page, since there's
+no local tab state to switch there anyway.
+
+**Acceptance criteria:**
+- [ ] No "Pages" tab and no `PagesTab.svelte` list exists anywhere
+  (member group page, admin group page, or guest join page).
+- [ ] The group's tab strip shows, in order: Homework, Rehearsal Tracks,
+  Weekly Notes, Members, Responsibilities, then one tab per visible
+  custom page (published for a member, every status for an admin), then
+  Info/Settings.
+- [ ] Clicking a custom page's tab shows its real content (`CarpoolBoard`
+  for a carpool page) with the same tab strip still visible above it,
+  correctly highlighting that tab as active.
+- [ ] From a custom page's tab, clicking any other tab (built-in or
+  another custom page) navigates there correctly, preserving admin/member
+  `view` mode.
+- [ ] Switching between the six built-in tabs while already on the main
+  group page still has zero navigation (no regression from today's
+  instant client-state switching).
+- [ ] The guest join page shows the identical pattern: no "Pages" list
+  tab, each guest-visible custom page is its own sibling tab in the same
+  relative slot (after Responsibilities).
+- [ ] No Backend changes.
+- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+  parity maintained (drop now-orphaned Pages-tab-list copy, e.g.
+  `pages_tab_title` if nothing else uses it).
+
+**Tasks — Claude:**
+- [ ] Design and implement the shared tab-list computation (order,
+  visibility, labels) used by both the main group page and a custom
+  page's own route.
+- [ ] Update `/groups/[id]/+page.svelte`: remove the `'pages'` tab type/
+  branch, render one sibling tab per custom page in its place.
+- [ ] Update `/groups/[id]/pages/[slug]/+page.svelte` (+ its
+  `+page.server.ts` if it needs more data to render the full strip): show
+  the same tab strip, active tab highlighted correctly.
+- [ ] Delete `PagesTab.svelte` (and its now-unused actions/i18n, if any
+  become orphaned).
+- [ ] Apply the identical change to `/join/[code]/+page.svelte` and
+  `/join/[code]/pages/[slug]/+page.svelte`.
+- [ ] i18n cleanup: remove any key that only existed for the removed
+  list.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 

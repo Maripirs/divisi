@@ -310,85 +310,83 @@
 				{savingPageSettings ? m.reset_password_saving() : m.groups_save_page_settings()}
 			</button>
 		</form>
-	</section>
 
-	<section class="card">
-		<p class="card-eyebrow">{m.pages_custom_pages()}</p>
-		<p class="card-note">{m.pages_custom_pages_note()}</p>
-
-		{#if data.customPages.length === 0}
-			<p class="card-note">{m.pages_no_pages_admin()}</p>
-		{:else}
-			{#each data.customPages as p (p.id)}
-				{#if editingCustomPageId === p.id}
-					<EditableCard
-						saveAction="?/updateCustomPage"
-						deleteAction="?/deleteCustomPage"
-						idName="pageId"
-						idValue={p.id}
-						bind:saving={savingCustomPageEdit}
-						error={form?.form === 'editPage' && form?.error}
-						deleteLabel={m.pages_delete()}
-						deleteConfirmLabel={m.pages_delete_confirm()}
-						onCancel={() => (editingCustomPageId = null)}
-					>
-						{#snippet fields()}
-							<label class="field">
-								<span>{m.new_homework_title_field()}</span>
-								<input name="title" bind:value={editCustomTitleDraft} required />
-							</label>
-							<label class="field">
-								<span>{m.pages_visibility_field()}</span>
-								<select name="audience" bind:value={editCustomAudienceDraft}>
-									<option value="members">{m.groups_members_only()}</option>
-									<option value="everyone">{m.groups_everyone_guests_too()}</option>
-								</select>
-							</label>
-							<label class="field">
-								<span>{m.pages_min_identity_field()}</span>
-								<select name="minIdentity" bind:value={editCustomMinIdentityDraft}>
-									<option value="anyone">{m.pages_min_identity_anyone()}</option>
-									<option value="saved">{m.pages_min_identity_saved()}</option>
-								</select>
-							</label>
-						{/snippet}
-					</EditableCard>
-				{:else}
-					<div class="page-setting-row">
-						<!-- A custom page has three states, not the built-in grid's plain
-						     boolean, so the checkbox only maps draft<->published (via the
-						     existing publish/unpublish actions); archived is a separate,
-						     more final state reached only through the explicit Archive
-						     button below, never by re-checking this box. -->
-						<form method="POST" action={p.status === 'published' ? '?/unpublishCustomPage' : '?/publishCustomPage'} use:enhance>
+		<!-- Custom pages (carpool board, etc.) as siblings of the built-in
+		     rows above, same card/list, not a separate section: the only
+		     reason this isn't inside the `<form>` above is that HTML
+		     forbids nesting a `<form>` inside another `<form>`, and a
+		     custom page's toggle needs its own per-row submit (publish/
+		     unpublish), unlike the built-in rows' one shared batch save. -->
+		{#each data.customPages as p (p.id)}
+			{#if editingCustomPageId === p.id}
+				<EditableCard
+					saveAction="?/updateCustomPage"
+					deleteAction="?/deleteCustomPage"
+					idName="pageId"
+					idValue={p.id}
+					bind:saving={savingCustomPageEdit}
+					error={form?.form === 'editPage' && form?.error}
+					deleteLabel={m.pages_delete()}
+					deleteConfirmLabel={m.pages_delete_confirm()}
+					onCancel={() => (editingCustomPageId = null)}
+				>
+					{#snippet fields()}
+						<label class="field">
+							<span>{m.new_homework_title_field()}</span>
+							<input name="title" bind:value={editCustomTitleDraft} required />
+						</label>
+						<label class="field">
+							<span>{m.pages_visibility_field()}</span>
+							<select name="audience" bind:value={editCustomAudienceDraft}>
+								<option value="members">{m.groups_members_only()}</option>
+								<option value="everyone">{m.groups_everyone_guests_too()}</option>
+							</select>
+						</label>
+						<label class="field">
+							<span>{m.pages_min_identity_field()}</span>
+							<select name="minIdentity" bind:value={editCustomMinIdentityDraft}>
+								<option value="anyone">{m.pages_min_identity_anyone()}</option>
+								<option value="saved">{m.pages_min_identity_saved()}</option>
+							</select>
+						</label>
+					{/snippet}
+				</EditableCard>
+			{:else}
+				<div class="page-setting-row">
+					<!-- A custom page has three states, not the built-in rows'
+					     plain boolean, so the checkbox only maps draft<->published
+					     (via the existing publish/unpublish actions); archived is a
+					     separate, more final state reached only through the
+					     explicit Archive button below, never by re-checking this
+					     box. -->
+					<form method="POST" action={p.status === 'published' ? '?/unpublishCustomPage' : '?/publishCustomPage'} use:enhance>
+						<input type="hidden" name="pageId" value={p.id} />
+						<label class="checkline">
+							<input
+								type="checkbox"
+								checked={p.status === 'published'}
+								disabled={p.status === 'archived'}
+								onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
+							/>
+							<span>{p.title}</span>
+						</label>
+					</form>
+					<span class="dim">{CUSTOM_PAGE_STATUS_LABELS[p.status]()}</span>
+				</div>
+				<div class="btn-row">
+					<button type="button" class="btn btn-outline" onclick={() => startCustomPageEdit(p)}>{m.drawer_edit()}</button>
+					{#if p.status !== 'archived'}
+						<form method="POST" action="?/archiveCustomPage" use:enhance>
 							<input type="hidden" name="pageId" value={p.id} />
-							<label class="checkline">
-								<input
-									type="checkbox"
-									checked={p.status === 'published'}
-									disabled={p.status === 'archived'}
-									onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
-								/>
-								<span>{p.title}</span>
-							</label>
+							<button type="submit" class="btn btn-outline">{m.pages_archive()}</button>
 						</form>
-						<span class="dim">{CUSTOM_PAGE_STATUS_LABELS[p.status]()}</span>
-					</div>
-					<div class="btn-row">
-						<button type="button" class="btn btn-outline" onclick={() => startCustomPageEdit(p)}>{m.drawer_edit()}</button>
-						{#if p.status !== 'archived'}
-							<form method="POST" action="?/archiveCustomPage" use:enhance>
-								<input type="hidden" name="pageId" value={p.id} />
-								<button type="submit" class="btn btn-outline">{m.pages_archive()}</button>
-							</form>
-						{/if}
-					</div>
-					{#if form?.form === 'pageStatus' && form?.error}
-						<p class="error">{form.error}</p>
 					{/if}
+				</div>
+				{#if form?.form === 'pageStatus' && form?.error}
+					<p class="error">{form.error}</p>
 				{/if}
-			{/each}
-		{/if}
+			{/if}
+		{/each}
 	</section>
 
 	<section class="card">
