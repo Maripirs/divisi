@@ -721,17 +721,46 @@ def create_signup(
     return _signup_out(signup, actor)
 
 
+def _resolve_actor(
+    local_id: str | None,
+    maybe_user: User | None,
+    maybe_participant: User | None,
+    db: Session,
+) -> User:
+    """Bearer member or cookie/`local_id`-resolved anonymous participant, for
+    `delete_signup` below where there's no create-time minting (an actor must
+    already exist to own a signup). 401 when neither resolves, same "not even
+    a guest yet" shape `create_signup`'s admin-assignment branch uses for a
+    missing bearer token. Kept local rather than shared with `carpool.py`'s
+    identical helper: see B28's plan.md note."""
+    actor = maybe_user or resolve_participant(db, maybe_participant, local_id)
+    if actor is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return actor
+
+
 @router.delete("/responsibilities/signups/{signup_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_signup(
     signup_id: str,
+    local_id: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> None:
+    """B28: an anonymous participant who self-signed up can remove their own
+    signup the same way a member can, via the `divisi_participant` cookie or
+    `local_id`. Ownership/lock checks are unchanged from B13, just against
+    the resolved actor instead of a guaranteed bearer user."""
     signup = _get_signup_or_404(signup_id, db)
     date = _get_date_or_404(signup.date_id, db)
     group_id = _group_id_for_date(date, db)
-    is_admin = _is_admin(group_id, current_user, db)
-    if signup.user_id != current_user.id and not is_admin:
+    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = _is_admin(group_id, actor, db)
+    if signup.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only remove your own signup")
     if not is_admin and date.locked:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This date is locked")

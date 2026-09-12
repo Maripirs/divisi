@@ -121,7 +121,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
 | B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
 | B27 | Carpool: claim a seat in a driver's post | ✅ Built 2026-09-12, migration `b3d7f1a9c6e2`; pytest 357 green |
-| B28 | Guests can remove their own responsibility signup | ⏳ Planned 2026-09-12 |
+| B28 | Guests can remove their own responsibility signup | ✅ Built 2026-09-12, no migration; pytest 361 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1512,7 +1512,7 @@ runs once at container startup).
   "computed: no claims yet") and two new `claims == []` assertions
   alongside it.
 
-### B28 — Guests can remove their own responsibility signup [ ]
+### B28 — Guests can remove their own responsibility signup [x]
 
 Human feedback 2026-09-12: a guest who self-signs up for a responsibility
 (B19's anonymous-participant flow) has no way to undo it. The Backend
@@ -1545,28 +1545,28 @@ identical helpers into one shared one later, as a small follow-up
 cleanup, not blocking this.
 
 **Acceptance criteria:**
-- [ ] An anonymous participant who self-signed up for a role can call
+- [x] An anonymous participant who self-signed up for a role can call
   `DELETE /responsibilities/signups/{signup_id}` (with the
   `divisi_participant` cookie or a `local_id` query param, same
   resolution B25 uses) and have it succeed.
-- [ ] The same 403 ("Can only remove your own signup") still applies
+- [x] The same 403 ("Can only remove your own signup") still applies
   when the resolved actor doesn't own the signup, guest or member either
   way.
-- [ ] The same 409 (date locked) still applies to a non-admin guest
+- [x] The same 409 (date locked) still applies to a non-admin guest
   exactly as it already does to a non-admin member. No change to that
   rule, just who can now reach it.
-- [ ] A request with no bearer token and no resolvable participant
+- [x] A request with no bearer token and no resolvable participant
   (no cookie, no matching `local_id`) 401s, same "not even a guest yet"
   shape B25's `_resolve_actor` uses.
-- [ ] Existing member-only `delete_signup` tests still pass unmodified.
-- [ ] `pytest` green with new tests covering the guest self-removal path
+- [x] Existing member-only `delete_signup` tests still pass unmodified.
+- [x] `pytest` green with new tests covering the guest self-removal path
   and its 403/409/401 edges.
 
 **Tasks — Claude:**
-- [ ] Rework `delete_signup` (`app/api/routes/responsibilities.py`):
+- [x] Rework `delete_signup` (`app/api/routes/responsibilities.py`):
   optional-auth dependencies, a small local resolve-actor helper, ownership
   and lock checks unchanged otherwise.
-- [ ] Tests: guest self-removal succeeds, wrong-guest 403, locked-date
+- [x] Tests: guest self-removal succeeds, wrong-guest 403, locked-date
   409 for a guest same as a member, no-actor-at-all 401.
 
 **Tasks — Human:**

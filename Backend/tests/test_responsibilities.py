@@ -251,9 +251,9 @@ def test_coverage_status_underfilled_covered_overfilled(client):
     assert status() == "overfilled"
 
 
-def test_guest_sees_coverage_but_not_signup_names(client):
+def test_guest_sees_signup_names_but_not_email_or_user_id(client):
     admin_headers = _register_and_login(client, "resp-admin10@example.com")
-    member_headers = _register_and_login(client, "resp-member10@example.com")
+    member_headers = _register_and_login(client, "resp-member10@example.com", name="Member Ten")
     group = client.post("/groups", json={"name": "Guest Choir"}, headers=admin_headers).json()
     _add_member(client, admin_headers, group["id"], "resp-member10@example.com")
     client.put(
@@ -269,9 +269,15 @@ def test_guest_sees_coverage_but_not_signup_names(client):
     response = client.get(f"/guest/{group['join_code']}/responsibilities/dates")
     assert response.status_code == 200
     body = response.json()
-    assert body[0]["schedules"][0]["roles"][0]["active_count"] == 1
-    assert body[0]["schedules"][0]["roles"][0]["status"] == "covered"
-    assert "signups" not in body[0]["schedules"][0]["roles"][0]
+    role = body[0]["schedules"][0]["roles"][0]
+    assert role["active_count"] == 1
+    assert role["status"] == "covered"
+    assert len(role["signups"]) == 1
+    signup = role["signups"][0]
+    assert signup["name"] == "Member Ten"
+    assert "email" not in signup
+    assert "user_id" not in signup
+    assert set(signup.keys()) == {"id", "name"}
 
 
 def test_guest_responsibilities_hidden_by_default(client):
@@ -475,3 +481,120 @@ def test_signup_with_role_from_unattached_role_set_404s(client):
         headers=member_headers,
     )
     assert resp.status_code == 404
+
+
+# --- B28: a guest (anonymous participant) can remove their own signup ---
+
+
+def _enable_guest_responsibilities(client, admin_headers, group_id):
+    client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "responsibilities", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+
+
+def test_guest_self_signup_and_remove(client):
+    admin_headers = _register_and_login(client, "resp-guest-admin1@example.com")
+    group_id = _make_group(client, admin_headers)
+    _enable_guest_responsibilities(client, admin_headers, group_id)
+    schedule = _make_schedule(client, admin_headers, group_id)
+    date = _make_date(client, admin_headers, schedule)
+    role_id = schedule["roles"][0]["id"]
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    signup = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": role_id, "local_id": "dev-g1", "display_name": "Guest One"},
+    )
+    assert signup.status_code == 201
+    assert "divisi_participant" in signup.headers.get("set-cookie", "")
+    signup_id = signup.json()["id"]
+
+    # The `divisi_participant` cookie set by the signup response persists on
+    # `client`, same as a real browser: no headers, no local_id needed here.
+    remove = client.delete("/responsibilities/signups/" + signup_id)
+    assert remove.status_code == 204
+
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    assert listing[0]["schedules"][0]["roles"][0]["active_count"] == 0
+
+
+def test_guest_cannot_remove_someone_elses_signup(client):
+    admin_headers = _register_and_login(client, "resp-guest-admin2@example.com")
+    group_id = _make_group(client, admin_headers)
+    _enable_guest_responsibilities(client, admin_headers, group_id)
+    schedule = _make_schedule(
+        client,
+        admin_headers,
+        group_id,
+        roles=[{"name": "Cantor", "needed_count": 1}, {"name": "Lector", "needed_count": 1}],
+    )
+    date = _make_date(client, admin_headers, schedule)
+    role_a, role_b = schedule["roles"][0]["id"], schedule["roles"][1]["id"]
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    owner_signup = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": role_a, "local_id": "dev-owner", "display_name": "Owner"},
+    ).json()
+
+    # A different device: mints its own participant via its own signup, then
+    # tries to remove the owner's.
+    client.cookies.clear()
+    other = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": role_b, "local_id": "dev-other", "display_name": "Other"},
+    )
+    assert other.status_code == 201
+
+    forbidden = client.delete("/responsibilities/signups/" + owner_signup["id"])
+    assert forbidden.status_code == 403
+
+
+def test_locked_date_blocks_guest_removal_same_as_member(client):
+    admin_headers = _register_and_login(client, "resp-guest-admin3@example.com")
+    group_id = _make_group(client, admin_headers)
+    _enable_guest_responsibilities(client, admin_headers, group_id)
+    schedule = _make_schedule(client, admin_headers, group_id)
+    date = _make_date(client, admin_headers, schedule)
+    role_id = schedule["roles"][0]["id"]
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    signup = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": role_id, "local_id": "dev-lock", "display_name": "Locked Out"},
+    ).json()
+
+    lock = client.patch("/responsibilities/dates/" + date["id"], json={"locked": True}, headers=admin_headers)
+    assert lock.status_code == 200
+
+    blocked = client.delete("/responsibilities/signups/" + signup["id"])
+    assert blocked.status_code == 409
+
+    # Admin still bypasses the lock, same as for a member's signup.
+    admin_remove = client.delete("/responsibilities/signups/" + signup["id"], headers=admin_headers)
+    assert admin_remove.status_code == 204
+
+
+def test_no_actor_resolves_gives_401_on_delete_signup(client):
+    admin_headers = _register_and_login(client, "resp-guest-admin4@example.com")
+    member_headers = _register_and_login(client, "resp-guest-member4@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "resp-guest-member4@example.com")
+    schedule = _make_schedule(client, admin_headers, group_id)
+    date = _make_date(client, admin_headers, schedule)
+    role_id = schedule["roles"][0]["id"]
+
+    signup = client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups", json={"role_id": role_id}, headers=member_headers
+    ).json()
+
+    # No bearer token, no participant cookie, no local_id: nobody at all.
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    unauthed = client.delete("/responsibilities/signups/" + signup["id"])
+    assert unauthed.status_code == 401
