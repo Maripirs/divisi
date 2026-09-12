@@ -8,7 +8,7 @@
 	import MembersTab from './tabs/MembersTab.svelte';
 	import ResponsibilitiesTab from './tabs/ResponsibilitiesTab.svelte';
 	import AboutTab from './tabs/AboutTab.svelte';
-	import PagesTab from './tabs/PagesTab.svelte';
+	import { computeGroupTabs, type BuiltinTabKey } from './groupTabs';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -16,11 +16,9 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// Same five tab slots in both modes, just relabeled — see the `tab`
-	// picker below. Keeping one `tab` state (rather than separate
-	// member/admin tab state) means switching modes never has to remap a
-	// tab selection that doesn't exist on the other side.
-	type Tab = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'about' | 'pages';
+	// The six built-in tabs still switch with local `$state` (zero
+	// navigation) — a custom page is never one of these, see `groupTabs.ts`.
+	type Tab = BuiltinTabKey;
 
 	// Admin mode is a *view* of this same group page, not a separate
 	// destination (UX_WIREFRAME.md's Admin Experience) — reachable via the
@@ -31,42 +29,26 @@
 	let mode = $state<'member' | 'admin'>(page.url.searchParams.get('view') === 'admin' ? 'admin' : 'member');
 	const isAdmin = data.group.role === 'admin';
 
-	// B12: a member only sees a tab whose page is actually enabled for
-	// them — `data.*Enabled` comes back `true` unconditionally for an admin
-	// (the Backend's member-page gate always passes for admins), so admin
-	// mode shows every tab regardless of the real per-page settings; the
-	// admin's own settings tab (below) is where those real settings show.
-	// Tracks/About have no page gate on the member-facing routes yet, so
-	// they're always shown.
-	const tabsInOrder: Tab[] = ['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'pages', 'about'];
-	function tabVisible(t: Tab): boolean {
-		if (mode === 'admin') return true;
-		if (t === 'primary') return data.homeworkEnabled;
-		if (t === 'weeklyNotes') return data.weeklyNotesEnabled;
-		if (t === 'members') return data.membersEnabled;
-		if (t === 'responsibilities') return data.responsibilitiesEnabled;
-		// B23: no built-in "enabled" flag here. `customPagesEnabled` only
-		// tells us the admin-management list call succeeded (see
-		// `+page.server.ts`'s comment on why a 403 there, the only way a real
-		// member ever hits this branch today, folds into the same fallback as
-		// every other page's disabled state). What actually gates the tab for
-		// a member is simpler: is there at least one published page to show.
-		if (t === 'pages') return data.customPages.some((p) => p.status === 'published');
-		return true;
+	// F31: the ordered, filtered, labeled tab list — built-ins plus one
+	// entry per visible custom page — shared with `pages/[slug]/+page.svelte`
+	// so the strip renders identically on either route. See `groupTabs.ts`.
+	let tabs = $derived(computeGroupTabs(data, mode));
+	function builtinVisible(key: Tab): boolean {
+		return tabs.some((t) => t.key === key);
 	}
-	let visibleTabs = $derived(tabsInOrder.filter(tabVisible));
 
 	// Homework (the "primary" tab) is the default landing tab, but it's a
 	// dead end with nothing to show when the group has none yet (or isn't
 	// even visible to this member) — Rehearsal Tracks is the one that's
 	// actually useful to land on then. A deep link (`?tab=responsibilities`,
-	// used by Home's "Upcoming responsibilities" list) overrides that
-	// default when the requested tab is actually reachable.
+	// used by Home's "Upcoming responsibilities" list, and by a custom
+	// page's own tab strip linking back here) overrides that default when
+	// the requested tab is actually reachable.
 	const requestedTab = page.url.searchParams.get('tab') as Tab | null;
 	let tab = $state<Tab>(
-		requestedTab && tabsInOrder.includes(requestedTab) && tabVisible(requestedTab)
+		requestedTab && builtinVisible(requestedTab)
 			? requestedTab
-			: data.homework.length === 0 || !tabVisible('primary')
+			: data.homework.length === 0 || !builtinVisible('primary')
 				? 'tracks'
 				: 'primary'
 	);
@@ -116,16 +98,18 @@
 	{/if}
 
 	<div class="tabs" role="tablist">
-		{#each visibleTabs as t (t)}
-			<button class="tab" class:active={tab === t} onclick={() => (tab = t)}>
-				{#if t === 'primary'}{mode === 'admin' ? m.groups_assignments() : m.homework_tab_title()}
-				{:else if t === 'tracks'}{mode === 'admin' ? m.groups_tracks() : m.tracks_tab_title()}
-				{:else if t === 'weeklyNotes'}{m.weekly_notes_tab_title()}
-				{:else if t === 'members'}{m.groups_members_tab_title()}
-				{:else if t === 'responsibilities'}{m.responsibilities_tab_title()}
-				{:else if t === 'pages'}{m.pages_tab_title()}
-				{:else}{mode === 'admin' ? m.groups_settings() : m.groups_info()}{/if}
-			</button>
+		{#each tabs as t (t.key ?? t.slug)}
+			{@const key = t.key}
+			{#if key !== null}
+				<button class="tab" class:active={tab === key} onclick={() => (tab = key)}>{t.label}</button>
+			{:else}
+				<!-- F31: a custom page is a real route, not local state — this is
+				     a plain link, carrying the current admin/member view along so
+				     landing on it (and coming back) doesn't reset that choice. -->
+				<a class="tab" href={lh(`/groups/${data.group.id}/pages/${t.slug}${mode === 'admin' ? '?view=admin' : ''}`)}>
+					{t.label}
+				</a>
+			{/if}
 		{/each}
 	</div>
 
@@ -139,8 +123,6 @@
 		<MembersTab {data} {form} {mode} />
 	{:else if tab === 'responsibilities'}
 		<ResponsibilitiesTab {data} {form} {mode} />
-	{:else if tab === 'pages'}
-		<PagesTab {data} {mode} />
 	{:else}
 		<AboutTab {data} {form} {mode} />
 	{/if}

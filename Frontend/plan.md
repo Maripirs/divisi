@@ -105,7 +105,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
 | F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
 | F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12, corrected same day: custom-page rows now live inside the same Page Visibility card as siblings of the built-in rows (not a separate "Custom pages" card); "Create page" stays its own card below. `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
-| F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Planned 2026-09-12 |
+| F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Built 2026-09-12: `PagesTab.svelte` deleted; a new `+layout.server.ts` under `/groups/[id]` shares the group/role/custom-pages/built-in-enabled-flags data between the main page and `pages/[slug]`, and a pure `groupTabs.ts` (`joinTabs.ts` on the guest side) computes the ordered/filtered/labeled tab list both routes render. Built-in tabs stay local `$state` buttons on the main page; every custom-page tab, and every tab at all from a custom page's own route, is a real link. `check` 0 errors (13 pre-existing warnings, unrelated), `build` clean, vitest 146 green (was 138; +8 new, `groupTabs.test.ts`/`joinTabs.test.ts`). Not deployed; no real-browser pass yet. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1657,7 +1657,7 @@ unrelated), `npm run build` clean, vitest 138 passed (unchanged, no
 tests target this UI directly). Not browser-exercised (standing
 blocker); no human pass yet.
 
-### F31 — Custom pages as siblings in the main tab bar, not a "Pages" tab [ ]
+### F31 — Custom pages as siblings in the main tab bar, not a "Pages" tab [x]
 
 Human feedback 2026-09-12, same session as F30's correction and pointing
 at the same underlying instinct: no standalone "Pages" list at all,
@@ -1710,47 +1710,106 @@ the built-in ones) is a plain link back to the main page, since there's
 no local tab state to switch there anyway.
 
 **Acceptance criteria:**
-- [ ] No "Pages" tab and no `PagesTab.svelte` list exists anywhere
+- [x] No "Pages" tab and no `PagesTab.svelte` list exists anywhere
   (member group page, admin group page, or guest join page).
-- [ ] The group's tab strip shows, in order: Homework, Rehearsal Tracks,
+- [x] The group's tab strip shows, in order: Homework, Rehearsal Tracks,
   Weekly Notes, Members, Responsibilities, then one tab per visible
   custom page (published for a member, every status for an admin), then
   Info/Settings.
-- [ ] Clicking a custom page's tab shows its real content (`CarpoolBoard`
+- [x] Clicking a custom page's tab shows its real content (`CarpoolBoard`
   for a carpool page) with the same tab strip still visible above it,
   correctly highlighting that tab as active.
-- [ ] From a custom page's tab, clicking any other tab (built-in or
+- [x] From a custom page's tab, clicking any other tab (built-in or
   another custom page) navigates there correctly, preserving admin/member
   `view` mode.
-- [ ] Switching between the six built-in tabs while already on the main
+- [x] Switching between the six built-in tabs while already on the main
   group page still has zero navigation (no regression from today's
   instant client-state switching).
-- [ ] The guest join page shows the identical pattern: no "Pages" list
+- [x] The guest join page shows the identical pattern: no "Pages" list
   tab, each guest-visible custom page is its own sibling tab in the same
   relative slot (after Responsibilities).
-- [ ] No Backend changes.
-- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+- [x] No Backend changes.
+- [x] `npm run check` / `npm run build` clean; vitest green; i18n key
   parity maintained (drop now-orphaned Pages-tab-list copy, e.g.
   `pages_tab_title` if nothing else uses it).
 
 **Tasks — Claude:**
-- [ ] Design and implement the shared tab-list computation (order,
+- [x] Design and implement the shared tab-list computation (order,
   visibility, labels) used by both the main group page and a custom
   page's own route.
-- [ ] Update `/groups/[id]/+page.svelte`: remove the `'pages'` tab type/
+- [x] Update `/groups/[id]/+page.svelte`: remove the `'pages'` tab type/
   branch, render one sibling tab per custom page in its place.
-- [ ] Update `/groups/[id]/pages/[slug]/+page.svelte` (+ its
+- [x] Update `/groups/[id]/pages/[slug]/+page.svelte` (+ its
   `+page.server.ts` if it needs more data to render the full strip): show
   the same tab strip, active tab highlighted correctly.
-- [ ] Delete `PagesTab.svelte` (and its now-unused actions/i18n, if any
+- [x] Delete `PagesTab.svelte` (and its now-unused actions/i18n, if any
   become orphaned).
-- [ ] Apply the identical change to `/join/[code]/+page.svelte` and
+- [x] Apply the identical change to `/join/[code]/+page.svelte` and
   `/join/[code]/pages/[slug]/+page.svelte`.
-- [ ] i18n cleanup: remove any key that only existed for the removed
+- [x] i18n cleanup: remove any key that only existed for the removed
   list.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Built 2026-09-12.** Landed on the plan's recommended shape almost
+exactly, with the layout split one level more granular than "a
+`+layout.svelte` covering both routes": a `+layout.server.ts` under
+`/groups/[id]` (data only, no matching `+layout.svelte` — the two routes'
+chrome differs too much, admin banner + created-group banner on the main
+page, none of that on a custom page's, to share a layout component, and a
+`+layout.server.ts` alone is a normal no-op pass-through for markup) now
+loads the group, its role, the four built-in pages' lists + enabled flags,
+and the custom pages list once; `+page.server.ts` and
+`pages/[slug]/+page.server.ts` both pull that back out via `parent()`
+instead of duplicating the fetch. A pure `groupTabs.ts`
+(`computeGroupTabs`) computes the ordered/filtered/labeled tab list from
+that shared shape plus a `mode`; both `+page.svelte` files render from it,
+built-ins as `<button>`s with local `$state` on the main page and as
+`<a href>` back to `/groups/[id]?tab=X` from a custom page's own route,
+custom-page entries always `<a href>`. The guest side got its own parallel
+`joinTabs.ts` (`computeGuestTabs`) rather than reusing `groupTabs.ts`
+directly — the guest built-in tab set is smaller and differently ordered
+(Tracks leads; no Members or Info tab at all) and carries no admin/member
+`mode`, so a shared type would have needed as much branching as two small
+files avoid.
+
+Deviations from the plan text: (1) the plan floated a `+layout.svelte`;
+landed on `+layout.server.ts` alone, since only the *data* is shared, not
+markup — see above. (2) The plan's design-constraint note worried about
+the main page's load fetching "every custom page's carpool events" if
+custom pages were folded into the zero-navigation model; the layout split
+here avoids that (carpool content stays on `pages/[slug]`'s own load,
+never fetched from the main page or from another custom page's route),
+but does add the four built-in pages' list-fetches to every custom page's
+load too, which it didn't pay before — a small, fixed cost independent of
+how many custom pages exist, unlike the carpool-events concern the plan
+called out, and the trade accepted to make the tab strip's built-in-tab
+visibility actually correct from either route. (3) The standalone "Back"
+link (`pages_back`) on both by-slug routes was dropped rather than kept
+alongside the new strip — the built-in tabs are themselves links back to
+the main page now, so a separate back link was pure duplication; its i18n
+key (plus `pages_view`, `pages_no_pages_admin_tab`, `pages_no_pages_member`
+from the deleted list, and `pages_tab_title`) came out with it. (4) Added
+`groupTabs.test.ts`/`joinTabs.test.ts` (not asked for explicitly, but the
+extracted functions are pure and the repo already unit-tests this kind of
+helper, e.g. `groupCards.test.ts`).
+
+Verification: `npm run check` 0 errors (13 pre-existing warnings,
+unrelated — same count/lines F30 already flagged), `npm run build` clean,
+vitest 146 passed (was 138; +8 new). Traced (read-through, no browser) the
+five required scenarios: (a) built-in tabs on the main page still switch
+via local `tab` `$state`, zero navigation; (b) a carpool page tab is a
+real `<a>` to `pages/[slug]`, which renders the same strip above
+`CarpoolBoard`; (c) that route's built-in tab links carry `?tab=X` back to
+the main page, whose `tab` `$state` initializer reads it; (d) admin mode
+(`?view=admin`, from the role switcher or a direct link) makes
+`computeGroupTabs` show every custom-page status and carries `?view=admin`
+through every link it renders, both directions; (e) the guest join page's
+built-ins stay buttons, its custom-page tabs are links to
+`/join/[code]/pages/[slug]`, and that route's own load now fetches the
+same three visibility flags + discovery list to render its own strip.
+Not deployed; no real-browser pass yet (standing blocker).
 
 ## Backlog
 

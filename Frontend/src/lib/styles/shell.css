@@ -342,7 +342,13 @@
 	padding-bottom: 0.6rem;
 }
 
+/* F31: a `.tab` used to always be a `<button>`; a custom-page tab is now a
+   real `<a>` to its own route, so this needs to look identical either way
+   (`display`/`text-decoration` are the two properties a bare anchor
+   wouldn't otherwise pick up from a `<button>`'s UA defaults). */
 .tab {
+	display: inline-flex;
+	align-items: center;
 	border: 1px solid var(--border);
 	border-radius: var(--radius-full);
 	background: transparent;
@@ -351,6 +357,7 @@
 	font-size: 0.8125rem;
 	font-weight: 700;
 	padding: 0.3rem 0.75rem;
+	text-decoration: none;
 	cursor: pointer;
 }
 

@@ -581,7 +581,6 @@
 	"roster_unverified_badge": "Sin verificar",
 	"roster_unverified_hint": "Se inscribió desde un dispositivo, aún sin cuenta guardada.",
 
-	"pages_tab_title": "Páginas",
 	"pages_create_page": "Crear página",
 	"pages_template_field": "Plantilla",
 	"pages_template_carpool_board": "Tablero de coche compartido",
@@ -601,10 +600,6 @@
 	"pages_archive": "Archivar",
 	"pages_delete": "Eliminar página",
 	"pages_delete_confirm": "¿Eliminar esta página? No se puede deshacer.",
-	"pages_view": "Ver",
-	"pages_no_pages_admin_tab": "Aún no hay páginas personalizadas. Un administrador puede crear una desde Ajustes.",
-	"pages_no_pages_member": "Aún no hay páginas.",
-	"pages_back": "Volver",
 	"pages_carpool_coming_soon": "Los detalles del coche compartido llegarán pronto.",
 
 	"carpool_events_heading": "Eventos",

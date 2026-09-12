@@ -20,6 +20,7 @@
 		shouldShowSignupBanner
 	} from '$lib/localProfile';
 	import { clearDemoPreviewGuest, setDemoPreviewGuest } from '$lib/demoPreview';
+	import { computeGuestTabs, type GuestBuiltinTabKey } from './joinTabs';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -51,8 +52,16 @@
 		};
 	});
 
-	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities' | 'pages';
-	let tab = $state<Tab>('tracks');
+	type Tab = GuestBuiltinTabKey;
+	// F31: a custom page's own tab is a real link to `pages/[slug]`, so it
+	// carries no local state here (see `+page.svelte`'s member-side
+	// counterpart, `groups/[id]/+page.svelte`) — `Tab` only ever cycles
+	// through the four built-ins. A deep link back from that route
+	// (`?tab=homework`) restores the tab it points at; anything else
+	// (missing, stale, or not actually visible once `result` resolves)
+	// falls through to the tracks content below, the same safe default a
+	// fresh visit gets.
+	let tab = $state<Tab>((page.url.searchParams.get('tab') as Tab | null) ?? 'tracks');
 
 	// F23: local-only responsibility self-signup. A visitor with no account
 	// signs themselves up straight from this read-only guest view; the
@@ -260,32 +269,19 @@
 			{/if}
 
 			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.customPages.length > 0}
+				<!-- F31: same shared-tab-list shape the member side uses
+				     (`groupTabs.ts`'s `computeGroupTabs`) — built-ins stay
+				     `<button>`s (zero navigation), a custom page's own tab is a
+				     real link to its route (`joinTabs.ts`). -->
 				<div class="tabs" role="tablist">
-					<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
-						{m.tracks_tab_title()}
-					</button>
-					{#if result.homeworkVisible}
-						<button class="tab" class:active={tab === 'homework'} onclick={() => (tab = 'homework')}>
-							{m.homework_tab_title()}
-						</button>
-					{/if}
-					{#if result.weeklyNotesVisible}
-						<button class="tab" class:active={tab === 'weeklyNotes'} onclick={() => (tab = 'weeklyNotes')}>
-							{m.weekly_notes_tab_title()}
-						</button>
-					{/if}
-					{#if result.responsibilitiesVisible}
-						<button class="tab" class:active={tab === 'responsibilities'} onclick={() => (tab = 'responsibilities')}>
-							{m.responsibilities_tab_title()}
-						</button>
-					{/if}
-					{#if result.customPages.length > 0}
-						<!-- B25/F29: discovery for a published, everyone-audience custom
-						     page (carpool boards today) — no shared slug link needed. -->
-						<button class="tab" class:active={tab === 'pages'} onclick={() => (tab = 'pages')}>
-							{m.pages_tab_title()}
-						</button>
-					{/if}
+					{#each computeGuestTabs(result) as t (t.key ?? t.slug)}
+						{@const key = t.key}
+						{#if key !== null}
+							<button class="tab" class:active={tab === key} onclick={() => (tab = key)}>{t.label}</button>
+						{:else}
+							<a class="tab" href={lh(`/join/${data.code}/pages/${t.slug}`)}>{t.label}</a>
+						{/if}
+					{/each}
 				</div>
 			{/if}
 
@@ -425,15 +421,6 @@
 						/>
 					{/each}
 				{/if}
-			{:else if tab === 'pages' && result.customPages.length > 0}
-				<!-- B25/F29: title plus a "View" link, same list shape the
-				     member-facing `PagesTab.svelte` uses. -->
-				{#each result.customPages as p (p.id)}
-					<div class="card">
-						<p class="card-eyebrow">{p.title}</p>
-						<a class="btn btn-outline" href={lh(`/join/${data.code}/pages/${p.slug}`)}>{m.pages_view()}</a>
-					</div>
-				{/each}
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees
 				     pieces that actually have a practice file wired up (no dead

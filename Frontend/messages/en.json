@@ -581,7 +581,6 @@
 	"roster_unverified_badge": "Unverified",
 	"roster_unverified_hint": "Signed up from a device, no saved account yet.",
 
-	"pages_tab_title": "Pages",
 	"pages_create_page": "Create page",
 	"pages_template_field": "Template",
 	"pages_template_carpool_board": "Carpool board",
@@ -601,10 +600,6 @@
 	"pages_archive": "Archive",
 	"pages_delete": "Delete page",
 	"pages_delete_confirm": "Delete this page? This can't be undone.",
-	"pages_view": "View",
-	"pages_no_pages_admin_tab": "No custom pages yet. An admin can create one from Settings.",
-	"pages_no_pages_member": "No pages yet.",
-	"pages_back": "Back",
 	"pages_carpool_coming_soon": "Carpool details are coming soon.",
 
 	"carpool_events_heading": "Events",
