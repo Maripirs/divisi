@@ -1071,6 +1071,17 @@ title never leaks to a caller who isn't supposed to know it exists yet.
 **Tasks — Human:**
 - [ ] None expected.
 
+**Fast-follow (2026-09-11, same day):** B23 deliberately shipped with no
+member-facing "list all custom pages" route (the plan called it out of
+scope: a member reaches one page by its slug). F27 then built the Pages
+tab's member view expecting exactly that list to exist, so it always
+rendered empty for a real (non-admin) member with no way to discover a
+page at all. Added `GET /groups/{group_id}/pages` (member-gated,
+published-only) right after F27 landed, and pointed the Frontend's group
+load at it for non-admin viewers instead of the admin management list
+(`app/api/routes/custom_pages.py`'s `list_member_custom_pages`, +2 tests,
+`pytest` 321 green).
+
 ### B24 — Carpool board: events + posts, list only, no map [x]
 
 Starts once B23 lands. Scope intentionally cut down from

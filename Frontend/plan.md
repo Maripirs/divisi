@@ -1413,6 +1413,17 @@ Saved accounts only) even though nothing in F27 writes to a custom page
 yet: included now per the spec's explicit ask, ready for F28's write gate
 to actually enforce it.
 
+**Fast-follow (2026-09-11, same day):** closed the first gap above —
+Backend B23's plan.md now has `GET /groups/{group_id}/pages`
+(member-gated, published-only). `+page.server.ts` fetches the admin
+management list for an admin and this new route for everyone else, so a
+real member's Pages tab now actually lists published pages instead of
+always rendering empty. The guest-discovery gap (no listing inside
+`/join/[code]`, by-slug link only) is unchanged, still a real gap, left
+for a future milestone since a guest's join view has no admin to hand it
+a slug link in the first place. `npm run check`/`build` clean, vitest 125
+green (unchanged count: no new components, just a load-path fix).
+
 ### F28 — Carpool board UI (frontend for Backend B24) [ ]
 
 Starts once F27 + B24 land.

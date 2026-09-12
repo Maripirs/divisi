@@ -71,15 +71,35 @@ def list_custom_pages(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[GroupCustomPage]:
-    """Admin-only, every status included — this is the management list,
-    not the public one. There's no member-facing "list all custom pages"
-    route (out of scope for B23: a member reaches a specific page by its
-    slug, e.g. from a link an admin shares)."""
+    """Admin-only, every status included: this is the management list,
+    not the public one. See `list_member_custom_pages` below for the
+    published-only list a real member's Pages tab reads."""
     get_group_or_404(group_id, db)
     require_admin(group_id, current_user, db)
     return (
         db.query(GroupCustomPage)
         .filter(GroupCustomPage.group_id == group_id)
+        .order_by(GroupCustomPage.created_at.asc())
+        .all()
+    )
+
+
+@router.get("/groups/{group_id}/pages", response_model=list[GroupCustomPageOut])
+def list_member_custom_pages(
+    group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[GroupCustomPage]:
+    """B23 fast-follow: the admin management list above 403s for a
+    non-admin, and reaching a page only by its slug left a real member's
+    Pages tab with nothing to list (F27 built that tab expecting this
+    route to exist). Published-only, same "audience doesn't gate members"
+    rule `require_member_page_access` already applies to a single page."""
+    get_group_or_404(group_id, db)
+    require_member(group_id, current_user, db)
+    return (
+        db.query(GroupCustomPage)
+        .filter(GroupCustomPage.group_id == group_id, GroupCustomPage.status == GroupCustomPageStatus.published)
         .order_by(GroupCustomPage.created_at.asc())
         .all()
     )

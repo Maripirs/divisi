@@ -9,13 +9,11 @@
 
 	let { data, form, mode }: { data: PageData; form: ActionData; mode: 'member' | 'admin' } = $props();
 
-	// F27: `data.customPages` already holds every status for an admin (the
-	// admin-management list `+page.server.ts` loads) and is empty for a real
-	// member (that list route 403s for a non-admin, see this codebase's own
-	// comment there on why there's no member-facing "list" route yet, only a
-	// by-slug one). A member never sees a draft/archived page either way, so
-	// filtering to `published` here is a no-op for a real member today and
-	// exactly the right thing to do once a member-facing list exists.
+	// `data.customPages` holds every status for an admin (the
+	// admin-management list) and published-only for a real member (the
+	// separate member-facing list route, B23 fast-follow). Filtering to
+	// `published` here is a no-op for a member but keeps this component
+	// correct even if `data` ever carried a wider set for that mode.
 	let visiblePages = $derived(
 		mode === 'admin' ? data.customPages : data.customPages.filter((p) => p.status === 'published')
 	);

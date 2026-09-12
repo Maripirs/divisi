@@ -168,6 +168,33 @@ def test_admin_list_includes_drafts(client):
     assert [p["status"] for p in listing.json()] == ["draft"]
 
 
+def test_member_list_shows_only_published(client):
+    admin_headers = _register_and_login(client, "cp-admin11b@example.com")
+    member_headers = _register_and_login(client, "cp-member11b@example.com")
+    group = _make_group(client, admin_headers)
+    client.post(
+        "/groups/" + group["id"] + "/members", json={"email": "cp-member11b@example.com"}, headers=admin_headers
+    )
+    draft = _create_page(client, admin_headers, group["id"], title="Draft Page").json()
+    published = _create_page(client, admin_headers, group["id"], title="Published Page").json()
+    client.post("/groups/" + group["id"] + "/custom-pages/" + published["id"] + "/publish", headers=admin_headers)
+
+    listing = client.get("/groups/" + group["id"] + "/pages", headers=member_headers)
+    assert listing.status_code == 200
+    slugs = [p["slug"] for p in listing.json()]
+    assert slugs == [published["slug"]]
+    assert draft["slug"] not in slugs
+
+
+def test_member_list_rejects_non_member(client):
+    admin_headers = _register_and_login(client, "cp-admin11c@example.com")
+    outsider_headers = _register_and_login(client, "cp-outsider11c@example.com")
+    group = _make_group(client, admin_headers)
+
+    listing = client.get("/groups/" + group["id"] + "/pages", headers=outsider_headers)
+    assert listing.status_code == 403
+
+
 def test_member_route_hides_draft_but_shows_published(client):
     admin_headers = _register_and_login(client, "cp-admin12@example.com")
     member_headers = _register_and_login(client, "cp-member12@example.com")

@@ -64,15 +64,20 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 					[]
 				),
 				fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
-				// B23: `GET .../custom-pages` is the admin *management* list
-				// (every status, not just published) and 403s for a non-admin
-				// caller: there's no member-facing "list" route at all (a
-				// member reaches one page by its slug, see the Backend's own
-				// comment on that route). `fetchPageOrDisabled` already treats a
-				// 403 as "nothing to show here" for the other pages above, which
-				// happens to be exactly the right fallback for a real member
-				// too, so this reuses it rather than a bespoke admin-only fetch.
-				fetchPageOrDisabled(backendJson<GroupCustomPageOut[]>(locals.token, `/groups/${group.id}/custom-pages`, undefined, fetch), [])
+				// B23 fast-follow: `GET .../custom-pages` is the admin
+				// *management* list (every status), so an admin gets that;
+				// a member gets the published-only `.../pages` list instead
+				// of 403ing into the empty fallback the other pages above
+				// use for a disabled page.
+				fetchPageOrDisabled(
+					backendJson<GroupCustomPageOut[]>(
+						locals.token,
+						isAdmin ? `/groups/${group.id}/custom-pages` : `/groups/${group.id}/pages`,
+						undefined,
+						fetch
+					),
+					[]
+				)
 			]);
 
 		// Admin-only management data — these two endpoints 403 for a
