@@ -11,7 +11,6 @@
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
 	import {
 		localProfile,
 		ensureLocalId,
@@ -61,6 +60,14 @@
 	// action and sets a device cookie (threaded first-party by
 	// `/join/[code]/responsibilities/signups`). The display name is
 	// prompted lazily, once, then reused from the local profile.
+	//
+	// B21: right after that first name is typed, before the signup itself
+	// fires, check `/join/[code]/name-matches` for another guest already in
+	// this group with the same name. A hit shows "is this you?"; confirming
+	// one threads `claimUserId` into the signup call so the Backend folds
+	// this device into that existing row instead of minting a duplicate.
+	// Declining (or no match at all) proceeds exactly as before.
+	interface NameMatch { userId: string; title: string | null; joinedAt: string }
 	const roleKey = (dateId: string, roleId: string) => `${dateId}:${roleId}`;
 	let promptingKey = $state<string | null>(null);
 	let nameDraft = $state('');
@@ -68,6 +75,10 @@
 	let doneKeys = $state<Set<string>>(new Set());
 	let errorByKey = $state<Record<string, string>>({});
 	let saveRequiredKey = $state<string | null>(null);
+	let matchKey = $state<string | null>(null);
+	let matchName = $state('');
+	let matchCandidates = $state<NameMatch[]>([]);
+	let pendingSignup = $state<{ dateId: string; roleId: string } | null>(null);
 
 	async function requestSignup(dateId: string, roleId: string) {
 		if ($localProfile.displayName.trim().length === 0) {
@@ -82,11 +93,45 @@
 		const name = nameDraft.trim();
 		if (!name) return;
 		setDisplayName(name);
+		const key = roleKey(dateId, roleId);
 		promptingKey = null;
+		busyKey = key;
+		try {
+			const res = await fetch(`/join/${data.code}/name-matches?name=${encodeURIComponent(name)}`);
+			const body = (await res.json()) as { ok: true; matches: NameMatch[] } | { ok: false };
+			if (body.ok && body.matches.length > 0) {
+				pendingSignup = { dateId, roleId };
+				matchName = name;
+				matchCandidates = body.matches;
+				matchKey = key;
+				busyKey = null;
+				return;
+			}
+		} catch {
+			// A failed match check just falls through to a plain signup below
+			// — worst case a brand-new participant is minted, same as if this
+			// check didn't exist at all.
+		}
 		await doSignup(dateId, roleId);
 	}
 
-	async function doSignup(dateId: string, roleId: string) {
+	function confirmMatch(userId: string) {
+		const pending = pendingSignup;
+		matchKey = null;
+		matchCandidates = [];
+		pendingSignup = null;
+		if (pending) void doSignup(pending.dateId, pending.roleId, userId);
+	}
+
+	function declineMatch() {
+		const pending = pendingSignup;
+		matchKey = null;
+		matchCandidates = [];
+		pendingSignup = null;
+		if (pending) void doSignup(pending.dateId, pending.roleId);
+	}
+
+	async function doSignup(dateId: string, roleId: string, claimUserId?: string) {
 		const key = roleKey(dateId, roleId);
 		busyKey = key;
 		saveRequiredKey = null;
@@ -99,7 +144,8 @@
 					dateId,
 					roleId,
 					localId: ensureLocalId(),
-					displayName: $localProfile.displayName
+					displayName: $localProfile.displayName,
+					claimUserId
 				})
 			});
 			const body = (await res.json()) as
@@ -198,15 +244,14 @@
 			     `AppHeader` is the one, quieter way in now. -->
 
 			{#if shouldShowSignupBanner($localProfile)}
-				<!-- F23: shown once, after the first responsibility signup, until
-				     dismissed or the profile is Saved (flags persist in the
-				     local profile store, so it does not reappear). -->
+				<!-- F23: shown once, after the first responsibility signup,
+				     until dismissed (the flag persists in the local profile
+				     store, so it does not reappear). B21: no more "Save"
+				     action here — reconnecting this identity on another
+				     device just means typing the same name again there. -->
 				<section class="card card--highlight">
 					<p class="card-note">{m.local_only_banner_body()}</p>
 					<div class="btn-row">
-						<button type="button" class="btn btn-primary" onclick={() => (settingsDrawer.open = true)}>
-							{m.save_action()}
-						</button>
 						<button type="button" class="btn btn-outline" onclick={dismissSignupBanner} aria-label={m.join_dismiss()}>
 							{m.join_not_now()}
 						</button>
@@ -254,8 +299,9 @@
 					{/each}
 				{/if}
 			{:else if tab === 'responsibilities' && result.responsibilitiesVisible}
-				<!-- Guest coverage view: no signup identities (see the Backend's
-				     `ResponsibilityGuestRoleCoverageOut`), but F23 adds a
+				<!-- Guest coverage view: same signup names a member sees, just
+				     never an email or account id (see the Backend's
+				     `ResponsibilityGuestRoleCoverageOut`), plus F23's
 				     local-only "Sign me up" per role for an open/unlocked date. -->
 				{#if result.responsibilities.length === 0}
 					<p class="empty">{m.join_no_responsibilities()}</p>
@@ -263,6 +309,15 @@
 					{#each result.responsibilities as d (d.id)}
 						{#snippet signupControl(role: ResponsibilityRole)}
 							{@const key = roleKey(d.id, role.roleId)}
+							<!-- Read-only names, same list the member tab's `roleExtra`
+							     renders (`ResponsibilitiesTab.svelte`), no remove/assign
+							     controls here, a guest can't act on anyone else's signup,
+							     only their own local "sign me up" flow below. -->
+							{#each role.signups ?? [] as s (s.id)}
+								<div class="list-row">
+									<span class="dim">{s.name}</span>
+								</div>
+							{/each}
 							{#if !d.locked && !d.canceled && !page.data.user}
 								<div class="signup-control">
 									{#if doneKeys.has(key)}
@@ -297,6 +352,29 @@
 												</button>
 											</div>
 										</form>
+									{:else if matchKey === key}
+										<!-- B21: another guest already in this group has the same
+										     name — confirming folds this device into that row
+										     (`claimUserId`) instead of minting a duplicate. -->
+										<div class="name-match-block">
+											<p class="card-note">{m.name_match_title()}</p>
+											{#each matchCandidates as c (c.userId)}
+												<div class="list-row name-match-row">
+													<span>{matchName}</span>
+													{#if c.title}
+														<span class="dim">{c.title}</span>
+													{:else}
+														<span class="dim">{m.name_match_joined({ date: formatEventDate(c.joinedAt) })}</span>
+													{/if}
+													<button type="button" class="btn btn-outline" onclick={() => confirmMatch(c.userId)}>
+														{m.name_match_confirm()}
+													</button>
+												</div>
+											{/each}
+											<button type="button" class="text-link" onclick={declineMatch}>
+												{m.name_match_decline()}
+											</button>
+										</div>
 									{:else}
 										<button
 											type="button"
@@ -311,9 +389,7 @@
 									{#if saveRequiredKey === key}
 										<p class="signup-save-required">
 											{m.responsibilities_save_required()}
-											<button type="button" class="text-link" onclick={() => (settingsDrawer.open = true)}>
-												{m.save_action()}
-											</button>
+											<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
 										</p>
 									{/if}
 									{#if errorByKey[key]}
@@ -332,7 +408,10 @@
 								scheduleGroups: d.schedules.map((s) => ({
 									scheduleId: s.scheduleName,
 									scheduleName: s.scheduleName,
-									roles: s.roles
+									roles: s.roles.map((r) => ({
+										...r,
+										signups: r.signups.map((sg) => ({ ...sg, userId: null }))
+									}))
 								}))
 							}}
 							roleExtra={signupControl}
@@ -468,5 +547,18 @@
 		align-items: center;
 		gap: 0.4rem;
 		flex-wrap: wrap;
+	}
+
+	/* B21 "is this you?" — a short list of guest-match candidates plus a
+	   decline link, same density as the signup form above it. */
+	.name-match-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.name-match-row {
+		flex-wrap: wrap;
+		gap: 0.5rem;
 	}
 </style>

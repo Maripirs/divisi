@@ -6,7 +6,6 @@ import {
 	ensureLocalId,
 	localProfile,
 	makeLocalProfile,
-	markProfileSaved,
 	markSignedUp,
 	needsName,
 	newLocalId,
@@ -60,7 +59,6 @@ describe('parseStoredProfile', () => {
 		const profile = makeLocalProfile({
 			localId: 'abc',
 			displayName: 'Sam',
-			saved: true,
 			signedUp: true,
 			bannerDismissed: true
 		});
@@ -71,7 +69,15 @@ describe('parseStoredProfile', () => {
 		expect(parsed).toEqual({
 			localId: 'abc',
 			displayName: '',
-			saved: false,
+			signedUp: false,
+			bannerDismissed: false
+		});
+	});
+	it('drops a stale pre-B21 `saved` field rather than surfacing it', () => {
+		const parsed = parseStoredProfile(JSON.stringify({ localId: 'abc', saved: true }));
+		expect(parsed).toEqual({
+			localId: 'abc',
+			displayName: '',
 			signedUp: false,
 			bannerDismissed: false
 		});
@@ -93,16 +99,13 @@ describe('needsName', () => {
 
 describe('shouldShowSignupBanner', () => {
 	it('is false before the first signup', () => {
-		expect(shouldShowSignupBanner({ saved: false, signedUp: false, bannerDismissed: false })).toBe(false);
+		expect(shouldShowSignupBanner({ signedUp: false, bannerDismissed: false })).toBe(false);
 	});
-	it('is true after a signup, until dismissed or saved', () => {
-		expect(shouldShowSignupBanner({ saved: false, signedUp: true, bannerDismissed: false })).toBe(true);
+	it('is true after a signup, until dismissed', () => {
+		expect(shouldShowSignupBanner({ signedUp: true, bannerDismissed: false })).toBe(true);
 	});
 	it('is false once dismissed', () => {
-		expect(shouldShowSignupBanner({ saved: false, signedUp: true, bannerDismissed: true })).toBe(false);
-	});
-	it('is false once saved', () => {
-		expect(shouldShowSignupBanner({ saved: true, signedUp: true, bannerDismissed: false })).toBe(false);
+		expect(shouldShowSignupBanner({ signedUp: true, bannerDismissed: true })).toBe(false);
 	});
 });
 
@@ -140,15 +143,6 @@ describe('local profile lifecycle (store + mutators)', () => {
 		const reread = readLocalProfile();
 		expect(reread.signedUp).toBe(true);
 		expect(reread.bannerDismissed).toBe(true);
-	});
-
-	it('markProfileSaved hides the Save prompt and the banner', () => {
-		markSignedUp();
-		markProfileSaved();
-		const profile = get(localProfile);
-		expect(profile.saved).toBe(true);
-		expect(shouldShowSignupBanner(profile)).toBe(false);
-		expect(readLocalProfile().saved).toBe(true);
 	});
 
 	it('ensureLocalId returns a stable id and syncs the store', () => {

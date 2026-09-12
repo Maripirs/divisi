@@ -33,18 +33,16 @@ class User(Base):
     # B19: a lazily minted "anonymous participant" (a local-only singer who
     # performed a shared action before registering). Its `email` is a
     # synthetic `anon-<uuid>@participants.divisi.invalid` value and its
-    # `hashed_password` is a random string nobody knows. Flipped to False in
-    # place when the singer runs "Save across devices" (name+PIN, or Google),
-    # so nothing they already did is lost.
+    # `hashed_password` is a random string nobody knows. B21 folds one
+    # anonymous row into another *guest* row in the same group when a typed
+    # name matches (`find_guest_matches` / `merge_participant`); it never
+    # promotes to a real account in place (that only happens by
+    # registering a separate, ordinary `User` row).
     is_anonymous: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     # The acting client's own local id (Frontend F23's localStorage profile),
     # a fallback resolver for when the `divisi_participant` cookie is lost but
     # localStorage survives. Only ever set on an anonymous participant row.
     anonymous_local_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
-    # Set only by a PIN-based "Save across devices". Kept distinct from
-    # `hashed_password` so a PIN account can never collide with a real
-    # email/password account. `None` for every account that never used a PIN.
-    pin_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

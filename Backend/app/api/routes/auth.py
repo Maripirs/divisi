@@ -7,18 +7,16 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import PARTICIPANT_COOKIE, get_current_user, get_optional_participant
+from app.api.deps import get_current_user
 from app.api.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
     ResetPasswordRequest,
-    SaveAccountRequest,
     Token,
     UserCreate,
     UserLogin,
@@ -55,12 +53,6 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.common import as_utc
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
-from app.services.participants import (
-    merge_participant,
-    mint_anonymous_participant,
-    resolve_participant,
-    set_participant_cookie,
-)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger("divisi.auth")
@@ -87,64 +79,6 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise invalid
     return Token(access_token=create_access_token(subject=user.id))
-
-
-@router.post("/save", response_model=Token)
-def save_account(
-    payload: SaveAccountRequest,
-    response: Response,
-    db: Session = Depends(get_db),
-    maybe_participant: User | None = Depends(get_optional_participant),
-) -> Token:
-    """B19 "Save across devices": attach a name + PIN to the caller's
-    anonymous participant row. If that name + PIN already maps to a saved
-    account, fold the caller into it (`merge_participant`) and hand back
-    that account's session; otherwise promote the anonymous row in place.
-    Also how a second device "signs in": it mints a local row there first
-    (via a shared action, or right here), then merges. Name + PIN login is
-    a deliberate launch-only compromise (a global "Sarah" + "1234" would
-    merge two unrelated people); Google / email magic link are the robust
-    cross-device follow-ups (Backlog)."""
-    actor = resolve_participant(db, maybe_participant, payload.local_id)
-    if actor is None:
-        actor = mint_anonymous_participant(db, payload.name, payload.local_id)
-    if not actor.is_anonymous:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="This device already has a saved account"
-        )
-
-    normalized = payload.name.strip()
-    if not normalized:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Name is required")
-
-    existing = (
-        db.query(User)
-        .filter(
-            func.lower(User.name) == normalized.lower(),
-            User.is_anonymous.is_(False),
-            User.pin_hash.isnot(None),
-        )
-        .first()
-    )
-    if existing is not None and verify_password(payload.pin, existing.pin_hash):
-        merge_participant(db, source=actor, target=existing)
-        session_user = existing
-    elif existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="That name is taken. Pick a different name."
-        )
-    else:
-        actor.is_anonymous = False
-        actor.pin_hash = hash_password(payload.pin)
-        actor.name = normalized
-        db.query(GroupMembership).filter(GroupMembership.user_id == actor.id).update(
-            {"is_guest": False}, synchronize_session=False
-        )
-        session_user = actor
-
-    db.commit()
-    response.delete_cookie(PARTICIPANT_COOKIE, path="/")
-    return Token(access_token=create_access_token(subject=session_user.id))
 
 
 @router.get("/me", response_model=UserOut)

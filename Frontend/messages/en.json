@@ -34,7 +34,7 @@
 	"login_continue_with_google": "Continue with Google",
 	"login_continue_with_apple": "Continue with Apple",
 	"login_oauth_error": "That sign-in attempt didn't go through. Please try again.",
-	"login_back_to_welcome": "Continue in guest mode",
+	"login_guest_divider": "Or enter a group code",
 
 	"errors_could_not_reach_server": "Couldn't reach the server. Please try again in a moment.",
 
@@ -145,6 +145,7 @@
 	"settings_title": "Settings",
 	"settings_account": "Account",
 	"settings_guest_note": "You're browsing as a guest, so nothing here leaves this device. Create an account (or log in to one) to keep it and your groups everywhere you sign in.",
+	"settings_guest_local_note": "This device's guest identity is local. Join this group again on another device with the same name to reconnect it.",
 	"settings_create_account": "Create an account",
 	"settings_theme": "Theme",
 	"settings_appearance": "Appearance",
@@ -556,15 +557,6 @@
 	"piece_notes_saving": "Saving…",
 	"piece_notes_body_required": "Write something before saving.",
 
-	"save_action": "Save across devices",
-	"save_only_this_device": "You're only on this device. Add a name and a PIN so you can sign back in on your phone or another browser and keep your groups, notes, and progress.",
-	"save_done_note": "Saved. Finishing signing you in…",
-	"save_name_label": "Your name",
-	"save_pin_label": "PIN",
-	"save_pin_help": "4 to 8 digits. You'll enter your name and this PIN to sign back in on another device, so pick something you'll remember.",
-	"save_enter_name": "Enter a name.",
-	"save_pin_invalid": "Your PIN must be 4 to 8 digits, numbers only.",
-	"save_failed": "Could not save. Please try again.",
 
 	"demo_preview_explainer": "See what the conductor's view looks like. Nothing you do here is saved.",
 	"demo_preview_button": "Preview Admin",
@@ -573,7 +565,7 @@
 	"demo_preview_banner": "Demo preview: read-only, nothing you do here is saved.",
 	"demo_preview_exit": "Exit preview",
 
-	"local_only_banner_body": "You're signed up, but you're only on this device. Until you Save across devices, clearing your browser wipes your name, notes, and progress.",
+	"local_only_banner_body": "You're signed up, but this device's guest identity is local. Join this group again on another device with the same name to reconnect it.",
 	"responsibilities_sign_me_up": "Sign me up",
 	"responsibilities_signing_up": "Signing up…",
 	"responsibilities_signup_done": "You're signed up.",
@@ -581,6 +573,10 @@
 	"responsibilities_save_required": "This sheet needs a saved account.",
 	"responsibilities_signup_conflict": "You're already signed up for this role.",
 	"responsibilities_signup_failed": "Could not sign you up. Please try again.",
+	"name_match_title": "Is this you?",
+	"name_match_joined": "Joined {date}",
+	"name_match_confirm": "Yes, that's me",
+	"name_match_decline": "That's not me",
 	"roster_unverified_badge": "Unverified",
 	"roster_unverified_hint": "Signed up from a device, no saved account yet.",
 

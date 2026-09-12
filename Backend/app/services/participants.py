@@ -1,4 +1,5 @@
-"""B19: anonymous participants + "Save across devices".
+"""B19: anonymous participants. B21: group-scoped guest name matching,
+replacing B19's PIN-based "Save across devices".
 
 The participant-level counterpart to `app/services/groups.py` (group-level)
 and `app/services/pages.py` (group-page-level): the same "shared helper,
@@ -9,9 +10,12 @@ reaches the Backend when they perform a shared action. At that point
 `mint_anonymous_participant` creates a durable `User` row with
 `is_anonymous = True` and a synthetic email / unknowable password, exactly
 the pattern `app/api/routes/auth.py`'s OAuth callback already uses for a
-"user whose password nobody knows". "Save across devices" later flips that
-same row in place (`POST /auth/save`), or `merge_participant` folds it into
-an account the credential already maps to.
+"user whose password nobody knows". B21's `find_guest_matches` lets a
+returning singer on a new device reconnect to that same row instead of
+minting a duplicate: since a group's join code is already the real
+gatekeeper, a name match against another *guest* already in that specific
+group is enough friction on its own, no PIN needed. `merge_participant`
+does the actual folding, same as it always has.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import secrets
 from uuid import uuid4
 
 from fastapi import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import PARTICIPANT_COOKIE
@@ -70,6 +75,31 @@ def resolve_participant(
             .first()
         )
     return None
+
+
+def find_guest_matches(db: Session, group_id: str, name: str) -> list[User]:
+    """B21: every *guest* participant (`GroupMembership.is_guest == True`)
+    in this specific group whose name matches `name` (case-insensitive,
+    trimmed). This is the entire safety boundary for "is this you?"
+    reconnect: the join code already gates who can reach the group at
+    all, so the only thing left to guard is that a guest can never match
+    (and therefore claim, via `merge_participant`) a real member/admin
+    account, or a guest in some *other* group. Both are enforced by the
+    same filter — `is_guest.is_(True)` scoped to this `group_id` — never
+    relaxed for any caller."""
+    normalized = name.strip()
+    if not normalized:
+        return []
+    return (
+        db.query(User)
+        .join(GroupMembership, GroupMembership.user_id == User.id)
+        .filter(
+            GroupMembership.group_id == group_id,
+            GroupMembership.is_guest.is_(True),
+            func.lower(User.name) == normalized.lower(),
+        )
+        .all()
+    )
 
 
 def ensure_guest_membership(db: Session, group_id: str, user: User) -> GroupMembership:

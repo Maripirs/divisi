@@ -622,6 +622,13 @@ loop flows it through, B17's scope-aware `_require_edit_access` unchanged.
 
 ### B19 Progressive accounts: anonymous participants + "Save across devices" [x]
 
+*Superseded in part by B21 (2026-09-11): "Save across devices"'s name+PIN
+mechanism described below was dropped entirely (no real users had ever hit
+it) in favor of a lighter group-scoped guest name match. Everything else
+here — the anonymous participant itself, mint-on-first-shared-action,
+`merge_participant`, `min_identity`, the roster badge, the sweep — stands
+unchanged; B21 just replaces how a merge gets triggered.*
+
 Lowers the account barrier for the singer path. A member who joins via a
 link can already read everything (guest routes, B6/B10/B12); the wall is
 the first *stateful* action: signing up for a responsibility slot, saving
@@ -884,6 +891,90 @@ group's join code is hand-set); see that doc's note under Step 3.
 - [ ] Set `DEMO_JOIN_CODE=DEMOSATB` on Render once the demo group's join
   code is set (`DEMO_SETUP.md` Step 3), then restart the service.
 
+### B21 — Drop PIN save, add group-scoped guest name matching [x]
+
+Supersedes B19's "Save across devices" PIN mechanism. Decided with the
+human 2026-09-11 (no real users have ever used it, safe to drop cleanly):
+a name + numeric PIN never felt like the right shape for a singer who
+just wants their name recognized on a second device, and a global
+name+PIN namespace (any "Sarah" + "1234" merging with any other) was
+always a launch-only compromise, not a real cross-device story. The
+replacement leans on friction that already exists: a group's join code is
+the real gatekeeper (B6), so once someone has it, matching a typed name
+against another guest already in that same group is enough to offer a
+reconnect, no credential needed at all.
+
+**Design:** `find_guest_matches(db, group_id, name)`
+(`app/services/participants.py`) is the entire feature — a case-
+insensitive, trimmed name lookup joined through `GroupMembership`,
+filtered to `group_id` *and* `is_guest.is_(True)`. That one filter is also
+the whole safety boundary: it can never return a real member/admin
+account (no `is_guest` row for one), and it can never return a guest of a
+different group. A new `GET /guest/{join_code}/name-matches?name=...`
+(same no-auth, rate-limited stance as every other guest route) exposes it
+read-only for the join page to check before submitting a signup, and
+`ResponsibilitySignupCreate.claim_user_id` lets the actual self-signup
+call confirm one: the route re-validates the claim against
+`find_guest_matches` itself (never trusts the client's confirmation
+blind), then reuses B19's existing `merge_participant` to fold the
+freshly-minted-or-resolved caller into the matched row — same
+reconciliation as always (annotations last-writer-wins per piece,
+memberships union, signups repoint, source row deleted), just triggered
+by a name match instead of a PIN.
+
+No promotion-in-place survives this change: an anonymous participant no
+longer has any path to flip `is_anonymous` to `false` on its own row.
+"Becoming a real account" now only happens by registering a separate,
+ordinary `User` row (unrelated to the guest identity); the guest's local
+continuity story is entirely the name-match reconnect, group by group.
+
+**Schema:** one migration (`e5c1a9f3b7d2`, `down_revision = d4a9f2c7e1b8`,
+the current head) drops `users.pin_hash`. Clean drop, no backfill: the
+column was never populated in production.
+
+**Acceptance criteria:**
+- [x] No trace of PIN / `pin_hash` / `SaveAccountRequest` / `POST
+  /auth/save` left in route, schema, service, or test code.
+- [x] A guest typing a name that matches another guest already in that
+  specific group gets offered a merge (`GET .../name-matches` lists it);
+  confirming it (`claim_user_id`) reconciles exactly the way
+  `merge_participant` already did for B19's PIN merge.
+- [x] The match never includes a real (non-guest) account, even on an
+  exact name hit, in this group or any other group; never a guest of a
+  different group either.
+- [x] A brand-new name (or a declined match) mints a fresh participant
+  exactly as before, unaffected.
+- [x] Claiming an id that doesn't actually resolve as a guest match for
+  the given name in this group is rejected (400), not merged.
+
+**Tasks — Claude:**
+- [x] Migration `e5c1a9f3b7d2`: drop `users.pin_hash`.
+- [x] Removed `POST /auth/save`, `SaveAccountRequest`, and every PIN
+  branch of the old merge-on-save flow (`app/api/routes/auth.py`,
+  `app/api/schemas/auth.py` + its `schemas/__init__.py` re-export).
+- [x] `find_guest_matches` (`app/services/participants.py`), next to
+  `mint_anonymous_participant` / `resolve_participant` / `merge_participant`.
+- [x] `GET /guest/{join_code}/name-matches` (`app/api/routes/guest.py`) +
+  `GuestNameMatchOut` (`app/api/schemas/library.py`, next to the other
+  Guest* shapes): candidates as `{user_id, title, joined_at}`.
+- [x] `ResponsibilitySignupCreate.claim_user_id` (optional, ignored for an
+  authenticated or admin-assignment call, same as `local_id`/
+  `display_name`); wired into `create_signup`'s self-signup branch
+  (`app/api/routes/responsibilities.py`) — re-validates the claim, then
+  `merge_participant`s into it instead of proceeding with a fresh mint.
+- [x] Tests: `find_guest_matches` scoping (this group only, guests only —
+  not other groups, not real accounts even on a name hit),
+  the name-matches endpoint (candidates + empty list), claim-and-merge
+  (two devices folding into one guest row, annotation conflict resolution
+  reusing B19's last-writer-wins assertions), a rejected claim (a real
+  account's id, and a genuine guest's id from a different group). Removed
+  the PIN-save/PIN-merge tests from `tests/test_auth.py` /
+  `tests/test_participants.py` (6 removed across both files, 5 new B21
+  ones added). `pytest` 274 green (was 275).
+
+**Tasks — Human:**
+- [ ] None.
+
 ## Backlog
 
 - **B16 fast-follow — promote a weekly note into a piece note**: an admin
@@ -911,12 +1002,14 @@ group's join code is hand-set); see that doc's note under Step 3.
 - No `pytest` coverage yet for `PUT /groups/{id}/description`, `PUT /groups/{id}/members/{user_id}/role`, or `DELETE /responsibilities/schedules/{id}`/`.../roles/{id}` (added post-B13, live in production)
 - Pick a transactional email provider so password-reset links actually work for someone who isn't reading server logs (`FRONTEND_BASE_URL` itself is already set on Render — see B14)
 - Re-enable Google Sign-In for real users: publish the OAuth consent screen out of Testing status in Cloud Console (project `divisi-506916`, non-sensitive scopes so this shouldn't need Google's full verification review), then re-add `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` on Render and restart the service
-- **B19 fast-follow: email magic link as a second Save method**, once a transactional email provider is wired (see the email-provider item above). Also the cleanest recovery path for a PIN a singer forgets, and the robust cross-device story name + PIN only approximates.
-- **B19: scheduled runner for the anonymous-participant sweep.** Ships as a manual `scripts/` command; wants the same real job runner the Responsibilities recurrence / reminders items need.
+- ~~B19 fast-follow: email magic link as a second Save method~~ — moot: B21 (2026-09-11) dropped the PIN Save mechanism this would have been a second method *for*. A future "real account" story, if wanted, would be its own design, not a Save fast-follow.
+- **B19: scheduled runner for the anonymous-participant sweep.** Ships as a manual `scripts/` command; wants the same real job runner the Responsibilities recurrence / reminders items need. Unaffected by B21 — the sweep logic never touched the PIN.
 
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-11: Built B21 (drop PIN save, add group-scoped guest name matching). Decided with the human that B19's name+PIN "Save across devices" never fit right and no real user had ever hit it, so dropped it entirely: migration `e5c1a9f3b7d2` drops `users.pin_hash`, `POST /auth/save` and `SaveAccountRequest` are gone. Replacement is much lighter: `find_guest_matches` (case-insensitive name lookup scoped to `GroupMembership.is_guest == True` in one specific group) backs a new `GET /guest/{join_code}/name-matches` read and a `claim_user_id` on the self-signup payload; a confirmed claim re-validates server-side and reuses B19's existing `merge_participant` unchanged. No more in-place promotion path — a guest's only way to a real account is now a separate registration, unrelated to the guest row. `pytest` 274 green (was 275: -6 old PIN tests, +5 new). Not pushed/deployed.
 
 - 2026-09-11: Built B20 (demo "Preview Admin", read-only). While testing B19/F23 locally end to end (docker compose + a seeded test group + a real Playwright walkthrough with two simulated devices), the human asked to let the public demo choir show what the Admin view looks like without risking a stranger changing the shared demo data. No mock UI: a new `admin_preview` JWT scope resolves as the demo's real admin for every read, and a single process-wide middleware rejects every non-GET request carrying it. Gated entirely by `Settings.demo_join_code` (env var, empty by default, no schema change). `pytest` 275 green (was 271); the local B19/F23 walkthrough itself surfaced no defects, only a pre-existing B6 rate-limiter artifact from hammering two "devices" through the same local proxy IP. Not pushed/deployed.
 

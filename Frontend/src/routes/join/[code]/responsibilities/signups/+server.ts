@@ -14,12 +14,20 @@ import type { RequestHandler } from './$types';
  * responsibility slot from the guest join page.
  *
  * `POST /responsibilities/dates/{dateId}/signups` with an unauthenticated
- * body `{ role_id, local_id, display_name }` makes the Backend mint (or
- * re-resolve, by the forwarded `divisi_participant` cookie or `local_id`)
- * this device's anonymous participant, create its guest-tier membership,
- * and set a fresh `divisi_participant` cookie on the response. We pull that
- * token out and re-set it first-party (see `participantSession.ts`).
+ * body `{ role_id, local_id, display_name, claim_user_id }` makes the
+ * Backend mint (or re-resolve, by the forwarded `divisi_participant`
+ * cookie or `local_id`) this device's anonymous participant, create its
+ * guest-tier membership, and set a fresh `divisi_participant` cookie on
+ * the response. We pull that token out and re-set it first-party (see
+ * `participantSession.ts`).
  *
+ * `claimUserId` is B21's "is this you?" confirm: set only once the join
+ * page's `GET .../name-matches` step found a match and the visitor
+ * confirmed it, it makes the Backend fold this call's actor into that
+ * existing guest row (re-validated server-side) instead of minting a new
+ * one. Omitted entirely for the ordinary "brand-new participant" path.
+ *
+
  * Always answers HTTP 200 with a small JSON verdict so the client form
  * reads a discriminant rather than catching:
  *   { ok: true, signup }
@@ -28,7 +36,13 @@ import type { RequestHandler } from './$types';
  *   { ok: false, error: 'server' }
  */
 export const POST: RequestHandler = async ({ request, cookies, locals, fetch }) => {
-	let body: { dateId?: string; roleId?: string; localId?: string; displayName?: string };
+	let body: {
+		dateId?: string;
+		roleId?: string;
+		localId?: string;
+		displayName?: string;
+		claimUserId?: string;
+	};
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
@@ -76,7 +90,8 @@ export const POST: RequestHandler = async ({ request, cookies, locals, fetch }) 
 				body: JSON.stringify({
 					role_id: roleId,
 					local_id: body.localId ?? undefined,
-					display_name: body.displayName ?? ''
+					display_name: body.displayName ?? '',
+					claim_user_id: body.claimUserId ?? undefined
 				}),
 				signal: AbortSignal.timeout(20_000)
 			}

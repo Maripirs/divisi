@@ -1009,6 +1009,14 @@ guestCode?)`. `check`/`build` clean, vitest 82.
 
 ### F23 Local profile + "Save across devices" (frontend for Backend B19) [ ]
 
+*Superseded in part by F25 (2026-09-11, frontend for Backend B21): the
+"Save across devices" PIN form described below (Settings, the
+name+PIN section) is gone — dropped entirely, no fast-follow. Everything
+else here — the local profile itself, the lazy name prompt, the one-time
+post-signup banner, the roster badge — stands unchanged; F25 replaces
+*how* a returning guest reconnects on a new device (typing the same name,
+not a credential) and trims the Settings copy accordingly.*
+
 The account barrier a singer actually hits: they open a join link, can
 already play and read everything, then try to save an annotation, check off
 homework, or sign up for a responsibility slot, and get bounced to
@@ -1242,6 +1250,88 @@ walkthrough, bundled since both touch the guest join page's chrome:
   `Backend/plan.md`'s B20 and `DEMO_SETUP.md`'s Step 3 note) and do a
   real-browser pass against the live demo.
 
+### F25 Drop "Save across devices" PIN form, add "is this you?" name-match reconnect (frontend for Backend B21) [x]
+
+Frontend counterpart to Backend B21, decided with the human 2026-09-11: no
+real user has ever hit F23's PIN "Save across devices" form, and a group's
+join code is already the real gatekeeper, so a typed-name match against
+another guest already in that same group is enough friction on its own.
+Drops the PIN mechanism entirely rather than reworking it.
+
+**Shape:**
+- Settings drawer's guest-state Account section loses the entire name+PIN
+  form (state, effect, markup) and shrinks to one line — this device's
+  guest identity is local, and joining the same group again elsewhere with
+  the same name will offer to reconnect it — plus the unchanged "Create an
+  account" / "Log in" buttons. Directly addresses the earlier "this seems
+  like too much" feedback on this section.
+- The join page's lazy name prompt (`confirmName`, right after a visitor
+  types their name for the first shared action) now also calls the new
+  `GET /join/[code]/name-matches?name=...` proxy before firing the signup.
+  A hit shows an inline "is this you?" step — each candidate by the typed
+  name plus its `title` if set else its joined date (mirrors
+  `MembersTab.svelte`'s `member.title` convention) — with a "that's not
+  me" decline. Confirming threads `claimUserId` into the signup call so
+  the Backend folds this device into that existing guest row
+  (`merge_participant`, re-validated server-side) instead of minting a
+  duplicate; declining (or no match at all) proceeds exactly as before.
+  Only checked once, at the first name entry — later signups from the same
+  browser already resolve to the right row via the participant cookie.
+- `localProfile.ts` drops `saved`/`markProfileSaved()` — there is no
+  longer a distinct client-side "saved" state to track. A real
+  cross-device account is a separate, ordinary registration, already
+  reflected server-side by `user` being non-null after `/auth/me`.
+- The one-time post-signup banner keeps its shape (still gated on
+  `signedUp && !bannerDismissed`) but drops its "Save across devices"
+  button and copy — dismiss is now its only action.
+- The `min_identity = saved` inline prompt (unrelated B12/B19 mechanism,
+  untouched by B21 itself) now points at registering a real account
+  (`settings_create_account`) instead of opening a Settings Save form that
+  no longer exists.
+
+**Acceptance criteria:**
+- [x] No PIN form anywhere in the UI; Settings' guest-state Account
+  section is materially shorter than before.
+- [x] A guest typing a name that matches another guest already in that
+  specific group is offered "is this you?"; confirming reconnects to that
+  row (verified against the Backend: the signup lands on the matched
+  user id, the freshly-minted row is gone).
+- [x] A brand-new name (or a declined match) signs up exactly as before,
+  unaffected.
+- [x] `npm run check` / vitest green.
+
+**Tasks — Claude:**
+- [x] `localProfile.ts`: removed `saved` from `LocalProfile`,
+  `markProfileSaved()`, and `saved`'s part of `shouldShowSignupBanner`;
+  `parseStoredProfile` now just drops a stale pre-B21 `saved` field rather
+  than surfacing it. `localProfile.test.ts` updated to match.
+- [x] `SettingsDrawer.svelte`: removed the `saveName`/`savePin`/
+  `savingProfile`/`saveError`/`savePinValid` state, the name-prefill
+  `$effect`, and the whole PIN form; guest-state section now just
+  `settings_guest_local_note` + the existing account buttons.
+- [x] `settings/+page.server.ts`: removed the `saveAcrossDevices` action
+  and its now-unused imports.
+- [x] New `join/[code]/name-matches/+server.ts` proxy (thin pass-through,
+  no cookie involved — mirrors `responsibilities/signups/+server.ts`'s
+  `{ ok, ... }` verdict convention).
+- [x] `join/[code]/responsibilities/signups/+server.ts`: threads an
+  optional `claimUserId` through to the Backend's `claim_user_id`.
+- [x] `join/[code]/+page.svelte`: `confirmName` now checks name-matches
+  before signing up; new `matchKey`/`matchCandidates`/`pendingSignup`
+  state and `confirmMatch`/`declineMatch` handlers; the one-time banner
+  and the `min_identity = saved` prompt both stopped referencing the
+  removed Save flow.
+- [x] en / es: removed `save_action`, `save_only_this_device`,
+  `save_name_label`, `save_pin_label`, `save_pin_help`, `save_pin_invalid`,
+  `save_done_note`, `save_failed`, `save_enter_name`; added
+  `settings_guest_local_note`, `name_match_title`, `name_match_joined`,
+  `name_match_confirm`, `name_match_decline`; reworded
+  `local_only_banner_body`.
+- [x] `npm run check` (0 errors) and vitest (125 passed) both green.
+
+**Tasks — Human:**
+- [ ] None.
+
 ## Backlog
 
 - ~~**Persist F12 annotation mode + F13 audio source per piece**~~ **done 2026-09-02** (with the F21/F22 batch). `PersistedSettings` grew `showMineMarkup` / `showDirectorMarkup` / `audioSource` (all optional). "Annotation mode" here = the F21 layer-visibility toggles, not the transient armed-tool state. The toggles persist via a guarded `$effect` in `piece/[id]/+page.svelte` (no page-level setter, same shape as the zoom-persist effect); `audioSource` persists from `setAudioSource` and is restored only when the stored value is `'reference'` **and** the restored `viewMode === 'pdf'` **and** `piece?.youtubeUrl` is set. F4's separate score-marker toggle was out of scope.
@@ -1256,8 +1346,8 @@ walkthrough, bundled since both touch the guest join page's chrome:
 - Live tempo control for F5's stem-backed pieces — a real time-stretching problem, not a rate multiplier like the MIDI-synth player has
 - Guest-side wiring for genuinely-new real pieces via join code (see F5's "Expanded" note) — closed via the fix logged 2026-08-29 below; kept here only if a similar gap resurfaces for a future upload path
 - **Fix the live production Backend URL if it ever regresses**: the deployed Worker was once built with `PUBLIC_API_BASE_URL=http://localhost:8000` baked in — always deploy with `PUBLIC_API_BASE_URL=<real-backend-url> npm run build && npx wrangler deploy`, never a plain `npm run build`, so it's never silently sourced from whatever a local `.env` happens to hold
-- **F23 fast-follow: email magic link as a second Save method** once a transactional email provider exists (Backend Backlog). Also the recovery path for a forgotten PIN, and the robust cross-device story name + PIN only approximates. (Google was considered as a Save method and dropped 2026-09-09.)
-- **F23: extra nudges toward "Save across devices"** beyond the one-time post-signup banner (a second-session prompt, or one when the app is opened on a new device) if the single banner does not convert.
+- ~~F23 fast-follow: email magic link as a second Save method~~ — moot: F25/Backend B21 (2026-09-11) dropped the PIN Save mechanism this would have been a second method *for*.
+- ~~F23: extra nudges toward "Save across devices"~~ — moot for the same reason; F25 replaced the Settings Save flow with the join page's automatic "is this you?" name-match prompt, which needs no separate nudge.
 
 ## iOS app (paused 2026-08-27, moved here from root `plan.md`)
 
@@ -1292,6 +1382,8 @@ fetching or required accounts.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-11: Built F25 (frontend for Backend B21): dropped F23's "Save across devices" PIN form entirely and replaced it with a join-page "is this you?" name-match reconnect. `localProfile.ts` lost `saved`/`markProfileSaved()` (no client-side "saved" state left to track); Settings drawer's guest Account section shrank to one line plus the existing Create account/Log in buttons. The join page's lazy name prompt now calls a new `/join/[code]/name-matches` proxy (thin pass-through to the Backend's public `GET /guest/{code}/name-matches`) right after a name is first typed; a hit shows candidates (name + title or joined date, mirroring `MembersTab.svelte`'s title convention) with a decline escape hatch, and confirming threads `claimUserId` through `/join/[code]/responsibilities/signups` into the Backend's `merge_participant`. The one-time post-signup banner and the unrelated `min_identity = saved` inline prompt both stopped referencing the removed Save flow (the latter now points at registering a real account instead). `check` 0 errors, vitest 125 green. Not deployed.
 
 - 2026-09-11: F24's "Preview Admin" half built (frontend for Backend B20). `$lib/api/guest.ts`'s `GuestGroup` gained `adminPreviewAvailable` (from `admin_preview_available`); a new `$lib/demoPreview.ts` store (plain `svelte/store`, matching `localProfile.ts`) holds the currently-viewed guest join code + whether it offers preview, set/cleared by `join/[code]/+page.svelte` via an `$effect` on `data.result`. Settings drawer's guest section gained a "Preview Admin" block gated on that store; clicking it posts to a new `/join/[code]/admin-preview` proxy (`app/routes/join/[code]/admin-preview/+server.ts`), which calls the Backend's `GET /guest/{code}/admin-preview`, sets the normal session cookie (`$lib/server/session.ts`) plus a new non-httpOnly `divisi_demo_preview` marker cookie (`$lib/server/demoPreviewSession.ts`), and navigates to `/groups/{group_id}` with `invalidateAll` (needed because the cookie was set via a plain `fetch`, outside SvelteKit's own invalidation tracking, same reason `saveAcrossDevices` calls it). `hooks.server.ts` reads the marker into `locals.demoPreviewJoinCode`, threaded through the root `+layout.server.ts` into `PageData`; the root layout renders a persistent, non-dismissible banner with "Exit preview", which posts to a new `/demo-preview/exit` route that reads the join code back out of the marker cookie, clears both cookies, and redirects to `/join/{code}`. Spot-checked `PREVIEW_READ_ONLY:` 403 legibility on 3 admin flows against a locally seeded demo group (docker compose + a real Playwright walkthrough): the page-settings toggle and homework-creation actions already forwarded `BackendApiError.message` into a visible slot for free; the responsibilities tab's signup/assign and cancel/reinstate forms did not (a silent no-op), so added the missing `form?.error` rendering there (`ResponsibilitiesTab.svelte`). Verified end to end: Settings shows "Preview Admin" only for the Backend-flagged demo group (confirmed absent for a second, non-demo seeded group), the full admin view renders, a blocked page-settings write shows the legible message and left `homework.enabled` unchanged (re-checked via a direct curl with the real admin's own token), and "Exit preview" clears both cookies and lands back on `/join/{code}`. `check` 0 errors, `build` clean, vitest 126 (+12). Not deployed; needs the human's real-browser pass once `DEMO_JOIN_CODE` is set on Render.
 

@@ -54,11 +54,13 @@ from app.services.pages import (
 )
 from app.services.participants import (
     ensure_guest_membership,
+    find_guest_matches,
+    merge_participant,
     mint_anonymous_participant,
     resolve_participant,
     set_participant_cookie,
 )
-from app.services.responsibilities import role_coverage
+from app.services.responsibilities import role_coverage, signup_display_name
 
 router = APIRouter(tags=["responsibilities"])
 
@@ -148,11 +150,10 @@ def _signup_out(signup: ResponsibilitySignup, user: User | None) -> Responsibili
     admin-assigned name with no account at all (`user` `None`, display name
     comes from `signup.guest_name` instead) — see `ResponsibilitySignup`'s
     own docstring for why those two are mutually exclusive."""
+    name = signup_display_name(signup, user)
     if user is not None:
-        return ResponsibilitySignupOut(id=signup.id, user_id=user.id, name=user.name, email=user.email, created_at=signup.created_at)
-    return ResponsibilitySignupOut(
-        id=signup.id, user_id=None, name=signup.guest_name or "Unnamed", email=None, created_at=signup.created_at
-    )
+        return ResponsibilitySignupOut(id=signup.id, user_id=user.id, name=name, email=user.email, created_at=signup.created_at)
+    return ResponsibilitySignupOut(id=signup.id, user_id=None, name=name, email=None, created_at=signup.created_at)
 
 
 def _date_out(date: ResponsibilityDate, db: Session) -> ResponsibilityDateOut:
@@ -667,6 +668,27 @@ def create_signup(
     minted = actor is None
     if minted:
         actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.is_anonymous and payload.claim_user_id:
+        # B21 "is this you?" confirm: re-validate the claim server-side
+        # (never trust the client's confirmation blind) against the same
+        # `find_guest_matches` the name-matches endpoint used, then fold
+        # this call's actor into that existing guest row. The safety
+        # boundary lives entirely in `find_guest_matches`: it only ever
+        # returns another *guest* already in this exact group, so this can
+        # never claim a real member/admin account.
+        claim_name = payload.display_name or actor.name
+        matches = find_guest_matches(db, group_id, claim_name)
+        if not any(u.id == payload.claim_user_id for u in matches):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That participant isn't a guest match for this name in this group",
+            )
+        target = db.get(User, payload.claim_user_id)
+        assert target is not None
+        if actor.id != target.id:
+            merge_participant(db, source=actor, target=target)
+        actor = target
 
     if actor.is_anonymous:
         # A local-only client is effectively a guest: the page must be

@@ -1,17 +1,11 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, BackendApiError } from '$lib/server/backend';
-import { clearSessionCookie, setSessionCookie } from '$lib/server/session';
-import {
-	backendCookieHeader,
-	clearParticipantCookie,
-	readParticipantCookie
-} from '$lib/server/participantSession';
+import { clearSessionCookie } from '$lib/server/session';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type { Actions } from './$types';
 
-/** Both actions are targeted from `SettingsDrawer.svelte` (`action="/settings?/..."`)
+/** Every action here is targeted from `SettingsDrawer.svelte` (`action="/settings?/..."`)
  * rather than from this route's own page, since the drawer is mounted once
  * in the root layout and can be open over any page in the app — see
  * `settingsDrawer.svelte.ts` for why. */
@@ -54,59 +48,6 @@ export const actions: Actions = {
 			throw err;
 		}
 		return { success: true, form: 'changePassword' as const };
-	},
-
-	// F23 / Backend B19 "Save across devices": attach a name + numeric PIN
-	// to this device's anonymous participant row (or fold it into a
-	// matching saved account). On success the Backend hands back a normal
-	// bearer token, which becomes this device's session cookie, and the
-	// `divisi_participant` cookie is retired. Targeted from
-	// `SettingsDrawer.svelte`'s Save section; needs the raw participant
-	// cookie forwarded, so it uses `fetch` directly rather than
-	// `backendFetch` (which is bearer-only and throws away the response on
-	// a non-2xx, losing the Backend's `detail`).
-	saveAcrossDevices: async ({ request, cookies, fetch }) => {
-		const form = await request.formData();
-		const name = String(form.get('name') ?? '').trim();
-		const pin = String(form.get('pin') ?? '').trim();
-		const localId = String(form.get('localId') ?? '').trim();
-		if (!name) return fail(400, { error: m.save_enter_name(), form: 'saveAcrossDevices' });
-		if (!/^[0-9]{4,8}$/.test(pin)) return fail(400, { error: m.save_pin_invalid(), form: 'saveAcrossDevices' });
-
-		const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-		const forward = backendCookieHeader(readParticipantCookie(cookies));
-		if (forward) headers.Cookie = forward;
-
-		let res: Response;
-		try {
-			res = await fetch(`${PUBLIC_API_BASE_URL}/auth/save`, {
-				method: 'POST',
-				headers,
-				body: JSON.stringify({ name, pin, local_id: localId || undefined }),
-				signal: AbortSignal.timeout(20_000)
-			});
-		} catch {
-			return fail(503, { error: m.errors_could_not_reach_server(), form: 'saveAcrossDevices' });
-		}
-
-		if (!res.ok) {
-			let detail = '';
-			try {
-				detail = ((await res.json()) as { detail?: string }).detail ?? '';
-			} catch {
-				detail = '';
-			}
-			if (res.status === 422) return fail(400, { error: m.save_pin_invalid(), form: 'saveAcrossDevices' });
-			return fail(res.status, {
-				error: detail || m.errors_request_failed({ status: res.status }),
-				form: 'saveAcrossDevices'
-			});
-		}
-
-		const { access_token: accessToken } = (await res.json()) as { access_token: string };
-		setSessionCookie(cookies, accessToken);
-		clearParticipantCookie(cookies);
-		return { success: true, form: 'saveAcrossDevices' as const };
 	},
 
 	// Destructive and irreversible — the Backend itself is the source of

@@ -4,7 +4,7 @@ import type { Cookies } from '@sveltejs/kit';
  *
  * A visitor who clicks "Preview Admin" on the public demo's join page gets
  * a *normal* session cookie (`$lib/server/session.ts`'s `setSessionCookie`,
- * same helper `/auth/save` and the OAuth callback use: every existing
+ * the same helper `/auth/login` and the OAuth callback use: every existing
  * admin screen renders exactly as it would for a real admin, since the
  * Backend's `admin_preview` token resolves as one for every read) plus
  * this separate first-party marker, whose value is the join code they

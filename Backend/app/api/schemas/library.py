@@ -198,6 +198,21 @@ class GuestPieceOwnerOut(BaseModel):
     guest_password_required: bool
 
 
+class GuestNameMatchOut(BaseModel):
+    """B21: one candidate a typed name might be — an existing *guest*
+    participant already in this same group (never a real member/admin,
+    see `find_guest_matches`'s safety boundary). The join page shows this
+    as "is this you?" before a first shared action, so a returning singer
+    on a new device can reconnect to their earlier signups instead of
+    minting a duplicate participant. `title` mirrors the roster's
+    per-membership title (e.g. "Soprano 2"); `joined_at` is the fallback
+    the Frontend shows when there's no title."""
+
+    user_id: str
+    title: str | None = None
+    joined_at: datetime
+
+
 class GuestAuthIn(BaseModel):
     """Body of POST /guest/{join_code}/auth: the group's guest password,
     exchanged for a signed guest token. Optional so a group with no guest

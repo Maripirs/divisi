@@ -3,7 +3,6 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll, goto } from '$app/navigation';
 	import { settingsDrawer } from '$lib/stores/settingsDrawer.svelte';
-	import { localProfile, markProfileSaved } from '$lib/localProfile';
 	import { demoPreviewGuest, shouldShowAdminPreview } from '$lib/demoPreview';
 	import { themeMode, setThemeMode, type ThemeMode } from '$lib/theme';
 	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
@@ -93,18 +92,6 @@
 		newPasswordDraft.length > 0 && confirmNewPasswordDraft.length > 0 && newPasswordDraft !== confirmNewPasswordDraft
 	);
 
-	// F23 "Save across devices": a local-only visitor attaches a name + PIN
-	// to this device's anonymous participant row (Backend B19
-	// `POST /auth/save`, via `/settings?/saveAcrossDevices`). On success the
-	// Backend returns a normal bearer token, which the action turns into
-	// this device's session cookie; `invalidateAll()` then swaps this whole
-	// section over to the ordinary logged-in account view above.
-	let saveName = $state('');
-	let savePin = $state('');
-	let savingProfile = $state(false);
-	let saveError = $state<string | null>(null);
-	const savePinValid = $derived(/^[0-9]{4,8}$/.test(savePin));
-
 	// F24 "Preview Admin": a read-only demo-admin session for the one guest
 	// group the Backend flags as the public demo (`$lib/demoPreview.ts`,
 	// fed by `GuestGroupOut.admin_preview_available` via B20). Posting to
@@ -129,9 +116,8 @@
 				// The proxy route above set the session + marker cookies via a
 				// plain `fetch`, outside SvelteKit's own invalidation tracking,
 				// so the root layout's server load (which reads them) would
-				// otherwise keep serving its stale pre-preview result (same
-				// reason "Save across devices" above calls `invalidateAll()`
-				// after its own cookie-setting action).
+				// otherwise keep serving its stale pre-preview result — hence
+				// the explicit `invalidateAll: true` below.
 				await goto(lh(`/groups/${body.groupId}`), { invalidateAll: true });
 			} else {
 				adminPreviewError = m.demo_preview_failed();
@@ -303,70 +289,24 @@
 						</span>
 					</div>
 				{/if}
-			{:else if $localProfile.saved}
-				<!-- Saved via the PIN path this session; the root layout's
-				     `/auth/me` reconcile is still in flight, after which the
-				     block above renders the real account. -->
-				<p class="card-meta">{m.save_done_note()}</p>
 			{:else}
-				<p class="card-meta">{m.save_only_this_device()}</p>
-				<form
-					method="POST"
-					action="/settings?/saveAcrossDevices"
-					use:enhance={() => {
-						savingProfile = true;
-						saveError = null;
-						return async ({ result }) => {
-							savingProfile = false;
-							if (result.type === 'failure') {
-								saveError = (result.data as { error?: string } | undefined)?.error ?? m.save_failed();
-								return;
-							}
-							if (result.type === 'success') {
-								markProfileSaved();
-								saveName = '';
-								savePin = '';
-								await invalidateAll();
-								close();
-							}
-						};
-					}}
-				>
-					<input type="hidden" name="localId" value={$localProfile.localId} />
-					<label class="field">
-						<span>{m.save_name_label()}</span>
-						<input name="name" bind:value={saveName} required autocomplete="name" />
-					</label>
-					<label class="field">
-						<span>{m.save_pin_label()}</span>
-						<input
-							name="pin"
-							bind:value={savePin}
-							inputmode="numeric"
-							pattern="[0-9]*"
-							minlength="4"
-							maxlength="8"
-							required
-							autocomplete="off"
-						/>
-					</label>
-					<p class="card-note">{m.save_pin_help()}</p>
-					{#if saveError}<p class="error">{saveError}</p>{/if}
-					<button type="submit" class="btn btn-primary btn-block" disabled={savingProfile || !savePinValid}>
-						{savingProfile ? m.reset_password_saving() : m.save_action()}
-					</button>
-				</form>
-
-				<p class="card-meta">{m.settings_guest_note()}</p>
+				<!-- B21: no PIN "Save across devices" any more. This device's
+				     guest identity (name + local signups) just stays local;
+				     joining the same group again elsewhere with the same name
+				     offers to reconnect it (see the join page's "is this
+				     you?" step). A real cross-device account is a separate,
+				     ordinary registration below, unrelated to this device's
+				     guest row. -->
+				<p class="card-meta">{m.settings_guest_local_note()}</p>
 				<div class="btn-row">
 					<a class="btn btn-outline" href={lh('/login?mode=register')} onclick={close}>{m.settings_create_account()}</a>
 					<a class="btn btn-outline" href={lh('/login')} onclick={close}>{m.login_title()}</a>
 				</div>
 
 				{#if showAdminPreview}
-					<!-- F24: distinct from the Save-across-devices form above.
-					     This is about seeing the conductor's view, not attaching
-					     a real identity to this device. -->
+					<!-- F24: distinct from the guest note above. This is about
+					     seeing the conductor's view, not attaching a real
+					     identity to this device. -->
 					<div class="admin-preview-block">
 						<p class="card-meta">{m.demo_preview_explainer()}</p>
 						{#if adminPreviewError}<p class="error">{adminPreviewError}</p>{/if}
@@ -724,8 +664,8 @@
 		color: var(--danger);
 	}
 
-	/* F24: sits under the Save-across-devices form and the login/register
-	   row, set off with a top border so it doesn't read as part of either. */
+	/* F24: sits under the guest note and the login/register row, set off
+	   with a top border so it doesn't read as part of either. */
 	.admin-preview-block {
 		margin-top: 0.75rem;
 		padding-top: 0.75rem;

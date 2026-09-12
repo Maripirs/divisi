@@ -1,5 +1,7 @@
-"""B13: schedules/roles/dates/signups, plus their guest-facing (no signup
-identities) counterparts."""
+"""B13: schedules/roles/dates/signups, plus their guest-facing counterparts.
+The guest shapes now carry signup names too (reachability is already the
+real gate, see `require_guest_page_access`); they still never carry an
+email or an account id, only member/admin ever see those."""
 
 from datetime import datetime
 
@@ -83,6 +85,13 @@ class ResponsibilitySignupCreate(BaseModel):
     # authenticated call or an admin assignment (`user_id`/`name`).
     local_id: str | None = None
     display_name: str | None = None
+    # B21: set when the caller confirmed a `GET /guest/{join_code}/
+    # name-matches` "is this you?" candidate. The route re-validates it
+    # against `find_guest_matches` before merging — never trusted blind —
+    # so a guest can only ever fold into another guest already in this
+    # same group, never claim a real account. Ignored for an authenticated
+    # call or an admin assignment, same as `local_id`/`display_name`.
+    claim_user_id: str | None = None
 
 
 class ResponsibilitySignupOut(BaseModel):
@@ -128,27 +137,42 @@ class ResponsibilityDateScheduleAttach(BaseModel):
     schedule_id: str
 
 
+class ResponsibilityGuestSignupOut(BaseModel):
+    """Guest-facing signup identity: name only, never email or account
+    id. Reachability is already gated by `audience = everyone` (see
+    `require_guest_page_access`), this is just what's in the payload
+    once a guest is allowed to see the page at all."""
+
+    id: str
+    name: str
+
+
 class ResponsibilityGuestRoleCoverageOut(BaseModel):
-    """Same coverage numbers as the member view, minus `signups` — a guest
-    gets no member names/emails, just whether a role still needs people."""
+    """Same coverage numbers as the member view, plus `signups` with the
+    same names a member sees, just never an email or account id, only
+    member/admin ever see those two."""
 
     role_id: str
     role_name: str
     needed_count: int
     active_count: int
     status: str
+    signups: list[ResponsibilityGuestSignupOut]
 
 
 class ResponsibilityGuestScheduleGroupOut(BaseModel):
     """Guest-facing counterpart of `ResponsibilityDateScheduleGroupOut`: a
-    role set's name plus its per-role coverage numbers only, never who
-    signed up."""
+    role set's name plus its per-role coverage, including who signed up
+    (names only, never email or account id)."""
 
     schedule_name: str
     roles: list[ResponsibilityGuestRoleCoverageOut]
 
 
 class ResponsibilityGuestDateOut(BaseModel):
+    """Guest-facing counterpart of `ResponsibilityDateOut`: same shape,
+    same signup names, just never an email or account id anywhere in it."""
+
     id: str
     date: datetime
     notes: str

@@ -34,7 +34,7 @@
 	"login_continue_with_google": "Continuar con Google",
 	"login_continue_with_apple": "Continuar con Apple",
 	"login_oauth_error": "Ese intento de inicio de sesión no funcionó. Inténtalo de nuevo.",
-	"login_back_to_welcome": "Continuar como invitado",
+	"login_guest_divider": "O ingresa un código de grupo",
 
 	"errors_could_not_reach_server": "No se pudo conectar con el servidor. Inténtalo de nuevo en un momento.",
 
@@ -145,6 +145,7 @@
 	"settings_title": "Ajustes",
 	"settings_account": "Cuenta",
 	"settings_guest_note": "Estás navegando como invitado/a, así que nada de esto sale de este dispositivo. Crea una cuenta (o inicia sesión en una) para conservarlo y tus grupos en todos lados donde inicies sesión.",
+	"settings_guest_local_note": "La identidad de invitado/a de este dispositivo es local. Únete a este grupo de nuevo desde otro dispositivo con el mismo nombre para reconectarla.",
 	"settings_create_account": "Crear una cuenta",
 	"settings_theme": "Tema",
 	"settings_appearance": "Apariencia",
@@ -556,15 +557,6 @@
 	"piece_notes_saving": "Guardando…",
 	"piece_notes_body_required": "Escribe algo antes de guardar.",
 
-	"save_action": "Guardar en tus dispositivos",
-	"save_only_this_device": "Solo estás en este dispositivo. Agrega un nombre y un PIN para volver a iniciar sesión en tu teléfono u otro navegador y conservar tus grupos, notas y progreso.",
-	"save_done_note": "Guardado. Terminando de iniciar tu sesión…",
-	"save_name_label": "Tu nombre",
-	"save_pin_label": "PIN",
-	"save_pin_help": "De 4 a 8 dígitos. Ingresarás tu nombre y este PIN para volver a iniciar sesión en otro dispositivo, así que elige algo que recuerdes.",
-	"save_enter_name": "Ingresa un nombre.",
-	"save_pin_invalid": "Tu PIN debe tener de 4 a 8 dígitos, solo números.",
-	"save_failed": "No se pudo guardar. Inténtalo de nuevo.",
 
 	"demo_preview_explainer": "Mira cómo se ve la vista del director. Nada de lo que hagas aquí se guarda.",
 	"demo_preview_button": "Vista previa de Admin",
@@ -573,7 +565,7 @@
 	"demo_preview_banner": "Vista previa de demo: solo lectura, nada de lo que hagas aquí se guarda.",
 	"demo_preview_exit": "Salir de la vista previa",
 
-	"local_only_banner_body": "Ya estás inscrito/a, pero solo en este dispositivo. Hasta que uses Guardar en tus dispositivos, si borras el navegador se pierden tu nombre, tus notas y tu progreso.",
+	"local_only_banner_body": "Ya estás inscrito/a, pero la identidad de invitado/a de este dispositivo es local. Únete a este grupo de nuevo desde otro dispositivo con el mismo nombre para reconectarla.",
 	"responsibilities_sign_me_up": "Inscribirme",
 	"responsibilities_signing_up": "Inscribiendo…",
 	"responsibilities_signup_done": "Estás inscrito/a.",
@@ -581,6 +573,10 @@
 	"responsibilities_save_required": "Esta hoja requiere una cuenta guardada.",
 	"responsibilities_signup_conflict": "Ya estás inscrito/a en este rol.",
 	"responsibilities_signup_failed": "No se pudo inscribirte. Inténtalo de nuevo.",
+	"name_match_title": "¿Eres tú?",
+	"name_match_joined": "Se unió el {date}",
+	"name_match_confirm": "Sí, soy yo",
+	"name_match_decline": "No soy yo",
 	"roster_unverified_badge": "Sin verificar",
 	"roster_unverified_hint": "Se inscribió desde un dispositivo, aún sin cuenta guardada.",
 

@@ -12,7 +12,7 @@ import type { RequestHandler } from './$types';
  * bearer token that resolves as the demo group's real admin for every
  * read (a process-wide Backend middleware rejects every non-GET request
  * it makes, regardless of route), so we just set it as the *normal*
- * session cookie (same helper `/auth/save` and the OAuth callback use,
+ * session cookie (same helper `/auth/login` and the OAuth callback use,
  * every existing admin screen renders as-is) plus a first-party marker
  * cookie so the rest of the app can tell this session apart from a real
  * login (the persistent banner, "Exit preview").

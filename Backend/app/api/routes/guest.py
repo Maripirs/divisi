@@ -28,6 +28,7 @@ from app.api.schemas import (
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupOut,
+    GuestNameMatchOut,
     GuestPieceOut,
     GuestPieceOwnerOut,
     HomeworkOut,
@@ -37,6 +38,7 @@ from app.api.schemas import (
     ResponsibilityGuestDateOut,
     ResponsibilityGuestRoleCoverageOut,
     ResponsibilityGuestScheduleGroupOut,
+    ResponsibilityGuestSignupOut,
     WeeklyNoteOut,
 )
 from app.core.config import get_settings
@@ -62,7 +64,8 @@ from app.db.models import (
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 from app.services.pages import require_guest_page_access
-from app.services.responsibilities import role_coverage
+from app.services.participants import find_guest_matches
+from app.services.responsibilities import role_coverage, signup_display_name
 from app.storage.files import resolve_existing_source_path
 
 router = APIRouter(prefix="/guest", tags=["guest"], dependencies=[Depends(rate_limit_guest)])
@@ -219,6 +222,36 @@ def start_admin_preview(join_code: str, db: Session = Depends(get_db)) -> AdminP
     return AdminPreviewOut(access_token=create_admin_preview_token(admin_membership.user_id), group_id=group.id)
 
 
+@router.get("/{join_code}/name-matches", response_model=list[GuestNameMatchOut])
+def get_guest_name_matches(join_code: str, name: str, db: Session = Depends(get_db)) -> list[GuestNameMatchOut]:
+    """B21: candidates a typed name might already be, before a first
+    shared action is submitted. The join page calls this to offer "is this
+    you?" — confirming folds the caller into the matched row instead of
+    minting a duplicate (see `ResponsibilitySignupCreate.claim_user_id`).
+    Sourced entirely from `find_guest_matches`, so it carries the same
+    safety boundary: only ever another *guest* already in this exact
+    group, never a real member/admin, never a guest of a different group.
+    Empty list when nothing matches — that's the common case, and it just
+    means "proceed as a brand-new participant"."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    matches = find_guest_matches(db, group.id, name)
+    out: list[GuestNameMatchOut] = []
+    for user in matches:
+        membership = (
+            db.query(GroupMembership)
+            .filter(GroupMembership.group_id == group.id, GroupMembership.user_id == user.id)
+            .first()
+        )
+        out.append(
+            GuestNameMatchOut(
+                user_id=user.id,
+                title=membership.title if membership else None,
+                joined_at=membership.created_at if membership else user.created_at,
+            )
+        )
+    return out
+
+
 @router.get("/{join_code}", response_model=GuestGroupOut)
 def resolve_join_code(
     join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
@@ -310,10 +343,13 @@ def list_guest_responsibility_dates(
     join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
 ) -> list[ResponsibilityGuestDateOut]:
     """Read-only, same no-auth stance as the rest of this router. Unlike the
-    member-facing `GET /groups/{id}/responsibilities/dates`, this never
-    returns *who* signed up (see `ResponsibilityGuestRoleCoverageOut`):
-    member names/emails aren't something a join-code link should hand out,
-    only whether a role still needs people. A date can carry several role
+    member-facing `GET /groups/{id}/responsibilities/dates`, this route's
+    real gate is reachability itself: it only answers at all when the
+    group's admin set the `responsibilities` page's audience to `everyone`
+    (see `require_guest_page_access`), and once a guest can reach it, they
+    see the same signup names a member sees (see
+    `ResponsibilityGuestRoleCoverageOut`) - just never an email or account
+    id, those two stay member/admin-only. A date can carry several role
     sets at once (`schedules`), each its own group of roles, with coverage
     rolled up across all of them. Gated by B12's `responsibilities` page
     settings, same mechanism as homework."""
@@ -354,7 +390,7 @@ def list_guest_responsibility_dates(
             )
             role_outs = []
             for role in roles:
-                active_count, coverage_status, _signups = role_coverage(date.id, role, db)
+                active_count, coverage_status, signups = role_coverage(date.id, role, db)
                 role_outs.append(
                     ResponsibilityGuestRoleCoverageOut(
                         role_id=role.id,
@@ -362,6 +398,10 @@ def list_guest_responsibility_dates(
                         needed_count=role.needed_count,
                         active_count=active_count,
                         status=coverage_status,
+                        signups=[
+                            ResponsibilityGuestSignupOut(id=s.id, name=signup_display_name(s, u))
+                            for s, u in signups
+                        ],
                     )
                 )
             schedule_groups.append(

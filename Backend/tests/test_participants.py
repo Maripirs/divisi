@@ -1,6 +1,8 @@
 """B19: anonymous participants (mint-on-first-shared-action), the
-`min_identity` write gate, "Save across devices" merge, the roster badge,
-and the prune command.
+`min_identity` write gate, the roster badge, and the prune command. B21:
+group-scoped guest name matching (`find_guest_matches`, the name-matches
+endpoint, and claiming via `claim_user_id`), which replaced B19's
+PIN-based "Save across devices".
 
 The first wired shared action is a responsibility self-signup, so these
 drive that route. Helpers mirror `tests/test_responsibilities.py`.
@@ -8,7 +10,9 @@ drive that route. Helpers mirror `tests/test_responsibilities.py`.
 
 from datetime import datetime, timedelta, timezone
 
+from app.core import rate_limit
 from app.db.models import Annotation, GroupMembership, ResponsibilitySignup, User
+from app.services.participants import find_guest_matches
 from scripts.prune_anonymous_participants import prune_anonymous_participants
 
 
@@ -187,108 +191,146 @@ def test_members_only_responsibilities_page_gives_an_anonymous_self_signup_a_404
     assert ok.status_code == 201
 
 
-def test_save_via_pin_promotes_in_place_and_keeps_the_earlier_signup(client):
-    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b19-p@example.com")
+# --- B21: group-scoped guest name matching -------------------------------
+
+
+def test_find_guest_matches_only_matches_guests_in_this_specific_group(client, db_session):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b21-a@example.com")
+    date = _make_date(client, admin_headers, schedule)
+
+    client.cookies.clear()
+    client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-alex", "display_name": "Alex"},
+    )
+
+    # A second, unrelated group with its own guest also named "Alex" — same
+    # name, different group, must never show up as a match for the first.
+    other_admin_headers, other_group_id, other_schedule, other_role_id = _fresh_setup(
+        client, "b21-a-other@example.com"
+    )
+    other_date = _make_date(client, other_admin_headers, other_schedule)
+    client.cookies.clear()
+    client.post(
+        f"/responsibilities/dates/{other_date['id']}/signups",
+        json={"role_id": other_role_id, "local_id": "dev-alex-2", "display_name": "Alex"},
+    )
+
+    db_session.rollback()
+    matches = find_guest_matches(db_session, group_id, "alex")  # case-insensitive, trimmed
+    assert len(matches) == 1
+    assert matches[0].name == "Alex"
+
+    # The admin is a real (non-guest) account named "Name" (see
+    # `_register_and_login`'s default) — never a match, even on an exact hit.
+    assert find_guest_matches(db_session, group_id, "Name") == []
+
+
+def test_name_matches_endpoint_returns_candidates_and_empty_list(client):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b21-b@example.com")
     date = _make_date(client, admin_headers, schedule)
 
     client.cookies.clear()
     signup = client.post(
         f"/responsibilities/dates/{date['id']}/signups",
-        json={"role_id": role_id, "local_id": "dev-pat", "display_name": "Pat"},
+        json={"role_id": role_id, "local_id": "dev-bo", "display_name": "Bo"},
     )
-    assert signup.status_code == 201
-    participant_id = signup.json()["user_id"]
+    user_id = signup.json()["user_id"]
 
-    saved = client.post("/auth/save", json={"name": "Patricia", "pin": "1234", "local_id": "dev-pat"})
-    assert saved.status_code == 200
-    token = saved.json()["access_token"]
+    groups = client.get("/groups", headers=admin_headers).json()
+    join_code = next(g["join_code"] for g in groups if g["id"] == group_id)
 
-    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
-    assert me["id"] == participant_id  # same row, promoted in place
+    rate_limit._hits.clear()
+    found = client.get(f"/guest/{join_code}/name-matches", params={"name": "bo"})
+    assert found.status_code == 200
+    body = found.json()
+    assert len(body) == 1
+    assert body[0]["user_id"] == user_id
+    assert "joined_at" in body[0]
 
-    members = {m["user_id"]: m for m in _members(client, admin_headers, group_id)}
-    assert members[participant_id]["is_anonymous"] is False
-
-    # The signup made before Save still belongs to the (now saved) account.
-    dates = client.get(
-        f"/groups/{group_id}/responsibilities/dates", headers=admin_headers
-    ).json()
-    signups = dates[0]["schedules"][0]["roles"][0]["signups"]
-    assert any(s["user_id"] == participant_id and s["name"] == "Patricia" for s in signups)
+    empty = client.get(f"/guest/{join_code}/name-matches", params={"name": "Nobody"})
+    assert empty.status_code == 200
+    assert empty.json() == []
 
 
-def test_merge_across_two_devices_folds_into_one_account(client, db_session):
-    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b19-f@example.com")
-    date = _make_date(client, admin_headers, schedule)
+def test_claim_user_id_merges_two_devices_into_one_guest_account(client, db_session):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b21-c@example.com")
+    date1 = _make_date(client, admin_headers, schedule, "2026-09-06T10:00:00Z")
+    date2 = _make_date(client, admin_headers, schedule, "2026-09-13T10:00:00Z")
+    date3 = _make_date(client, admin_headers, schedule, "2026-09-20T10:00:00Z")
 
-    # Device A: mint via a self-signup, then Save.
+    # Device A: mints via a self-signup as "Sam".
     client.cookies.clear()
     a_signup = client.post(
-        f"/responsibilities/dates/{date['id']}/signups",
-        json={"role_id": role_id, "local_id": "dev-A", "display_name": "Sammy"},
+        f"/responsibilities/dates/{date1['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-A", "display_name": "Sam"},
     )
     assert a_signup.status_code == 201
-    a_save = client.post("/auth/save", json={"name": "Sam", "pin": "1234", "local_id": "dev-A"})
-    assert a_save.status_code == 200
-    a_token = a_save.json()["access_token"]
-    a_user_id = client.get(
-        "/auth/me", headers={"Authorization": f"Bearer {a_token}"}
-    ).json()["id"]
+    a_user_id = a_signup.json()["user_id"]
 
-    # Device B: a fresh client state, mint via a signup on the same group
-    # with a different local_id, then Save with the same name + PIN.
+    # Device B: mints its own row under a different name first, so it has
+    # its own identity and signup to repoint, then later confirms "is this
+    # you? Sam" and claims A's id.
     client.cookies.clear()
     b_signup = client.post(
-        f"/responsibilities/dates/{date['id']}/signups",
+        f"/responsibilities/dates/{date2['id']}/signups",
         json={"role_id": role_id, "local_id": "dev-B", "display_name": "Sam B"},
     )
     assert b_signup.status_code == 201
     b_user_id = b_signup.json()["user_id"]
     assert b_user_id != a_user_id
 
-    b_save = client.post("/auth/save", json={"name": "Sam", "pin": "1234", "local_id": "dev-B"})
-    assert b_save.status_code == 200
-    b_token = b_save.json()["access_token"]
-    surviving_id = client.get(
-        "/auth/me", headers={"Authorization": f"Bearer {b_token}"}
-    ).json()["id"]
-    assert surviving_id == a_user_id
+    claimed = client.post(
+        f"/responsibilities/dates/{date3['id']}/signups",
+        json={
+            "role_id": role_id,
+            "local_id": "dev-B",
+            "display_name": "Sam",
+            "claim_user_id": a_user_id,
+        },
+    )
+    assert claimed.status_code == 201
+    assert claimed.json()["user_id"] == a_user_id
 
     db_session.rollback()
-    assert db_session.get(User, b_user_id) is None
+    assert db_session.get(User, b_user_id) is None  # source row deleted
     memberships = (
         db_session.query(GroupMembership)
         .filter(GroupMembership.user_id == a_user_id, GroupMembership.group_id == group_id)
         .all()
     )
-    assert len(memberships) == 1
-    # Device B's signup now resolves to the surviving account.
-    b_signups = (
+    assert len(memberships) == 1  # union, not duplicated
+    # Device B's earlier signup now resolves to the surviving account.
+    repointed = (
         db_session.query(ResponsibilitySignup)
-        .filter(ResponsibilitySignup.user_id == a_user_id, ResponsibilitySignup.date_id == date["id"])
+        .filter(ResponsibilitySignup.user_id == a_user_id, ResponsibilitySignup.date_id == date2["id"])
         .all()
     )
-    assert len(b_signups) == 1
+    assert len(repointed) == 1
+    own = (
+        db_session.query(ResponsibilitySignup)
+        .filter(ResponsibilitySignup.user_id == a_user_id, ResponsibilitySignup.date_id == date3["id"])
+        .all()
+    )
+    assert len(own) == 1
 
 
-def test_merge_reconciles_annotations_last_writer_wins_per_piece(client, db_session):
-    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b19-g@example.com")
-    date = _make_date(client, admin_headers, schedule)
+def test_claim_user_id_merge_reconciles_annotations_last_writer_wins_per_piece(client, db_session):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b21-d@example.com")
+    date1 = _make_date(client, admin_headers, schedule, "2026-09-06T10:00:00Z")
+    date2 = _make_date(client, admin_headers, schedule, "2026-09-13T10:00:00Z")
+    date3 = _make_date(client, admin_headers, schedule, "2026-09-20T10:00:00Z")
 
     client.cookies.clear()
-    client.post(
-        f"/responsibilities/dates/{date['id']}/signups",
+    a_signup = client.post(
+        f"/responsibilities/dates/{date1['id']}/signups",
         json={"role_id": role_id, "local_id": "dev-GA", "display_name": "Gaia"},
     )
-    a_save = client.post("/auth/save", json={"name": "Gee", "pin": "4321", "local_id": "dev-GA"})
-    a_token = a_save.json()["access_token"]
-    a_user_id = client.get(
-        "/auth/me", headers={"Authorization": f"Bearer {a_token}"}
-    ).json()["id"]
+    a_user_id = a_signup.json()["user_id"]
 
     client.cookies.clear()
     b_signup = client.post(
-        f"/responsibilities/dates/{date['id']}/signups",
+        f"/responsibilities/dates/{date2['id']}/signups",
         json={"role_id": role_id, "local_id": "dev-GB", "display_name": "Gene"},
     )
     b_user_id = b_signup.json()["user_id"]
@@ -305,8 +347,16 @@ def test_merge_reconciles_annotations_last_writer_wins_per_piece(client, db_sess
     )
     db_session.commit()
 
-    merged = client.post("/auth/save", json={"name": "Gee", "pin": "4321", "local_id": "dev-GB"})
-    assert merged.status_code == 200
+    merged = client.post(
+        f"/responsibilities/dates/{date3['id']}/signups",
+        json={
+            "role_id": role_id,
+            "local_id": "dev-GB",
+            "display_name": "Gaia",
+            "claim_user_id": a_user_id,
+        },
+    )
+    assert merged.status_code == 201
 
     db_session.rollback()
     rows = (
@@ -317,6 +367,41 @@ def test_merge_reconciles_annotations_last_writer_wins_per_piece(client, db_sess
     assert len(rows) == 1
     assert rows[0].content == "B-newer"
     assert db_session.get(User, b_user_id) is None
+
+
+def test_claim_user_id_rejected_when_not_a_guest_match_in_this_group(client):
+    admin_headers, group_id, schedule, role_id = _fresh_setup(client, "b21-e@example.com")
+    date = _make_date(client, admin_headers, schedule)
+
+    # The admin's name ("Name") is an exact hit, but the admin is a real
+    # account, never a guest match.
+    admin_id = client.get("/auth/me", headers=admin_headers).json()["id"]
+    client.cookies.clear()
+    blocked = client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-z1", "display_name": "Name", "claim_user_id": admin_id},
+    )
+    assert blocked.status_code == 400
+
+    # A genuine guest, but one who belongs to a different group, is also
+    # rejected.
+    other_admin_headers, other_group_id, other_schedule, other_role_id = _fresh_setup(
+        client, "b21-e-other@example.com"
+    )
+    other_date = _make_date(client, other_admin_headers, other_schedule)
+    client.cookies.clear()
+    other_guest = client.post(
+        f"/responsibilities/dates/{other_date['id']}/signups",
+        json={"role_id": other_role_id, "local_id": "dev-z2", "display_name": "Zed"},
+    )
+    other_guest_id = other_guest.json()["user_id"]
+
+    client.cookies.clear()
+    blocked_cross_group = client.post(
+        f"/responsibilities/dates/{date['id']}/signups",
+        json={"role_id": role_id, "local_id": "dev-z3", "display_name": "Zed", "claim_user_id": other_guest_id},
+    )
+    assert blocked_cross_group.status_code == 400
 
 
 def test_roster_flags_a_participant_and_not_the_admin(client):

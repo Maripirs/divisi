@@ -12,8 +12,8 @@ import type { Cookies } from '@sveltejs/kit';
  * stash it in a first-party httpOnly cookie).
  *
  * Read only from server code (`+server.ts` / `+page.server.ts`). Later
- * `/responsibilities/...` and `/auth/save` proxy calls forward it back to
- * the Backend as a `Cookie:` header (see `backendCookieHeader`). */
+ * `/responsibilities/...` proxy calls forward it back to the Backend as a
+ * `Cookie:` header (see `backendCookieHeader`). */
 
 export const PARTICIPANT_COOKIE = 'divisi_participant';
 
