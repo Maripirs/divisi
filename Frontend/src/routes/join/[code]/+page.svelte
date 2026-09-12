@@ -19,6 +19,11 @@
 		dismissSignupBanner,
 		shouldShowSignupBanner
 	} from '$lib/localProfile';
+	import {
+		isOwnedResponsibilitySignup,
+		rememberResponsibilitySignup,
+		forgetResponsibilitySignup
+	} from '$lib/utils/responsibilitySignupOwnership';
 	import { clearDemoPreviewGuest, setDemoPreviewGuest } from '$lib/demoPreview';
 	import { computeGuestTabs, type GuestBuiltinTabKey } from './joinTabs';
 	import '$lib/styles/shell.css';
@@ -81,7 +86,12 @@
 	let promptingKey = $state<string | null>(null);
 	let nameDraft = $state('');
 	let busyKey = $state<string | null>(null);
-	let doneKeys = $state<Set<string>>(new Set());
+	// F34: "have I already signed up for this role" used to live in a
+	// purely in-memory `doneKeys` set, which lost the answer on reload.
+	// `isOwnedResponsibilitySignup` (persisted) is the single source of
+	// truth now, checked against each role's own signup rows below, so
+	// there's only one tracker rather than two that could disagree.
+	let removingId = $state<string | null>(null);
 	let errorByKey = $state<Record<string, string>>({});
 	let saveRequiredKey = $state<string | null>(null);
 	let matchKey = $state<string | null>(null);
@@ -158,13 +168,16 @@
 				})
 			});
 			const body = (await res.json()) as
-				| { ok: true }
+				| { ok: true; signup: { id: string } }
 				| { ok: false; error: 'save-required' }
 				| { ok: false; error: 'conflict'; message?: string }
 				| { ok: false; error: 'server' };
 			if (body.ok) {
 				markSignedUp();
-				doneKeys = new Set([...doneKeys, key]);
+				// F34: remember this signup as ours so the "Remove me" control
+				// shows up for it once `result.responsibilities` reloads below,
+				// and again on a later page visit.
+				rememberResponsibilitySignup(body.signup.id);
 				await invalidateAll();
 			} else if (body.error === 'save-required') {
 				saveRequiredKey = key;
@@ -177,6 +190,33 @@
 			errorByKey = { ...errorByKey, [key]: m.responsibilities_signup_failed() };
 		} finally {
 			busyKey = null;
+		}
+	}
+
+	// F34: a guest removes their own earlier signup, resolved by the new
+	// proxy the same cookie/`local_id` way the create call above is.
+	async function removeSignup(dateId: string, roleId: string, signupId: string) {
+		const key = roleKey(dateId, roleId);
+		removingId = signupId;
+		errorByKey = { ...errorByKey, [key]: '' };
+		try {
+			const res = await fetch(
+				`/join/${data.code}/responsibilities/signups/${signupId}?localId=${encodeURIComponent(ensureLocalId())}`,
+				{ method: 'DELETE' }
+			);
+			const body = (await res.json()) as
+				| { ok: true }
+				| { ok: false; error: 'forbidden' | 'conflict' | 'server'; message?: string };
+			if (body.ok) {
+				forgetResponsibilitySignup(signupId);
+				await invalidateAll();
+			} else {
+				errorByKey = { ...errorByKey, [key]: body.message || m.responsibilities_removal_failed() };
+			}
+		} catch {
+			errorByKey = { ...errorByKey, [key]: m.responsibilities_removal_failed() };
+		} finally {
+			removingId = null;
 		}
 	}
 
@@ -312,19 +352,37 @@
 					{#each result.responsibilities as d (d.id)}
 						{#snippet signupControl(role: ResponsibilityRole)}
 							{@const key = roleKey(d.id, role.roleId)}
+							<!-- F34: "am I already signed up for this role" is derived
+							     from `isOwnedResponsibilitySignup`, checked per signup row
+							     rather than tracked separately, so this can never disagree
+							     with the "Remove me" controls below it. -->
+							{@const mySignedUp = (role.signups ?? []).some((s) => isOwnedResponsibilitySignup(s.id))}
 							<!-- Read-only names, same list the member tab's `roleExtra`
-							     renders (`ResponsibilitiesTab.svelte`), no remove/assign
-							     controls here, a guest can't act on anyone else's signup,
-							     only their own local "sign me up" flow below. -->
+							     renders (`ResponsibilitiesTab.svelte`); a guest can't act
+							     on anyone else's signup, only one it created itself
+							     (F29's `carpoolOwnership.ts` trick, since the guest-facing
+							     signup shape carries no `user_id` to compare against). -->
 							{#each role.signups ?? [] as s (s.id)}
 								<div class="list-row">
 									<span class="dim">{s.name}</span>
+									{#if !d.locked && !d.canceled && isOwnedResponsibilitySignup(s.id)}
+										<button
+											type="button"
+											class="text-link"
+											onclick={() => void removeSignup(d.id, role.roleId, s.id)}
+											disabled={removingId === s.id}
+										>
+											{m.groups_remove_me()}
+										</button>
+									{/if}
 								</div>
 							{/each}
 							{#if !d.locked && !d.canceled && !page.data.user}
 								<div class="signup-control">
-									{#if doneKeys.has(key)}
-										<p class="signup-done">{m.responsibilities_signup_done()}</p>
+									{#if mySignedUp}
+										<!-- Nothing else to show: the "Remove me" control next
+										     to this browser's own name above already reflects
+										     the signed-up state. -->
 									{:else if promptingKey === key}
 										<form
 											class="signup-name-form"
@@ -533,13 +591,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-	}
-
-	.signup-done {
-		margin: 0;
-		font-size: 0.8125rem;
-		font-weight: 700;
-		color: var(--accent);
 	}
 
 	.signup-save-required {

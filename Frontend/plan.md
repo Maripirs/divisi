@@ -108,7 +108,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Built 2026-09-12: `PagesTab.svelte` deleted; a new `+layout.server.ts` under `/groups/[id]` shares the group/role/custom-pages/built-in-enabled-flags data between the main page and `pages/[slug]`, and a pure `groupTabs.ts` (`joinTabs.ts` on the guest side) computes the ordered/filtered/labeled tab list both routes render. Built-in tabs stay local `$state` buttons on the main page; every custom-page tab, and every tab at all from a custom page's own route, is a real link. `check` 0 errors (13 pre-existing warnings, unrelated), `build` clean, vitest 146 green (was 138; +8 new, `groupTabs.test.ts`/`joinTabs.test.ts`). Not deployed; no real-browser pass yet. |
 | F32 | Carpool: standing board by default, dated events for exceptions (frontend for Backend B26) | ✅ Built 2026-09-12; `npm run check` 0 errors, `npm run build` clean, vitest 151 passed (was 146; +5 new) |
 | F33 | Carpool: claim a seat in a driver's post (frontend for Backend B27) | ✅ Built 2026-09-12; check 0 errors, build clean, vitest 155 green |
-| F34 | Guests can remove their own responsibility signup (frontend for Backend B28) | ⏳ Planned 2026-09-12, starts after B28 |
+| F34 | Guests can remove their own responsibility signup (frontend for Backend B28) | ✅ Built 2026-09-12; check 0 errors, build clean, vitest 161 green (was 155; +6 new, `responsibilitySignupOwnership.test.ts`) |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1986,7 +1986,7 @@ Deviations from the plan text:
   that moderation surface wasn't asked for, so it's left out rather than
   guessed at.
 
-### F34 — Guests can remove their own responsibility signup (frontend for Backend B28) [ ]
+### F34 — Guests can remove their own responsibility signup (frontend for Backend B28) [x]
 
 Frontend half of B28. The member tab (`ResponsibilitiesTab.svelte`)
 already shows "Remove me" next to a signup where `s.userId === data.user.id`.
@@ -2002,31 +2002,64 @@ created" in `localStorage`, checked only for a guest (a member's own check
 stays the existing `user_id` compare).
 
 **Acceptance criteria:**
-- [ ] After a guest signs up, that signup's row shows a "Remove me"
+- [x] After a guest signs up, that signup's row shows a "Remove me"
   control, immediately and again on a later page reload (this is the
   part today's purely in-memory `doneKeys` tracking can't do, since it
   resets on reload, so switching to persisted-id tracking fixes visible
   behavior, not just this feature).
-- [ ] Clicking it calls a new guest proxy that resolves the same way the
+- [x] Clicking it calls a new guest proxy that resolves the same way the
   existing responsibilities-signup proxy does (cookie/`local_id`), then
   updates the visible list.
-- [ ] A locked date still shows no "Remove me" (matches the member
+- [x] A locked date still shows no "Remove me" (matches the member
   view's existing behavior, the Backend still enforces the 409 either
   way).
-- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [x] `npm run check` / `npm run build` clean; vitest green.
 
 **Tasks — Claude:**
-- [ ] A small ownership-tracking helper for signup ids, either a new
+- [x] A small ownership-tracking helper for signup ids, either a new
   small module mirroring `carpoolOwnership.ts`'s shape or a generalized
   version both features share, implementer's call. Called right after a
   guest's own signup succeeds.
-- [ ] New guest proxy route for `DELETE .../responsibilities/signups/{id}`,
+- [x] New guest proxy route for `DELETE .../responsibilities/signups/{id}`,
   following the existing signup-create proxy's cookie/local_id handling.
-- [ ] "Remove me" control on the join page's responsibilities view, gated
+- [x] "Remove me" control on the join page's responsibilities view, gated
   on the ownership check above.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Status:** Built 2026-09-12. `npm run check` 0 errors (13 pre-existing
+warnings, none new); `npm run build` clean; vitest 161 green (155 baseline
++ 6 new tests for `responsibilitySignupOwnership.ts`).
+
+Deviations from the plan text:
+- `responsibilitySignupOwnership.ts` is a new module, not a generalization
+  of `carpoolOwnership.ts`: F33 landed concurrently in this same working
+  tree and had already reshaped that file for its own claim-id tracking by
+  the time this was built. Folding a second, unrelated id namespace into a
+  file under active concurrent edit risked a conflict for no real payoff
+  (each module is ~60 lines), so this duplicates the shape instead.
+- The member tab's own "Remove me" (`ResponsibilitiesTab.svelte`) doesn't
+  actually gate on `d.locked`/`d.canceled` today, unlike what this
+  section's acceptance criteria describe. Removal still isn't blocked in
+  the UI, only backstopped by the Backend's 409; the guest control here
+  follows the acceptance criteria as written (hides on a locked/canceled
+  date) rather than the member tab's current, looser behavior, since a
+  guest with no error-recovery affordance for a raw 409 benefits more from
+  the control just not being there.
+- Added `responsibilities_removal_failed` (en/es) rather than reusing
+  `responsibilities_signup_failed` for a failed removal: the existing
+  string reads "Could not sign you up," which is wrong for a delete
+  failure. The new guest DELETE proxy also forwards the Backend's 409
+  detail as `message`, the same way the signup-create proxy already does
+  for its own conflict case, so a locked-date removal attempt shows the
+  real reason rather than a generic fallback.
+- Dropped the old `responsibilities_signup_done` string's only call site
+  (and its now-unused `.signup-done` CSS rule) rather than keeping it
+  alongside the new control: once a guest's own name in the roster carries
+  a "Remove me" button, a separate "You're signed up" line next to the
+  sign-up form is redundant, matching the member tab's own minimalism
+  (no equivalent text there either).
 
 ## Backlog
 
