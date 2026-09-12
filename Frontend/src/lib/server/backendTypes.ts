@@ -164,6 +164,45 @@ export interface GroupCustomPageOut {
 	updated_at: string;
 }
 
+export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
+
+/** B24/F28: one dated carpool occurrence on a carpool-template
+ * `GroupCustomPage`. No lat/lng anywhere (label-only, no map). */
+export interface CarpoolEventOut {
+	id: string;
+	page_id: string;
+	title: string;
+	starts_at: string;
+	destination_label: string;
+	status: CarpoolEventStatus;
+	created_by: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export type CarpoolPostKind = 'driver' | 'rider';
+export type CarpoolPostStatus = 'open' | 'hidden' | 'cancelled';
+
+/** B24/F28: one member's ride offer/request against a `CarpoolEvent`.
+ * `seats_total`/`seats_available`/`leave_time_text` are null for a rider
+ * post; a driver post always has the first two set. `display_name` is
+ * captured at post time, not resolved live from the user. */
+export interface CarpoolPostOut {
+	id: string;
+	event_id: string;
+	user_id: string;
+	display_name: string;
+	kind: CarpoolPostKind;
+	status: CarpoolPostStatus;
+	origin_label: string;
+	seats_total: number | null;
+	seats_available: number | null;
+	leave_time_text: string | null;
+	notes: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface LibraryEntryOut {
 	piece_id: string;
 	title: string;

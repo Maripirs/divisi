@@ -102,7 +102,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. Verified 2026-09-11 end to end (signup, save, cross-device merge, the `min_identity` gate) in a real local browser; still no human/phone pass. |
 | F24 | Guest chrome cleanup + demo "Preview Admin" entry point | ⏳ Built 2026-09-11: banner removal (`0e47174`) plus the Settings "Preview Admin" entry point (frontend for Backend B20): `demoPreview.ts` store, `/join/[code]/admin-preview` proxy, `divisi_demo_preview` marker cookie, persistent banner + "Exit preview". `check`/`build` clean, vitest 126. Verified end to end locally (docker compose + Playwright); no human pass against the deployed demo yet |
 | F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
-| F28 | Carpool board UI (frontend for Backend B24) | ⏳ Planned 2026-09-11, starts after F27/B24 |
+| F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1424,29 +1424,60 @@ for a future milestone since a guest's join view has no admin to hand it
 a slug link in the first place. `npm run check`/`build` clean, vitest 125
 green (unchanged count: no new components, just a load-path fix).
 
-### F28 — Carpool board UI (frontend for Backend B24) [ ]
+### F28 — Carpool board UI (frontend for Backend B24) [x]
 
 Starts once F27 + B24 land.
 
 **Acceptance criteria:**
-- [ ] Carpool page shows an event selector, driver list, rider list.
-- [ ] "I can drive" / "I need a ride" forms (name, origin label, seats/
-  notes as applicable) — no map, no pin picker.
-- [ ] A member can edit/delete their own post from the list.
-- [ ] Admin sees moderation actions (hide/delete any post, lock/archive
+- [x] Carpool page shows an event selector, driver list, rider list.
+- [x] "I can drive" / "I need a ride" forms (name, origin label, seats/
+  notes as applicable), no map, no pin picker.
+- [x] A member can edit/delete their own post from the list.
+- [x] Admin sees moderation actions (hide/delete any post, lock/archive
   event) inline in the same list.
-- [ ] Usable on mobile at the widths the rest of the group pages already
+- [x] Usable on mobile at the widths the rest of the group pages already
   target.
-- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [x] `npm run check` / `npm run build` clean; vitest green.
 
 **Tasks — Claude:**
-- [ ] Carpool template renderer: event selector + driver/rider lists.
-- [ ] Post forms (driver/rider), owner edit/delete.
-- [ ] Admin moderation controls.
-- [ ] Unit tests for form validation; mobile layout pass.
+- [x] Carpool template renderer: event selector + driver/rider lists.
+- [x] Post forms (driver/rider), owner edit/delete.
+- [x] Admin moderation controls.
+- [x] Unit tests for form validation; mobile layout pass.
 
 **Tasks — Human:**
 - [ ] Manual browser pass once deployed.
+
+**Deviations / friction against the real B24 API:**
+- No "name" field on either post form: `CarpoolPostCreate` has no such
+  field at all, `display_name` is always `current_user.name` captured
+  server-side at post time. The plan's own acceptance-criteria wording
+  ("name, origin label, seats/notes") predates reading the real schema.
+- `CarpoolBoard.svelte` (a new `$lib` component) is rendered directly by
+  `routes/groups/[id]/pages/[slug]/+page.svelte` in place of
+  `CustomPageView.svelte` once `template_key === 'carpool_board'`, rather
+  than teaching `CustomPageView` itself the real content: the guest
+  counterpart (`/join/[code]/pages/[slug]`) has no Backend carpool routes
+  to call at all (reads or writes), so it keeps `CustomPageView`'s
+  placeholder unchanged and untouched.
+- `CarpoolPostUpdate` (unlike `CarpoolPostCreate`) has no seat-count
+  validator, so a driver editing `seats_total` down below their current
+  `seats_available` is accepted as-is by the Backend with no consistency
+  check; not worked around client-side since it wasn't asked for.
+- A post an admin hides disappears from its own owner's list too: the
+  Backend's non-admin branch of `GET /carpool/events/{id}/posts` filters
+  to `status=open` with no owner-scoped exception on read (only on direct
+  edit/delete by id, per that route's own docstring). A member has no way
+  to discover or un-hide their own hidden post through this UI as a
+  result; flagged here rather than routed around.
+- Event lock/unlock/archive: the Backend's one `PATCH` endpoint would also
+  accept reopening an archived event, but the UI only ever offers Lock/
+  Unlock and a one-way Archive button, matching the acceptance criteria's
+  literal "lock/archive" wording rather than exposing every state
+  transition the endpoint technically allows.
+- `npm run check` 0 errors, `npm run build` clean, vitest 132 (was 125,
+  +7 new in `$lib/utils/carpool.test.ts`). Not deployed; no real-browser
+  pass yet (Human task above).
 
 ## Backlog
 
