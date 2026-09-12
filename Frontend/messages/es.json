@@ -649,6 +649,8 @@
 	"carpool_hidden_badge": "Oculta",
 	"carpool_delete_post": "Eliminar esta publicación",
 	"carpool_delete_post_confirm": "¿Eliminar esta publicación? No se puede deshacer.",
+	"carpool_save_required": "Este tablero de coche compartido necesita una cuenta guardada.",
+	"carpool_guest_action_failed": "Algo salió mal. Inténtalo de nuevo.",
 
 	"error_404_title": "Página no encontrada",
 	"error_403_title": "No permitido",

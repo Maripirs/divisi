@@ -649,6 +649,8 @@
 	"carpool_hidden_badge": "Hidden",
 	"carpool_delete_post": "Delete this post",
 	"carpool_delete_post_confirm": "Delete this post? This can't be undone.",
+	"carpool_save_required": "This carpool board needs a saved account.",
+	"carpool_guest_action_failed": "Something went wrong. Please try again.",
 
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",

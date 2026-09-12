@@ -1,10 +1,12 @@
 import {
 	GuestApiError,
 	JoinCodeNotFoundError,
+	listGuestCustomPages,
 	listGuestHomework,
 	listGuestResponsibilityDates,
 	listGuestWeeklyNotes,
 	resolveJoinCode,
+	type GuestCustomPageListItem,
 	type GuestGroup,
 	type GuestHomework,
 	type GuestResponsibilityDate,
@@ -38,6 +40,7 @@ export type GuestJoinResult =
 			responsibilitiesVisible: boolean;
 			weeklyNotes: GuestWeeklyNote[];
 			weeklyNotesVisible: boolean;
+			customPages: GuestCustomPageListItem[];
 	  };
 
 /** Runs every guest fetch and resolves (never rejects) to a `GuestJoinResult`
@@ -96,6 +99,13 @@ export async function loadGuestJoin(
 			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
 		}
 
+		// B25/F29: published + `audience: everyone` custom pages (carpool
+		// boards, today). Unlike the three lists above, this route has no
+		// per-group opt-in to gate on — it always answers with whatever
+		// matches, possibly empty — so there's no `...Visible` flag: an empty
+		// array already means "nothing to discover."
+		const customPages = await listGuestCustomPages(code, { token, fetchFn: fetch });
+
 		return {
 			error: null,
 			group,
@@ -104,7 +114,8 @@ export async function loadGuestJoin(
 			responsibilities,
 			responsibilitiesVisible,
 			weeklyNotes,
-			weeklyNotesVisible
+			weeklyNotesVisible,
+			customPages
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };

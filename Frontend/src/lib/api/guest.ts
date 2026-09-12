@@ -410,3 +410,105 @@ export async function getGuestCustomPage(
 	const body: GuestCustomPageResponse = await res.json();
 	return { title: body.title, templateKey: body.template_key };
 }
+
+/** B25: the discovery counterpart to `getGuestCustomPage` above — every
+ * published, `audience: everyone` custom page, so a guest can find one
+ * without a shared slug link (fed into `/join/[code]`'s own "Pages" tab).
+ * Never 404s for a valid join code (an empty array just means this group
+ * has no such page yet), unlike every other guest list here. */
+export interface GuestCustomPageListItem {
+	id: string;
+	title: string;
+	slug: string;
+	templateKey: 'carpool_board';
+}
+
+interface GuestCustomPageListItemResponse {
+	id: string;
+	title: string;
+	slug: string;
+	template_key: 'carpool_board';
+}
+
+export async function listGuestCustomPages(
+	code: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestCustomPageListItem[]> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/pages`, { password, token }), fetchFn);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestCustomPageListItemResponse[] = await res.json();
+	return body.map((p) => ({ id: p.id, title: p.title, slug: p.slug, templateKey: p.template_key }));
+}
+
+/** B24/B25: one dated carpool occurrence and one ride post, exactly the
+ * Backend's own `CarpoolEventOut`/`CarpoolPostOut` shape (snake_case, no
+ * camelCase remap) — unlike every other type in this file, these feed
+ * `CarpoolBoard.svelte` directly (built for the member route, which passes
+ * it `$lib/server/backendTypes`'s identically-shaped types), so keeping the
+ * wire shape as-is here is what lets the same component render either
+ * caller's data with no adapter in between. */
+export interface GuestCarpoolEvent {
+	id: string;
+	page_id: string;
+	title: string;
+	starts_at: string;
+	destination_label: string;
+	status: 'open' | 'locked' | 'archived';
+	created_by: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface GuestCarpoolPost {
+	id: string;
+	event_id: string;
+	user_id: string;
+	display_name: string;
+	kind: 'driver' | 'rider';
+	status: 'open' | 'hidden' | 'cancelled';
+	origin_label: string;
+	seats_total: number | null;
+	seats_available: number | null;
+	leave_time_text: string | null;
+	notes: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** Only reachable at all once `getGuestCustomPage` has already confirmed the
+ * page is published, `audience: everyone`, and a carpool board — a 404 here
+ * (wrong audience, or `getGuestCustomPage` skipped) is a real error, not an
+ * "opted out" signal the way it is for homework/responsibilities/weekly
+ * notes above. */
+export async function listGuestCarpoolEvents(
+	code: string,
+	slug: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestCarpoolEvent[]> {
+	const res = await guestFetch(
+		guestUrl(`/guest/${encodeURIComponent(code)}/pages/${encodeURIComponent(slug)}/carpool/events`, {
+			password,
+			token
+		}),
+		fetchFn
+	);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+	return res.json();
+}
+
+export async function listGuestCarpoolPosts(
+	code: string,
+	eventId: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestCarpoolPost[]> {
+	const res = await guestFetch(
+		guestUrl(`/guest/${encodeURIComponent(code)}/carpool/events/${encodeURIComponent(eventId)}/posts`, {
+			password,
+			token
+		}),
+		fetchFn
+	);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+	return res.json();
+}

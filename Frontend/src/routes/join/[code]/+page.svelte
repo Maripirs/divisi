@@ -51,7 +51,7 @@
 		};
 	});
 
-	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities';
+	type Tab = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities' | 'pages';
 	let tab = $state<Tab>('tracks');
 
 	// F23: local-only responsibility self-signup. A visitor with no account
@@ -259,7 +259,7 @@
 				</section>
 			{/if}
 
-			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible}
+			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.customPages.length > 0}
 				<div class="tabs" role="tablist">
 					<button class="tab" class:active={tab === 'tracks'} onclick={() => (tab = 'tracks')}>
 						{m.tracks_tab_title()}
@@ -277,6 +277,13 @@
 					{#if result.responsibilitiesVisible}
 						<button class="tab" class:active={tab === 'responsibilities'} onclick={() => (tab = 'responsibilities')}>
 							{m.responsibilities_tab_title()}
+						</button>
+					{/if}
+					{#if result.customPages.length > 0}
+						<!-- B25/F29: discovery for a published, everyone-audience custom
+						     page (carpool boards today) — no shared slug link needed. -->
+						<button class="tab" class:active={tab === 'pages'} onclick={() => (tab = 'pages')}>
+							{m.pages_tab_title()}
 						</button>
 					{/if}
 				</div>
@@ -418,6 +425,15 @@
 						/>
 					{/each}
 				{/if}
+			{:else if tab === 'pages' && result.customPages.length > 0}
+				<!-- B25/F29: title plus a "View" link, same list shape the
+				     member-facing `PagesTab.svelte` uses. -->
+				{#each result.customPages as p (p.id)}
+					<div class="card">
+						<p class="card-eyebrow">{p.title}</p>
+						<a class="btn btn-outline" href={lh(`/join/${data.code}/pages/${p.slug}`)}>{m.pages_view()}</a>
+					</div>
+				{/each}
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees
 				     pieces that actually have a practice file wired up (no dead

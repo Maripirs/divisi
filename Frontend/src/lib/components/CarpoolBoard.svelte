@@ -1,9 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import EditableCard from './EditableCard.svelte';
 	import ConfirmButton from './ConfirmButton.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
+	import { driverOfferError, riderRequestError } from '$lib/utils/carpool';
+	import { isOwnedCarpoolPost, rememberCarpoolPost } from '$lib/utils/carpoolOwnership';
+	import { ensureLocalId, localProfile, markSignedUp, needsName, setDisplayName } from '$lib/localProfile';
 	import { m } from '$lib/paraglide/messages';
+	import { lh } from '$lib/i18n';
 	import type { CarpoolEventOut, CarpoolPostOut } from '$lib/server/backendTypes';
 
 	/** B24/F28: the real content behind a carpool-template `GroupCustomPage`
@@ -11,9 +16,20 @@
 	 * ride" forms, owner edit/delete, and, for an admin, event create/edit/
 	 * lock/archive plus post moderation). Rendered directly by `routes/
 	 * groups/[id]/pages/[slug]/+page.svelte` in place of `CustomPageView`'s
-	 * placeholder once `template_key === 'carpool_board'`. The guest route
-	 * keeps using that placeholder unchanged since no guest carpool routes
-	 * exist on the Backend at all (writes *and* reads).
+	 * placeholder once `template_key === 'carpool_board'`.
+	 *
+	 * F29/B25: the `guest` prop is what a guest render passes (`routes/
+	 * join/[code]/pages/[slug]/+page.svelte`) instead of leaving it unset.
+	 * Its presence swaps every write control's mechanics from a SvelteKit
+	 * form action (`use:enhance` against `?/offerRide` etc., resolved by
+	 * this component's own route's `+page.server.ts`) to a plain `fetch`
+	 * against the `/join/[code]/carpool/...` proxy routes, since a guest
+	 * write needs the local profile's name/`local_id` and the lazy
+	 * name-prompt/`SAVE_REQUIRED` handling those proxies (and only those)
+	 * carry — the same reason the guest join page's own responsibility
+	 * self-signup isn't a form action either. `isAdmin` is always `false`
+	 * for a guest (never true), so every admin-only block below already
+	 * stays hidden with no `guest`-specific branch needed.
 	 *
 	 * `form`/`ActionData` is typed loosely rather than imported from this
 	 * route's own `./$types`, so this component stays a plain, reusable
@@ -26,7 +42,8 @@
 		events,
 		selectedEventId,
 		posts,
-		form
+		form,
+		guest = null
 	}: {
 		pageId: string;
 		isAdmin: boolean;
@@ -35,7 +52,10 @@
 		selectedEventId: string | null;
 		posts: CarpoolPostOut[];
 		form: { form?: string; error?: string } | null;
+		guest?: { code: string } | null;
 	} = $props();
+
+	let isGuest = $derived(guest !== null);
 
 	let selectedEvent = $derived(events.find((e) => e.id === selectedEventId) ?? null);
 	let drivers = $derived(posts.filter((p) => p.kind === 'driver'));
@@ -96,44 +116,315 @@
 		editNotesDraft = p.notes ?? '';
 		editingPostId = p.id;
 	}
+
+	// --- F29 guest write path -------------------------------------------
+	// Everything below only runs when `guest` is set. A guest has no
+	// SvelteKit form action to `use:enhance` against (see the doc comment
+	// above), so these forms submit via plain `fetch` instead, mirroring
+	// the guest join page's own `doSignup` (`routes/join/[code]/
+	// +page.svelte`): a small `{ ok, error? }` JSON verdict from the proxy,
+	// `SAVE_REQUIRED` mapped to an inline prompt, everything else to one
+	// generic retry message.
+
+	let guestCreateError = $state('');
+	let guestSaveRequired = $state(false);
+	// Which write is waiting on a name before it can proceed — the ride
+	// form itself only appears once a name is on file, same "prompt first,
+	// then act" order the responsibility self-signup uses.
+	let guestNamePromptFor = $state<'offer' | 'request' | null>(null);
+	let guestNameDraft = $state('');
+
+	let guestOfferOrigin = $state('');
+	let guestOfferSeats = $state<number | undefined>(undefined);
+	let guestOfferLeaveTime = $state('');
+	let guestOfferNotes = $state('');
+	let guestRequestOrigin = $state('');
+	let guestRequestNotes = $state('');
+
+	let guestEditError = $state('');
+
+	function startOfferRide() {
+		guestCreateError = '';
+		guestSaveRequired = false;
+		if (needsName($localProfile)) {
+			guestNamePromptFor = 'offer';
+			guestNameDraft = '';
+			return;
+		}
+		offeringRide = true;
+	}
+
+	function startRequestRide() {
+		guestCreateError = '';
+		guestSaveRequired = false;
+		if (needsName($localProfile)) {
+			guestNamePromptFor = 'request';
+			guestNameDraft = '';
+			return;
+		}
+		requestingRide = true;
+	}
+
+	function confirmGuestName() {
+		const name = guestNameDraft.trim();
+		if (!name) return;
+		setDisplayName(name);
+		const target = guestNamePromptFor;
+		guestNamePromptFor = null;
+		if (target === 'offer') offeringRide = true;
+		else if (target === 'request') requestingRide = true;
+	}
+
+	type GuestWriteResult =
+		| { ok: true; post: CarpoolPostOut }
+		| { ok: false; error: 'save-required' }
+		| { ok: false; error: 'conflict'; message?: string }
+		| { ok: false; error: 'forbidden' }
+		| { ok: false; error: 'server' };
+
+	async function submitGuestPost(
+		eventId: string,
+		body: Record<string, unknown>,
+		onSuccess: (post: CarpoolPostOut) => void
+	): Promise<void> {
+		if (!guest) return;
+		guestCreateError = '';
+		guestSaveRequired = false;
+		try {
+			const res = await fetch(`/join/${guest.code}/carpool/events/${eventId}/posts`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ...body, localId: ensureLocalId(), displayName: $localProfile.displayName })
+			});
+			const result = (await res.json()) as GuestWriteResult;
+			if (result.ok) {
+				rememberCarpoolPost(result.post.id);
+				markSignedUp();
+				onSuccess(result.post);
+				await invalidateAll();
+			} else if (result.error === 'save-required') {
+				guestSaveRequired = true;
+			} else if (result.error === 'conflict') {
+				guestCreateError = result.message || m.carpool_guest_action_failed();
+			} else {
+				guestCreateError = m.carpool_guest_action_failed();
+			}
+		} catch {
+			guestCreateError = m.carpool_guest_action_failed();
+		}
+	}
+
+	async function submitGuestOffer(eventId: string) {
+		const invalid = driverOfferError(guestOfferOrigin, guestOfferSeats ?? null);
+		if (invalid) {
+			guestCreateError = invalid === 'seats' ? m.carpool_driver_needs_seats() : m.carpool_enter_origin();
+			return;
+		}
+		submittingOffer = true;
+		await submitGuestPost(
+			eventId,
+			{
+				kind: 'driver',
+				originLabel: guestOfferOrigin,
+				seatsTotal: guestOfferSeats,
+				leaveTimeText: guestOfferLeaveTime,
+				notes: guestOfferNotes
+			},
+			() => {
+				offeringRide = false;
+				guestOfferOrigin = '';
+				guestOfferSeats = undefined;
+				guestOfferLeaveTime = '';
+				guestOfferNotes = '';
+			}
+		);
+		submittingOffer = false;
+	}
+
+	async function submitGuestRequest(eventId: string) {
+		if (riderRequestError(guestRequestOrigin)) {
+			guestCreateError = m.carpool_enter_origin();
+			return;
+		}
+		submittingRequest = true;
+		await submitGuestPost(
+			eventId,
+			{ kind: 'rider', originLabel: guestRequestOrigin, notes: guestRequestNotes },
+			() => {
+				requestingRide = false;
+				guestRequestOrigin = '';
+				guestRequestNotes = '';
+			}
+		);
+		submittingRequest = false;
+	}
+
+	async function submitGuestPostEdit(p: CarpoolPostOut) {
+		if (!guest) return;
+		guestEditError = '';
+		savingPostEdit = true;
+		try {
+			const res = await fetch(`/join/${guest.code}/carpool/posts/${p.id}`, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					originLabel: editOriginDraft,
+					seatsTotal: p.kind === 'driver' ? (editSeatsDraft ?? null) : undefined,
+					leaveTimeText: editLeaveDraft || null,
+					notes: editNotesDraft || null,
+					localId: ensureLocalId()
+				})
+			});
+			const result = (await res.json()) as GuestWriteResult;
+			if (result.ok) {
+				editingPostId = null;
+				await invalidateAll();
+			} else if (result.error === 'conflict') {
+				guestEditError = result.message || m.carpool_guest_action_failed();
+			} else {
+				guestEditError = m.carpool_guest_action_failed();
+			}
+		} catch {
+			guestEditError = m.carpool_guest_action_failed();
+		} finally {
+			savingPostEdit = false;
+		}
+	}
+
+	async function deleteGuestPost(p: CarpoolPostOut) {
+		if (!guest) return;
+		guestEditError = '';
+		savingPostEdit = true;
+		try {
+			const res = await fetch(
+				`/join/${guest.code}/carpool/posts/${p.id}?localId=${encodeURIComponent(ensureLocalId())}`,
+				{ method: 'DELETE' }
+			);
+			const result = (await res.json()) as GuestWriteResult;
+			if (result.ok) {
+				editingPostId = null;
+				await invalidateAll();
+			} else {
+				guestEditError = m.carpool_guest_action_failed();
+			}
+		} catch {
+			guestEditError = m.carpool_guest_action_failed();
+		} finally {
+			savingPostEdit = false;
+		}
+	}
 </script>
 
 {#snippet postRow(p: CarpoolPostOut)}
-	{@const isOwner = p.user_id === userId}
+	{@const isOwner = isGuest ? isOwnedCarpoolPost(p.id) : p.user_id === userId}
 	<div class="carpool-post">
 		{#if editingPostId === p.id}
-			<EditableCard
-				saveAction="?/updateCarpoolPost"
-				deleteAction="?/deleteCarpoolPost"
-				idName="postId"
-				idValue={p.id}
-				bind:saving={savingPostEdit}
-				error={form?.form === 'editPost' && form?.error}
-				deleteLabel={m.carpool_delete_post()}
-				deleteConfirmLabel={m.carpool_delete_post_confirm()}
-				onCancel={() => (editingPostId = null)}
-			>
-				{#snippet fields()}
+			{#if isGuest}
+				<!-- F29: no form action to `use:enhance` against (see this
+				     component's doc comment), so this is a plain fetch-backed
+				     form instead of `EditableCard` — same fields, same Save/
+				     Cancel/Delete row, laid out by hand. -->
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						void submitGuestPostEdit(p);
+					}}
+				>
 					<label class="field">
 						<span>{m.carpool_origin_field()}</span>
-						<input name="originLabel" bind:value={editOriginDraft} required />
+						<input bind:value={editOriginDraft} required />
 					</label>
 					{#if p.kind === 'driver'}
 						<label class="field">
 							<span>{m.carpool_seats_field()}</span>
-							<input name="seatsTotal" type="number" min="1" bind:value={editSeatsDraft} required />
+							<input type="number" min="1" bind:value={editSeatsDraft} required />
 						</label>
 						<label class="field">
 							<span>{m.carpool_leave_time_field()}</span>
-							<input name="leaveTimeText" bind:value={editLeaveDraft} placeholder={m.groups_optional()} />
+							<input bind:value={editLeaveDraft} placeholder={m.groups_optional()} />
 						</label>
 					{/if}
 					<label class="field">
 						<span>{m.carpool_notes_field()}</span>
-						<input name="notes" bind:value={editNotesDraft} placeholder={m.groups_optional()} />
+						<input bind:value={editNotesDraft} placeholder={m.groups_optional()} />
 					</label>
-				{/snippet}
-			</EditableCard>
+					{#if guestEditError}
+						<p class="error">{guestEditError}</p>
+					{/if}
+					<div class="btn-row">
+						<button type="submit" class="btn btn-outline" disabled={savingPostEdit}>
+							{savingPostEdit ? m.reset_password_saving() : m.action_save()}
+						</button>
+						<button
+							type="button"
+							class="text-link"
+							onclick={() => (editingPostId = null)}
+							disabled={savingPostEdit}
+						>
+							{m.action_cancel()}
+						</button>
+						<ConfirmButton>
+							{#snippet trigger(start)}
+								<button
+									type="button"
+									class="text-link text-link--danger"
+									onclick={start}
+									disabled={savingPostEdit}
+								>
+									{m.carpool_delete_post()}
+								</button>
+							{/snippet}
+							{#snippet confirm(cancel)}
+								<p class="card-note">{m.carpool_delete_post_confirm()}</p>
+								<div class="btn-row">
+									<button type="button" class="btn btn-outline" onclick={cancel}>{m.action_cancel()}</button>
+									<button
+										type="button"
+										class="btn btn-danger"
+										disabled={savingPostEdit}
+										onclick={() => void deleteGuestPost(p)}
+									>
+										{m.carpool_delete_post()}
+									</button>
+								</div>
+							{/snippet}
+						</ConfirmButton>
+					</div>
+				</form>
+			{:else}
+				<EditableCard
+					saveAction="?/updateCarpoolPost"
+					deleteAction="?/deleteCarpoolPost"
+					idName="postId"
+					idValue={p.id}
+					bind:saving={savingPostEdit}
+					error={form?.form === 'editPost' && form?.error}
+					deleteLabel={m.carpool_delete_post()}
+					deleteConfirmLabel={m.carpool_delete_post_confirm()}
+					onCancel={() => (editingPostId = null)}
+				>
+					{#snippet fields()}
+						<label class="field">
+							<span>{m.carpool_origin_field()}</span>
+							<input name="originLabel" bind:value={editOriginDraft} required />
+						</label>
+						{#if p.kind === 'driver'}
+							<label class="field">
+								<span>{m.carpool_seats_field()}</span>
+								<input name="seatsTotal" type="number" min="1" bind:value={editSeatsDraft} required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_leave_time_field()}</span>
+								<input name="leaveTimeText" bind:value={editLeaveDraft} placeholder={m.groups_optional()} />
+							</label>
+						{/if}
+						<label class="field">
+							<span>{m.carpool_notes_field()}</span>
+							<input name="notes" bind:value={editNotesDraft} placeholder={m.groups_optional()} />
+						</label>
+					{/snippet}
+				</EditableCard>
+			{/if}
 		{:else}
 			<div class="carpool-post-main">
 				<p class="card-title">
@@ -321,48 +612,92 @@
 				<p class="empty">{m.carpool_no_drivers()}</p>
 			{/each}
 			{#if canPost}
-				{#if offeringRide}
-					<form
-						method="POST"
-						action="?/offerRide"
-						use:enhance={() => {
-							submittingOffer = true;
-							return async ({ result, update }) => {
-								submittingOffer = false;
-								if (result.type === 'success') offeringRide = false;
-								await update();
-							};
-						}}
-					>
-						<input type="hidden" name="eventId" value={ev.id} />
-						<label class="field">
-							<span>{m.carpool_origin_field()}</span>
-							<input name="originLabel" required />
-						</label>
-						<label class="field">
-							<span>{m.carpool_seats_field()}</span>
-							<input name="seatsTotal" type="number" min="1" required />
-						</label>
-						<label class="field">
-							<span>{m.carpool_leave_time_field()}</span>
-							<input name="leaveTimeText" placeholder={m.groups_optional()} />
-						</label>
-						<label class="field">
-							<span>{m.carpool_notes_field()}</span>
-							<input name="notes" placeholder={m.groups_optional()} />
-						</label>
-						{#if form?.form === 'offerRide' && form?.error}
-							<p class="error">{form.error}</p>
-						{/if}
-						<div class="btn-row">
-							<button type="submit" class="btn btn-primary" disabled={submittingOffer}>
-								{submittingOffer ? m.carpool_posting() : m.carpool_submit_offer()}
-							</button>
-							<button type="button" class="text-link" onclick={() => (offeringRide = false)}>{m.action_cancel()}</button>
-						</div>
-					</form>
+				{#if isGuest && guestNamePromptFor === 'offer'}
+					{@render guestNamePrompt(m.carpool_offer_ride())}
+				{:else if offeringRide}
+					{#if isGuest}
+						<form
+							onsubmit={(e) => {
+								e.preventDefault();
+								void submitGuestOffer(ev.id);
+							}}
+						>
+							<label class="field">
+								<span>{m.carpool_origin_field()}</span>
+								<input bind:value={guestOfferOrigin} required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_seats_field()}</span>
+								<input type="number" min="1" bind:value={guestOfferSeats} required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_leave_time_field()}</span>
+								<input bind:value={guestOfferLeaveTime} placeholder={m.groups_optional()} />
+							</label>
+							<label class="field">
+								<span>{m.carpool_notes_field()}</span>
+								<input bind:value={guestOfferNotes} placeholder={m.groups_optional()} />
+							</label>
+							{#if guestCreateError}
+								<p class="error">{guestCreateError}</p>
+							{/if}
+							{#if guestSaveRequired}
+								{@render guestSaveRequiredNotice()}
+							{/if}
+							<div class="btn-row">
+								<button type="submit" class="btn btn-primary" disabled={submittingOffer}>
+									{submittingOffer ? m.carpool_posting() : m.carpool_submit_offer()}
+								</button>
+								<button type="button" class="text-link" onclick={() => (offeringRide = false)}>{m.action_cancel()}</button>
+							</div>
+						</form>
+					{:else}
+						<form
+							method="POST"
+							action="?/offerRide"
+							use:enhance={() => {
+								submittingOffer = true;
+								return async ({ result, update }) => {
+									submittingOffer = false;
+									if (result.type === 'success') offeringRide = false;
+									await update();
+								};
+							}}
+						>
+							<input type="hidden" name="eventId" value={ev.id} />
+							<label class="field">
+								<span>{m.carpool_origin_field()}</span>
+								<input name="originLabel" required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_seats_field()}</span>
+								<input name="seatsTotal" type="number" min="1" required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_leave_time_field()}</span>
+								<input name="leaveTimeText" placeholder={m.groups_optional()} />
+							</label>
+							<label class="field">
+								<span>{m.carpool_notes_field()}</span>
+								<input name="notes" placeholder={m.groups_optional()} />
+							</label>
+							{#if form?.form === 'offerRide' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+							<div class="btn-row">
+								<button type="submit" class="btn btn-primary" disabled={submittingOffer}>
+									{submittingOffer ? m.carpool_posting() : m.carpool_submit_offer()}
+								</button>
+								<button type="button" class="text-link" onclick={() => (offeringRide = false)}>{m.action_cancel()}</button>
+							</div>
+						</form>
+					{/if}
 				{:else}
-					<button type="button" class="btn btn-outline btn-block" onclick={() => (offeringRide = true)}>
+					<button
+						type="button"
+						class="btn btn-outline btn-block"
+						onclick={() => (isGuest ? startOfferRide() : (offeringRide = true))}
+					>
 						{m.carpool_offer_ride()}
 					</button>
 				{/if}
@@ -377,40 +712,76 @@
 				<p class="empty">{m.carpool_no_riders()}</p>
 			{/each}
 			{#if canPost}
-				{#if requestingRide}
-					<form
-						method="POST"
-						action="?/requestRide"
-						use:enhance={() => {
-							submittingRequest = true;
-							return async ({ result, update }) => {
-								submittingRequest = false;
-								if (result.type === 'success') requestingRide = false;
-								await update();
-							};
-						}}
-					>
-						<input type="hidden" name="eventId" value={ev.id} />
-						<label class="field">
-							<span>{m.carpool_origin_field()}</span>
-							<input name="originLabel" required />
-						</label>
-						<label class="field">
-							<span>{m.carpool_notes_field()}</span>
-							<input name="notes" placeholder={m.groups_optional()} />
-						</label>
-						{#if form?.form === 'requestRide' && form?.error}
-							<p class="error">{form.error}</p>
-						{/if}
-						<div class="btn-row">
-							<button type="submit" class="btn btn-primary" disabled={submittingRequest}>
-								{submittingRequest ? m.carpool_posting() : m.carpool_submit_request()}
-							</button>
-							<button type="button" class="text-link" onclick={() => (requestingRide = false)}>{m.action_cancel()}</button>
-						</div>
-					</form>
+				{#if isGuest && guestNamePromptFor === 'request'}
+					{@render guestNamePrompt(m.carpool_request_ride())}
+				{:else if requestingRide}
+					{#if isGuest}
+						<form
+							onsubmit={(e) => {
+								e.preventDefault();
+								void submitGuestRequest(ev.id);
+							}}
+						>
+							<label class="field">
+								<span>{m.carpool_origin_field()}</span>
+								<input bind:value={guestRequestOrigin} required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_notes_field()}</span>
+								<input bind:value={guestRequestNotes} placeholder={m.groups_optional()} />
+							</label>
+							{#if guestCreateError}
+								<p class="error">{guestCreateError}</p>
+							{/if}
+							{#if guestSaveRequired}
+								{@render guestSaveRequiredNotice()}
+							{/if}
+							<div class="btn-row">
+								<button type="submit" class="btn btn-primary" disabled={submittingRequest}>
+									{submittingRequest ? m.carpool_posting() : m.carpool_submit_request()}
+								</button>
+								<button type="button" class="text-link" onclick={() => (requestingRide = false)}>{m.action_cancel()}</button>
+							</div>
+						</form>
+					{:else}
+						<form
+							method="POST"
+							action="?/requestRide"
+							use:enhance={() => {
+								submittingRequest = true;
+								return async ({ result, update }) => {
+									submittingRequest = false;
+									if (result.type === 'success') requestingRide = false;
+									await update();
+								};
+							}}
+						>
+							<input type="hidden" name="eventId" value={ev.id} />
+							<label class="field">
+								<span>{m.carpool_origin_field()}</span>
+								<input name="originLabel" required />
+							</label>
+							<label class="field">
+								<span>{m.carpool_notes_field()}</span>
+								<input name="notes" placeholder={m.groups_optional()} />
+							</label>
+							{#if form?.form === 'requestRide' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+							<div class="btn-row">
+								<button type="submit" class="btn btn-primary" disabled={submittingRequest}>
+									{submittingRequest ? m.carpool_posting() : m.carpool_submit_request()}
+								</button>
+								<button type="button" class="text-link" onclick={() => (requestingRide = false)}>{m.action_cancel()}</button>
+							</div>
+						</form>
+					{/if}
 				{:else}
-					<button type="button" class="btn btn-outline btn-block" onclick={() => (requestingRide = true)}>
+					<button
+						type="button"
+						class="btn btn-outline btn-block"
+						onclick={() => (isGuest ? startRequestRide() : (requestingRide = true))}
+					>
 						{m.carpool_request_ride()}
 					</button>
 				{/if}
@@ -418,6 +789,36 @@
 		</section>
 	{/if}
 {/if}
+
+{#snippet guestNamePrompt(confirmLabel: string)}
+	<form
+		class="signup-name-form"
+		onsubmit={(e) => {
+			e.preventDefault();
+			confirmGuestName();
+		}}
+	>
+		<label class="field">
+			<span>{m.responsibilities_name_prompt()}</span>
+			<input bind:value={guestNameDraft} required autocomplete="name" />
+		</label>
+		<div class="btn-row">
+			<button type="button" class="text-link" onclick={() => (guestNamePromptFor = null)}>
+				{m.join_not_now()}
+			</button>
+			<button type="submit" class="btn btn-primary" disabled={guestNameDraft.trim().length === 0}>
+				{confirmLabel}
+			</button>
+		</div>
+	</form>
+{/snippet}
+
+{#snippet guestSaveRequiredNotice()}
+	<p class="signup-save-required">
+		{m.carpool_save_required()}
+		<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
+	</p>
+{/snippet}
 
 <style>
 	.carpool-head {
@@ -484,5 +885,24 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
+	}
+
+	/* F29 guest write path — same shapes as the join page's own responsibility
+	   self-signup prompt (`routes/join/[code]/+page.svelte`), duplicated here
+	   rather than shared since Svelte scopes `<style>` per component. */
+	.signup-name-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.signup-save-required {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
 	}
 </style>

@@ -103,7 +103,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F24 | Guest chrome cleanup + demo "Preview Admin" entry point | ⏳ Built 2026-09-11: banner removal (`0e47174`) plus the Settings "Preview Admin" entry point (frontend for Backend B20): `demoPreview.ts` store, `/join/[code]/admin-preview` proxy, `divisi_demo_preview` marker cookie, persistent banner + "Exit preview". `check`/`build` clean, vitest 126. Verified end to end locally (docker compose + Playwright); no human pass against the deployed demo yet |
 | F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
-| F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Planned 2026-09-12, starts after B25 |
+| F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1480,7 +1480,7 @@ Starts once F27 + B24 land.
   +7 new in `$lib/utils/carpool.test.ts`). Not deployed; no real-browser
   pass yet (Human task above).
 
-### F29 — Guest carpool board: real content + posting (frontend for Backend B25) [ ]
+### F29 — Guest carpool board: real content + posting (frontend for Backend B25) [x]
 
 Frontend half of B25. The guest page route (`/join/[code]/pages/[slug]`)
 currently always renders `CustomPageView`'s empty placeholder for
@@ -1493,41 +1493,41 @@ profile/anonymous-participant plumbing rather than building a second one:
 for proxying a guest write through to a mint-or-resolve Backend endpoint.
 
 **Acceptance criteria:**
-- [ ] `/join/[code]/pages/[slug]` renders `CarpoolBoard` (or a guest-
+- [x] `/join/[code]/pages/[slug]` renders `CarpoolBoard` (or a guest-
   appropriate variant of it) with real events and driver/rider lists when
   the page is a published, `audience=everyone` carpool page, not the
   placeholder.
-- [ ] `/join/[code]` (or wherever a guest currently reaches other guest-
+- [x] `/join/[code]` (or wherever a guest currently reaches other guest-
   visible pages from) lists this page too, using B25's new guest pages
   list route, so a guest doesn't need a slug link to find it.
-- [ ] A guest can submit "I can drive" / "I need a ride" the same way a
+- [x] A guest can submit "I can drive" / "I need a ride" the same way a
   member does: same forms, same validation
   (`$lib/utils/carpool.ts`'s existing `driverOfferError`/
   `riderRequestError`), routed through a new
   `/join/[code]/carpool/...` proxy analogous to the existing
   responsibilities-signup one, carrying the local profile's name via
   `display_name`/`local_id` the same way that proxy already does.
-- [ ] A guest can edit/delete their own post across a page reload (the
+- [x] A guest can edit/delete their own post across a page reload (the
   `divisi_participant` cookie round-trips the same way it already does
   for responsibility signups).
-- [ ] A `min_identity=saved` carpool page shows the existing
+- [x] A `min_identity=saved` carpool page shows the existing
   `SAVE_REQUIRED:` inline prompt for a guest attempting to post, not a
   raw error.
-- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+- [x] `npm run check` / `npm run build` clean; vitest green; i18n key
   parity maintained.
 
 **Tasks — Claude:**
-- [ ] `/join/[code]/pages/[slug]/+page.server.ts` + `+page.svelte`: load
+- [x] `/join/[code]/pages/[slug]/+page.server.ts` + `+page.svelte`: load
   real carpool data via the new guest read routes, render `CarpoolBoard`
   instead of `CustomPageView` for `template_key=carpool_board`.
-- [ ] `/join/[code]/pages/+server.ts` (or wherever the join page's own
+- [x] `/join/[code]/pages/+server.ts` (or wherever the join page's own
   data fan-out lives): add the guest pages list to whatever the join page
   already surfaces as available pages/tabs.
-- [ ] New proxy route(s) under `/join/[code]/carpool/...` for post
+- [x] New proxy route(s) under `/join/[code]/carpool/...` for post
   create/edit/delete, following the responsibilities-signup proxy's
   shape (local profile name, participant cookie, `SAVE_REQUIRED:`
   passthrough).
-- [ ] Reuse `CarpoolBoard.svelte`'s existing form markup rather than a
+- [x] Reuse `CarpoolBoard.svelte`'s existing form markup rather than a
   second copy; branch only where the guest path genuinely differs
   (no admin moderation controls, different submit endpoint).
 
@@ -1535,6 +1535,33 @@ for proxying a guest write through to a mint-or-resolve Backend endpoint.
 - [ ] Manual browser pass once deployed (guest posting flow specifically,
   since B25/F29 is the first place carpool touches unauthenticated
   writes).
+
+**Deviations from this section as originally scoped:**
+- No `/join/[code]/pages/+server.ts` was added — the guest pages list is
+  fetched from `guestJoin.ts`'s existing fan-out (`loadGuestJoin`, run by
+  `/join/[code]/data/+server.ts`) alongside homework/responsibilities/
+  weekly notes, and surfaced as a new "Pages" tab on `/join/[code]`
+  itself, following that file's existing pattern rather than adding a
+  second endpoint.
+- `CarpoolBoard.svelte` stays one component (no second copy), but a guest
+  render's write controls could not literally reuse the member path's
+  `use:enhance`/`?/actionName` form actions: those depend on SvelteKit's
+  own action-invocation machinery (a `+page.server.ts` `actions` export),
+  which a `+server.ts` proxy route doesn't provide, and is the reason the
+  guest responsibility self-signup (F23) isn't a form action either. The
+  component instead takes an optional `guest` prop; when set, the same
+  markup/CSS renders but each write posts via a plain `fetch` against the
+  new proxy routes, with a lazy name prompt and inline `SAVE_REQUIRED`
+  notice reusing the join page's existing patterns/copy. Ownership of a
+  guest's own post (for showing Edit/Delete) is tracked client-side, by
+  remembering each post id this browser successfully created
+  (`$lib/utils/carpoolOwnership.ts`, localStorage-backed like
+  `localProfile.ts`) — the Backend has no "is this mine" flag on a read,
+  and the guest's resolved participant id isn't known until their first
+  successful write.
+- Two small new i18n keys not enumerated in the plan text:
+  `carpool_save_required` and `carpool_guest_action_failed` (a guest-path
+  generic retry message covering create/edit/delete alike).
 
 ## Backlog
 
