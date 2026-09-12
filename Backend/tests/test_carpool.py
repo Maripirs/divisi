@@ -98,7 +98,10 @@ def test_member_can_list_published_events(client):
         "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=member_headers
     )
     assert listing.status_code == 200
-    assert len(listing.json()) == 1
+    # B26: every listing also carries the page's standing event now, so this
+    # checks the dated event specifically rather than the raw list length.
+    dated = [e for e in listing.json() if not e["is_standing"]]
+    assert len(dated) == 1
 
 
 def test_member_cannot_list_events_on_draft_page(client):
@@ -418,7 +421,10 @@ def test_guest_can_list_carpool_events_and_posts(client):
 
     events = client.get("/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events")
     assert events.status_code == 200
-    assert [e["id"] for e in events.json()] == [event["id"]]
+    # B26: the standing event rides along in every listing now; check the
+    # dated event specifically rather than the raw list.
+    dated_events = [e for e in events.json() if not e["is_standing"]]
+    assert [e["id"] for e in dated_events] == [event["id"]]
 
     posts = client.get("/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts")
     assert posts.status_code == 200
@@ -667,3 +673,165 @@ def test_admin_can_moderate_a_guests_post(client):
 
     deleted = client.delete("/carpool/posts/" + post["id"], headers=admin_headers)
     assert deleted.status_code == 204
+
+
+# --- B26: standing (non-dated) carpool event ---
+
+
+def test_first_listing_bootstraps_standing_event(client):
+    admin_headers = _register_and_login(client, "cp-st-admin1@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+
+    listing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()
+    assert len(listing) == 1
+    standing = listing[0]
+    assert standing["is_standing"] is True
+    assert standing["starts_at"] is None
+    assert standing["destination_label"] is None
+    assert standing["title"]  # some sensible default, exact string not asserted
+
+
+def test_second_listing_reuses_same_standing_event(client):
+    admin_headers = _register_and_login(client, "cp-st-admin2@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+
+    first = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()
+    second = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()
+    assert len(second) == 1
+    assert second[0]["id"] == first[0]["id"]
+
+
+def test_guest_listing_bootstraps_and_reuses_same_standing_event(client):
+    admin_headers = _register_and_login(client, "cp-st-admin3@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+
+    first = client.get(
+        "/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events"
+    ).json()
+    assert len(first) == 1
+    assert first[0]["is_standing"] is True
+
+    second = client.get(
+        "/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events"
+    ).json()
+    assert len(second) == 1
+    assert second[0]["id"] == first[0]["id"]
+
+    # The member route's bootstrap and the guest route's bootstrap must be
+    # the exact same row, not two independent standing events.
+    member_view = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()
+    assert len(member_view) == 1
+    assert member_view[0]["id"] == first[0]["id"]
+
+
+def test_listing_orders_standing_first_then_dated_by_starts_at(client):
+    admin_headers = _register_and_login(client, "cp-st-admin4@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+
+    later = _make_event(
+        client, admin_headers, group["id"], page["id"], title="Later", starts_at="2026-10-01T18:00:00Z"
+    ).json()
+    earlier = _make_event(
+        client, admin_headers, group["id"], page["id"], title="Earlier", starts_at="2026-09-20T18:00:00Z"
+    ).json()
+
+    listing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()
+    assert [e["is_standing"] for e in listing] == [True, False, False]
+    assert [e["id"] for e in listing[1:]] == [earlier["id"], later["id"]]
+
+
+def test_standing_event_cannot_be_archived(client):
+    admin_headers = _register_and_login(client, "cp-st-admin5@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()[0]
+
+    rejected = client.patch(
+        "/carpool/events/" + standing["id"], json={"status": "archived"}, headers=admin_headers
+    )
+    assert rejected.status_code == 400
+
+
+def test_standing_event_can_be_locked_and_reopened(client):
+    admin_headers = _register_and_login(client, "cp-st-admin6@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()[0]
+
+    locked = client.patch(
+        "/carpool/events/" + standing["id"], json={"status": "locked"}, headers=admin_headers
+    )
+    assert locked.status_code == 200
+    assert locked.json()["status"] == "locked"
+
+    reopened = client.patch(
+        "/carpool/events/" + standing["id"], json={"status": "open"}, headers=admin_headers
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["status"] == "open"
+
+
+def test_standing_event_title_and_destination_are_editable(client):
+    admin_headers = _register_and_login(client, "cp-st-admin7@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()[0]
+
+    edited = client.patch(
+        "/carpool/events/" + standing["id"],
+        json={"title": "Weekly rehearsal carpool", "destination_label": "SFCC rehearsal hall"},
+        headers=admin_headers,
+    )
+    assert edited.status_code == 200
+    assert edited.json()["title"] == "Weekly rehearsal carpool"
+    assert edited.json()["destination_label"] == "SFCC rehearsal hall"
+
+
+def test_standing_event_rejects_starts_at_patch(client):
+    admin_headers = _register_and_login(client, "cp-st-admin8@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()[0]
+
+    rejected = client.patch(
+        "/carpool/events/" + standing["id"],
+        json={"starts_at": "2026-09-20T18:00:00Z"},
+        headers=admin_headers,
+    )
+    assert rejected.status_code == 400
+
+
+def test_standing_event_can_still_accept_posts(client):
+    admin_headers = _register_and_login(client, "cp-st-admin9@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+    ).json()[0]
+
+    post = client.post(
+        "/carpool/events/" + standing["id"] + "/posts", json=_rider_post(), headers=admin_headers
+    )
+    assert post.status_code == 201

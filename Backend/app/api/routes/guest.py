@@ -73,6 +73,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.services.carpool import list_events_ordered
 from app.services.custom_pages import get_custom_page_by_slug_or_404
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
@@ -431,16 +432,13 @@ def list_guest_carpool_events(
 ) -> list[CarpoolEvent]:
     """B25: the guest-facing carpool board, same events a member sees via
     `GET /groups/{id}/pages/{page_id}/carpool/events` — reached by slug
-    since a guest never has a raw page id."""
+    since a guest never has a raw page id. B26: same standing-event
+    bootstrap and ordering as the member route, via the shared
+    `list_events_ordered` helper so the two paths can't drift apart."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     page = _get_guest_carpool_page_or_404(group.id, slug, db)
-    return (
-        db.query(CarpoolEvent)
-        .filter(CarpoolEvent.page_id == page.id)
-        .order_by(CarpoolEvent.starts_at.asc())
-        .all()
-    )
+    return list_events_ordered(page.id, db)
 
 
 @router.get("/{join_code}/carpool/events/{event_id}/posts", response_model=list[CarpoolPostOut])

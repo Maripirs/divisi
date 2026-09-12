@@ -49,6 +49,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
+from app.services.carpool import list_events_ordered
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access, require_guest_page_access, require_saved_identity
@@ -146,12 +147,7 @@ def list_events(
     require_member(group_id, current_user, db)
     page = _get_carpool_page_or_404(group_id, page_id, db)
     require_member_page_access(group_id, page, current_user.id, db)
-    return (
-        db.query(CarpoolEvent)
-        .filter(CarpoolEvent.page_id == page_id)
-        .order_by(CarpoolEvent.starts_at.asc())
-        .all()
-    )
+    return list_events_ordered(page_id, db)
 
 
 @router.patch("/carpool/events/{event_id}", response_model=CarpoolEventOut)
@@ -163,11 +159,30 @@ def update_event(
 ) -> CarpoolEvent:
     """Admin-only. Covers edit and the lock/archive (and reopen) status
     transitions in one partial-patch endpoint, same precedent as
-    `ResponsibilityDate`'s `update_date`."""
+    `ResponsibilityDate`'s `update_date`.
+
+    B26: a standing event (`is_standing`) rejects two attempts outright
+    rather than silently dropping them, same "a confused client finds out
+    immediately" reasoning as `CarpoolPostCreate`'s seat validation:
+    `status=archived` (the standing event's whole point is that it doesn't
+    go away, though locking/unlocking still works) and `starts_at` (setting
+    a date on it would half-turn it into a dated event). `is_standing`
+    itself isn't in `CarpoolEventUpdate` at all, so there's nothing to
+    guard there."""
     event = _get_event_or_404(event_id, db)
     page = _page_for_event(event, db)
     require_admin(page.group_id, current_user, db)
     fields = payload.model_fields_set
+    if event.is_standing and "starts_at" in fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="starts_at can't be set on the standing carpool event",
+        )
+    if event.is_standing and "status" in fields and payload.status == CarpoolEventStatus.archived:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The standing carpool event can't be archived",
+        )
     if "title" in fields and payload.title is not None:
         event.title = payload.title
     if "starts_at" in fields and payload.starts_at is not None:

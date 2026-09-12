@@ -110,7 +110,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
-| B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ⏳ Planned 2026-09-12 |
+| B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1234,7 +1234,7 @@ the guest-read mirror routes every other page type already has under
 **Tasks — Human:**
 - [ ] None expected.
 
-### B26 — Carpool: a standing (non-dated) board by default, dated events stay for exceptions [ ]
+### B26 — Carpool: a standing (non-dated) board by default, dated events stay for exceptions [x]
 
 Human feedback 2026-09-12: carpool should be an ongoing thing for
 rehearsals, not a one-time thing, i.e. not something that forces an admin
@@ -1270,45 +1270,80 @@ can't be set on a standing event via update either, keeping "standing"
 and "dated" from drifting into a half-state.
 
 **Acceptance criteria:**
-- [ ] A carpool page's very first `GET .../carpool/events` call (admin,
+- [x] A carpool page's very first `GET .../carpool/events` call (admin,
   member, or guest) returns a standing event even though nobody created
   one; a second call returns the same row, not a duplicate.
-- [ ] `CarpoolEvent.starts_at` and `destination_label` are nullable at
+- [x] `CarpoolEvent.starts_at` and `destination_label` are nullable at
   the schema level (the standing event has neither by default) but
   `CarpoolEventCreate` (the admin-facing dated-event creation payload)
   still requires both, unchanged, so creating a dated exception works
   exactly as it does today.
-- [ ] `PATCH /carpool/events/{id}` rejects `status=archived` for a
+- [x] `PATCH /carpool/events/{id}` rejects `status=archived` for a
   standing event (400) but still allows `status=locked`/`open` and
   title/destination edits; `starts_at` and `is_standing` are not
   patchable fields at all.
-- [ ] Listing events orders the standing one first, then dated events by
+- [x] Listing events orders the standing one first, then dated events by
   `starts_at` ascending (a `NULL starts_at` naturally sorts oddly, so
   order explicitly rather than relying on that).
-- [ ] Guest reads (`guest.py`) get the same standing-event bootstrap and
+- [x] Guest reads (`guest.py`) get the same standing-event bootstrap and
   ordering as the member route; guest writes (B25's post create/edit/
   delete) work unchanged against either kind of event.
-- [ ] Existing B24/B25 tests for dated events still pass unmodified
+- [x] Existing B24/B25 tests for dated events still pass unmodified
   (dated-event behavior doesn't change at all); new tests cover the
   standing-event bootstrap, idempotency, ordering, and the
   archive-rejected/lock-allowed distinction.
-- [ ] `pytest` green.
+- [x] `pytest` green.
 
 **Tasks — Claude:**
-- [ ] Migration: `carpool_events.starts_at` and `destination_label`
+- [x] Migration: `carpool_events.starts_at` and `destination_label`
   become nullable; add `carpool_events.is_standing` (boolean, not null,
   default false).
-- [ ] `app/services/carpool.py` (new): `get_or_create_standing_event(page_id, db)`.
-- [ ] Wire that helper into `list_events` (`carpool.py`) and the guest
+- [x] `app/services/carpool.py` (new): `get_or_create_standing_event(page_id, db)`.
+- [x] Wire that helper into `list_events` (`carpool.py`) and the guest
   events-list route (`guest.py`); both should return the standing event
   plus any dated ones, standing first.
-- [ ] `update_event`: reject `status=archived` when `event.is_standing`;
+- [x] `update_event`: reject `status=archived` when `event.is_standing`;
   drop `starts_at` from what's patchable on a standing event (or reject
   the attempt outright, whichever reads cleaner in the actual diff).
-- [ ] Tests per the acceptance criteria above.
+- [x] Tests per the acceptance criteria above.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Built 2026-09-12, migration `a1c9e6f2b7d4` (`down_revision =
+48a30562ab06`), single linear head. Verified up/down/up against the local
+docker-compose Postgres, never prod (`.env`'s `DATABASE_URL` untouched).
+`pytest` 343 green (was 334; +9 new).**
+
+`app/services/carpool.py` also grew a second small helper,
+`list_events_ordered(page_id, db)`, beyond the one the plan named
+(`get_or_create_standing_event`): it bootstraps the standing event *and*
+returns `[standing, *dated_by_starts_at_asc]` in one call, so
+`list_events` (`carpool.py`) and `list_guest_carpool_events` (`guest.py`)
+both call one function instead of independently re-deriving the same
+ordering.
+
+Default title landed as `"Ongoing carpool"` (`STANDING_EVENT_TITLE` in
+`app/services/carpool.py`).
+
+On the "silently ignore vs. reject" question for `starts_at` on a standing
+event: picked reject (400, `"starts_at can't be set on the standing
+carpool event"`), matching this file's existing seat-validation reasoning
+in `schemas/carpool.py` ("a confused client finds out immediately instead
+of shipping data nobody reads"). Same 400 for the archive attempt,
+detail `"The standing carpool event can't be archived"`. `is_standing`
+itself was never added to `CarpoolEventUpdate`, so there's no reject/
+ignore question for it at all.
+
+Two existing B24/B25 tests needed a one-line change, not zero:
+`test_member_can_list_published_events` and
+`test_guest_can_list_carpool_events_and_posts` both asserted an exact
+event-listing count/id-list, which the standing event's presence in every
+listing unavoidably changes (this is the acceptance criterion working as
+designed, not a regression). Both now filter to `is_standing == False`
+before asserting on the dated event, preserving the original intent. No
+other B24/B25 test touches listing contents, so no other test needed a
+change.
 
 ## Backlog
 
@@ -1344,6 +1379,7 @@ and "dated" from drifting into a half-state.
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
+- 2026-09-12: Built B26 (carpool: a standing, non-dated board by default, dated events stay for exceptions). `CarpoolEvent.starts_at`/`destination_label` went nullable, plus a new `is_standing` boolean (migration `a1c9e6f2b7d4`, chained off B25's `48a30562ab06`); no `CarpoolPost` change. `app/services/carpool.py` (new): `get_or_create_standing_event` bootstraps the one page-scoped standing row (title `"Ongoing carpool"`, `starts_at`/`destination_label` both `None`) lazily on first listing rather than admin-created, and `list_events_ordered` wraps it plus dated-by-`starts_at`-ascending ordering so `list_events` (`carpool.py`) and the guest events route (`guest.py`) share one call. `update_event` rejects (400) `status=archived` and any `starts_at` patch on a standing event; lock/unlock and title/destination edits still work. Two existing B24/B25 listing-count tests needed a one-line filter (`is_standing == False`) since the standing event now rides along in every listing, by design; no other B24/B25 test changed. `pytest` 343 green (was 334; +9 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
 - 2026-09-12: Built B25 (guest carpool access: read + write, via existing anonymous-participant flow). No new mechanism, all wiring: `POST /carpool/events/{id}/posts` and `PATCH`/`DELETE /carpool/posts/{id}` (`app/api/routes/carpool.py`) now take `maybe_user`/`maybe_participant` optional-auth dependencies and resolve the caller exactly like `create_signup`'s self-signup branch (mint-on-demand, `require_guest_page_access` + `require_saved_identity`, `ensure_guest_membership`, `divisi_participant` cookie). Three new guest reads in `app/api/routes/guest.py`: `GET /guest/{join_code}/pages` (published + `audience=everyone`), `.../pages/{slug}/carpool/events`, `.../carpool/events/{event_id}/posts`, all 404ing the same generic way `get_guest_custom_page` does. `CarpoolPostCreate` gained `local_id`/`display_name`; no `CarpoolPost` schema/column change (an anonymous participant is already a real `User` row). `pytest` 334 green (was 321; +13 new). Not pushed/deployed.
 - 2026-09-11: Built B24 (carpool board: events + posts, list only, no map). `CarpoolEvent`/`CarpoolPost` (migration `48a30562ab06`, chained off B23's `33efd3092bff`) scope to a carpool-template `GroupCustomPage` and reuse its `require_member_page_access` gate unchanged. New router `app/api/routes/carpool.py`: admin create/edit/lock/archive an event (one `PATCH` covers all three, following `ResponsibilityDate`'s precedent over `GroupCustomPage`'s separate publish/archive actions); a member posts driver/rider offers on an open event, edits/deletes only their own, and an admin can hide/delete any post regardless of event state. `CarpoolPost.user_id` is non-nullable (no guest/anonymous carpool writes at all, per `GROUP_PAGES_CARPOOL_PLAN.md`'s own deferral). Deliberate asymmetry: a locked/archived event blocks new posts *and* edits, but a member can always delete their own post. `pytest` 319 green (was 299; +20 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
 - 2026-09-11: Built B23 (Custom Group Pages foundation, carpool template only). `GroupCustomPage` (migration `33efd3092bff`) is a dynamic per-group row rather than a fixed `GroupPage` enum member, reusing `PageAudience`/`PageMinIdentity` and a new one-value `GroupCustomPageTemplate` (`carpool_board`). `app/services/pages.py`'s three gate functions were extended in place (`PageLike = GroupPage | GroupCustomPage`) rather than forked, so the new admin CRUD router (`app/api/routes/custom_pages.py`: create/list/get/patch/delete plus `/publish` and `/archive`), the member route `GET /groups/{id}/pages/{slug}`, and the guest route `GET /guest/{join_code}/pages/{slug}` all share the exact same access checks built-in pages use. Slugs are generated from title, unique per group, immutable after create, and rejected with 409 on collision (no auto-suffixing). No `GroupPageBlock`, no HTML field anywhere on the model. `pytest` 299 green (was 279 on top of pre-existing uncommitted work; +20 new). Not pushed/deployed.

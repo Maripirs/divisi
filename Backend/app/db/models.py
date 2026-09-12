@@ -699,15 +699,25 @@ class CarpoolEvent(Base):
     carpool.py`): `open` accepts new posts and post edits, `locked`/
     `archived` both reject them (an admin still bypasses either state, same
     admin-always-wins convention as Responsibilities' `locked` dates). No
-    lat/lng: MVP is label-only, no map (plan.md's B24)."""
+    lat/lng: MVP is label-only, no map (plan.md's B24).
+
+    B26: `is_standing` marks the one page-scoped, non-dated board that's
+    always there for regular rehearsals (`starts_at`/`destination_label`
+    both `None`), lazily get-or-created by `app.services.carpool.
+    get_or_create_standing_event` rather than admin-created. Everything
+    `create_event` makes is still the dated shape (`is_standing = False`,
+    both fields required). `starts_at`/`destination_label` are nullable at
+    the schema level only so the standing row can exist; `CarpoolEventCreate`
+    still requires both, unchanged."""
 
     __tablename__ = "carpool_events"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     page_id: Mapped[str] = mapped_column(String, ForeignKey("group_custom_pages.id"), nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    destination_label: Mapped[str] = mapped_column(String, nullable=False)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    destination_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_standing: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     status: Mapped[CarpoolEventStatus] = mapped_column(
         SAEnum(CarpoolEventStatus, native_enum=False),
         nullable=False,

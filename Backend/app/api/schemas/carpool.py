@@ -13,6 +13,11 @@ from app.db.models import CarpoolEventStatus, CarpoolPostKind, CarpoolPostStatus
 
 
 class CarpoolEventCreate(BaseModel):
+    """The admin-facing dated-event creation payload. B26 unchanged: no
+    `is_standing` field here at all, so a client can't create (or claim to
+    create) the standing event, that's the one thing the get-or-create
+    helper in `app.services.carpool` owns."""
+
     title: str
     starts_at: datetime
     destination_label: str
@@ -23,7 +28,12 @@ class CarpoolEventUpdate(BaseModel):
     `GroupCustomPageUpdate`/`ResponsibilityDateUpdate`). `status` transitions
     (lock/archive/reopen) ride this same endpoint rather than dedicated
     `/lock`/`/archive` actions, matching `ResponsibilityDateUpdate`'s
-    "edit/lock/cancel in one endpoint" precedent."""
+    "edit/lock/cancel in one endpoint" precedent.
+
+    No `is_standing` field: it never flips after creation, for either
+    shape. `starts_at` stays here for rescheduling a dated event, but the
+    route (`update_event`) rejects setting it on a standing event, and
+    rejects `status=archived` there too. See `app.services.carpool`."""
 
     title: str | None = None
     starts_at: datetime | None = None
@@ -35,8 +45,9 @@ class CarpoolEventOut(BaseModel):
     id: str
     page_id: str
     title: str
-    starts_at: datetime
-    destination_label: str
+    starts_at: datetime | None
+    destination_label: str | None
+    is_standing: bool
     status: CarpoolEventStatus
     created_by: str | None
     created_at: datetime
