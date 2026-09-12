@@ -101,6 +101,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
 | F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. Verified 2026-09-11 end to end (signup, save, cross-device merge, the `min_identity` gate) in a real local browser; still no human/phone pass. |
 | F24 | Guest chrome cleanup + demo "Preview Admin" entry point | ⏳ Built 2026-09-11: banner removal (`0e47174`) plus the Settings "Preview Admin" entry point (frontend for Backend B20): `demoPreview.ts` store, `/join/[code]/admin-preview` proxy, `divisi_demo_preview` marker cookie, persistent banner + "Exit preview". `check`/`build` clean, vitest 126. Verified end to end locally (docker compose + Playwright); no human pass against the deployed demo yet |
+| F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Planned 2026-09-11 — see `GROUP_PAGES_CARPOOL_PLAN.md` |
+| F28 | Carpool board UI (frontend for Backend B24) | ⏳ Planned 2026-09-11, starts after F27/B24 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1331,6 +1333,67 @@ Drops the PIN mechanism entirely rather than reworking it.
 
 **Tasks — Human:**
 - [ ] None.
+
+### F27 — Pages tab: custom group pages foundation (frontend for Backend B23) [ ]
+
+Frontend half of B23. Adds a "Pages" tab to the group shell
+(`src/routes/groups/[id]/+page.svelte`'s `tabsInOrder`), gated the same
+way `responsibilities`/`weeklyNotes` already are — an enabled flag off
+`data`, not just a conditionally-imported component.
+
+**Acceptance criteria:**
+- [ ] Members see a "Pages" tab listing published custom pages the group
+  currently has (empty state when there are none — most groups won't
+  have any until F28/carpool ships).
+- [ ] Admins additionally see drafts, and a "Create page" flow: for now
+  the template picker offers exactly one option (Carpool board), plus
+  title, visibility (audience/min_identity), and publish/unpublish/
+  archive controls — same UI language as the existing group page-
+  settings grid (F6), not a new pattern.
+- [ ] Guests see published `audience=everyone` pages under the same join
+  flow as other guest-visible pages.
+- [ ] A read-only page renderer exists but is functionally empty until
+  F28 gives `carpool_board` real content — this milestone just needs it
+  to render something sane (title + an empty state).
+- [ ] i18n keys added for every new string, Spanish included (F8).
+- [ ] `npm run check` / `npm run build` clean; vitest green.
+
+**Tasks — Claude:**
+- [ ] Add `pages` to the group tab set + nav, gated on whether the group
+  has any custom pages to show for the current viewer.
+- [ ] Admin page list + create-from-template flow (one template option).
+- [ ] Visibility controls (audience/min_identity), reusing the existing
+  group page-settings component rather than a new one.
+- [ ] Read-only page renderer shell for `carpool_board` (empty state only).
+- [ ] Guest page route/rendering.
+- [ ] i18n keys, `/es` included.
+
+**Tasks — Human:**
+- [ ] None expected.
+
+### F28 — Carpool board UI (frontend for Backend B24) [ ]
+
+Starts once F27 + B24 land.
+
+**Acceptance criteria:**
+- [ ] Carpool page shows an event selector, driver list, rider list.
+- [ ] "I can drive" / "I need a ride" forms (name, origin label, seats/
+  notes as applicable) — no map, no pin picker.
+- [ ] A member can edit/delete their own post from the list.
+- [ ] Admin sees moderation actions (hide/delete any post, lock/archive
+  event) inline in the same list.
+- [ ] Usable on mobile at the widths the rest of the group pages already
+  target.
+- [ ] `npm run check` / `npm run build` clean; vitest green.
+
+**Tasks — Claude:**
+- [ ] Carpool template renderer: event selector + driver/rider lists.
+- [ ] Post forms (driver/rider), owner edit/delete.
+- [ ] Admin moderation controls.
+- [ ] Unit tests for form validation; mobile layout pass.
+
+**Tasks — Human:**
+- [ ] Manual browser pass once deployed.
 
 ## Backlog
 

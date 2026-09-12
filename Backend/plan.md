@@ -59,6 +59,24 @@ ResponsibilitySignup   id, responsibility_date_id, responsibility_role_id, user_
                  assigned_by_user_id, source (self_signup|admin_assignment),
                  status (active|removed), created_at, removed_at  — soft-removed for
                  admin audit; coverage = needed_count - active signups, per role
+
+GroupCustomPage id, group_id, title, slug, template_key (carpool_board),
+                 status (draft|published|archived), audience (members|everyone),
+                 min_identity (anyone|saved), created_by, created_at, updated_at
+                 — an admin-created page distinct from the built-in GroupPage
+                 enum; reuses PageAudience/PageMinIdentity rather than new
+                 enums. No generic GroupPageBlock: one template doesn't
+                 justify a block system yet. (B23)
+CarpoolEvent    id, page_id, title, starts_at, destination_label,
+                 status (open|locked|archived), created_by, created_at,
+                 updated_at  — one dated carpool occurrence on a
+                 GroupCustomPage. No lat/lng: MVP is label-only, no map. (B24)
+CarpoolPost     id, event_id, user_id, display_name, kind (driver|rider),
+                 status (open|hidden|cancelled), origin_label, seats_total,
+                 seats_available, leave_time_text, notes, created_at,
+                 updated_at  — a member's ride offer/request; free-text
+                 origin_label only, no coordinates until a map milestone
+                 justifies storing them. (B24)
 ```
 
 Stack: Python/FastAPI, Postgres (SQLAlchemy + Alembic migrations), file storage via Neon
@@ -89,6 +107,8 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Built 2026-09-02, migration `c3e5a7b9d1f4` (`down_revision = b1c3d5e7f9a2`), single linear head; pytest 240 green; not pushed/deployed |
 | B19 | Progressive accounts: anonymous participants + "Save across devices" | ⏳ Built 2026-09-09, migration `d4a9f2c7e1b8` (`down_revision = a2f6c1e4d9b7`), single linear head; pytest 271 green. Not pushed/deployed |
 | B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
+| B23 | Custom Group Pages foundation (carpool template only) | ⏳ Planned 2026-09-11 — see `GROUP_PAGES_CARPOOL_PLAN.md` |
+| B24 | Carpool board: events + posts, list only, no map | ⏳ Planned 2026-09-11, starts after B23 |
 
 ### B1 — Backend scaffold [x]
 
@@ -974,6 +994,101 @@ column was never populated in production.
 
 **Tasks — Human:**
 - [ ] None.
+
+### B23 — Custom Group Pages foundation (carpool template only) [ ]
+
+Requested by the choir board via `GROUP_PAGES_CARPOOL_PLAN.md` (2026-09-11):
+lightweight, admin-created pages for group-specific coordination — carpool
+is the first concrete need, but the underlying request is a reusable page
+system rather than a one-off carpool table. That plan's own milestone
+numbers (B20-B23) collided with B20-B22, which shipped in the meantime;
+renumbered here to B23/B24.
+
+**Design:** `GroupCustomPage` extends the pattern `GroupPageSettings` (B12)
+already established for the five built-in pages — same `PageAudience`/
+`PageMinIdentity` enums, same `enabled`-then-`audience`-then-`min_identity`
+gate order in `app/services/pages.py` — but as its own dynamic row per
+page instead of a fixed enum member. `template_key` is a real enum with
+exactly one value (`carpool_board`) for now; adding a second template
+later is a migration, not a schema redesign. No `GroupPageBlock` / generic
+block system: that's speculative CMS scope for a system with one
+consumer, explicitly deferred until a second template actually needs it
+(see `GROUP_PAGES_CARPOOL_PLAN.md`'s own scope-creep risk note).
+
+Slugs are unique per group (not globally), generated from title on create
+and immutable after.
+
+**Acceptance criteria:**
+- [ ] Admin can create a custom page (`template_key=carpool_board` only),
+  set title/audience/min_identity, and publish/unpublish/archive it.
+- [ ] Custom pages respect the same `audience`/`min_identity` gates as
+  built-in pages: guest read only when `enabled` and `audience=everyone`;
+  member read whenever `enabled` (admins bypass); write gates check
+  `min_identity` via the existing `require_saved_identity` helper.
+- [ ] Member route `GET /groups/{group_id}/pages/{slug}` and guest route
+  `GET /guest/{join_code}/pages/{slug}` share the same access-check
+  helpers as the built-in pages, not a parallel implementation.
+- [ ] Draft pages are invisible to members and guests; only the owning
+  group's admins can see/manage drafts.
+- [ ] Slug collisions within a group are rejected (409); a page's own
+  slug can't collide with itself on update.
+- [ ] No arbitrary HTML accepted anywhere in `GroupCustomPage`.
+- [ ] `pytest` green with new tests covering access gates and slug
+  uniqueness, same shape as B12's.
+
+**Tasks — Claude:**
+- [ ] `GroupCustomPage` model (`app/db/models.py`) + migration.
+- [ ] `GroupCustomPageTemplate` enum: `carpool_board` only for now.
+- [ ] `app/services/custom_pages.py`: slug generation/uniqueness, and
+  access-check helpers that delegate to the same shape as
+  `app/services/pages.py`'s `require_guest_page_access` /
+  `require_member_page_access` / `require_saved_identity` (extend those
+  to accept a `GroupCustomPage` row rather than forking a parallel set).
+- [ ] Admin CRUD routes: `POST/GET/PATCH/DELETE
+  /groups/{group_id}/custom-pages[/{page_id}]`, plus `.../publish` and
+  `.../archive`.
+- [ ] Member read route `GET /groups/{group_id}/pages/{slug}`.
+- [ ] Guest read route `GET /guest/{join_code}/pages/{slug}`.
+- [ ] Schemas: `GroupCustomPageOut`, `GroupCustomPageCreate`,
+  `GroupCustomPageUpdate`.
+- [ ] Tests: admin CRUD, publish/archive transitions, slug uniqueness
+  (same group + cross-group), guest/member/draft access gates.
+
+**Tasks — Human:**
+- [ ] None expected.
+
+### B24 — Carpool board: events + posts, list only, no map [ ]
+
+Starts once B23 lands. Scope intentionally cut down from
+`GROUP_PAGES_CARPOOL_PLAN.md`'s fuller carpool spec: no coordinates, no
+map, no route sketches, no `CarpoolMatch` — those stay in that doc as
+later milestones (B25+) until list-based carpool sees real use.
+Auto-archival is a manual admin action, not a scheduled sweep: a real job
+runner is already backlogged for Responsibilities' recurrence/reminders
+and B19's anonymous-participant sweep, and this shouldn't be the third
+place that gets reinvented ad hoc.
+
+**Acceptance criteria:**
+- [ ] Admin can create/edit/archive a `CarpoolEvent` on a carpool-template
+  page (title, date, destination label).
+- [ ] Members can add a driver or rider `CarpoolPost` (free-text origin
+  label, no coordinates) to an open event.
+- [ ] A member can edit/delete only their own post; admins can hide/
+  delete any post and lock/archive the event.
+- [ ] Locked/archived events reject new posts.
+- [ ] `pytest` green with ownership + admin-moderation tests.
+
+**Tasks — Claude:**
+- [ ] `CarpoolEvent` + `CarpoolPost` models + migration (both scoped to a
+  `GroupCustomPage`, `template_key=carpool_board`).
+- [ ] Routes for events/posts per `GROUP_PAGES_CARPOOL_PLAN.md`'s API
+  section, minus anything coordinate-related.
+- [ ] Ownership checks on post edit/delete; admin moderation actions.
+- [ ] Tests: ownership, admin moderation, locked/archived event rejects
+  new posts.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 
