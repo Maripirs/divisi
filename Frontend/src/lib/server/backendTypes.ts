@@ -138,6 +138,32 @@ export interface WeeklyNoteOut {
 	created_at: string;
 }
 
+/** B23: one template value for now (a second is a migration, not a schema
+ * change, per the Backend's own comment on `GroupCustomPageTemplate`). */
+export type GroupCustomPageTemplate = 'carpool_board';
+export type GroupCustomPageStatus = 'draft' | 'published' | 'archived';
+
+/** B23: an admin-created page distinct from the built-in `GroupPage` enum
+ * above, one dynamic row per page instead of a fixed member. `status`
+ * stands in for a built-in page's `enabled` bool (`published` is the only
+ * reachable state for a non-admin); `audience`/`min_identity` are the same
+ * enums the built-in pages use. No content field here on purpose (see the
+ * Backend schema's own comment): what a template renders comes from
+ * `template_key` alone, not a stored body. */
+export interface GroupCustomPageOut {
+	id: string;
+	group_id: string;
+	title: string;
+	slug: string;
+	template_key: GroupCustomPageTemplate;
+	status: GroupCustomPageStatus;
+	audience: PageAudience;
+	min_identity: PageMinIdentity;
+	created_by: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface LibraryEntryOut {
 	piece_id: string;
 	title: string;

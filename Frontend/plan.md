@@ -101,7 +101,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F22 | PDF cue points — tap to jump the reference recording (frontend for Backend B18) | ⏳ Built 2026-09-02: cue tool + glyph, tap-to-jump, mm:ss edit in the toolbar, hidden under "My mix"; `check` 0 errors, `build` clean, vitest 79 green; not deployed; no touchscreen pass. Tightened 2026-09-02 (human's request): cue tool is Director-layer only (owning-group admin + draw target = Director); personal-cue path dropped, every cue saves `scope='group'`. 2026-09-03 (human's request): cue glyphs now always render in the PDF player for every viewer (members and not-logged-in join-link guests) whenever the audio source is the reference recording, independent of the "Show director markup" toggle; guests read them via a new `GET /guest/{code}/pieces/{id}/cues` (cue-only). Editing unchanged. `check`/`build` clean, vitest 82 |
 | F23 | Local profile + "Save across devices" (frontend for Backend B19) | ⏳ Built 2026-09-09: silent local profile, lazy name prompt on guest responsibility self-signup, Settings "Save across devices" (name + PIN), one-time post-signup banner, roster "Unverified" badge, `SAVE_REQUIRED:` inline prompt. `check` 0 errors, `build` clean, vitest 114. Verified 2026-09-11 end to end (signup, save, cross-device merge, the `min_identity` gate) in a real local browser; still no human/phone pass. |
 | F24 | Guest chrome cleanup + demo "Preview Admin" entry point | ⏳ Built 2026-09-11: banner removal (`0e47174`) plus the Settings "Preview Admin" entry point (frontend for Backend B20): `demoPreview.ts` store, `/join/[code]/admin-preview` proxy, `divisi_demo_preview` marker cookie, persistent banner + "Exit preview". `check`/`build` clean, vitest 126. Verified end to end locally (docker compose + Playwright); no human pass against the deployed demo yet |
-| F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Planned 2026-09-11 — see `GROUP_PAGES_CARPOOL_PLAN.md` |
+| F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Planned 2026-09-11, starts after F27/B24 |
 
 ### F1 — Standalone playback + notation prototype [x]
@@ -1334,7 +1334,7 @@ Drops the PIN mechanism entirely rather than reworking it.
 **Tasks — Human:**
 - [ ] None.
 
-### F27 — Pages tab: custom group pages foundation (frontend for Backend B23) [ ]
+### F27 — Pages tab: custom group pages foundation (frontend for Backend B23) [x]
 
 Frontend half of B23. Adds a "Pages" tab to the group shell
 (`src/routes/groups/[id]/+page.svelte`'s `tabsInOrder`), gated the same
@@ -1344,32 +1344,74 @@ way `responsibilities`/`weeklyNotes` already are — an enabled flag off
 **Acceptance criteria:**
 - [ ] Members see a "Pages" tab listing published custom pages the group
   currently has (empty state when there are none — most groups won't
-  have any until F28/carpool ships).
-- [ ] Admins additionally see drafts, and a "Create page" flow: for now
+  have any until F28/carpool ships). **Caveat, see deviations below:**
+  the tab and its empty state are wired correctly, but a real (non-admin)
+  member can't populate that list yet, since the Backend has no
+  member-facing "list" route.
+- [x] Admins additionally see drafts, and a "Create page" flow: for now
   the template picker offers exactly one option (Carpool board), plus
   title, visibility (audience/min_identity), and publish/unpublish/
   archive controls — same UI language as the existing group page-
   settings grid (F6), not a new pattern.
 - [ ] Guests see published `audience=everyone` pages under the same join
-  flow as other guest-visible pages.
-- [ ] A read-only page renderer exists but is functionally empty until
+  flow as other guest-visible pages. **Caveat, see deviations below:**
+  built as a direct by-slug route instead, since there's no guest list
+  route either.
+- [x] A read-only page renderer exists but is functionally empty until
   F28 gives `carpool_board` real content — this milestone just needs it
   to render something sane (title + an empty state).
-- [ ] i18n keys added for every new string, Spanish included (F8).
-- [ ] `npm run check` / `npm run build` clean; vitest green.
+- [x] i18n keys added for every new string, Spanish included (F8).
+- [x] `npm run check` / `npm run build` clean; vitest green.
 
 **Tasks — Claude:**
-- [ ] Add `pages` to the group tab set + nav, gated on whether the group
+- [x] Add `pages` to the group tab set + nav, gated on whether the group
   has any custom pages to show for the current viewer.
-- [ ] Admin page list + create-from-template flow (one template option).
-- [ ] Visibility controls (audience/min_identity), reusing the existing
+- [x] Admin page list + create-from-template flow (one template option).
+- [x] Visibility controls (audience/min_identity), reusing the existing
   group page-settings component rather than a new one.
-- [ ] Read-only page renderer shell for `carpool_board` (empty state only).
-- [ ] Guest page route/rendering.
-- [ ] i18n keys, `/es` included.
+- [x] Read-only page renderer shell for `carpool_board` (empty state only).
+- [x] Guest page route/rendering.
+- [x] i18n keys, `/es` included.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Built 2026-09-11.** `PagesTab.svelte` (admin create/edit/publish/
+unpublish/archive/delete, member/guest read-only list), `CustomPageView.svelte`
+(the shared `carpool_board` renderer shell), `actions/customPages.ts`, and
+by-slug view routes at `groups/[id]/pages/[slug]` (member, bypassed for
+admins same as the Backend's own gate) and `join/[code]/pages/[slug]`
+(guest). `+page.server.ts` fetches the admin management list
+(`GET .../custom-pages`) for everyone via the existing `fetchPageOrDisabled`
+helper, same as `weeklyNotes`/`responsibilities`: it 200s with every status
+for an admin and 403s (folded into an empty list) for anyone else.
+
+**Deviations from the spec above:** B23's own admin-only `GET
+.../custom-pages` is the *only* list route that exists, there's no
+member- or guest-facing "list every published custom page" route, only
+the by-slug reads (`GET /groups/{id}/pages/{slug}` and `GET
+/guest/{code}/pages/{slug}`), per that route module's own comment ("a
+member reaches a specific page by its slug, e.g. from a link an admin
+shares"). Two consequences, both flagged as caveats above rather than
+silently glossed over:
+- A real (non-admin) member's Pages tab reuses the same 403-as-disabled
+  fallback every other gated tab already uses, which is architecturally
+  correct but means it always renders empty today, regardless of what's
+  actually published, until a member-facing list route exists.
+- Guest access is a direct route (`/join/[code]/pages/[slug]`) reached by
+  a shared link, not a tab inside the main `/join/[code]` view: there's
+  nothing there to list from either.
+
+Both gaps are pre-existing in the already-committed Backend (B23), not
+something introduced here, and the fix in either case is a small new
+Backend route (a published-only list, gated the same way the by-slug
+routes already are): reasonable scope for a B24/F28 fast-follow rather
+than this milestone, which was told not to touch `Backend/` at all.
+
+The visibility form also includes a `min_identity` control (Anyone, or
+Saved accounts only) even though nothing in F27 writes to a custom page
+yet: included now per the spec's explicit ask, ready for F28's write gate
+to actually enforce it.
 
 ### F28 — Carpool board UI (frontend for Backend B24) [ ]
 

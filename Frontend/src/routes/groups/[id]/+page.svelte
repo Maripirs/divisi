@@ -8,6 +8,7 @@
 	import MembersTab from './tabs/MembersTab.svelte';
 	import ResponsibilitiesTab from './tabs/ResponsibilitiesTab.svelte';
 	import AboutTab from './tabs/AboutTab.svelte';
+	import PagesTab from './tabs/PagesTab.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -19,7 +20,7 @@
 	// picker below. Keeping one `tab` state (rather than separate
 	// member/admin tab state) means switching modes never has to remap a
 	// tab selection that doesn't exist on the other side.
-	type Tab = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'about';
+	type Tab = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'about' | 'pages';
 
 	// Admin mode is a *view* of this same group page, not a separate
 	// destination (UX_WIREFRAME.md's Admin Experience) — reachable via the
@@ -37,13 +38,20 @@
 	// admin's own settings tab (below) is where those real settings show.
 	// Tracks/About have no page gate on the member-facing routes yet, so
 	// they're always shown.
-	const tabsInOrder: Tab[] = ['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'about'];
+	const tabsInOrder: Tab[] = ['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'pages', 'about'];
 	function tabVisible(t: Tab): boolean {
 		if (mode === 'admin') return true;
 		if (t === 'primary') return data.homeworkEnabled;
 		if (t === 'weeklyNotes') return data.weeklyNotesEnabled;
 		if (t === 'members') return data.membersEnabled;
 		if (t === 'responsibilities') return data.responsibilitiesEnabled;
+		// B23: no built-in "enabled" flag here. `customPagesEnabled` only
+		// tells us the admin-management list call succeeded (see
+		// `+page.server.ts`'s comment on why a 403 there, the only way a real
+		// member ever hits this branch today, folds into the same fallback as
+		// every other page's disabled state). What actually gates the tab for
+		// a member is simpler: is there at least one published page to show.
+		if (t === 'pages') return data.customPages.some((p) => p.status === 'published');
 		return true;
 	}
 	let visibleTabs = $derived(tabsInOrder.filter(tabVisible));
@@ -115,6 +123,7 @@
 				{:else if t === 'weeklyNotes'}{m.weekly_notes_tab_title()}
 				{:else if t === 'members'}{m.groups_members_tab_title()}
 				{:else if t === 'responsibilities'}{m.responsibilities_tab_title()}
+				{:else if t === 'pages'}{m.pages_tab_title()}
 				{:else}{mode === 'admin' ? m.groups_settings() : m.groups_info()}{/if}
 			</button>
 		{/each}
@@ -130,6 +139,8 @@
 		<MembersTab {data} {form} {mode} />
 	{:else if tab === 'responsibilities'}
 		<ResponsibilitiesTab {data} {form} {mode} />
+	{:else if tab === 'pages'}
+		<PagesTab {data} {form} {mode} />
 	{:else}
 		<AboutTab {data} {form} {mode} />
 	{/if}

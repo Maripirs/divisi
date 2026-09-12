@@ -3,6 +3,7 @@ import { backendJson, BackendApiError } from '$lib/server/backend';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type {
+	GroupCustomPageOut,
 	GroupMemberOut,
 	GroupOut,
 	GroupPageSettingOut,
@@ -19,6 +20,7 @@ import { trackActions } from './actions/tracks';
 import { homeworkActions } from './actions/homework';
 import { weeklyNoteActions } from './actions/weeklyNotes';
 import { responsibilityActions } from './actions/responsibilities';
+import { customPageActions } from './actions/customPages';
 
 /** B12: a member-facing page route 403s once its admin disables that page
  * (`require_member_page_access`) — admins always pass regardless, so this
@@ -52,16 +54,26 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homeworkResult, membersResult, library, responsibilitiesResult, weeklyNotesResult] = await Promise.all([
-			fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
-			fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
-			backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch),
-			fetchPageOrDisabled(
-				backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
-				[]
-			),
-			fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), [])
-		]);
+		const [homeworkResult, membersResult, library, responsibilitiesResult, weeklyNotesResult, customPagesResult] =
+			await Promise.all([
+				fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
+				fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
+				backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch),
+				fetchPageOrDisabled(
+					backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
+					[]
+				),
+				fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
+				// B23: `GET .../custom-pages` is the admin *management* list
+				// (every status, not just published) and 403s for a non-admin
+				// caller: there's no member-facing "list" route at all (a
+				// member reaches one page by its slug, see the Backend's own
+				// comment on that route). `fetchPageOrDisabled` already treats a
+				// 403 as "nothing to show here" for the other pages above, which
+				// happens to be exactly the right fallback for a real member
+				// too, so this reuses it rather than a bespoke admin-only fetch.
+				fetchPageOrDisabled(backendJson<GroupCustomPageOut[]>(locals.token, `/groups/${group.id}/custom-pages`, undefined, fetch), [])
+			]);
 
 		// Admin-only management data — these two endpoints 403 for a
 		// non-admin, so only fetched when the caller actually is one.
@@ -97,6 +109,8 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params }) =>
 			responsibilitiesEnabled: responsibilitiesResult.enabled,
 			weeklyNotes: weeklyNotesResult.data,
 			weeklyNotesEnabled: weeklyNotesResult.enabled,
+			customPages: customPagesResult.data,
+			customPagesEnabled: customPagesResult.enabled,
 			schedules,
 			pageSettings
 		};
@@ -117,5 +131,6 @@ export const actions: Actions = {
 	...trackActions,
 	...homeworkActions,
 	...weeklyNoteActions,
-	...responsibilityActions
+	...responsibilityActions,
+	...customPageActions
 };

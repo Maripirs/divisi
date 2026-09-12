@@ -40,18 +40,30 @@ export interface GuestHomework {
 	dueDate: string | null;
 }
 
+/** Mirrors the Backend's `ResponsibilityGuestSignupOut` (B13): a guest's
+ * view of one signup, name only, deliberately no email/userId (see
+ * `groupCards.ts`'s `ResponsibilityRoleSignup`, which the join page maps
+ * this into with `userId: null` since the guest DTO has no such field). */
+export interface GuestResponsibilityRoleSignup {
+	id: string;
+	name: string;
+}
+
 /** Mirrors the Backend's `ResponsibilityGuestRoleCoverageOut`/
  * `ResponsibilityGuestDateOut` (B13), as seen via the guest
- * `/guest/{code}/responsibilities/dates` route — coverage numbers only, no
- * signup identities (see the Backend route's own note on why). Only
- * returned at all when the group's admin has enabled the `responsibilities`
- * page for guests, same B12 mechanism as homework above. */
+ * `/guest/{code}/responsibilities/dates` route: the same coverage numbers
+ * and signup names a member sees, just never an email or account id (the
+ * Backend route's real gate is reachability itself, see
+ * `require_guest_page_access`). Only returned at all when the group's admin
+ * has enabled the `responsibilities` page for guests, same B12 mechanism as
+ * homework above. */
 export interface GuestResponsibilityRoleCoverage {
 	roleId: string;
 	roleName: string;
 	neededCount: number;
 	activeCount: number;
 	status: string;
+	signups: GuestResponsibilityRoleSignup[];
 }
 
 /** One role set attached to a guest-visible date. No `schedule_id` in the
@@ -145,12 +157,18 @@ interface GuestHomeworkResponse {
 	due_date: string | null;
 }
 
+interface GuestResponsibilityRoleSignupResponse {
+	id: string;
+	name: string;
+}
+
 interface GuestResponsibilityRoleCoverageResponse {
 	role_id: string;
 	role_name: string;
 	needed_count: number;
 	active_count: number;
 	status: string;
+	signups: GuestResponsibilityRoleSignupResponse[];
 }
 
 interface GuestResponsibilityDateScheduleGroupResponse {
@@ -309,7 +327,8 @@ export async function listGuestResponsibilityDates(
 				roleName: r.role_name,
 				neededCount: r.needed_count,
 				activeCount: r.active_count,
-				status: r.status
+				status: r.status,
+				signups: r.signups.map((sg) => ({ id: sg.id, name: sg.name }))
 			}))
 		}))
 	}));
@@ -358,4 +377,36 @@ export async function listGuestPieceRehearsalNotes(
 
 	const body: GuestPieceRehearsalNoteResponse[] = await res.json();
 	return body.map((n) => ({ id: n.id, body: n.body, createdAt: n.created_at }));
+}
+
+/** B23: one admin-created custom page (`carpool_board` is the only
+ * `templateKey` today), reached by its slug rather than listed: there's no
+ * guest "list every custom page" route, same gap the Backend's own comment
+ * on the member-facing route describes: a page is reached via a link
+ * someone shares, not a browse view. Guest-visible only when the page is
+ * published *and* `audience: everyone`; a draft, archived, or members-only
+ * page 404s here exactly like a disabled built-in page would. */
+export interface GuestCustomPage {
+	title: string;
+	templateKey: 'carpool_board';
+}
+
+interface GuestCustomPageResponse {
+	title: string;
+	template_key: 'carpool_board';
+}
+
+export async function getGuestCustomPage(
+	code: string,
+	slug: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestCustomPage> {
+	const res = await guestFetch(
+		guestUrl(`/guest/${encodeURIComponent(code)}/pages/${encodeURIComponent(slug)}`, { password, token }),
+		fetchFn
+	);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestCustomPageResponse = await res.json();
+	return { title: body.title, templateKey: body.template_key };
 }
