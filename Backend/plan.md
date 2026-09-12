@@ -121,6 +121,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
 | B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
 | B27 | Carpool: claim a seat in a driver's post | ⏳ Planned 2026-09-12 |
+| B28 | Guests can remove their own responsibility signup | ⏳ Planned 2026-09-12 |
 
 ### B1 — Backend scaffold [x]
 
@@ -1459,6 +1460,66 @@ seat exactly like a member can, no separate write path.
 - [ ] Tests per acceptance criteria; audit existing carpool tests that
   construct/assert on `seats_available` and update them for the schema
   change.
+
+**Tasks — Human:**
+- [ ] None expected.
+
+### B28 — Guests can remove their own responsibility signup [ ]
+
+Human feedback 2026-09-12: a guest who self-signs up for a responsibility
+(B19's anonymous-participant flow) has no way to undo it. The Backend
+route already supports self-removal in principle,
+`DELETE /responsibilities/signups/{signup_id}` already checks
+`signup.user_id != current_user.id` and lets the owner (or an admin)
+through, exactly the right rule, it's just bearer-only
+(`current_user: User = Depends(get_current_user)`), so an anonymous
+participant (who has no bearer token at all) can never reach it. This is
+the same gap B25 already closed once for carpool posts
+(`update_post`/`delete_post`); closing it here is the identical move,
+not a new design.
+
+**Design:** swap `get_current_user` for the same `maybe_user`/
+`maybe_participant`/`local_id`-query-param optional-auth shape B25's
+`carpool.py` uses, resolve via `resolve_participant` (401 if nothing
+resolves, matching carpool's `_resolve_actor`), then run the exact same
+ownership/lock checks the route already has, just against the resolved
+actor instead of a guaranteed bearer user. No schema change (there's no
+request body on a DELETE), no migration (`ResponsibilitySignup.user_id`
+already accepts an anonymous participant's id today, same fact as
+`CarpoolPost.user_id`).
+
+Deliberately duplicates a small local resolve-actor helper in
+`responsibilities.py` rather than promoting `carpool.py`'s `_resolve_actor`
+into a shared `app/services/participants.py` function: B27 is
+concurrently in flight against `carpool.py` as this is written, so
+touching that file here would risk a collision. Fine to unify the two
+identical helpers into one shared one later, as a small follow-up
+cleanup, not blocking this.
+
+**Acceptance criteria:**
+- [ ] An anonymous participant who self-signed up for a role can call
+  `DELETE /responsibilities/signups/{signup_id}` (with the
+  `divisi_participant` cookie or a `local_id` query param, same
+  resolution B25 uses) and have it succeed.
+- [ ] The same 403 ("Can only remove your own signup") still applies
+  when the resolved actor doesn't own the signup, guest or member either
+  way.
+- [ ] The same 409 (date locked) still applies to a non-admin guest
+  exactly as it already does to a non-admin member. No change to that
+  rule, just who can now reach it.
+- [ ] A request with no bearer token and no resolvable participant
+  (no cookie, no matching `local_id`) 401s, same "not even a guest yet"
+  shape B25's `_resolve_actor` uses.
+- [ ] Existing member-only `delete_signup` tests still pass unmodified.
+- [ ] `pytest` green with new tests covering the guest self-removal path
+  and its 403/409/401 edges.
+
+**Tasks — Claude:**
+- [ ] Rework `delete_signup` (`app/api/routes/responsibilities.py`):
+  optional-auth dependencies, a small local resolve-actor helper, ownership
+  and lock checks unchanged otherwise.
+- [ ] Tests: guest self-removal succeeds, wrong-guest 403, locked-date
+  409 for a guest same as a member, no-actor-at-all 401.
 
 **Tasks — Human:**
 - [ ] None expected.
