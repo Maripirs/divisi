@@ -104,7 +104,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F27 | Pages tab: custom group pages foundation (frontend for Backend B23) | ⏳ Built 2026-09-11: Pages tab (admin create/publish/unpublish/archive/delete + edit, member/guest read-only), by-slug view routes for member and guest, `carpool_board` renderer shell. `check`/`build` clean, vitest 125. |
 | F28 | Carpool board UI (frontend for Backend B24) | ⏳ Built 2026-09-11: event selector, driver/rider lists, owner edit/delete, admin moderation + event create/edit/lock/archive. `check`/`build` clean, vitest 132. Not deployed; no real-browser pass yet. |
 | F29 | Guest carpool board: real content + posting (frontend for Backend B25) | ⏳ Built 2026-09-12: `/join/[code]/pages/[slug]` renders real `CarpoolBoard` content for a guest (events/posts via B25's guest reads), `/join/[code]` "Pages" tab discovery, `/join/[code]/carpool/...` proxy routes for guest post create/edit/delete (name prompt, `SAVE_REQUIRED:` inline, cookie round-trip). `check` 0 errors, `build` clean, vitest 138 green (was 132; +6 new). Not deployed; no real-browser pass yet. |
-| F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ⏳ Planned 2026-09-12 |
+| F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12: create-page form and per-page publish/archive/delete/edit controls moved from `PagesTab.svelte` into `AboutTab.svelte`'s Settings screen, as two new cards right after the built-in Page Visibility card ("Custom pages" list, then "Create page"). `PagesTab.svelte` is now a pure list (title, status label for admin, "View" link). `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1564,7 +1564,7 @@ for proxying a guest write through to a mint-or-resolve Backend endpoint.
   `carpool_save_required` and `carpool_guest_action_failed` (a guest-path
   generic retry message covering create/edit/delete alike).
 
-### F30 — Move custom-page create + visibility into Settings, alongside built-in Page Visibility [ ]
+### F30 — Move custom-page create + visibility into Settings, alongside built-in Page Visibility [x]
 
 Human feedback 2026-09-12, looking at the Settings screen's existing
 "Page Visibility" card (`AboutTab.svelte`, admin mode: a checkbox +
@@ -1597,34 +1597,65 @@ row (not foldable into the checkbox) since it's a more final state than
 between "unpublish" and "archive."
 
 **Acceptance criteria:**
-- [ ] The Settings screen's Page Visibility area lists custom pages
+- [x] The Settings screen's Page Visibility area lists custom pages
   alongside the six built-in ones (or in a clearly-labeled adjacent
   section if mixing them into one literal list/form is awkward given the
   different action-per-row vs. one-shared-form shape), each with a
   published/draft toggle and an audience dropdown.
-- [ ] "Create page" (template picker, title, audience, min_identity) is
+- [x] "Create page" (template picker, title, audience, min_identity) is
   reachable from Settings, not from the Pages tab.
-- [ ] Archive and delete remain available per custom page, from Settings.
-- [ ] The Pages tab still shows the list of pages (drafts included for an
+- [x] Archive and delete remain available per custom page, from Settings.
+- [x] The Pages tab still shows the list of pages (drafts included for an
   admin, published-only for a member/guest) with a working "View" link,
   but no create/edit/publish/archive/delete controls.
-- [ ] No Backend route or schema changes.
-- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+- [x] No Backend route or schema changes.
+- [x] `npm run check` / `npm run build` clean; vitest green; i18n key
   parity maintained (reuse existing `pages_*`/`groups_page_visibility*`
   keys where the copy still fits, add new ones only where it doesn't).
 
 **Tasks — Claude:**
-- [ ] Move the create-page form from `PagesTab.svelte` into
+- [x] Move the create-page form from `PagesTab.svelte` into
   `AboutTab.svelte`'s admin section.
-- [ ] Add a per-custom-page visibility row (published/draft toggle,
+- [x] Add a per-custom-page visibility row (published/draft toggle,
   audience dropdown, archive/delete) to the same area, reusing
   `EditableCard`/existing action wiring rather than a new pattern.
-- [ ] Strip `PagesTab.svelte` down to a read-only list.
-- [ ] i18n: audit which existing keys still read correctly in the new
+- [x] Strip `PagesTab.svelte` down to a read-only list.
+- [x] i18n: audit which existing keys still read correctly in the new
   location vs. need a Settings-specific variant.
 
 **Tasks — Human:**
 - [ ] None expected.
+
+**Built 2026-09-12.** Went with a clearly-labeled adjacent section rather
+than folding custom pages into the built-in grid's literal list/form:
+the built-in card is one shared form submitted via a single "Save page
+settings" button, but each custom page acts through its own per-row
+action call (publish/unpublish/archive/delete/update), so a shared save
+button made no sense for them. `AboutTab.svelte` gained two new cards
+right after the existing Page Visibility card: "Custom pages" (one row
+per page in `data.customPages`, admin sees every status) with a
+checkbox wired straight to `?/publishCustomPage`/`?/unpublishCustomPage`
+(submits on change via `requestSubmit()`, no separate Save button),
+Edit (opens the existing `EditableCard` title/audience/min_identity
+form, wired to `?/updateCustomPage`/`?/deleteCustomPage`) and Archive
+(`?/archiveCustomPage`, hidden once a page is archived, disables the
+checkbox instead of letting the toggle re-check an archived page); then
+"Create page" (the form, unchanged, moved verbatim). `PagesTab.svelte`
+is now title + admin status label + "View" link only.
+
+i18n: reused `pages_*`/`groups_page_visibility*` keys almost entirely
+as-is. Added three: `pages_custom_pages` (the new section heading),
+`pages_custom_pages_note`, and `pages_no_pages_admin_tab` (the old
+`pages_no_pages_admin` says "Create one below," which is only true in
+its new Settings home now that the create form moved out of
+`PagesTab.svelte`; the Pages tab's own empty state needed different
+copy pointing an admin at Settings instead). en/es key counts both
+626, in parity.
+
+Verification: `npm run check` 0 errors (13 pre-existing warnings,
+unrelated to this change), `npm run build` clean, vitest 138 passed
+(unchanged from baseline, no tests targeted this UI directly). Not
+browser-exercised (standing blocker); no human pass yet.
 
 ## Backlog
 

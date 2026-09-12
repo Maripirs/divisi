@@ -140,7 +140,7 @@
 	{:else if tab === 'responsibilities'}
 		<ResponsibilitiesTab {data} {form} {mode} />
 	{:else if tab === 'pages'}
-		<PagesTab {data} {form} {mode} />
+		<PagesTab {data} {mode} />
 	{:else}
 		<AboutTab {data} {form} {mode} />
 	{/if}

@@ -603,7 +603,10 @@
 	"pages_delete_confirm": "¿Eliminar esta página? No se puede deshacer.",
 	"pages_view": "Ver",
 	"pages_no_pages_admin": "Aún no hay páginas personalizadas. Crea una a continuación.",
+	"pages_no_pages_admin_tab": "Aún no hay páginas personalizadas. Un administrador puede crear una desde Ajustes.",
 	"pages_no_pages_member": "Aún no hay páginas.",
+	"pages_custom_pages": "Páginas personalizadas",
+	"pages_custom_pages_note": "Activa o desactiva una página personalizada, o archívala o elimínala. Edita una página para cambiar su título o quién puede verla.",
 	"pages_back": "Volver",
 	"pages_carpool_coming_soon": "Los detalles del coche compartido llegarán pronto.",
 
