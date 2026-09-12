@@ -45,6 +45,7 @@
 			pageId={data.customPage.id}
 			isAdmin={data.isAdmin}
 			userId={data.user.id}
+			userName={data.user.name}
 			events={data.events}
 			selectedEventId={data.selectedEventId}
 			posts={data.posts}

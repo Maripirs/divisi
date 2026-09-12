@@ -39,6 +39,7 @@
 		pageId,
 		isAdmin,
 		userId,
+		userName = null,
 		events,
 		selectedEventId,
 		posts,
@@ -48,6 +49,14 @@
 		pageId: string;
 		isAdmin: boolean;
 		userId: string;
+		/** A member's own account name, shown as "Posting as {name}" on the
+		 * offer/request forms so it's clear which name a post will carry
+		 * (`display_name` comes from the Backend session, not a form field,
+		 * see `CarpoolPostCreate`). `null` for a guest, whose name instead
+		 * comes reactively from `localProfile` below, since it can change
+		 * mid-session (the lazy name prompt) in a way a member's account
+		 * name never does. */
+		userName?: string | null;
 		events: CarpoolEventOut[];
 		selectedEventId: string | null;
 		posts: CarpoolPostOut[];
@@ -56,6 +65,11 @@
 	} = $props();
 
 	let isGuest = $derived(guest !== null);
+	// Shown as "Posting as {name}" right on the offer/request forms: a
+	// member's name never changes mid-session, but a guest's does the
+	// moment the lazy name prompt below sets it, so this has to stay
+	// reactive to the store rather than read once.
+	let postingAsName = $derived(isGuest ? $localProfile.displayName : (userName ?? ''));
 
 	let selectedEvent = $derived(events.find((e) => e.id === selectedEventId) ?? null);
 	let drivers = $derived(posts.filter((p) => p.kind === 'driver'));
@@ -643,6 +657,7 @@
 								void submitGuestOffer(ev.id);
 							}}
 						>
+							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
 								<input bind:value={guestOfferOrigin} required />
@@ -686,6 +701,7 @@
 							}}
 						>
 							<input type="hidden" name="eventId" value={ev.id} />
+							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
 								<input name="originLabel" required />
@@ -743,6 +759,7 @@
 								void submitGuestRequest(ev.id);
 							}}
 						>
+							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
 								<input bind:value={guestRequestOrigin} required />
@@ -778,6 +795,7 @@
 							}}
 						>
 							<input type="hidden" name="eventId" value={ev.id} />
+							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
 								<input name="originLabel" required />

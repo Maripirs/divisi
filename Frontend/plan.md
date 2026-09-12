@@ -1902,6 +1902,22 @@ visible, so the individual calls there are real work, not waste. `check`
 0 errors, `build` clean, vitest 151 green (unchanged, no new test surface,
 covered by the Backend's new tests).
 
+### Small addition, 2026-09-12 — "Posting as {name}" on carpool forms
+
+Human feedback: when offering/requesting a ride, the form should say
+which name the post will carry, since `display_name` is never a form
+field (it comes from the session for a member, the local profile for a
+guest, see `CarpoolPostCreate`) so there was previously no way to tell
+from the form itself. Added a `userName` prop to `CarpoolBoard.svelte`
+(a member's own account name, from the group layout's `data.user.name`)
+and a reactive `postingAsName` (falls back to `$localProfile.displayName`
+for a guest, which can change mid-session via the lazy name prompt in a
+way a member's name never does). Shown as "Posting as {name}" at the top
+of all four offer/request form variants (member/guest x driver/rider).
+New key `carpool_posting_as`, en/es. `check` 0 errors, `build` clean,
+vitest 151 green (unchanged, no new test surface for a pure display
+string).
+
 ## Backlog
 
 - ~~**Persist F12 annotation mode + F13 audio source per piece**~~ **done 2026-09-02** (with the F21/F22 batch). `PersistedSettings` grew `showMineMarkup` / `showDirectorMarkup` / `audioSource` (all optional). "Annotation mode" here = the F21 layer-visibility toggles, not the transient armed-tool state. The toggles persist via a guarded `$effect` in `piece/[id]/+page.svelte` (no page-level setter, same shape as the zoom-persist effect); `audioSource` persists from `setAudioSource` and is restored only when the stored value is `'reference'` **and** the restored `viewMode === 'pdf'` **and** `piece?.youtubeUrl` is set. F4's separate score-marker toggle was out of scope.

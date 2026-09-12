@@ -628,6 +628,7 @@
 	"carpool_no_riders": "Aún nadie necesita que lo lleven.",
 	"carpool_offer_ride": "Puedo llevar a alguien",
 	"carpool_request_ride": "Necesito que me lleven",
+	"carpool_posting_as": "Publicando como {name}",
 	"carpool_origin_field": "Sale desde",
 	"carpool_origin_label": "Desde {origin}",
 	"carpool_seats_field": "Asientos disponibles",
