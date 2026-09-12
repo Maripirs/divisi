@@ -108,7 +108,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B19 | Progressive accounts: anonymous participants + "Save across devices" | ⏳ Built 2026-09-09, migration `d4a9f2c7e1b8` (`down_revision = a2f6c1e4d9b7`), single linear head; pytest 271 green. Not pushed/deployed |
 | B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
 | B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
-| B24 | Carpool board: events + posts, list only, no map | ⏳ Planned 2026-09-11, starts after B23 |
+| B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1071,7 +1071,7 @@ title never leaks to a caller who isn't supposed to know it exists yet.
 **Tasks — Human:**
 - [ ] None expected.
 
-### B24 — Carpool board: events + posts, list only, no map [ ]
+### B24 — Carpool board: events + posts, list only, no map [x]
 
 Starts once B23 lands. Scope intentionally cut down from
 `GROUP_PAGES_CARPOOL_PLAN.md`'s fuller carpool spec: no coordinates, no
@@ -1083,23 +1083,45 @@ and B19's anonymous-participant sweep, and this shouldn't be the third
 place that gets reinvented ad hoc.
 
 **Acceptance criteria:**
-- [ ] Admin can create/edit/archive a `CarpoolEvent` on a carpool-template
+- [x] Admin can create/edit/archive a `CarpoolEvent` on a carpool-template
   page (title, date, destination label).
-- [ ] Members can add a driver or rider `CarpoolPost` (free-text origin
+- [x] Members can add a driver or rider `CarpoolPost` (free-text origin
   label, no coordinates) to an open event.
-- [ ] A member can edit/delete only their own post; admins can hide/
+- [x] A member can edit/delete only their own post; admins can hide/
   delete any post and lock/archive the event.
-- [ ] Locked/archived events reject new posts.
-- [ ] `pytest` green with ownership + admin-moderation tests.
+- [x] Locked/archived events reject new posts.
+- [x] `pytest` green with ownership + admin-moderation tests.
 
 **Tasks — Claude:**
-- [ ] `CarpoolEvent` + `CarpoolPost` models + migration (both scoped to a
+- [x] `CarpoolEvent` + `CarpoolPost` models + migration (both scoped to a
   `GroupCustomPage`, `template_key=carpool_board`).
-- [ ] Routes for events/posts per `GROUP_PAGES_CARPOOL_PLAN.md`'s API
+- [x] Routes for events/posts per `GROUP_PAGES_CARPOOL_PLAN.md`'s API
   section, minus anything coordinate-related.
-- [ ] Ownership checks on post edit/delete; admin moderation actions.
-- [ ] Tests: ownership, admin moderation, locked/archived event rejects
+- [x] Ownership checks on post edit/delete; admin moderation actions.
+- [x] Tests: ownership, admin moderation, locked/archived event rejects
   new posts.
+
+**Deviations from this section as originally scoped:**
+- No `CarpoolEvent` delete route: the acceptance criteria only ever say
+  "create/edit/archive", so archive (a status flip, kept alongside lock in
+  one `PATCH /carpool/events/{id}`, following `ResponsibilityDate`'s
+  precedent rather than `GroupCustomPage`'s separate `/publish`/`/archive`
+  actions) covers it; a hard delete wasn't asked for.
+- "Locked/archived events reject new posts" was extended to *edits* of an
+  existing post too (a non-admin can't `PATCH` content on a post once its
+  event is locked/archived), but deliberately *not* to deleting your own
+  post: a member can always withdraw their own post regardless of event
+  state, since being stuck with a stale post because an admin locked the
+  event later seemed worse than the inconsistency.
+- No guest/anonymous-participant carpool routes at all (`GROUP_PAGES_
+  CARPOOL_PLAN.md` itself defers this: "Guest carpool writes should be
+  deferred until the privacy rules are proven"). Every carpool route
+  requires a real bearer-authenticated member; `CarpoolPost.user_id` is
+  non-nullable, unlike `ResponsibilitySignup`'s guest-name carve-out.
+- Non-admin members only ever see `status=open` posts in the list
+  (hidden/cancelled are filtered out); an admin sees every status. Not
+  explicit in the acceptance criteria but implied by "hide" being a
+  moderation action at all.
 
 **Tasks — Human:**
 - [ ] None expected.
@@ -1138,6 +1160,7 @@ place that gets reinvented ad hoc.
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
+- 2026-09-11: Built B24 (carpool board: events + posts, list only, no map). `CarpoolEvent`/`CarpoolPost` (migration `48a30562ab06`, chained off B23's `33efd3092bff`) scope to a carpool-template `GroupCustomPage` and reuse its `require_member_page_access` gate unchanged. New router `app/api/routes/carpool.py`: admin create/edit/lock/archive an event (one `PATCH` covers all three, following `ResponsibilityDate`'s precedent over `GroupCustomPage`'s separate publish/archive actions); a member posts driver/rider offers on an open event, edits/deletes only their own, and an admin can hide/delete any post regardless of event state. `CarpoolPost.user_id` is non-nullable (no guest/anonymous carpool writes at all, per `GROUP_PAGES_CARPOOL_PLAN.md`'s own deferral). Deliberate asymmetry: a locked/archived event blocks new posts *and* edits, but a member can always delete their own post. `pytest` 319 green (was 299; +20 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
 - 2026-09-11: Built B23 (Custom Group Pages foundation, carpool template only). `GroupCustomPage` (migration `33efd3092bff`) is a dynamic per-group row rather than a fixed `GroupPage` enum member, reusing `PageAudience`/`PageMinIdentity` and a new one-value `GroupCustomPageTemplate` (`carpool_board`). `app/services/pages.py`'s three gate functions were extended in place (`PageLike = GroupPage | GroupCustomPage`) rather than forked, so the new admin CRUD router (`app/api/routes/custom_pages.py`: create/list/get/patch/delete plus `/publish` and `/archive`), the member route `GET /groups/{id}/pages/{slug}`, and the guest route `GET /guest/{join_code}/pages/{slug}` all share the exact same access checks built-in pages use. Slugs are generated from title, unique per group, immutable after create, and rejected with 409 on collision (no auto-suffixing). No `GroupPageBlock`, no HTML field anywhere on the model. `pytest` 299 green (was 279 on top of pre-existing uncommitted work; +20 new). Not pushed/deployed.
 
 - 2026-09-11: Built B21 (drop PIN save, add group-scoped guest name matching). Decided with the human that B19's name+PIN "Save across devices" never fit right and no real user had ever hit it, so dropped it entirely: migration `e5c1a9f3b7d2` drops `users.pin_hash`, `POST /auth/save` and `SaveAccountRequest` are gone. Replacement is much lighter: `find_guest_matches` (case-insensitive name lookup scoped to `GroupMembership.is_guest == True` in one specific group) backs a new `GET /guest/{join_code}/name-matches` read and a `claim_user_id` on the self-signup payload; a confirmed claim re-validates server-side and reuses B19's existing `merge_participant` unchanged. No more in-place promotion path — a guest's only way to a real account is now a separate registration, unrelated to the guest row. `pytest` 274 green (was 275: -6 old PIN tests, +5 new). Not pushed/deployed.

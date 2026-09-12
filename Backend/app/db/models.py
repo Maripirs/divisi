@@ -685,3 +685,83 @@ class GroupCustomPage(Base):
     created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class CarpoolEventStatus(str, enum.Enum):
+    open = "open"
+    locked = "locked"
+    archived = "archived"
+
+
+class CarpoolEvent(Base):
+    """B24: one dated carpool occurrence on a carpool-template
+    `GroupCustomPage`. `status` gates member writes (`app/api/routes/
+    carpool.py`): `open` accepts new posts and post edits, `locked`/
+    `archived` both reject them (an admin still bypasses either state, same
+    admin-always-wins convention as Responsibilities' `locked` dates). No
+    lat/lng: MVP is label-only, no map (plan.md's B24)."""
+
+    __tablename__ = "carpool_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    page_id: Mapped[str] = mapped_column(String, ForeignKey("group_custom_pages.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    destination_label: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[CarpoolEventStatus] = mapped_column(
+        SAEnum(CarpoolEventStatus, native_enum=False),
+        nullable=False,
+        default=CarpoolEventStatus.open,
+        server_default="open",
+    )
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the event out from under the rest of the group (same
+    # convention as `GroupCustomPage.created_by`).
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class CarpoolPostKind(str, enum.Enum):
+    driver = "driver"
+    rider = "rider"
+
+
+class CarpoolPostStatus(str, enum.Enum):
+    open = "open"
+    hidden = "hidden"
+    cancelled = "cancelled"
+
+
+class CarpoolPost(Base):
+    """B24: one member's ride offer/request against a `CarpoolEvent`.
+    `user_id` is required (not nullable, unlike `ResponsibilitySignup`'s
+    guest_name carve-out): join-link guest and anonymous-participant
+    carpool writes are explicitly deferred (see GROUP_PAGES_CARPOOL_PLAN.md
+    and plan.md's B24), so every post traces to a real member. `display_name`
+    is captured at post time rather than resolved from `user` at read time,
+    so a later name change doesn't rewrite history. Free-text `origin_label`
+    only, no coordinates until a map milestone justifies storing them."""
+
+    __tablename__ = "carpool_posts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_events.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[CarpoolPostKind] = mapped_column(SAEnum(CarpoolPostKind, native_enum=False), nullable=False)
+    status: Mapped[CarpoolPostStatus] = mapped_column(
+        SAEnum(CarpoolPostStatus, native_enum=False),
+        nullable=False,
+        default=CarpoolPostStatus.open,
+        server_default="open",
+    )
+    origin_label: Mapped[str] = mapped_column(String, nullable=False)
+    # Null for a rider post (seat counts don't apply); a driver post always
+    # has both set (`CarpoolPostCreate` validates this at the schema layer).
+    seats_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seats_available: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    leave_time_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

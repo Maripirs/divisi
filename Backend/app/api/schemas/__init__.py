@@ -38,6 +38,14 @@ from app.api.schemas.groups import (
     GroupPageSettingUpdate,
     GroupRehearsalScheduleUpdate,
 )
+from app.api.schemas.carpool import (
+    CarpoolEventCreate,
+    CarpoolEventOut,
+    CarpoolEventUpdate,
+    CarpoolPostCreate,
+    CarpoolPostOut,
+    CarpoolPostUpdate,
+)
 from app.api.schemas.custom_pages import GroupCustomPageCreate, GroupCustomPageOut, GroupCustomPageUpdate
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
@@ -99,6 +107,12 @@ __all__ = [
     "MIN_PASSWORD_LENGTH",
     "AdminPreviewOut",
     "AnnotationCreate",
+    "CarpoolEventCreate",
+    "CarpoolEventOut",
+    "CarpoolEventUpdate",
+    "CarpoolPostCreate",
+    "CarpoolPostOut",
+    "CarpoolPostUpdate",
     "AnnotationOut",
     "AnnotationShareCreate",
     "AnnotationShareOut",
