@@ -107,7 +107,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B18 | PDF cue points (time anchors on `PieceMarkupMark`) | ⏳ Built 2026-09-02, migration `c3e5a7b9d1f4` (`down_revision = b1c3d5e7f9a2`), single linear head; pytest 240 green; not pushed/deployed |
 | B19 | Progressive accounts: anonymous participants + "Save across devices" | ⏳ Built 2026-09-09, migration `d4a9f2c7e1b8` (`down_revision = a2f6c1e4d9b7`), single linear head; pytest 271 green. Not pushed/deployed |
 | B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
-| B23 | Custom Group Pages foundation (carpool template only) | ⏳ Planned 2026-09-11 — see `GROUP_PAGES_CARPOOL_PLAN.md` |
+| B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
 | B24 | Carpool board: events + posts, list only, no map | ⏳ Planned 2026-09-11, starts after B23 |
 
 ### B1 — Backend scaffold [x]
@@ -995,7 +995,7 @@ column was never populated in production.
 **Tasks — Human:**
 - [ ] None.
 
-### B23 — Custom Group Pages foundation (carpool template only) [ ]
+### B23 — Custom Group Pages foundation (carpool template only) [x]
 
 Requested by the choir board via `GROUP_PAGES_CARPOOL_PLAN.md` (2026-09-11):
 lightweight, admin-created pages for group-specific coordination — carpool
@@ -1018,40 +1018,54 @@ consumer, explicitly deferred until a second template actually needs it
 Slugs are unique per group (not globally), generated from title on create
 and immutable after.
 
+**Design notes (where this deviated from the plan text above):** there's no
+dedicated `/unpublish` route — "unpublish" is just `PATCH .../custom-pages/
+{id}` with `{"status": "draft"}`, since the generic partial-update route
+already accepts `status` and a third single-purpose route for one enum
+transition wasn't worth adding. The access-check helpers were extended
+directly in `app/services/pages.py` (a `PageLike = GroupPage |
+GroupCustomPage` union threaded through `require_guest_page_access` /
+`require_member_page_access` / `require_saved_identity`) rather than added
+as separate wrappers in `custom_pages.py`, per that module's own
+parenthetical ("extend those to accept a `GroupCustomPage` row"); the
+label shown in a 403/404 for a custom page is the generic "This page" /
+"Page not found", not the page's real title, so a draft or archived page's
+title never leaks to a caller who isn't supposed to know it exists yet.
+
 **Acceptance criteria:**
-- [ ] Admin can create a custom page (`template_key=carpool_board` only),
+- [x] Admin can create a custom page (`template_key=carpool_board` only),
   set title/audience/min_identity, and publish/unpublish/archive it.
-- [ ] Custom pages respect the same `audience`/`min_identity` gates as
+- [x] Custom pages respect the same `audience`/`min_identity` gates as
   built-in pages: guest read only when `enabled` and `audience=everyone`;
   member read whenever `enabled` (admins bypass); write gates check
   `min_identity` via the existing `require_saved_identity` helper.
-- [ ] Member route `GET /groups/{group_id}/pages/{slug}` and guest route
+- [x] Member route `GET /groups/{group_id}/pages/{slug}` and guest route
   `GET /guest/{join_code}/pages/{slug}` share the same access-check
   helpers as the built-in pages, not a parallel implementation.
-- [ ] Draft pages are invisible to members and guests; only the owning
+- [x] Draft pages are invisible to members and guests; only the owning
   group's admins can see/manage drafts.
-- [ ] Slug collisions within a group are rejected (409); a page's own
+- [x] Slug collisions within a group are rejected (409); a page's own
   slug can't collide with itself on update.
-- [ ] No arbitrary HTML accepted anywhere in `GroupCustomPage`.
-- [ ] `pytest` green with new tests covering access gates and slug
+- [x] No arbitrary HTML accepted anywhere in `GroupCustomPage`.
+- [x] `pytest` green with new tests covering access gates and slug
   uniqueness, same shape as B12's.
 
 **Tasks — Claude:**
-- [ ] `GroupCustomPage` model (`app/db/models.py`) + migration.
-- [ ] `GroupCustomPageTemplate` enum: `carpool_board` only for now.
-- [ ] `app/services/custom_pages.py`: slug generation/uniqueness, and
+- [x] `GroupCustomPage` model (`app/db/models.py`) + migration.
+- [x] `GroupCustomPageTemplate` enum: `carpool_board` only for now.
+- [x] `app/services/custom_pages.py`: slug generation/uniqueness, and
   access-check helpers that delegate to the same shape as
   `app/services/pages.py`'s `require_guest_page_access` /
   `require_member_page_access` / `require_saved_identity` (extend those
   to accept a `GroupCustomPage` row rather than forking a parallel set).
-- [ ] Admin CRUD routes: `POST/GET/PATCH/DELETE
+- [x] Admin CRUD routes: `POST/GET/PATCH/DELETE
   /groups/{group_id}/custom-pages[/{page_id}]`, plus `.../publish` and
   `.../archive`.
-- [ ] Member read route `GET /groups/{group_id}/pages/{slug}`.
-- [ ] Guest read route `GET /guest/{join_code}/pages/{slug}`.
-- [ ] Schemas: `GroupCustomPageOut`, `GroupCustomPageCreate`,
+- [x] Member read route `GET /groups/{group_id}/pages/{slug}`.
+- [x] Guest read route `GET /guest/{join_code}/pages/{slug}`.
+- [x] Schemas: `GroupCustomPageOut`, `GroupCustomPageCreate`,
   `GroupCustomPageUpdate`.
-- [ ] Tests: admin CRUD, publish/archive transitions, slug uniqueness
+- [x] Tests: admin CRUD, publish/archive transitions, slug uniqueness
   (same group + cross-group), guest/member/draft access gates.
 
 **Tasks — Human:**
@@ -1123,6 +1137,8 @@ place that gets reinvented ad hoc.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-11: Built B23 (Custom Group Pages foundation, carpool template only). `GroupCustomPage` (migration `33efd3092bff`) is a dynamic per-group row rather than a fixed `GroupPage` enum member, reusing `PageAudience`/`PageMinIdentity` and a new one-value `GroupCustomPageTemplate` (`carpool_board`). `app/services/pages.py`'s three gate functions were extended in place (`PageLike = GroupPage | GroupCustomPage`) rather than forked, so the new admin CRUD router (`app/api/routes/custom_pages.py`: create/list/get/patch/delete plus `/publish` and `/archive`), the member route `GET /groups/{id}/pages/{slug}`, and the guest route `GET /guest/{join_code}/pages/{slug}` all share the exact same access checks built-in pages use. Slugs are generated from title, unique per group, immutable after create, and rejected with 409 on collision (no auto-suffixing). No `GroupPageBlock`, no HTML field anywhere on the model. `pytest` 299 green (was 279 on top of pre-existing uncommitted work; +20 new). Not pushed/deployed.
 
 - 2026-09-11: Built B21 (drop PIN save, add group-scoped guest name matching). Decided with the human that B19's name+PIN "Save across devices" never fit right and no real user had ever hit it, so dropped it entirely: migration `e5c1a9f3b7d2` drops `users.pin_hash`, `POST /auth/save` and `SaveAccountRequest` are gone. Replacement is much lighter: `find_guest_matches` (case-insensitive name lookup scoped to `GroupMembership.is_guest == True` in one specific group) backs a new `GET /guest/{join_code}/name-matches` read and a `claim_user_id` on the self-signup payload; a confirmed claim re-validates server-side and reuses B19's existing `merge_participant` unchanged. No more in-place promotion path — a guest's only way to a real account is now a separate registration, unrelated to the guest row. `pytest` 274 green (was 275: -6 old PIN tests, +5 new). Not pushed/deployed.
 

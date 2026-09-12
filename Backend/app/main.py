@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from app.api.routes import (
     annotations,
     auth,
+    custom_pages,
     groups,
     guest,
     homework,
@@ -63,6 +64,7 @@ app.include_router(guest.router)
 app.include_router(homework.router)
 app.include_router(responsibilities.router)
 app.include_router(weekly_notes.router)
+app.include_router(custom_pages.router)
 
 
 @app.get("/health")

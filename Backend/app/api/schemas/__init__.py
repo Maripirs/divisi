@@ -38,6 +38,7 @@ from app.api.schemas.groups import (
     GroupPageSettingUpdate,
     GroupRehearsalScheduleUpdate,
 )
+from app.api.schemas.custom_pages import GroupCustomPageCreate, GroupCustomPageOut, GroupCustomPageUpdate
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
@@ -106,6 +107,9 @@ __all__ = [
     "DistributionOut",
     "ForgotPasswordRequest",
     "GroupCreate",
+    "GroupCustomPageCreate",
+    "GroupCustomPageOut",
+    "GroupCustomPageUpdate",
     "GroupDescriptionUpdate",
     "GroupGuestSettingsUpdate",
     "GroupMemberAdd",

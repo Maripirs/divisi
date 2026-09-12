@@ -626,3 +626,62 @@ class OmrJob(Base):
     pages_total: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class GroupCustomPageTemplate(str, enum.Enum):
+    """B23: exactly one template for now. Adding a second is a migration
+    (append a value), not a schema redesign, since the column is already a
+    real enum rather than a free-text string."""
+
+    carpool_board = "carpool_board"
+
+
+class GroupCustomPageStatus(str, enum.Enum):
+    draft = "draft"
+    published = "published"
+    archived = "archived"
+
+
+class GroupCustomPage(Base):
+    """B23: an admin-created page distinct from the built-in `GroupPage`
+    enum/`GroupPageSettings` row (B12) — a dynamic row per page instead of
+    a fixed enum member, so a group can have zero or several. Reuses
+    `PageAudience`/`PageMinIdentity` rather than new enums, and
+    `app/services/pages.py`'s existing gate helpers rather than a parallel
+    set: `status == published` stands in for a built-in page's `enabled`
+    bool (draft and archived are both unreachable outside the owning
+    group's admins). No `GroupPageBlock`: one template doesn't justify a
+    generic block system yet (see plan.md's B23).
+
+    `slug` is generated from `title` at creation and immutable after
+    (`app/services/custom_pages.py`), unique per group, not globally.
+    """
+
+    __tablename__ = "group_custom_pages"
+    __table_args__ = (UniqueConstraint("group_id", "slug", name="uq_group_custom_page_slug"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    slug: Mapped[str] = mapped_column(String, nullable=False)
+    template_key: Mapped[GroupCustomPageTemplate] = mapped_column(
+        SAEnum(GroupCustomPageTemplate, native_enum=False), nullable=False
+    )
+    status: Mapped[GroupCustomPageStatus] = mapped_column(
+        SAEnum(GroupCustomPageStatus, native_enum=False),
+        nullable=False,
+        default=GroupCustomPageStatus.draft,
+        server_default="draft",
+    )
+    audience: Mapped[PageAudience] = mapped_column(
+        SAEnum(PageAudience, native_enum=False), nullable=False, default=PageAudience.members
+    )
+    min_identity: Mapped[PageMinIdentity] = mapped_column(
+        SAEnum(PageMinIdentity, native_enum=False), nullable=False, default=PageMinIdentity.anyone
+    )
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the page out from under the rest of the group (same
+    # convention as `WeeklyNote.created_by`).
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

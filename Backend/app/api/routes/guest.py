@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     AdminPreviewOut,
+    GroupCustomPageOut,
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupOut,
@@ -47,6 +48,7 @@ from app.core.security import create_admin_preview_token, create_guest_token, ve
 from app.db.models import (
     Distribution,
     Group,
+    GroupCustomPage,
     GroupMembership,
     GroupPage,
     GroupRole,
@@ -63,6 +65,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
+from app.services.custom_pages import get_custom_page_by_slug_or_404
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
 from app.services.responsibilities import role_coverage, signup_display_name
@@ -336,6 +339,26 @@ def list_guest_weekly_notes(
         .order_by(WeeklyNote.note_date.desc(), WeeklyNote.created_at.desc())
         .all()
     )
+
+
+@router.get("/{join_code}/pages/{slug}", response_model=GroupCustomPageOut)
+def get_guest_custom_page(
+    join_code: str,
+    slug: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
+) -> GroupCustomPage:
+    """B23: a custom page's guest gate is exactly `require_guest_page_access`
+    given the page row itself instead of a `GroupPage` enum member (see
+    `app/services/pages.py`) — `enabled` there is standing in for
+    `status == published`, and a draft/archived page 404s exactly like a
+    disabled built-in page would, never revealing its title."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    page = get_custom_page_by_slug_or_404(group.id, slug, db)
+    require_guest_page_access(group.id, page, db)
+    return page
 
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])
