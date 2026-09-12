@@ -109,6 +109,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B20 | Demo "Preview Admin" (public, read-only) | ⏳ Built 2026-09-11, no migration; pytest 275 green. Not pushed/deployed |
 | B23 | Custom Group Pages foundation (carpool template only) | ✅ Built 2026-09-11, migration `33efd3092bff`; pytest 299 green |
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
+| B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ⏳ Planned 2026-09-12 |
 
 ### B1 — Backend scaffold [x]
 
@@ -1133,6 +1134,81 @@ place that gets reinvented ad hoc.
   (hidden/cancelled are filtered out); an admin sees every status. Not
   explicit in the acceptance criteria but implied by "hide" being a
   moderation action at all.
+
+**Tasks — Human:**
+- [ ] None expected.
+
+### B25 — Guest carpool access: read + write, via existing anonymous-participant flow [ ]
+
+Decided with the human 2026-09-12, answering one of `GROUP_PAGES_CARPOOL_PLAN.md`'s
+own open questions ("should carpool pages ever be visible to join-link
+guests?") and one made in this session (guests get full write parity with
+members, not read-only): an admin's existing "Everyone with join link"
+audience setting on a carpool page (built in B23/F27, already settable
+today) currently does nothing useful for carpool specifically. B24 shipped
+with an explicit "no guest routes here" (`app/api/routes/carpool.py`'s own
+comment) and F28 confirmed the guest page route still renders
+`CustomPageView`'s empty placeholder, never `CarpoolBoard`, with no guest
+discovery list either (same by-slug-only gap the B23 fast-follow closed
+for members, still open for guests). This closes both.
+
+**Design:** don't invent new guest-identity plumbing. B19/B21 already
+solved "an unauthenticated caller can act as a real, if anonymous, group
+participant": `mint_anonymous_participant` / `resolve_participant` /
+`find_guest_matches` / `merge_participant` (`app/services/participants.py`),
+`ensure_guest_membership`, and the `divisi_participant` cookie. B23 already
+made `require_guest_page_access` / `require_member_page_access` /
+`require_saved_identity` generic over `GroupCustomPage` rows. `CarpoolPost`
+already stores a real `user_id`, and an anonymous participant *is* a real
+`User` row (just `is_anonymous`), so no `CarpoolPost` schema change is
+needed at all. This milestone is almost entirely wiring, not new
+mechanism: reuse `create_signup`'s exact actor-resolution shape
+(`app/api/routes/responsibilities.py`, search "Self-signup: a real member,
+an existing anonymous participant") for carpool post creation, and add
+the guest-read mirror routes every other page type already has under
+`app/api/routes/guest.py`.
+
+**Acceptance criteria:**
+- [ ] `GET /guest/{join_code}/pages/{slug}/carpool/events` and
+  `GET /guest/{join_code}/carpool/events/{event_id}/posts` work exactly
+  when the page is published + `audience=everyone`, same gate
+  `get_guest_custom_page` already uses; 404 otherwise (no leaking whether
+  a page exists at all to an unauthorized join code, same stance as every
+  other guest 404 in this codebase).
+- [ ] `GET /guest/{join_code}/pages` (published + `audience=everyone`
+  only) exists so a guest can discover the page without a shared slug
+  link, mirroring the member list added in the B23/F27 fast-follow.
+- [ ] `POST /carpool/events/{event_id}/posts` accepts an unauthenticated
+  caller with no bearer token: mints or resolves an anonymous participant
+  exactly like `create_signup`'s self-signup branch, gated by
+  `require_guest_page_access` + `require_saved_identity` against the
+  post's `GroupCustomPage`, with `ensure_guest_membership` run before the
+  post is created.
+- [ ] `PATCH`/`DELETE /carpool/posts/{post_id}` resolve the caller the
+  same way, so an anonymous participant can edit/delete their own post
+  exactly like a member can (ownership check unchanged: `user_id` must
+  match the resolved actor, admin bypasses).
+- [ ] A page with `min_identity=saved` rejects an unsaved anonymous
+  caller's post with the existing `SAVE_REQUIRED:`-prefixed 403, not a
+  generic error.
+- [ ] A page with `audience=members` still 404s every guest route above,
+  regardless of `min_identity`.
+- [ ] `pytest` green with new tests mirroring `test_responsibilities.py`'s
+  guest-signup coverage (mint-on-demand, cookie set, `min_identity` gate,
+  own-post edit/delete) plus `test_carpool.py`'s existing
+  member/admin/ownership tests re-run against a guest actor.
+
+**Tasks — Claude:**
+- [ ] Guest read routes in `app/api/routes/guest.py`: events list, posts
+  list (per-event), and the published+everyone pages list.
+- [ ] Rework `POST /carpool/events/{event_id}/posts` (and the
+  `PATCH`/`DELETE /carpool/posts/{post_id}` pair) in
+  `app/api/routes/carpool.py` to take `maybe_user`/`maybe_participant`
+  optional-auth dependencies instead of a bearer-only `current_user`,
+  following `create_signup`'s branch structure.
+- [ ] Schemas: add `local_id`/`display_name` to `CarpoolPostCreate` (same
+  fields `ResponsibilitySignupCreate` carries for the same reason).
+- [ ] Tests per the acceptance criteria above.
 
 **Tasks — Human:**
 - [ ] None expected.
