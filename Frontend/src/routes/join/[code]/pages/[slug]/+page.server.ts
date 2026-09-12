@@ -1,15 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { readGuestCookie } from '$lib/server/guestSession';
-import {
-	GuestApiError,
-	getGuestCustomPage,
-	listGuestCarpoolEvents,
-	listGuestCarpoolPosts,
-	listGuestCustomPages,
-	listGuestHomework,
-	listGuestResponsibilityDates,
-	listGuestWeeklyNotes
-} from '$lib/api/guest';
+import { GuestApiError, getGuestCustomPage, getGuestTabs, listGuestCarpoolEvents, listGuestCarpoolPosts } from '$lib/api/guest';
 import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
 import type { PageServerLoad } from './$types';
 
@@ -27,10 +18,15 @@ import type { PageServerLoad } from './$types';
  * F31: also loads the same three optional-page visibility flags and the
  * custom-page discovery list `/join/[code]`'s own load does
  * (`guestJoin.ts`), so this route can render the identical shared tab strip
- * (`joinTabs.ts`). Duplicated rather than calling `loadGuestJoin` directly:
- * that helper resolves its own errors into a `{ error }` result instead of
- * throwing, which doesn't fit this route's plain throw-on-failure handling
- * below.
+ * (`joinTabs.ts`). Via `getGuestTabs` (one call), not `loadGuestJoin`
+ * directly: that helper resolves its own errors into a `{ error }` result
+ * instead of throwing, which doesn't fit this route's plain
+ * throw-on-failure handling below, and it fetches each list's full data
+ * (which this route has no other use for) rather than just the booleans.
+ * F31 originally called the four individual list endpoints here and threw
+ * three of them away, which quadrupled this route's guest request count
+ * and tripped `rate_limit_guest` during ordinary tab-to-tab navigation
+ * (fast-follow, same day).
  *
  * Unlike `/join/[code]`'s own load, this doesn't stream the fetch behind an
  * unawaited promise: that trick exists there so a Render cold start doesn't
@@ -42,30 +38,13 @@ export const load: PageServerLoad = async ({ params, cookies, fetch, url }) => {
 	const token = readGuestCookie(cookies, code) ?? undefined;
 	try {
 		const customPage = await getGuestCustomPage(code, params.slug, { token, fetchFn: fetch });
-
-		let homeworkVisible = false;
-		try {
-			await listGuestHomework(code, { token, fetchFn: fetch });
-			homeworkVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-		let weeklyNotesVisible = false;
-		try {
-			await listGuestWeeklyNotes(code, { token, fetchFn: fetch });
-			weeklyNotesVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-		let responsibilitiesVisible = false;
-		try {
-			await listGuestResponsibilityDates(code, { token, fetchFn: fetch });
-			responsibilitiesVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-		const customPages = await listGuestCustomPages(code, { token, fetchFn: fetch });
-		const tabData = { homeworkVisible, weeklyNotesVisible, responsibilitiesVisible, customPages };
+		const tabs = await getGuestTabs(code, { token, fetchFn: fetch });
+		const tabData = {
+			homeworkVisible: tabs.homeworkVisible,
+			weeklyNotesVisible: tabs.weeklyNotesVisible,
+			responsibilitiesVisible: tabs.responsibilitiesVisible,
+			customPages: tabs.customPages
+		};
 		// `GuestCustomPage` (unlike the member-side `GroupCustomPageOut`)
 		// carries no `slug` of its own — it's fetched by slug, not listed —
 		// so the route param is this page's own tab-strip identity instead.

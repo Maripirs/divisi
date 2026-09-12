@@ -408,6 +408,38 @@ def test_guest_can_list_published_everyone_pages(client):
     assert [p["id"] for p in listing.json()] == [page["id"]]
 
 
+def test_guest_tabs_reports_visibility_and_custom_pages(client):
+    """Guest fast-follow (2026-09-12): one call instead of the four
+    `list_guest_homework`/`list_guest_weekly_notes`/
+    `list_guest_responsibility_dates`/`list_guest_custom_pages` calls
+    `pages/[slug]/+page.server.ts` used to make just to learn these
+    booleans, which was tripping `rate_limit_guest` during ordinary
+    tab-to-tab navigation."""
+    admin_headers = _register_and_login(client, "cp-tabs-admin1@example.com")
+    group = _make_group(client, admin_headers)
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "homework", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    _make_carpool_page(client, admin_headers, group["id"], title="Draft", publish=False)
+
+    tabs = client.get("/guest/" + group["join_code"] + "/tabs")
+    assert tabs.status_code == 200
+    body = tabs.json()
+    assert body["homework_visible"] is True
+    # weekly_notes/responsibilities default to members-only audience (B12),
+    # so a plain join code with no page-settings override sees neither.
+    assert body["weekly_notes_visible"] is False
+    assert body["responsibilities_visible"] is False
+    assert [p["id"] for p in body["custom_pages"]] == [page["id"]]
+
+
+def test_guest_tabs_unknown_join_code_404s(client):
+    assert client.get("/guest/NOTAREAL/tabs").status_code == 404
+
+
 def test_guest_can_list_carpool_events_and_posts(client):
     admin_headers = _register_and_login(client, "cp-g-admin2@example.com")
     member_headers = _register_and_login(client, "cp-g-member2@example.com")

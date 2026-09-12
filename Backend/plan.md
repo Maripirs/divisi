@@ -1345,6 +1345,31 @@ before asserting on the dated event, preserving the original intent. No
 other B24/B25 test touches listing contents, so no other test needed a
 change.
 
+**Fast-follow (2026-09-12, same day): guest tab strip was tripping the
+rate limiter.** F31 gave `/join/[code]/pages/[slug]` its own copy of the
+tab-visibility fan-out (`listGuestHomework`/`listGuestWeeklyNotes`/
+`listGuestResponsibilityDates`, each called only to check whether it
+404s, plus `listGuestCustomPages`) so it could render the shared tab
+strip. That quadrupled the guest requests a single carpool page view
+cost, and since `rate_limit_guest` (`app/core/rate_limit.py`) counts by
+IP with a 60-second fixed window, a real user clicking between a few
+tabs (and behind Docker Desktop's NAT locally, every local request looks
+like the same IP) could trip it during entirely ordinary navigation,
+surfacing as "the backend stopped working."
+
+Added `GET /guest/{join_code}/tabs` (`GuestTabsOut`,
+`app/api/routes/guest.py` + `app/api/schemas/custom_pages.py`): the same
+three booleans via `require_guest_page_access`'s existing gate check
+(no `Homework`/`WeeklyNote`/`ResponsibilityDate` query at all, cheaper
+server-side too, not just fewer round trips) plus the custom pages list,
+one call. The by-slug route now calls this instead of the four
+individual list endpoints. Also raised `_MAX_REQUESTS_PER_WINDOW` from
+20 to 60: B6's original figure predates B23-F31's guest surface
+entirely, and 60/minute is still tight enough to make join-code/password
+brute-forcing impractical, this limiter's actual job. Tests:
+`test_guest_tabs_reports_visibility_and_custom_pages`,
+`test_guest_tabs_unknown_join_code_404s`. `pytest` 345 green (was 343).
+
 ## Backlog
 
 - **B16 fast-follow — promote a weekly note into a piece note**: an admin

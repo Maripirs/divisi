@@ -1884,6 +1884,24 @@ field is conditionally omitted from the DOM entirely for a standing event,
 not just visually hidden or disabled, the same reasoning as the Archive
 button itself.
 
+**Fast-follow (2026-09-12, same day): the guest tab strip was making 4x
+the requests it needed to.** F31 gave `/join/[code]/pages/[slug]` its own
+copy of the tab-visibility fan-out (call each of
+`listGuestHomework`/`listGuestWeeklyNotes`/`listGuestResponsibilityDates`,
+keep only whether it 404s, plus `listGuestCustomPages`), which the human
+hit directly: enough guest requests per page view to trip
+`rate_limit_guest`'s 60-second window during normal tab clicking, seen
+locally as "the backend stopped working" (compounded by Docker Desktop's
+NAT making every local request look like one IP). Backend fast-follow
+(`Backend/plan.md`'s B26 section) added `GET /guest/{join_code}/tabs`,
+one call for the same three booleans plus the custom pages list. `guest.ts`
+gained `getGuestTabs`; the by-slug route calls it instead of the four
+individual list endpoints. `/join/[code]`'s own load (`guestJoin.ts`) is
+unchanged, it needs each list's actual data, not just whether it's
+visible, so the individual calls there are real work, not waste. `check`
+0 errors, `build` clean, vitest 151 green (unchanged, no new test surface,
+covered by the Backend's new tests).
+
 ## Backlog
 
 - ~~**Persist F12 annotation mode + F13 audio source per piece**~~ **done 2026-09-02** (with the F21/F22 batch). `PersistedSettings` grew `showMineMarkup` / `showDirectorMarkup` / `audioSource` (all optional). "Annotation mode" here = the F21 layer-visibility toggles, not the transient armed-tool state. The toggles persist via a guarded `$effect` in `piece/[id]/+page.svelte` (no page-level setter, same shape as the zoom-persist effect); `audioSource` persists from `setAudioSource` and is restored only when the stored value is `'reference'` **and** the restored `viewMode === 'pdf'` **and** `piece?.youtubeUrl` is set. F4's separate score-marker toggle was out of scope.

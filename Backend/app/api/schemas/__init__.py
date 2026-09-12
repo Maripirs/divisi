@@ -46,7 +46,12 @@ from app.api.schemas.carpool import (
     CarpoolPostOut,
     CarpoolPostUpdate,
 )
-from app.api.schemas.custom_pages import GroupCustomPageCreate, GroupCustomPageOut, GroupCustomPageUpdate
+from app.api.schemas.custom_pages import (
+    GroupCustomPageCreate,
+    GroupCustomPageOut,
+    GroupCustomPageUpdate,
+    GuestTabsOut,
+)
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
@@ -141,6 +146,7 @@ __all__ = [
     "GuestNameMatchOut",
     "GuestPieceOut",
     "GuestPieceOwnerOut",
+    "GuestTabsOut",
     "HomeworkCreate",
     "HomeworkOut",
     "HomeworkUpdate",

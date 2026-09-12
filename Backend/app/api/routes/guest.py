@@ -34,6 +34,7 @@ from app.api.schemas import (
     GuestNameMatchOut,
     GuestPieceOut,
     GuestPieceOwnerOut,
+    GuestTabsOut,
     HomeworkOut,
     MarkupMarkOut,
     PieceRehearsalNoteOut,
@@ -390,6 +391,50 @@ def list_guest_custom_pages(
         )
         .order_by(GroupCustomPage.created_at.asc())
         .all()
+    )
+
+
+@router.get("/{join_code}/tabs", response_model=GuestTabsOut)
+def get_guest_tabs(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> GuestTabsOut:
+    """F31 fast-follow: `pages/[slug]/+page.server.ts` needs to know which
+    of homework/weekly_notes/responsibilities are guest-visible to render
+    its copy of the tab strip, but has no other use for those pages' actual
+    data. It used to get the three booleans as a side effect of calling
+    `list_guest_homework`/`list_guest_weekly_notes`/
+    `list_guest_responsibility_dates` and discarding the result, which
+    quadrupled (with `list_guest_custom_pages`) the guest requests a single
+    page view cost, tripping `rate_limit_guest`'s 60-second window during
+    perfectly normal tab-to-tab navigation. This checks
+    `require_guest_page_access` directly (the same gate, no `Homework`/
+    `WeeklyNote`/`ResponsibilityDate` query at all) and folds the custom
+    pages list in alongside it, one call instead of four."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+
+    def _visible(page: GroupPage) -> bool:
+        try:
+            require_guest_page_access(group.id, page, db)
+            return True
+        except HTTPException:
+            return False
+
+    custom_pages = (
+        db.query(GroupCustomPage)
+        .filter(
+            GroupCustomPage.group_id == group.id,
+            GroupCustomPage.status == GroupCustomPageStatus.published,
+            GroupCustomPage.audience == PageAudience.everyone,
+        )
+        .order_by(GroupCustomPage.created_at.asc())
+        .all()
+    )
+    return GuestTabsOut(
+        homework_visible=_visible(GroupPage.homework),
+        weekly_notes_visible=_visible(GroupPage.weekly_notes),
+        responsibilities_visible=_visible(GroupPage.responsibilities),
+        custom_pages=[GroupCustomPageOut.model_validate(p) for p in custom_pages],
     )
 
 

@@ -13,7 +13,13 @@ from collections import defaultdict
 from fastapi import HTTPException, Request, status
 
 _WINDOW_SECONDS = 60
-_MAX_REQUESTS_PER_WINDOW = 20
+# Raised from 20 (B6's original figure) after B23-F31's guest pages/carpool
+# routes made a single guest page view cost several requests: a real guest
+# clicking between a few tabs could trip the old ceiling during entirely
+# normal use (see the F31 fast-follow's GuestTabsOut, which independently
+# cut that same per-view cost). Still tight enough to make join-code or
+# password brute-forcing impractical, which is this limiter's actual job.
+_MAX_REQUESTS_PER_WINDOW = 60
 
 _hits: dict[str, list[float]] = defaultdict(list)
 

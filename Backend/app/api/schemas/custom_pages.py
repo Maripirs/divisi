@@ -53,3 +53,21 @@ class GroupCustomPageOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class GuestTabsOut(BaseModel):
+    """F31's guest tab strip needs `homework`/`weekly_notes`/
+    `responsibilities` visibility plus the custom-pages list to render
+    itself, but `pages/[slug]/+page.server.ts` doesn't otherwise need any
+    of that data. Before this, it got the booleans as a side effect of
+    fetching (and discarding) each page's full list, three separate
+    guest calls just to learn a yes/no. This is that same set of flags in
+    one call, backed by `require_guest_page_access`'s existing gate check
+    rather than a real query against Homework/WeeklyNote/
+    ResponsibilityDate at all, so it's cheaper than the three calls it
+    replaces individually too, not just fewer round trips."""
+
+    homework_visible: bool
+    weekly_notes_visible: bool
+    responsibilities_visible: bool
+    custom_pages: list[GroupCustomPageOut]

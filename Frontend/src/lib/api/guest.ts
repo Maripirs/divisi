@@ -441,6 +441,49 @@ export async function listGuestCustomPages(
 	return body.map((p) => ({ id: p.id, title: p.title, slug: p.slug, templateKey: p.template_key }));
 }
 
+export interface GuestTabs {
+	homeworkVisible: boolean;
+	weeklyNotesVisible: boolean;
+	responsibilitiesVisible: boolean;
+	customPages: GuestCustomPageListItem[];
+}
+
+interface GuestTabsResponse {
+	homework_visible: boolean;
+	weekly_notes_visible: boolean;
+	responsibilities_visible: boolean;
+	custom_pages: GuestCustomPageListItemResponse[];
+}
+
+/** F31 fast-follow: `pages/[slug]/+page.server.ts` used to learn these same
+ * three booleans as a side effect of calling `listGuestHomework`/
+ * `listGuestWeeklyNotes`/`listGuestResponsibilityDates` and discarding the
+ * result, plus a separate `listGuestCustomPages` call, four guest requests
+ * just to render the tab strip. One call now, and it's the only one that
+ * route needs to make beyond its own page's actual content. `/join/[code]`'s
+ * own load still calls the individual list endpoints directly, since it
+ * needs their real data (not just whether they're visible), not this. */
+export async function getGuestTabs(
+	code: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestTabs> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/tabs`, { password, token }), fetchFn);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestTabsResponse = await res.json();
+	return {
+		homeworkVisible: body.homework_visible,
+		weeklyNotesVisible: body.weekly_notes_visible,
+		responsibilitiesVisible: body.responsibilities_visible,
+		customPages: body.custom_pages.map((p) => ({
+			id: p.id,
+			title: p.title,
+			slug: p.slug,
+			templateKey: p.template_key
+		}))
+	};
+}
+
 /** B24/B25: one dated carpool occurrence and one ride post, exactly the
  * Backend's own `CarpoolEventOut`/`CarpoolPostOut` shape (snake_case, no
  * camelCase remap) — unlike every other type in this file, these feed
