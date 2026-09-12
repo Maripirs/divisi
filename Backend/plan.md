@@ -76,7 +76,16 @@ CarpoolPost     id, event_id, user_id, display_name, kind (driver|rider),
                  seats_available, leave_time_text, notes, created_at,
                  updated_at  — a member's ride offer/request; free-text
                  origin_label only, no coordinates until a map milestone
-                 justifies storing them. (B24)
+                 justifies storing them. (B24) seats_available becomes a
+                 computed value once CarpoolSeatClaim exists (B27), not a
+                 client-set field any more.
+CarpoolSeatClaim id, driver_post_id, user_id, display_name,
+                 status (active|removed), created_at, removed_at  — a
+                 rider (or anyone, no rider post of their own required)
+                 claiming one seat on a specific driver's post, first-come
+                 first-served, no admin/driver approval step. Same soft-
+                 removal-for-audit shape as ResponsibilitySignup. One
+                 active claim per (driver_post_id, user_id). (B27)
 ```
 
 Stack: Python/FastAPI, Postgres (SQLAlchemy + Alembic migrations), file storage via Neon
@@ -111,6 +120,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B24 | Carpool board: events + posts, list only, no map | ✅ Built 2026-09-11, migration `48a30562ab06`; pytest 319 green |
 | B25 | Guest carpool access: read + write, via existing anonymous-participant flow | ✅ Built 2026-09-12, no migration; pytest 334 green |
 | B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
+| B27 | Carpool: claim a seat in a driver's post | ⏳ Planned 2026-09-12 |
 
 ### B1 — Backend scaffold [x]
 
@@ -1369,6 +1379,89 @@ entirely, and 60/minute is still tight enough to make join-code/password
 brute-forcing impractical, this limiter's actual job. Tests:
 `test_guest_tabs_reports_visibility_and_custom_pages`,
 `test_guest_tabs_unknown_join_code_404s`. `pytest` 345 green (was 343).
+
+### B27 — Carpool: claim a seat in a driver's post [ ]
+
+Human feedback 2026-09-12: riders should be able to "claim" a seat in a
+specific driver's post, not just see two disconnected lists and
+coordinate entirely off-app. This is `GROUP_PAGES_CARPOOL_PLAN.md`'s own
+deferred `CarpoolMatch` concept, scoped down per the human's call: an
+immediate, first-come-first-served claim, not a request/driver-approves
+workflow. No `CarpoolMatch` status lifecycle (requested/accepted/
+declined) needed for that simpler shape.
+
+**Design:** `CarpoolSeatClaim` is a new, small table, not a repurposing
+of `CarpoolPost`: claiming a seat shouldn't require the claimant to have
+posted their own "I need a ride" first (someone might just want a ride
+with no notes/origin of their own to share), so it's its own row linking
+a user directly to a driver's post. Soft-removed for audit
+(`status: active|removed`), matching `ResponsibilitySignup`'s exact
+shape rather than a hard delete, so a released seat leaves a trace the
+same way a removed signup does.
+
+**`seats_available` stops being a field the driver sets.** Today
+(`CarpoolPostCreate`/`Update`) it's a plain number a driver types in
+alongside `seats_total`, no relationship to anything real. Once claims
+exist, that's a lie waiting to happen (the driver says "2 open" while 3
+people have actually claimed). `seats_available` becomes a computed
+response value (`seats_total - active claim count`) on `CarpoolPostOut`;
+`CarpoolPostCreate`/`Update` drop it entirely; `seats_total` is the only
+number a driver still sets, and lowering it below the current active
+claim count is rejected (400) rather than silently going negative.
+
+Claiming reuses B25's exact actor-resolution shape (`create_signup`'s
+self-signup branch, `mint_anonymous_participant`/`resolve_participant`,
+`require_guest_page_access`/`require_saved_identity`/
+`ensure_guest_membership` for an anonymous actor) — a guest can claim a
+seat exactly like a member can, no separate write path.
+
+**Acceptance criteria:**
+- [ ] `POST /carpool/posts/{driver_post_id}/claims` claims one seat:
+  rejects (400) if the target post isn't `kind=driver`, if it's full
+  (active claims == `seats_total`), if the caller already has an active
+  claim on that same post, or if the event is locked/archived and the
+  caller isn't admin. Works for a member (bearer) or an anonymous
+  participant (mint-or-resolve), same as `create_post`.
+- [ ] `DELETE /carpool/claims/{claim_id}` releases a seat: the claimant,
+  the driver post's own owner, or an admin can do this; anyone else gets
+  403.
+- [ ] `CarpoolPostOut` for a driver post includes its active claims
+  (`id`, `user_id`, `display_name`, `created_at`) and a computed
+  `seats_available`; a rider post's claims field is empty/irrelevant (it
+  isn't a driver post, it can't be claimed).
+- [ ] `CarpoolPostCreate`/`CarpoolPostUpdate` no longer accept
+  `seats_available` at all; existing `seats_total`-only behavior for a
+  driver post, and the rider "don't set seat fields" validation, are
+  unchanged.
+- [ ] `min_identity=saved` and `audience=members` gates apply to claiming
+  exactly like they do to posting.
+- [ ] Guest reads (`guest.py`'s carpool posts list) include the same
+  claims/computed-`seats_available` shape as the member route.
+- [ ] `pytest` green: claim/release, double-claim rejected, full-post
+  rejected, `seats_total` can't drop below active claims, guest claim
+  parity, existing B24-B26 carpool tests updated for the
+  `seats_available` schema change wherever they touched it (updated, not
+  weakened, note anywhere a test's intent had to be preserved through a
+  different assertion).
+
+**Tasks — Claude:**
+- [ ] `CarpoolSeatClaim` model + migration.
+- [ ] `app/services/carpool.py`: `seats_available_for(post, db)` (or
+  similar), reused by both the create/list routes and `CarpoolPostOut`
+  serialization so member and guest reads can't compute it differently.
+- [ ] `POST /carpool/posts/{driver_post_id}/claims`,
+  `DELETE /carpool/claims/{claim_id}` in `app/api/routes/carpool.py`.
+- [ ] Drop `seats_available` from `CarpoolPostCreate`/`CarpoolPostUpdate`;
+  add `claims: list[CarpoolSeatClaimOut]` and a computed
+  `seats_available` to `CarpoolPostOut`.
+- [ ] Update `list_guest_carpool_posts` (`guest.py`) to serialize the
+  same shape.
+- [ ] Tests per acceptance criteria; audit existing carpool tests that
+  construct/assert on `seats_available` and update them for the schema
+  change.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 

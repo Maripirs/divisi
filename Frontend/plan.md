@@ -107,6 +107,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F30 | Move custom-page create + visibility into Settings, alongside built-in Page Visibility | ✅ Built 2026-09-12, corrected same day: custom-page rows now live inside the same Page Visibility card as siblings of the built-in rows (not a separate "Custom pages" card); "Create page" stays its own card below. `check` 0 errors, `build` clean, vitest 138 green (unchanged). |
 | F31 | Custom pages as siblings in the main tab bar, not a "Pages" tab | ⏳ Built 2026-09-12: `PagesTab.svelte` deleted; a new `+layout.server.ts` under `/groups/[id]` shares the group/role/custom-pages/built-in-enabled-flags data between the main page and `pages/[slug]`, and a pure `groupTabs.ts` (`joinTabs.ts` on the guest side) computes the ordered/filtered/labeled tab list both routes render. Built-in tabs stay local `$state` buttons on the main page; every custom-page tab, and every tab at all from a custom page's own route, is a real link. `check` 0 errors (13 pre-existing warnings, unrelated), `build` clean, vitest 146 green (was 138; +8 new, `groupTabs.test.ts`/`joinTabs.test.ts`). Not deployed; no real-browser pass yet. |
 | F32 | Carpool: standing board by default, dated events for exceptions (frontend for Backend B26) | ✅ Built 2026-09-12; `npm run check` 0 errors, `npm run build` clean, vitest 151 passed (was 146; +5 new) |
+| F33 | Carpool: claim a seat in a driver's post (frontend for Backend B27) | ⏳ Planned 2026-09-12, starts after B27 |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -1917,6 +1918,46 @@ of all four offer/request form variants (member/guest x driver/rider).
 New key `carpool_posting_as`, en/es. `check` 0 errors, `build` clean,
 vitest 151 green (unchanged, no new test surface for a pure display
 string).
+
+### F33 — Carpool: claim a seat in a driver's post (frontend for Backend B27) [ ]
+
+Frontend half of B27. `CarpoolBoard.svelte`'s driver list currently just
+shows each post's static `seats_available`; this makes it a real
+first-come-first-served claim.
+
+**Acceptance criteria:**
+- [ ] Each driver post shows its computed `seats_available` (from the
+  Backend, not client-derived) and, when there's at least one, a "Claim a
+  seat" action, member and guest both.
+- [ ] After claiming, that same button becomes "Release your seat" for
+  the claimant specifically (not shown as claimable-by-you to anyone
+  else); a full post (no seats left) shows neither for a non-claimant.
+- [ ] Claimants are visible under the driver's post (names), same
+  "posted content is visible to whoever can see the board" stance the
+  rest of carpool already takes.
+- [ ] A guest's claim goes through the same local-profile/lazy-name-
+  prompt/`SAVE_REQUIRED` handling every other guest carpool write already
+  uses, not a separate flow.
+- [ ] Owner edit/delete on a driver's own post still works; deleting a
+  driver post the normal way (existing behavior) is unaffected by
+  whether it has claims (not attempting cascade-cleanup UI here beyond
+  whatever the Backend already does).
+- [ ] `npm run check` / `npm run build` clean; vitest green; i18n key
+  parity maintained.
+
+**Tasks — Claude:**
+- [ ] `CarpoolPostOut`/`GuestCarpoolPost` types gain `claims` and the
+  (now computed, not client-set) `seats_available`.
+- [ ] Claim/release actions: a form action for the member route
+  (`actions/carpool.ts`), a proxy route for the guest route, following
+  the exact pattern the existing offer/request actions and
+  `/join/[code]/carpool/...` proxies already use.
+- [ ] Driver post rendering: claimant list, the claim/release button
+  with the three states above (claim / release / full-not-yours).
+- [ ] i18n: new strings for claim/release/claimed-by, en/es.
+
+**Tasks — Human:**
+- [ ] None expected.
 
 ## Backlog
 
