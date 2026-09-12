@@ -88,9 +88,20 @@
 	let savingEventEdit = $state(false);
 	function startEditEvent(ev: CarpoolEventOut) {
 		editTitleDraft = ev.title;
-		editStartsAtDraft = toDatetimeLocalValue(ev.starts_at);
-		editDestinationDraft = ev.destination_label;
+		// B26: the standing event has neither field, so there's nothing to
+		// prefill; its edit panel omits the "when" input entirely (see the
+		// markup below) so this draft never actually gets submitted for it.
+		editStartsAtDraft = ev.starts_at ? toDatetimeLocalValue(ev.starts_at) : '';
+		editDestinationDraft = ev.destination_label ?? '';
 		editingEvent = true;
+	}
+
+	/** B26/F32: the standing event has no `starts_at`, so its chip/detail
+	 * label reads as "Ongoing" instead of formatting a `null` date. Only the
+	 * standing event ever lacks one, so this doubles as the `is_standing`
+	 * check without a second lookup. */
+	function eventTimeLabel(ev: CarpoolEventOut): string {
+		return ev.starts_at ? formatDateTime(ev.starts_at) : m.carpool_ongoing_label();
 	}
 
 	// "I can drive" / "I need a ride" forms: one flag for whether the form
@@ -479,14 +490,14 @@
 	<p class="card-eyebrow">{m.carpool_events_heading()}</p>
 	{#if isAdmin}
 		<button type="button" class="text-link" onclick={() => (showNewEvent = !showNewEvent)}>
-			{m.carpool_new_event()}
+			{m.carpool_add_one_time_event()}
 		</button>
 	{/if}
 </div>
 
 {#if isAdmin && showNewEvent}
 	<section class="card">
-		<p class="card-eyebrow">{m.carpool_new_event()}</p>
+		<p class="card-eyebrow">{m.carpool_add_one_time_event()}</p>
 		<form
 			method="POST"
 			action="?/createCarpoolEvent"
@@ -535,7 +546,7 @@
 					href="?event={ev.id}"
 				>
 					<span class="carpool-event-chip__title">{ev.title}</span>
-					<span class="carpool-event-chip__sub">{formatDateTime(ev.starts_at)}</span>
+					<span class="carpool-event-chip__sub">{eventTimeLabel(ev)}</span>
 				</a>
 			{/each}
 		</div>
@@ -559,10 +570,15 @@
 							<span>{m.carpool_event_title_field()}</span>
 							<input name="title" bind:value={editTitleDraft} required />
 						</label>
-						<label class="field">
-							<span>{m.carpool_event_when_field()}</span>
-							<input type="datetime-local" name="startsAt" bind:value={editStartsAtDraft} required />
-						</label>
+						{#if !ev.is_standing}
+							<!-- B26: the Backend 400s on any starts_at patch to the
+							     standing event, so this input isn't rendered at all
+							     for it (an unchanged value would still be "set"). -->
+							<label class="field">
+								<span>{m.carpool_event_when_field()}</span>
+								<input type="datetime-local" name="startsAt" bind:value={editStartsAtDraft} required />
+							</label>
+						{/if}
 						<label class="field">
 							<span>{m.carpool_event_destination_field()}</span>
 							<input name="destinationLabel" bind:value={editDestinationDraft} required />
@@ -574,7 +590,7 @@
 					<span class="card-title">{ev.title}</span>
 					<span class="dim">{STATUS_LABELS[ev.status]()}</span>
 				</div>
-				<p class="card-meta">{formatDateTime(ev.starts_at)} · {ev.destination_label}</p>
+				<p class="card-meta">{eventTimeLabel(ev)}{#if ev.destination_label} · {ev.destination_label}{/if}</p>
 				{#if isAdmin}
 					<div class="btn-row">
 						<button type="button" class="btn btn-outline" onclick={() => startEditEvent(ev)}>{m.drawer_edit()}</button>
@@ -586,11 +602,16 @@
 									{ev.status === 'locked' ? m.carpool_unlock_event() : m.carpool_lock_event()}
 								</button>
 							</form>
-							<form method="POST" action="?/updateCarpoolEvent" use:enhance>
-								<input type="hidden" name="eventId" value={ev.id} />
-								<input type="hidden" name="status" value="archived" />
-								<button type="submit" class="btn btn-outline">{m.carpool_archive_event()}</button>
-							</form>
+							{#if !ev.is_standing}
+								<!-- B26: the Backend rejects archiving the standing
+								     event outright, so this button never renders for
+								     it in the first place. -->
+								<form method="POST" action="?/updateCarpoolEvent" use:enhance>
+									<input type="hidden" name="eventId" value={ev.id} />
+									<input type="hidden" name="status" value="archived" />
+									<button type="submit" class="btn btn-outline">{m.carpool_archive_event()}</button>
+								</form>
+							{/if}
 						{/if}
 					</div>
 					{#if form?.form === 'editEvent' && form?.error}

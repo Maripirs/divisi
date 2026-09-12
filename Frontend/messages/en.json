@@ -603,7 +603,8 @@
 	"pages_carpool_coming_soon": "Carpool details are coming soon.",
 
 	"carpool_events_heading": "Events",
-	"carpool_new_event": "New event",
+	"carpool_ongoing_label": "Ongoing",
+	"carpool_add_one_time_event": "Add a one-time event",
 	"carpool_event_title_field": "Title",
 	"carpool_event_when_field": "Date & time",
 	"carpool_event_destination_field": "Destination",

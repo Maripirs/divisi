@@ -31,3 +31,21 @@ export function riderRequestError(originLabel: string): RiderRequestError {
 export function eventFieldsMissing(title: string, startsAt: string, destinationLabel: string): boolean {
 	return !title.trim() || !startsAt.trim() || !destinationLabel.trim();
 }
+
+/** B26/F32: which event a load should show when the caller didn't pick one
+ * via `?event=`. A requested id that matches a real event always wins;
+ * otherwise the standing event wins over "first by `starts_at`", which
+ * stopped making sense once a `null` `starts_at` joined the list. Shared by
+ * the member and guest `+page.server.ts` loads (identical logic, different
+ * event types) rather than duplicated per route. */
+export function selectDefaultCarpoolEventId<T extends { id: string; is_standing: boolean }>(
+	events: T[],
+	requestedId: string | null
+): string | null {
+	return (
+		events.find((e) => e.id === requestedId)?.id ??
+		events.find((e) => e.is_standing)?.id ??
+		events[0]?.id ??
+		null
+	);
+}

@@ -603,7 +603,8 @@
 	"pages_carpool_coming_soon": "Los detalles del coche compartido llegarán pronto.",
 
 	"carpool_events_heading": "Eventos",
-	"carpool_new_event": "Nuevo evento",
+	"carpool_ongoing_label": "En curso",
+	"carpool_add_one_time_event": "Añadir un evento puntual",
 	"carpool_event_title_field": "Título",
 	"carpool_event_when_field": "Fecha y hora",
 	"carpool_event_destination_field": "Destino",

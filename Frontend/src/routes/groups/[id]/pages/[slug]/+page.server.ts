@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import type { CarpoolEventOut, CarpoolPostOut, GroupCustomPageOut } from '$lib/server/backendTypes';
+import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
 import type { Actions, PageServerLoad } from './$types';
 import { carpoolActions } from './actions/carpool';
 
@@ -21,8 +22,8 @@ import { carpoolActions } from './actions/carpool';
  * B24/F28: for a carpool board, also loads that page's events (and the
  * selected one's posts) so `CarpoolBoard.svelte` has real content instead
  * of `CustomPageView`'s placeholder. `?event=<id>` in the URL picks which
- * event's posts to show; it defaults to the first (soonest, since the
- * Backend already returns events ordered by `starts_at`). */
+ * event's posts to show; it defaults to the standing event (B26/F32) via
+ * `selectDefaultCarpoolEventId`, not "first by `starts_at`" as before. */
 export const load: PageServerLoad = async ({ parent, locals, fetch, params, url }) => {
 	const { isAdmin } = await parent();
 
@@ -44,8 +45,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params, url 
 				undefined,
 				fetch
 			);
-			const requested = url.searchParams.get('event');
-			selectedEventId = events.find((e) => e.id === requested)?.id ?? events[0]?.id ?? null;
+			selectedEventId = selectDefaultCarpoolEventId(events, url.searchParams.get('event'));
 			if (selectedEventId) {
 				posts = await backendJson<CarpoolPostOut[]>(
 					locals.token,

@@ -167,13 +167,18 @@ export interface GroupCustomPageOut {
 export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
 
 /** B24/F28: one dated carpool occurrence on a carpool-template
- * `GroupCustomPage`. No lat/lng anywhere (label-only, no map). */
+ * `GroupCustomPage`. No lat/lng anywhere (label-only, no map).
+ *
+ * B26/F32: `is_standing` marks the one page-scoped, non-dated board every
+ * carpool page now bootstraps on first view; `starts_at`/`destination_label`
+ * are `null` on that row and required (never `null`) on every dated one. */
 export interface CarpoolEventOut {
 	id: string;
 	page_id: string;
 	title: string;
-	starts_at: string;
-	destination_label: string;
+	starts_at: string | null;
+	destination_label: string | null;
+	is_standing: boolean;
 	status: CarpoolEventStatus;
 	created_by: string | null;
 	created_at: string;

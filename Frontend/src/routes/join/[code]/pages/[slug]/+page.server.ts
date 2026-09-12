@@ -10,6 +10,7 @@ import {
 	listGuestResponsibilityDates,
 	listGuestWeeklyNotes
 } from '$lib/api/guest';
+import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
 import type { PageServerLoad } from './$types';
 
 /** F27: the guest counterpart to `/groups/[id]/pages/[slug]`, reached by a
@@ -75,8 +76,7 @@ export const load: PageServerLoad = async ({ params, cookies, fetch, url }) => {
 		}
 
 		const events = await listGuestCarpoolEvents(code, params.slug, { token, fetchFn: fetch });
-		const requested = url.searchParams.get('event');
-		const selectedEventId = events.find((e) => e.id === requested)?.id ?? events[0]?.id ?? null;
+		const selectedEventId = selectDefaultCarpoolEventId(events, url.searchParams.get('event'));
 		const posts = selectedEventId
 			? await listGuestCarpoolPosts(code, selectedEventId, { token, fetchFn: fetch })
 			: [];

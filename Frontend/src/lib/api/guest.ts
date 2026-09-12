@@ -452,8 +452,9 @@ export interface GuestCarpoolEvent {
 	id: string;
 	page_id: string;
 	title: string;
-	starts_at: string;
-	destination_label: string;
+	starts_at: string | null;
+	destination_label: string | null;
+	is_standing: boolean;
 	status: 'open' | 'locked' | 'archived';
 	created_by: string | null;
 	created_at: string;
