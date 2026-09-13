@@ -242,8 +242,8 @@ const GUEST_TIMEOUT_MS = 20_000;
  * response, which callers check via `res.ok`/`res.status` themselves
  * afterward (which is why this stays a thin wrapper over `fetchOr503` and
  * not the shared `makeCall`). */
-async function guestFetch(url: string, fetchFn: typeof fetch): Promise<Response> {
-	return fetchOr503(GuestApiError, url, { signal: AbortSignal.timeout(GUEST_TIMEOUT_MS) }, fetchFn);
+async function guestFetch(url: string, fetchFn: typeof fetch, headers?: Record<string, string>): Promise<Response> {
+	return fetchOr503(GuestApiError, url, { signal: AbortSignal.timeout(GUEST_TIMEOUT_MS), headers }, fetchFn);
 }
 
 async function throwForStatus(res: Response, code: string): Promise<never> {
@@ -526,6 +526,16 @@ export interface GuestCarpoolSeatClaim {
 	created_at: string;
 }
 
+/** B30: same `CarpoolRiderInterestOut` shape `$lib/server/backendTypes.ts`
+ * carries for the member route, mirrored here for the same "no adapter in
+ * between" reason as `GuestCarpoolSeatClaim` above. */
+export interface GuestCarpoolRiderInterest {
+	id: string;
+	user_id: string;
+	display_name: string;
+	created_at: string;
+}
+
 export interface GuestCarpoolPost {
 	id: string;
 	event_id: string;
@@ -545,7 +555,14 @@ export interface GuestCarpoolPost {
 	seats_available: number | null;
 	leave_time_text: string | null;
 	notes: string | null;
+	// B30: already visibility-gated by the Backend (`serialize_post`) — see
+	// `CarpoolPost.contact_phone`'s docstring. `null` unless this viewer is
+	// the post's own owner or a matched counterparty.
+	contact_phone: string | null;
 	claims: GuestCarpoolSeatClaim[];
+	// B30: a rider post's active interests, same shape as `claims`; always
+	// empty for a driver post.
+	interests: GuestCarpoolRiderInterest[];
 	created_at: string;
 	updated_at: string;
 }
@@ -571,17 +588,32 @@ export async function listGuestCarpoolEvents(
 	return res.json();
 }
 
+/** B30: `participantCookieHeader` is the one extra thing this call needs
+ * beyond every other guest list here — a `Cookie: divisi_participant=...`
+ * value (`$lib/server/participantSession.ts`'s `backendCookieHeader`, fed
+ * from `readParticipantCookie` on the incoming SvelteKit request) so the
+ * Backend can identify *which* guest is asking and decide `contact_phone`
+ * visibility (`app.services.carpool.serialize_post`) accordingly. `undefined`
+ * (a guest with no participant cookie yet at all) is the normal case for a
+ * brand-new visitor — every post's `contact_phone` just comes back `null`,
+ * same as it would for any other unmatched viewer. */
 export async function listGuestCarpoolPosts(
 	code: string,
 	eventId: string,
-	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+	{
+		password,
+		token,
+		fetchFn = fetch,
+		participantCookieHeader
+	}: GuestRequestOptions & { participantCookieHeader?: string } = {}
 ): Promise<GuestCarpoolPost[]> {
 	const res = await guestFetch(
 		guestUrl(`/guest/${encodeURIComponent(code)}/carpool/events/${encodeURIComponent(eventId)}/posts`, {
 			password,
 			token
 		}),
-		fetchFn
+		fetchFn,
+		participantCookieHeader ? { Cookie: participantCookieHeader } : undefined
 	);
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 	return res.json();

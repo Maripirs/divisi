@@ -31,6 +31,11 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		seatsTotal?: number;
 		leaveTimeText?: string;
 		notes?: string;
+		// B30: same optional contact phone the member form action forwards
+		// (`actions/carpool.ts`'s `offerRide`/`requestRide`), revealed only to
+		// a matched counterparty once posted (see the Backend's
+		// `CarpoolPost.contact_phone` docstring).
+		contactPhone?: string;
 		localId?: string;
 		displayName?: string;
 		// F35: same optional pin fields the member form action forwards
@@ -63,6 +68,7 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		seats_total: kind === 'driver' ? (body.seatsTotal ?? null) : undefined,
 		leave_time_text: body.leaveTimeText || null,
 		notes: body.notes || null,
+		contact_phone: body.contactPhone || null,
 		...originCoordinatesPayload({
 			latitude: body.originLatitude,
 			longitude: body.originLongitude,

@@ -119,6 +119,7 @@ export const carpoolActions = {
 		const seatsTotal = Number(form.get('seatsTotal'));
 		const leaveTimeText = String(form.get('leaveTimeText') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
+		const contactPhone = String(form.get('contactPhone') ?? '').trim();
 		if (!eventId) return fail(400, { error: m.carpool_missing_event(), form: 'offerRide' });
 		const invalid = driverOfferError(originLabel, Number.isNaN(seatsTotal) ? null : seatsTotal);
 		if (invalid) {
@@ -146,6 +147,7 @@ export const carpoolActions = {
 						seats_total: seatsTotal,
 						leave_time_text: leaveTimeText || null,
 						notes: notes || null,
+						contact_phone: contactPhone || null,
 						...originCoordinatesPayload({
 							latitude: form.get('originLatitude') as string | null,
 							longitude: form.get('originLongitude') as string | null,
@@ -165,6 +167,7 @@ export const carpoolActions = {
 		const eventId = String(form.get('eventId') ?? '');
 		const originLabel = String(form.get('originLabel') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
+		const contactPhone = String(form.get('contactPhone') ?? '').trim();
 		if (!eventId) return fail(400, { error: m.carpool_missing_event(), form: 'requestRide' });
 		if (riderRequestError(originLabel)) {
 			return fail(400, { error: m.carpool_enter_origin(), form: 'requestRide' });
@@ -180,6 +183,7 @@ export const carpoolActions = {
 						kind: 'rider',
 						origin_label: originLabel,
 						notes: notes || null,
+						contact_phone: contactPhone || null,
 						...originCoordinatesPayload({
 							latitude: form.get('originLatitude') as string | null,
 							longitude: form.get('originLongitude') as string | null,
@@ -193,9 +197,10 @@ export const carpoolActions = {
 		);
 	},
 
-	// Owner edits their own post's content (origin/seats/leave-time/notes).
-	// Admin moderation (`status`) goes through `moderateCarpoolPost` below,
-	// kept as a separate action so this form can never accidentally flip it.
+	// Owner edits their own post's content (origin/seats/leave-time/notes/
+	// contact phone). Admin moderation (`status`) goes through
+	// `moderateCarpoolPost` below, kept as a separate action so this form
+	// can never accidentally flip it.
 	updateCarpoolPost: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const postId = String(form.get('postId') ?? '');
@@ -206,6 +211,7 @@ export const carpoolActions = {
 			seats_total?: number | null;
 			leave_time_text?: string | null;
 			notes?: string | null;
+			contact_phone?: string | null;
 		} = {};
 		if (form.has('originLabel')) body.origin_label = String(form.get('originLabel') ?? '').trim();
 		if (form.has('seatsTotal')) {
@@ -214,6 +220,7 @@ export const carpoolActions = {
 		}
 		if (form.has('leaveTimeText')) body.leave_time_text = String(form.get('leaveTimeText') ?? '').trim() || null;
 		if (form.has('notes')) body.notes = String(form.get('notes') ?? '').trim() || null;
+		if (form.has('contactPhone')) body.contact_phone = String(form.get('contactPhone') ?? '').trim() || null;
 
 		return runAction('editPost', () =>
 			backendFetch(locals.token, `/carpool/posts/${postId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch)
@@ -272,6 +279,39 @@ export const carpoolActions = {
 
 		return runAction(`releaseSeat:${claimId}`, () =>
 			backendFetch(locals.token, `/carpool/claims/${claimId}`, { method: 'DELETE' }, fetch)
+		);
+	},
+
+	// B30: the rider-post mirror of `claimSeat` — a driver expressing
+	// interest in a rider's request, since a rider's post has no seats to
+	// claim. Same shape (no body fields for a bearer member, `form` keyed by
+	// the post id) and the same Backend rejections (wrong kind, own post,
+	// already interested, event locked) surfacing via `runAction`.
+	expressInterest: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const riderPostId = String(form.get('riderPostId') ?? '');
+		if (!riderPostId) return fail(400, { error: m.carpool_missing_post(), form: 'expressInterest' });
+
+		return runAction(`expressInterest:${riderPostId}`, () =>
+			backendFetch(
+				locals.token,
+				`/carpool/posts/${riderPostId}/interests`,
+				{ method: 'POST', body: JSON.stringify({}) },
+				fetch
+			)
+		);
+	},
+
+	// The interested party, the rider post's own owner, or an admin may
+	// release an interest; the Backend 403s anyone else. Same per-row `form`
+	// keying as `releaseSeat`, keyed by the interest id.
+	releaseInterest: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const interestId = String(form.get('interestId') ?? '');
+		if (!interestId) return fail(400, { error: m.carpool_missing_interest(), form: 'releaseInterest' });
+
+		return runAction(`releaseInterest:${interestId}`, () =>
+			backendFetch(locals.token, `/carpool/interests/${interestId}`, { method: 'DELETE' }, fetch)
 		);
 	}
 } satisfies Actions;

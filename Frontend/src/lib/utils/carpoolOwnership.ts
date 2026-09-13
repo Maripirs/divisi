@@ -17,6 +17,8 @@
 
 const OWNED_POST_IDS_KEY = 'divisi:myCarpoolPostIds';
 const OWNED_CLAIM_IDS_KEY = 'divisi:myCarpoolClaimIds';
+// B30: same idea, for a guest's own expressed interest in a rider's post.
+const OWNED_INTEREST_IDS_KEY = 'divisi:myCarpoolInterestIds';
 
 function hasStorage(): boolean {
 	return typeof localStorage !== 'undefined';
@@ -90,4 +92,28 @@ export function forgetCarpoolClaim(claimId: string): void {
 	const ids = readOwnedIds(OWNED_CLAIM_IDS_KEY);
 	if (!ids.delete(claimId)) return;
 	writeOwnedIds(OWNED_CLAIM_IDS_KEY, ids);
+}
+
+/** B30: the rider-post mirror of `isOwnedCarpoolClaim` — is this expressed
+ * interest (in some rider's post) one *this browser* made? Same reasoning:
+ * a guest never learns its own anonymous participant id from a read. */
+export function isOwnedCarpoolInterest(interestId: string): boolean {
+	return readOwnedIds(OWNED_INTEREST_IDS_KEY).has(interestId);
+}
+
+/** Called right after a guest's own interest succeeds, so that post's
+ * button flips from "I'm interested" to "Withdraw interest" immediately,
+ * and again on a later reload. */
+export function rememberCarpoolInterest(interestId: string): void {
+	const ids = readOwnedIds(OWNED_INTEREST_IDS_KEY);
+	ids.add(interestId);
+	writeOwnedIds(OWNED_INTEREST_IDS_KEY, ids);
+}
+
+/** Called after a guest releases their own interest; same housekeeping as
+ * `forgetCarpoolClaim`, not load-bearing. */
+export function forgetCarpoolInterest(interestId: string): void {
+	const ids = readOwnedIds(OWNED_INTEREST_IDS_KEY);
+	if (!ids.delete(interestId)) return;
+	writeOwnedIds(OWNED_INTEREST_IDS_KEY, ids);
 }

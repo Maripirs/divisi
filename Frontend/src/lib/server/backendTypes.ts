@@ -216,6 +216,16 @@ export interface CarpoolSeatClaimOut {
 	created_at: string;
 }
 
+/** B30: the rider-post mirror of `CarpoolSeatClaimOut` — one driver
+ * expressing interest in a rider's `CarpoolPost`. Same shape, same actor
+ * possibilities (`user_id` is a real member or an anonymous participant). */
+export interface CarpoolRiderInterestOut {
+	id: string;
+	user_id: string;
+	display_name: string;
+	created_at: string;
+}
+
 /** B24/F28: one member's ride offer/request against a `CarpoolEvent`.
  * `seats_total`/`seats_available`/`leave_time_text` are null for a rider
  * post; a driver post always has the first two set. `display_name` is
@@ -230,7 +240,18 @@ export interface CarpoolSeatClaimOut {
  * driver/rider's home-area pin, optional (most posts won't have one).
  * `origin_precision` says how trustworthy the coordinates are; see that
  * type's own doc comment for the privacy-rounding rule. Rendered by
- * `CarpoolMap.svelte`. */
+ * `CarpoolMap.svelte`.
+ *
+ * B30: `contact_phone` is already visibility-gated by the Backend
+ * (`app.services.carpool.serialize_post`) before it ever reaches here —
+ * `null` unless this viewer is the post's own owner, a group admin, or a
+ * matched counterparty (a rider who claimed a driver's seat, or a driver
+ * who expressed interest in a rider's post). The Frontend never re-derives
+ * that check itself, it just renders whatever it got, same as
+ * `origin_label`/`notes`. `interests` is the rider-post mirror of `claims`:
+ * a rider post's active interests (always empty for a driver post, which
+ * can't have interest expressed in it, same as `claims` always being empty
+ * for a rider post). */
 export interface CarpoolPostOut {
 	id: string;
 	event_id: string;
@@ -247,7 +268,9 @@ export interface CarpoolPostOut {
 	seats_available: number | null;
 	leave_time_text: string | null;
 	notes: string | null;
+	contact_phone: string | null;
 	claims: CarpoolSeatClaimOut[];
+	interests: CarpoolRiderInterestOut[];
 	created_at: string;
 	updated_at: string;
 }

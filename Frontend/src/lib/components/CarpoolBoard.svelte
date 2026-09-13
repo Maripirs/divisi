@@ -10,9 +10,12 @@
 	import { driverOfferError, riderRequestError } from '$lib/utils/carpool';
 	import {
 		forgetCarpoolClaim,
+		forgetCarpoolInterest,
 		isOwnedCarpoolClaim,
+		isOwnedCarpoolInterest,
 		isOwnedCarpoolPost,
 		rememberCarpoolClaim,
+		rememberCarpoolInterest,
 		rememberCarpoolPost
 	} from '$lib/utils/carpoolOwnership';
 	import { ensureLocalId, localProfile, markSignedUp, needsName, setDisplayName } from '$lib/localProfile';
@@ -20,7 +23,12 @@
 	import { googlePlacesAutocomplete, type PlaceSelection } from '$lib/actions/googlePlaces';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
-	import type { CarpoolEventOut, CarpoolPostOut, CarpoolSeatClaimOut } from '$lib/server/backendTypes';
+	import type {
+		CarpoolEventOut,
+		CarpoolPostOut,
+		CarpoolRiderInterestOut,
+		CarpoolSeatClaimOut
+	} from '$lib/server/backendTypes';
 
 	/** B24/F28: the real content behind a carpool-template `GroupCustomPage`
 	 * (event selector, driver/rider lists, the "I can drive"/"I need a
@@ -167,6 +175,13 @@
 		return p.claims.find((c) => (isGuest ? isOwnedCarpoolClaim(c.id) : c.user_id === userId));
 	}
 
+	/** B30: the rider-post mirror of `myClaimFor` — this viewer's own active
+	 * interest in a rider post, if any. Same "member compares `user_id`,
+	 * guest checks `carpoolOwnership.ts`'s tracking instead" reasoning. */
+	function myInterestFor(p: CarpoolPostOut): CarpoolRiderInterestOut | undefined {
+		return p.interests.find((i) => (isGuest ? isOwnedCarpoolInterest(i.id) : i.user_id === userId));
+	}
+
 	const STATUS_LABELS: Record<CarpoolEventOut['status'], () => string> = {
 		open: m.carpool_status_open,
 		locked: m.carpool_status_locked,
@@ -226,12 +241,19 @@
 	let editSeatsDraft = $state<number | undefined>(undefined);
 	let editLeaveDraft = $state('');
 	let editNotesDraft = $state('');
+	// B30: shared by both the member (`EditableCard`) and guest (fetch-based)
+	// edit form variants below, same as every other draft in this block.
+	let editContactPhoneDraft = $state('');
 	let savingPostEdit = $state(false);
 	function startEditPost(p: CarpoolPostOut) {
 		editOriginDraft = p.origin_label;
 		editSeatsDraft = p.seats_total ?? undefined;
 		editLeaveDraft = p.leave_time_text ?? '';
 		editNotesDraft = p.notes ?? '';
+		// B30: prefilled from `p.contact_phone` when it's visible to this
+		// viewer at all — always true here, since only the post's own owner
+		// (or an admin, who never sees this inline-edit form) reaches this.
+		editContactPhoneDraft = p.contact_phone ?? '';
 		editingPostId = p.id;
 	}
 
@@ -252,17 +274,22 @@
 	// reuses the same prompt for a driver post's seat claim, with
 	// `guestClaimTargetPostId` pinning it to the specific post that was
 	// clicked (offer/request have no such target — there's only ever one
-	// open offer/request form at a time).
-	let guestNamePromptFor = $state<'offer' | 'request' | 'claim' | null>(null);
+	// open offer/request form at a time). B30: 'interest' is the rider-post
+	// mirror of 'claim', with `guestInterestTargetPostId` pinning it the
+	// same way.
+	let guestNamePromptFor = $state<'offer' | 'request' | 'claim' | 'interest' | null>(null);
 	let guestNameDraft = $state('');
 	let guestClaimTargetPostId = $state<string | null>(null);
+	let guestInterestTargetPostId = $state<string | null>(null);
 
 	let guestOfferOrigin = $state('');
 	let guestOfferSeats = $state<number | undefined>(undefined);
 	let guestOfferLeaveTime = $state('');
 	let guestOfferNotes = $state('');
+	let guestOfferContactPhone = $state('');
 	let guestRequestOrigin = $state('');
 	let guestRequestNotes = $state('');
+	let guestRequestContactPhone = $state('');
 
 	let guestEditError = $state('');
 
@@ -294,11 +321,14 @@
 		setDisplayName(name);
 		const target = guestNamePromptFor;
 		const claimTargetPostId = guestClaimTargetPostId;
+		const interestTargetPostId = guestInterestTargetPostId;
 		guestNamePromptFor = null;
 		guestClaimTargetPostId = null;
+		guestInterestTargetPostId = null;
 		if (target === 'offer') offeringRide = true;
 		else if (target === 'request') requestingRide = true;
 		else if (target === 'claim' && claimTargetPostId) void submitGuestClaim(claimTargetPostId);
+		else if (target === 'interest' && interestTargetPostId) void submitGuestInterest(interestTargetPostId);
 	}
 
 	type GuestWriteResult =
@@ -355,6 +385,7 @@
 				seatsTotal: guestOfferSeats,
 				leaveTimeText: guestOfferLeaveTime,
 				notes: guestOfferNotes,
+				contactPhone: guestOfferContactPhone,
 				...(guestOfferPlace
 					? {
 							originLatitude: guestOfferPlace.latitude,
@@ -370,6 +401,7 @@
 				guestOfferSeats = undefined;
 				guestOfferLeaveTime = '';
 				guestOfferNotes = '';
+				guestOfferContactPhone = '';
 				guestOfferPlace = null;
 			}
 		);
@@ -388,6 +420,7 @@
 				kind: 'rider',
 				originLabel: guestRequestOrigin,
 				notes: guestRequestNotes,
+				contactPhone: guestRequestContactPhone,
 				...(guestRequestPlace
 					? {
 							originLatitude: guestRequestPlace.latitude,
@@ -401,6 +434,7 @@
 				requestingRide = false;
 				guestRequestOrigin = '';
 				guestRequestNotes = '';
+				guestRequestContactPhone = '';
 				guestRequestPlace = null;
 			}
 		);
@@ -420,6 +454,7 @@
 					seatsTotal: p.kind === 'driver' ? (editSeatsDraft ?? null) : undefined,
 					leaveTimeText: editLeaveDraft || null,
 					notes: editNotesDraft || null,
+					contactPhone: editContactPhoneDraft || null,
 					localId: ensureLocalId()
 				})
 			});
@@ -554,6 +589,96 @@
 			claimActionBusyId = null;
 		}
 	}
+
+	// --- B30 guest interest/withdraw path --------------------------------
+	// The rider-post mirror of the guest claim/release path above, same
+	// `fetch`-backed proxy shape against `/join/[code]/carpool/posts/{id}/
+	// interests` and `/join/[code]/carpool/interests/{id}`.
+	// `interestActionBusyId` doubles as a rider-post id (an interest in
+	// flight) or an interest id (a release in flight), same "the two button
+	// states never render for the same post at once" reasoning as
+	// `claimActionBusyId`.
+
+	let interestActionBusyId = $state<string | null>(null);
+	let interestActionErrorFor = $state<string | null>(null);
+	let interestActionError = $state('');
+	let interestActionSaveRequired = $state(false);
+
+	type GuestInterestResult =
+		| { ok: true; interest: CarpoolRiderInterestOut }
+		| { ok: false; error: 'save-required' }
+		| { ok: false; error: 'conflict'; message?: string }
+		| { ok: false; error: 'server' };
+
+	function startExpressInterest(postId: string) {
+		if (needsName($localProfile)) {
+			guestNamePromptFor = 'interest';
+			guestInterestTargetPostId = postId;
+			guestNameDraft = '';
+			return;
+		}
+		void submitGuestInterest(postId);
+	}
+
+	async function submitGuestInterest(postId: string) {
+		if (!guest) return;
+		interestActionErrorFor = null;
+		interestActionError = '';
+		interestActionSaveRequired = false;
+		interestActionBusyId = postId;
+		try {
+			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/interests`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ localId: ensureLocalId(), displayName: $localProfile.displayName })
+			});
+			const result = (await res.json()) as GuestInterestResult;
+			if (result.ok) {
+				rememberCarpoolInterest(result.interest.id);
+				markSignedUp();
+				await invalidateAll();
+			} else if (result.error === 'save-required') {
+				interestActionErrorFor = postId;
+				interestActionSaveRequired = true;
+			} else {
+				interestActionErrorFor = postId;
+				interestActionError =
+					result.error === 'conflict' && result.message ? result.message : m.carpool_guest_action_failed();
+			}
+		} catch {
+			interestActionErrorFor = postId;
+			interestActionError = m.carpool_guest_action_failed();
+		} finally {
+			interestActionBusyId = null;
+		}
+	}
+
+	async function releaseGuestInterest(postId: string, interestId: string) {
+		if (!guest) return;
+		interestActionErrorFor = null;
+		interestActionError = '';
+		interestActionSaveRequired = false;
+		interestActionBusyId = interestId;
+		try {
+			const res = await fetch(
+				`/join/${guest.code}/carpool/interests/${interestId}?localId=${encodeURIComponent(ensureLocalId())}`,
+				{ method: 'DELETE' }
+			);
+			const result = (await res.json()) as GuestReleaseResult;
+			if (result.ok) {
+				forgetCarpoolInterest(interestId);
+				await invalidateAll();
+			} else {
+				interestActionErrorFor = postId;
+				interestActionError = m.carpool_guest_action_failed();
+			}
+		} catch {
+			interestActionErrorFor = postId;
+			interestActionError = m.carpool_guest_action_failed();
+		} finally {
+			interestActionBusyId = null;
+		}
+	}
 </script>
 
 {#snippet postRow(p: CarpoolPostOut)}
@@ -588,6 +713,10 @@
 					<label class="field">
 						<span>{m.carpool_notes_field()}</span>
 						<input bind:value={editNotesDraft} placeholder={m.groups_optional()} />
+					</label>
+					<label class="field">
+						<span>{m.carpool_contact_phone_field()}</span>
+						<input type="tel" bind:value={editContactPhoneDraft} placeholder={m.groups_optional()} />
 					</label>
 					{#if guestEditError}
 						<p class="error">{guestEditError}</p>
@@ -663,11 +792,21 @@
 							<span>{m.carpool_notes_field()}</span>
 							<input name="notes" bind:value={editNotesDraft} placeholder={m.groups_optional()} />
 						</label>
+						<label class="field">
+							<span>{m.carpool_contact_phone_field()}</span>
+							<input
+								name="contactPhone"
+								type="tel"
+								bind:value={editContactPhoneDraft}
+								placeholder={m.groups_optional()}
+							/>
+						</label>
 					{/snippet}
 				</EditableCard>
 			{/if}
 		{:else}
 			{@const myClaim = p.kind === 'driver' ? myClaimFor(p) : undefined}
+			{@const myInterest = p.kind === 'rider' ? myInterestFor(p) : undefined}
 			<div class="carpool-post-main">
 				<p class="card-title">
 					{p.display_name}
@@ -687,8 +826,23 @@
 							{m.carpool_claimed_by({ names: p.claims.map((c) => c.display_name).join(', ') })}
 						</p>
 					{/if}
+				{:else if p.interests.length > 0}
+					<!-- B30: interested drivers' names, same "posted content is
+					     visible to whoever can see the board" stance as `claims`
+					     above — only the phone number itself is gated, not who's
+					     interested. -->
+					<p class="card-meta">
+						{m.carpool_interested_by({ names: p.interests.map((i) => i.display_name).join(', ') })}
+					</p>
 				{/if}
 				{#if p.notes}<p class="card-note">{p.notes}</p>{/if}
+				{#if p.contact_phone}
+					<!-- B30: already visibility-gated by the Backend
+					     (`serialize_post`) — this just renders whatever it got,
+					     exactly like `origin_label`/`notes` above, no client-side
+					     ownership/claim check needed here. -->
+					<p class="card-meta">{m.carpool_contact_phone_label({ phone: p.contact_phone })}</p>
+				{/if}
 			</div>
 			<div class="btn-row">
 				{#if isOwner}
@@ -779,6 +933,64 @@
 				{:else if form?.form === `claimSeat:${p.id}` && form?.error}
 					<p class="error">{form.error}</p>
 				{:else if myClaim && form?.form === `releaseSeat:${myClaim.id}` && form?.error}
+					<p class="error">{form.error}</p>
+				{/if}
+			{/if}
+			{#if p.kind === 'rider'}
+				<!-- B30: the rider-post mirror of the driver claim/release block
+				     above. No capacity check here at all (a rider's request isn't
+				     seat-limited the way a driver's post is), just a single
+				     "you already expressed interest" state per viewer. `!isOwner`
+				     guards the "I'm interested" button specifically: a rider can't
+				     express interest in their own post (the Backend rejects it
+				     with 400 too, see `create_interest`'s own doc comment), same
+				     reasoning as the driver self-claim guard above. -->
+				<div class="btn-row">
+					{#if myInterest}
+						{#if isGuest}
+							<button
+								type="button"
+								class="btn btn-outline"
+								disabled={interestActionBusyId === myInterest.id}
+								onclick={() => releaseGuestInterest(p.id, myInterest.id)}
+							>
+								{interestActionBusyId === myInterest.id ? m.carpool_releasing() : m.carpool_withdraw_interest()}
+							</button>
+						{:else}
+							<form method="POST" action="?/releaseInterest" use:enhance>
+								<input type="hidden" name="interestId" value={myInterest.id} />
+								<button type="submit" class="btn btn-outline">{m.carpool_withdraw_interest()}</button>
+							</form>
+						{/if}
+					{:else if !isOwner && canPost && isGuest && guestNamePromptFor === 'interest' && guestInterestTargetPostId === p.id}
+						{@render guestNamePrompt(m.carpool_im_interested())}
+					{:else if !isOwner && canPost}
+						{#if isGuest}
+							<button
+								type="button"
+								class="btn btn-outline"
+								disabled={interestActionBusyId === p.id}
+								onclick={() => startExpressInterest(p.id)}
+							>
+								{interestActionBusyId === p.id ? m.carpool_expressing_interest() : m.carpool_im_interested()}
+							</button>
+						{:else}
+							<form method="POST" action="?/expressInterest" use:enhance>
+								<input type="hidden" name="riderPostId" value={p.id} />
+								<button type="submit" class="btn btn-outline">{m.carpool_im_interested()}</button>
+							</form>
+						{/if}
+					{/if}
+				</div>
+				{#if isGuest}
+					{#if interestActionErrorFor === p.id && interestActionSaveRequired}
+						{@render guestSaveRequiredNotice()}
+					{:else if interestActionErrorFor === p.id && interestActionError}
+						<p class="error">{interestActionError}</p>
+					{/if}
+				{:else if form?.form === `expressInterest:${p.id}` && form?.error}
+					<p class="error">{form.error}</p>
+				{:else if myInterest && form?.form === `releaseInterest:${myInterest.id}` && form?.error}
 					<p class="error">{form.error}</p>
 				{/if}
 			{/if}
@@ -1014,6 +1226,10 @@
 								<span>{m.carpool_notes_field()}</span>
 								<input bind:value={guestOfferNotes} placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_phone_field()}</span>
+								<input type="tel" bind:value={guestOfferContactPhone} placeholder={m.groups_optional()} />
+							</label>
 							{#if guestCreateError}
 								<p class="error">{guestCreateError}</p>
 							{/if}
@@ -1072,6 +1288,10 @@
 							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input name="notes" placeholder={m.groups_optional()} />
+							</label>
+							<label class="field">
+								<span>{m.carpool_contact_phone_field()}</span>
+								<input name="contactPhone" type="tel" placeholder={m.groups_optional()} />
 							</label>
 							{#if form?.form === 'offerRide' && form?.error}
 								<p class="error">{form.error}</p>
@@ -1140,6 +1360,10 @@
 								<span>{m.carpool_notes_field()}</span>
 								<input bind:value={guestRequestNotes} placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_phone_field()}</span>
+								<input type="tel" bind:value={guestRequestContactPhone} placeholder={m.groups_optional()} />
+							</label>
 							{#if guestCreateError}
 								<p class="error">{guestCreateError}</p>
 							{/if}
@@ -1190,6 +1414,10 @@
 							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input name="notes" placeholder={m.groups_optional()} />
+							</label>
+							<label class="field">
+								<span>{m.carpool_contact_phone_field()}</span>
+								<input name="contactPhone" type="tel" placeholder={m.groups_optional()} />
 							</label>
 							{#if form?.form === 'requestRide' && form?.error}
 								<p class="error">{form.error}</p>

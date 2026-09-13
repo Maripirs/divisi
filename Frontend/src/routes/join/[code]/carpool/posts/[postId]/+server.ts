@@ -31,6 +31,9 @@ export const PATCH: RequestHandler = async ({ request, params, cookies, locals, 
 		seatsTotal?: number | null;
 		leaveTimeText?: string | null;
 		notes?: string | null;
+		// B30: same optional contact phone `updateCarpoolPost` (the member
+		// form action) accepts.
+		contactPhone?: string | null;
 		localId?: string;
 	};
 	try {
@@ -48,6 +51,7 @@ export const PATCH: RequestHandler = async ({ request, params, cookies, locals, 
 	if (body.seatsTotal !== undefined) patchBody.seats_total = body.seatsTotal;
 	if (body.leaveTimeText !== undefined) patchBody.leave_time_text = body.leaveTimeText || null;
 	if (body.notes !== undefined) patchBody.notes = body.notes || null;
+	if (body.contactPhone !== undefined) patchBody.contact_phone = body.contactPhone || null;
 
 	if (locals.token) {
 		try {

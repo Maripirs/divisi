@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { readGuestCookie } from '$lib/server/guestSession';
+import { backendCookieHeader, readParticipantCookie } from '$lib/server/participantSession';
 import { GuestApiError, getGuestCustomPage, getGuestTabs, listGuestCarpoolEvents, listGuestCarpoolPosts } from '$lib/api/guest';
 import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
 import type { PageServerLoad } from './$types';
@@ -27,6 +28,14 @@ import type { PageServerLoad } from './$types';
  * three of them away, which quadrupled this route's guest request count
  * and tripped `rate_limit_guest` during ordinary tab-to-tab navigation
  * (fast-follow, same day).
+ *
+ * B30: also forwards this device's `divisi_participant` cookie (if any, via
+ * `readParticipantCookie`/`backendCookieHeader`) into `listGuestCarpoolPosts`
+ * so the Backend can tell *which* guest is asking and decide `contact_phone`
+ * visibility accordingly — the same cookie a prior guest claim/post action
+ * on this device already set (`$lib/server/participantSession.ts`). A
+ * brand-new visitor with no such cookie yet just gets `null` back for every
+ * post's `contact_phone`, expected and not specially handled here.
  *
  * Unlike `/join/[code]`'s own load, this doesn't stream the fetch behind an
  * unawaited promise: that trick exists there so a Render cold start doesn't
@@ -57,8 +66,9 @@ export const load: PageServerLoad = async ({ params, cookies, fetch, url }) => {
 
 		const events = await listGuestCarpoolEvents(code, params.slug, { token, fetchFn: fetch });
 		const selectedEventId = selectDefaultCarpoolEventId(events, url.searchParams.get('event'));
+		const participantCookieHeader = backendCookieHeader(readParticipantCookie(cookies));
 		const posts = selectedEventId
-			? await listGuestCarpoolPosts(code, selectedEventId, { token, fetchFn: fetch })
+			? await listGuestCarpoolPosts(code, selectedEventId, { token, fetchFn: fetch, participantCookieHeader })
 			: [];
 
 		return { code, slug, customPage, events, selectedEventId, posts, ...tabData };

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	forgetCarpoolClaim,
+	forgetCarpoolInterest,
 	forgetCarpoolPost,
 	isOwnedCarpoolClaim,
+	isOwnedCarpoolInterest,
 	isOwnedCarpoolPost,
 	rememberCarpoolClaim,
+	rememberCarpoolInterest,
 	rememberCarpoolPost
 } from './carpoolOwnership';
 
@@ -83,5 +86,31 @@ describe('isOwnedCarpoolClaim', () => {
 	it('does not confuse a claim id with a post id remembered under the other key', () => {
 		rememberCarpoolPost('shared-id');
 		expect(isOwnedCarpoolClaim('shared-id')).toBe(false);
+	});
+});
+
+// B30: the parallel interest-ownership tracking, same shape, separate
+// storage key so a claim id and an interest id never collide.
+describe('isOwnedCarpoolInterest', () => {
+	it('is false for an id nothing has remembered', () => {
+		expect(isOwnedCarpoolInterest('i1')).toBe(false);
+	});
+
+	it('is true once remembered, and survives a fresh read (page reload)', () => {
+		rememberCarpoolInterest('i1');
+		expect(isOwnedCarpoolInterest('i1')).toBe(true);
+	});
+
+	it('forgetCarpoolInterest drops just that one id', () => {
+		rememberCarpoolInterest('i1');
+		rememberCarpoolInterest('i2');
+		forgetCarpoolInterest('i1');
+		expect(isOwnedCarpoolInterest('i1')).toBe(false);
+		expect(isOwnedCarpoolInterest('i2')).toBe(true);
+	});
+
+	it('does not confuse an interest id with a claim id remembered under the other key', () => {
+		rememberCarpoolClaim('shared-id');
+		expect(isOwnedCarpoolInterest('shared-id')).toBe(false);
 	});
 });
