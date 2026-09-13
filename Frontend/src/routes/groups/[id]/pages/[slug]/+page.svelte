@@ -21,7 +21,12 @@
 </script>
 
 <main class="shell">
-	<AppHeader title={data.customPage.title} />
+	<!-- The group's name, not this custom page's own title: every other tab
+	     under this group keeps the group name in the header (the main group
+	     page passes data.group.name the same way), so a custom page like
+	     Carpool switching the header to its own title read like leaving the
+	     group entirely rather than just changing tabs. -->
+	<AppHeader title={data.group.name} />
 
 	{#if data.isAdmin}
 		<!-- A custom page is a real route rather than the main group page's

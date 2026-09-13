@@ -13,7 +13,10 @@
 </script>
 
 <main class="shell">
-	<AppHeader title={data.customPage.title} homeHref={lh('/welcome')} />
+	<!-- The group's own name, not this custom page's title, same fix as the
+	     member-side route: every other guest tab keeps the group name in the
+	     header. -->
+	<AppHeader title={data.groupName} homeHref={lh('/welcome')} />
 
 	<div class="tabs" role="tablist">
 		{#each tabs as t (t.key ?? t.slug)}

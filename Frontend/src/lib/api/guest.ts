@@ -446,6 +446,10 @@ export interface GuestTabs {
 	weeklyNotesVisible: boolean;
 	responsibilitiesVisible: boolean;
 	customPages: GuestCustomPageListItem[];
+	/** The group's own name, for a guest custom page's `AppHeader` (same
+	 * field `GuestGroup.groupName` carries on the join landing page) rather
+	 * than that one page's own title. */
+	groupName: string;
 }
 
 interface GuestTabsResponse {
@@ -453,6 +457,7 @@ interface GuestTabsResponse {
 	weekly_notes_visible: boolean;
 	responsibilities_visible: boolean;
 	custom_pages: GuestCustomPageListItemResponse[];
+	group_name: string;
 }
 
 /** F31 fast-follow: `pages/[slug]/+page.server.ts` used to learn these same
@@ -480,7 +485,8 @@ export async function getGuestTabs(
 			title: p.title,
 			slug: p.slug,
 			templateKey: p.template_key
-		}))
+		})),
+		groupName: body.group_name
 	};
 }
 

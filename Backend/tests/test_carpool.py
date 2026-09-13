@@ -431,6 +431,7 @@ def test_guest_tabs_reports_visibility_and_custom_pages(client):
     tabs = client.get("/guest/" + group["join_code"] + "/tabs")
     assert tabs.status_code == 200
     body = tabs.json()
+    assert body["group_name"] == group["name"]
     assert body["homework_visible"] is True
     # weekly_notes/responsibilities default to members-only audience (B12),
     # so a plain join code with no page-settings override sees neither.

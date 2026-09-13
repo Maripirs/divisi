@@ -43,7 +43,8 @@ export const load: PageServerLoad = async ({ params, cookies, fetch, url }) => {
 			homeworkVisible: tabs.homeworkVisible,
 			weeklyNotesVisible: tabs.weeklyNotesVisible,
 			responsibilitiesVisible: tabs.responsibilitiesVisible,
-			customPages: tabs.customPages
+			customPages: tabs.customPages,
+			groupName: tabs.groupName
 		};
 		// `GuestCustomPage` (unlike the member-side `GroupCustomPageOut`)
 		// carries no `slug` of its own — it's fetched by slug, not listed —

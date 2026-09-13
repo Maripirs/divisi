@@ -71,3 +71,9 @@ class GuestTabsOut(BaseModel):
     weekly_notes_visible: bool
     responsibilities_visible: bool
     custom_pages: list[GroupCustomPageOut]
+    # The header on a guest's custom-page route (`pages/[slug]/+page.svelte`)
+    # needs the group's own name, same as every other guest tab already
+    # shows there rather than switching to that one page's title. `group` is
+    # already loaded in `get_guest_tabs` to run its own visibility checks, so
+    # this is a free field on an existing row, not a second query.
+    group_name: str

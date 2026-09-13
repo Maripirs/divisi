@@ -435,6 +435,7 @@ def get_guest_tabs(
         weekly_notes_visible=_visible(GroupPage.weekly_notes),
         responsibilities_visible=_visible(GroupPage.responsibilities),
         custom_pages=[GroupCustomPageOut.model_validate(p) for p in custom_pages],
+        group_name=group.name,
     )
 
 
