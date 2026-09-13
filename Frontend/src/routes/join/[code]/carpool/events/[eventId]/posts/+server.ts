@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, BackendApiError } from '$lib/server/backend';
+import { originCoordinatesPayload } from '$lib/utils/carpool';
 import {
 	backendCookieHeader,
 	extractParticipantToken,
@@ -32,6 +33,14 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		notes?: string;
 		localId?: string;
 		displayName?: string;
+		// F35: same optional pin fields the member form action forwards
+		// (`actions/carpool.ts`'s `offerRide`/`requestRide`); absent entirely
+		// on a plain free-text submission (Places unavailable, or no place
+		// picked), same as today.
+		originLatitude?: number;
+		originLongitude?: number;
+		originPlaceId?: string;
+		originPrecision?: 'exact' | 'approximate';
 	};
 	try {
 		body = (await request.json()) as typeof body;
@@ -53,7 +62,13 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		// member actions use.
 		seats_total: kind === 'driver' ? (body.seatsTotal ?? null) : undefined,
 		leave_time_text: body.leaveTimeText || null,
-		notes: body.notes || null
+		notes: body.notes || null,
+		...originCoordinatesPayload({
+			latitude: body.originLatitude,
+			longitude: body.originLongitude,
+			placeId: body.originPlaceId,
+			precision: body.originPrecision
+		})
 	};
 
 	// A logged-in member who reaches a guest page (e.g. via a shared join

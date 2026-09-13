@@ -1,7 +1,13 @@
 import { fail } from '@sveltejs/kit';
 import { backendFetch } from '$lib/server/backend';
 import { datetimeLocalToIso } from '$lib/utils/dates';
-import { driverOfferError, eventFieldsMissing, riderRequestError } from '$lib/utils/carpool';
+import {
+	destinationCoordinatesPayload,
+	driverOfferError,
+	eventFieldsMissing,
+	originCoordinatesPayload,
+	riderRequestError
+} from '$lib/utils/carpool';
 import { m } from '$lib/paraglide/messages';
 import type { Actions } from '../$types';
 // Reuses the same `runAction` tail the group page's own action files share
@@ -31,6 +37,10 @@ export const carpoolActions = {
 			return fail(400, { error: m.carpool_fill_event_fields(), form: 'createEvent' });
 		}
 
+		// F35: the destination pin is optional (only present when the admin
+		// actually picked a place via Places Autocomplete on `destinationLabel`,
+		// see `CarpoolBoard.svelte`); `destinationCoordinatesPayload` returns
+		// no keys at all when there's nothing to send, same as today.
 		return runAction('createEvent', () =>
 			backendFetch(
 				locals.token,
@@ -40,7 +50,12 @@ export const carpoolActions = {
 					body: JSON.stringify({
 						title,
 						starts_at: datetimeLocalToIso(startsAt),
-						destination_label: destinationLabel
+						destination_label: destinationLabel,
+						...destinationCoordinatesPayload({
+							latitude: form.get('destinationLatitude') as string | null,
+							longitude: form.get('destinationLongitude') as string | null,
+							placeId: form.get('destinationPlaceId') as string | null
+						})
 					})
 				},
 				fetch
@@ -61,11 +76,31 @@ export const carpoolActions = {
 			starts_at?: string;
 			destination_label?: string;
 			status?: string;
+			destination_latitude?: number;
+			destination_longitude?: number;
+			destination_place_id?: string;
 		} = {};
 		if (form.has('title')) body.title = String(form.get('title') ?? '').trim();
 		if (form.has('startsAt')) body.starts_at = datetimeLocalToIso(String(form.get('startsAt') ?? ''));
 		if (form.has('destinationLabel')) body.destination_label = String(form.get('destinationLabel') ?? '').trim();
 		if (form.has('status')) body.status = String(form.get('status') ?? '');
+		// F35: only touches the destination pin when the edit form's hidden
+		// fields are actually present, i.e. the admin re-picked a place via
+		// Places Autocomplete this submit (see `CarpoolBoard.svelte`). Same
+		// "only what this patch actually sent" convention every other
+		// optional field on this partial patch already follows: leaving
+		// `destinationLabel` text unchanged with no new pin picked keeps
+		// whatever coordinates were already stored, it doesn't clear them.
+		if (form.has('destinationLatitude')) {
+			Object.assign(
+				body,
+				destinationCoordinatesPayload({
+					latitude: form.get('destinationLatitude') as string | null,
+					longitude: form.get('destinationLongitude') as string | null,
+					placeId: form.get('destinationPlaceId') as string | null
+				})
+			);
+		}
 
 		return runAction('editEvent', () =>
 			backendFetch(locals.token, `/carpool/events/${eventId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch)
@@ -93,6 +128,12 @@ export const carpoolActions = {
 			});
 		}
 
+		// F35: `originCoordinatesPayload` returns no keys at all unless the
+		// member actually picked a place via Places Autocomplete on this
+		// form's origin field (see `CarpoolBoard.svelte`'s hidden
+		// `originLatitude`/`originLongitude`/`originPlaceId`/`originPrecision`
+		// inputs), so a plain free-text submission (Maps unconfigured, or the
+		// member just typed a label) behaves exactly as it does today.
 		return runAction('offerRide', () =>
 			backendFetch(
 				locals.token,
@@ -104,7 +145,13 @@ export const carpoolActions = {
 						origin_label: originLabel,
 						seats_total: seatsTotal,
 						leave_time_text: leaveTimeText || null,
-						notes: notes || null
+						notes: notes || null,
+						...originCoordinatesPayload({
+							latitude: form.get('originLatitude') as string | null,
+							longitude: form.get('originLongitude') as string | null,
+							placeId: form.get('originPlaceId') as string | null,
+							precision: form.get('originPrecision') as string | null
+						})
 					})
 				},
 				fetch
@@ -127,7 +174,20 @@ export const carpoolActions = {
 			backendFetch(
 				locals.token,
 				`/carpool/events/${eventId}/posts`,
-				{ method: 'POST', body: JSON.stringify({ kind: 'rider', origin_label: originLabel, notes: notes || null }) },
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						kind: 'rider',
+						origin_label: originLabel,
+						notes: notes || null,
+						...originCoordinatesPayload({
+							latitude: form.get('originLatitude') as string | null,
+							longitude: form.get('originLongitude') as string | null,
+							placeId: form.get('originPlaceId') as string | null,
+							precision: form.get('originPrecision') as string | null
+						})
+					})
+				},
 				fetch
 			)
 		);

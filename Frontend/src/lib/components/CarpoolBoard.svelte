@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
+	import { env } from '$env/dynamic/public';
 	import EditableCard from './EditableCard.svelte';
 	import ConfirmButton from './ConfirmButton.svelte';
+	import CarpoolMap from './CarpoolMap.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
 	import { driverOfferError, riderRequestError } from '$lib/utils/carpool';
 	import {
@@ -13,6 +16,8 @@
 		rememberCarpoolPost
 	} from '$lib/utils/carpoolOwnership';
 	import { ensureLocalId, localProfile, markSignedUp, needsName, setDisplayName } from '$lib/localProfile';
+	import { loadGoogleMaps, type GoogleMapsHandle } from '$lib/utils/googleMaps';
+	import { googlePlacesAutocomplete, type PlaceSelection } from '$lib/actions/googlePlaces';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import type { CarpoolEventOut, CarpoolPostOut, CarpoolSeatClaimOut } from '$lib/server/backendTypes';
@@ -40,7 +45,16 @@
 	 * `form`/`ActionData` is typed loosely rather than imported from this
 	 * route's own `./$types`, so this component stays a plain, reusable
 	 * `$lib` piece rather than one tied to a specific route's generated
-	 * types. */
+	 * types.
+	 *
+	 * F35 (Carpool Map): `mapEnabled` mirrors `GroupCustomPageOut.map_enabled`
+	 * (member route) / `GuestCustomPage.mapEnabled` (guest route), the
+	 * admin's per-page "turn the map on" toggle. It's necessary but not
+	 * sufficient for actually showing a map: `mapsAvailable` below also has
+	 * to confirm the loader itself resolved a real handle (a real api key
+	 * configured, script actually reachable), so this component still falls
+	 * back to today's list-only layout when `mapEnabled` is true but Maps
+	 * isn't really usable, e.g. no key configured yet. */
 	let {
 		pageId,
 		isAdmin,
@@ -50,7 +64,8 @@
 		selectedEventId,
 		posts,
 		form,
-		guest = null
+		guest = null,
+		mapEnabled = false
 	}: {
 		pageId: string;
 		isAdmin: boolean;
@@ -68,6 +83,7 @@
 		posts: CarpoolPostOut[];
 		form: { form?: string; error?: string } | null;
 		guest?: { code: string } | null;
+		mapEnabled?: boolean;
 	} = $props();
 
 	let isGuest = $derived(guest !== null);
@@ -83,6 +99,72 @@
 	// Admin always bypasses the lock/archive gate when posting (the Backend
 	// does the same); a member can only post to a genuinely open event.
 	let canPost = $derived(isAdmin || selectedEvent?.status === 'open');
+
+	// --- F35 map state -----------------------------------------------------
+	// Loaded once, lazily, only when this page actually has `map_enabled`:
+	// never at import time, never for a page that doesn't use maps at all
+	// (see `googleMaps.ts`'s own doc comment on the loader's "singleton,
+	// on-demand" contract). `mapsHandle` triples as "still loading" (`null`),
+	// "confirmed unavailable" (`false`), and "ready" (the real handle), so
+	// `mapsAvailable` below, and every "only when Maps/Places is actually
+	// usable" gate in the markup, all read off the one value.
+	const mapsConfig = {
+		apiKey: env.PUBLIC_GOOGLE_MAPS_API_KEY || undefined,
+		mapId: env.PUBLIC_GOOGLE_MAPS_MAP_ID || undefined
+	};
+	let mapsHandle: GoogleMapsHandle | null | false = $state(null);
+	onMount(() => {
+		if (!mapEnabled) return;
+		let cancelled = false;
+		void loadGoogleMaps(mapsConfig).then((h) => {
+			if (!cancelled) mapsHandle = h ?? false;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
+	let mapsAvailable = $derived(mapsHandle !== null && mapsHandle !== false);
+
+	// Mobile List/Map single-view toggle. Desktop shows both panels side by
+	// side regardless of this (see `.carpool-map-layout`'s breakpoint in this
+	// component's own stylesheet), so this state only actually matters below
+	// that breakpoint.
+	let mapView = $state<'list' | 'map'>('list');
+
+	// --- F35 approximate-pin picker state -----------------------------------
+	// One `PlaceSelection | null` (what Places Autocomplete last resolved,
+	// `null` meaning "no place picked", either because Places isn't
+	// available at all or the poster just typed a free-text label) plus one
+	// "share exact location" bool, per form that can carry a pin: member
+	// offer/request, guest offer/request, and (destination, no precision
+	// concept there, see `destinationCoordinatesPayload`'s own doc comment)
+	// admin event create/edit. `originCoordinatesPayload`/
+	// `destinationCoordinatesPayload` (`$lib/utils/carpool.ts`) both already
+	// treat "no place picked" as "send nothing", so a plain free-text
+	// submission behaves exactly as it did before this milestone.
+	let offerPlace = $state<PlaceSelection | null>(null);
+	let offerExact = $state(false);
+	let requestPlace = $state<PlaceSelection | null>(null);
+	let requestExact = $state(false);
+	let guestOfferPlace = $state<PlaceSelection | null>(null);
+	let guestOfferExact = $state(false);
+	let guestRequestPlace = $state<PlaceSelection | null>(null);
+	let guestRequestExact = $state(false);
+	let newEventPlace = $state<PlaceSelection | null>(null);
+	let editEventPlace = $state<PlaceSelection | null>(null);
+
+	// The admin edit-event destination field is a controlled `bind:value`
+	// input (`editDestinationDraft`), unlike the create form's plain
+	// uncontrolled one: Places Autocomplete sets the input's DOM value
+	// directly on selection, which doesn't fire a real `input` event (see
+	// `googlePlaces.ts`'s doc comment on why `oninput` never fires for a
+	// selection), so the bound state needs that mirrored back by hand here
+	// or Svelte's own reactivity would stomp the widget's chosen text back
+	// to whatever `editDestinationDraft` still held.
+	function onSelectEditDestination(p: PlaceSelection) {
+		editEventPlace = p;
+		editDestinationDraft = p.label;
+	}
 
 	/** F33/B27: this viewer's own active claim on a driver post, if any —
 	 * a member compares `user_id` (same as post ownership), a guest checks
@@ -122,6 +204,10 @@
 		// markup below) so this draft never actually gets submitted for it.
 		editStartsAtDraft = ev.starts_at ? toDatetimeLocalValue(ev.starts_at) : '';
 		editDestinationDraft = ev.destination_label ?? '';
+		// F35: no place re-picked yet this edit, so the patch leaves whatever
+		// destination coordinates are already stored untouched (see
+		// `destinationCoordinatesPayload`'s call site in `updateCarpoolEvent`).
+		editEventPlace = null;
 		editingEvent = true;
 	}
 
@@ -276,7 +362,15 @@
 				originLabel: guestOfferOrigin,
 				seatsTotal: guestOfferSeats,
 				leaveTimeText: guestOfferLeaveTime,
-				notes: guestOfferNotes
+				notes: guestOfferNotes,
+				...(guestOfferPlace
+					? {
+							originLatitude: guestOfferPlace.latitude,
+							originLongitude: guestOfferPlace.longitude,
+							originPlaceId: guestOfferPlace.placeId ?? undefined,
+							originPrecision: guestOfferExact ? 'exact' : 'approximate'
+						}
+					: {})
 			},
 			() => {
 				offeringRide = false;
@@ -284,6 +378,7 @@
 				guestOfferSeats = undefined;
 				guestOfferLeaveTime = '';
 				guestOfferNotes = '';
+				guestOfferPlace = null;
 			}
 		);
 		submittingOffer = false;
@@ -297,11 +392,24 @@
 		submittingRequest = true;
 		await submitGuestPost(
 			eventId,
-			{ kind: 'rider', originLabel: guestRequestOrigin, notes: guestRequestNotes },
+			{
+				kind: 'rider',
+				originLabel: guestRequestOrigin,
+				notes: guestRequestNotes,
+				...(guestRequestPlace
+					? {
+							originLatitude: guestRequestPlace.latitude,
+							originLongitude: guestRequestPlace.longitude,
+							originPlaceId: guestRequestPlace.placeId ?? undefined,
+							originPrecision: guestRequestExact ? 'exact' : 'approximate'
+						}
+					: {})
+			},
 			() => {
 				requestingRide = false;
 				guestRequestOrigin = '';
 				guestRequestNotes = '';
+				guestRequestPlace = null;
 			}
 		);
 		submittingRequest = false;
@@ -701,7 +809,10 @@
 				creatingEvent = true;
 				return async ({ result, update }) => {
 					creatingEvent = false;
-					if (result.type === 'success') showNewEvent = false;
+					if (result.type === 'success') {
+						showNewEvent = false;
+						newEventPlace = null;
+					}
 					await update();
 				};
 			}}
@@ -717,8 +828,14 @@
 			</label>
 			<label class="field">
 				<span>{m.carpool_event_destination_field()}</span>
-				<input name="destinationLabel" required />
+				<input
+					name="destinationLabel"
+					required
+					oninput={() => (newEventPlace = null)}
+					use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: (p) => (newEventPlace = p) }}
+				/>
 			</label>
+			{@render destinationHiddenFields(newEventPlace)}
 			{#if form?.form === 'createEvent' && form?.error}
 				<p class="error">{form.error}</p>
 			{/if}
@@ -776,8 +893,23 @@
 						{/if}
 						<label class="field">
 							<span>{m.carpool_event_destination_field()}</span>
-							<input name="destinationLabel" bind:value={editDestinationDraft} required />
+							<!-- Autocomplete sets the input's DOM value directly, which
+							     doesn't fire a real `input` event (see `googlePlaces.ts`'s
+							     own doc comment on why `oninput` below never fires for a
+							     selection). A controlled `bind:value` input like this one
+							     needs that mirrored back into the bound state by hand
+							     (`onSelectDestination` below), or Svelte's own reactivity
+							     would stomp the widget's chosen text back to whatever
+							     `editDestinationDraft` still held. -->
+							<input
+								name="destinationLabel"
+								bind:value={editDestinationDraft}
+								required
+								oninput={() => (editEventPlace = null)}
+								use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: onSelectEditDestination }}
+							/>
 						</label>
+						{@render destinationHiddenFields(editEventPlace)}
 					{/snippet}
 				</EditableCard>
 			{:else}
@@ -820,9 +952,45 @@
 			{/if}
 		</section>
 
-		<section class="card">
-			<p class="card-eyebrow">{m.carpool_drivers_heading()}</p>
-			{#each drivers as p (p.id)}
+		<!-- F35: side-by-side list+map on desktop, a List/Map single-view
+		     toggle on mobile, both only once `mapsAvailable` (the admin's
+		     `map_enabled` toggle is on AND the loader actually confirmed
+		     Maps/Places usable). Otherwise this falls straight through to
+		     `driversRidersSections` with no wrapper at all, i.e. today's
+		     exact list-only markup, unchanged. -->
+		{#if mapsAvailable}
+			<div class="carpool-view-toggle" role="group" aria-label={m.carpool_view_toggle_label()}>
+				<button type="button" class:active={mapView === 'list'} onclick={() => (mapView = 'list')}>
+					{m.carpool_view_list()}
+				</button>
+				<button type="button" class:active={mapView === 'map'} onclick={() => (mapView = 'map')}>
+					{m.carpool_view_map()}
+				</button>
+			</div>
+			<div class="carpool-map-layout">
+				<!-- The `hidden` attribute, not a conditional block: on mobile
+				     this shows exactly one panel at a time per `mapView`; the
+				     `.carpool-map-layout` breakpoint in this component's own
+				     stylesheet overrides both back to visible side by side on
+				     desktop regardless of `mapView`, matching the plan doc's
+				     desktop sketch. -->
+				<div class="carpool-list-panel" hidden={mapView !== 'list'}>
+					{@render driversRidersSections(ev)}
+				</div>
+				<div class="carpool-map-panel" hidden={mapView !== 'map'}>
+					<CarpoolMap mapEnabled={true} destination={ev} {drivers} {riders} />
+				</div>
+			</div>
+		{:else}
+			{@render driversRidersSections(ev)}
+		{/if}
+	{/if}
+{/if}
+
+{#snippet driversRidersSections(ev: CarpoolEventOut)}
+	<section class="card">
+		<p class="card-eyebrow">{m.carpool_drivers_heading()}</p>
+		{#each drivers as p (p.id)}
 				{@render postRow(p)}
 			{:else}
 				<p class="empty">{m.carpool_no_drivers()}</p>
@@ -841,8 +1009,25 @@
 							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
-								<input bind:value={guestOfferOrigin} required />
+								<input
+									bind:value={guestOfferOrigin}
+									required
+									oninput={() => (guestOfferPlace = null)}
+									use:googlePlacesAutocomplete={{
+										config: mapsConfig,
+										onSelect: (p) => {
+											guestOfferPlace = p;
+											guestOfferOrigin = p.label;
+										}
+									}}
+								/>
 							</label>
+							{#if mapsAvailable}
+								<label class="checkline">
+									<input type="checkbox" bind:checked={guestOfferExact} />
+									<span>{m.carpool_share_exact_location()}</span>
+								</label>
+							{/if}
 							<label class="field">
 								<span>{m.carpool_seats_field()}</span>
 								<input type="number" min="1" bind:value={guestOfferSeats} required />
@@ -876,7 +1061,10 @@
 								submittingOffer = true;
 								return async ({ result, update }) => {
 									submittingOffer = false;
-									if (result.type === 'success') offeringRide = false;
+									if (result.type === 'success') {
+										offeringRide = false;
+										offerPlace = null;
+									}
 									await update();
 								};
 							}}
@@ -885,8 +1073,20 @@
 							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
-								<input name="originLabel" required />
+								<input
+									name="originLabel"
+									required
+									oninput={() => (offerPlace = null)}
+									use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: (p) => (offerPlace = p) }}
+								/>
 							</label>
+							{#if mapsAvailable}
+								<label class="checkline">
+									<input type="checkbox" bind:checked={offerExact} />
+									<span>{m.carpool_share_exact_location()}</span>
+								</label>
+							{/if}
+							{@render originHiddenFields(offerPlace, offerExact)}
 							<label class="field">
 								<span>{m.carpool_seats_field()}</span>
 								<input name="seatsTotal" type="number" min="1" required />
@@ -943,8 +1143,25 @@
 							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
-								<input bind:value={guestRequestOrigin} required />
+								<input
+									bind:value={guestRequestOrigin}
+									required
+									oninput={() => (guestRequestPlace = null)}
+									use:googlePlacesAutocomplete={{
+										config: mapsConfig,
+										onSelect: (p) => {
+											guestRequestPlace = p;
+											guestRequestOrigin = p.label;
+										}
+									}}
+								/>
 							</label>
+							{#if mapsAvailable}
+								<label class="checkline">
+									<input type="checkbox" bind:checked={guestRequestExact} />
+									<span>{m.carpool_share_exact_location()}</span>
+								</label>
+							{/if}
 							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input bind:value={guestRequestNotes} placeholder={m.groups_optional()} />
@@ -970,7 +1187,10 @@
 								submittingRequest = true;
 								return async ({ result, update }) => {
 									submittingRequest = false;
-									if (result.type === 'success') requestingRide = false;
+									if (result.type === 'success') {
+										requestingRide = false;
+										requestPlace = null;
+									}
 									await update();
 								};
 							}}
@@ -979,8 +1199,20 @@
 							<p class="card-note">{m.carpool_posting_as({ name: postingAsName })}</p>
 							<label class="field">
 								<span>{m.carpool_origin_field()}</span>
-								<input name="originLabel" required />
+								<input
+									name="originLabel"
+									required
+									oninput={() => (requestPlace = null)}
+									use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: (p) => (requestPlace = p) }}
+								/>
 							</label>
+							{#if mapsAvailable}
+								<label class="checkline">
+									<input type="checkbox" bind:checked={requestExact} />
+									<span>{m.carpool_share_exact_location()}</span>
+								</label>
+							{/if}
+							{@render originHiddenFields(requestPlace, requestExact)}
 							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input name="notes" placeholder={m.groups_optional()} />
@@ -1007,8 +1239,7 @@
 				{/if}
 			{/if}
 		</section>
-	{/if}
-{/if}
+{/snippet}
 
 {#snippet guestNamePrompt(confirmLabel: string)}
 	<form
@@ -1038,6 +1269,35 @@
 		{m.carpool_save_required()}
 		<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
 	</p>
+{/snippet}
+
+<!-- F35: the member offer/request forms' hidden coordinate fields, shared
+     between the two so a real `<form>` submit's `FormData` carries them
+     without repeating the same four inputs at both call sites. Nothing
+     renders at all when `place` is `null` (Places unavailable, or the
+     member never picked a place), so a plain free-text submission sends
+     none of these, exactly as it did before this milestone; see
+     `originCoordinatesPayload` (`$lib/utils/carpool.ts`) on the receiving
+     end in `actions/carpool.ts`. -->
+{#snippet originHiddenFields(place: PlaceSelection | null, exact: boolean)}
+	{#if place}
+		<input type="hidden" name="originLatitude" value={place.latitude} />
+		<input type="hidden" name="originLongitude" value={place.longitude} />
+		{#if place.placeId}<input type="hidden" name="originPlaceId" value={place.placeId} />{/if}
+		<input type="hidden" name="originPrecision" value={exact ? 'exact' : 'approximate'} />
+	{/if}
+{/snippet}
+
+<!-- Same idea as `originHiddenFields` above, for the admin event create/edit
+     forms' destination pin. No `precision` field here at all: a venue pin
+     is never privacy-rounded (see `destinationCoordinatesPayload`'s own
+     doc comment), so there's nothing to pick between exact/approximate. -->
+{#snippet destinationHiddenFields(place: PlaceSelection | null)}
+	{#if place}
+		<input type="hidden" name="destinationLatitude" value={place.latitude} />
+		<input type="hidden" name="destinationLongitude" value={place.longitude} />
+		{#if place.placeId}<input type="hidden" name="destinationPlaceId" value={place.placeId} />{/if}
+	{/if}
 {/snippet}
 
 <style>
@@ -1075,6 +1335,81 @@
 		border-color: var(--accent);
 		box-shadow: inset 0 0 0 1px var(--accent);
 		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+	}
+
+	/* F35: mobile List/Map single-view toggle, same pill-button shape as the
+	   event chips above. Hidden above the `.carpool-map-layout` breakpoint
+	   below, where both panels already show side by side and the toggle
+	   would be redundant. */
+	.carpool-view-toggle {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.carpool-view-toggle button {
+		flex: 1;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-2);
+		color: var(--text);
+		font-weight: 600;
+		font-size: 0.875rem;
+	}
+
+	.carpool-view-toggle button.active {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+	}
+
+	/* Mobile default: one panel at a time, whichever `mapView` picked (the
+	   other carries the native `hidden` attribute, which the browser's own
+	   stylesheet already turns into `display: none` with no rule needed
+	   here. `:not([hidden])` below only supplies the *visible* panel's
+	   flex/gap, so it never fights that native hiding). The 860px
+	   breakpoint is the same kind of "list becomes wide enough to split"
+	   cutoff `.carpool-event-strip` already uses one media query up from,
+	   chosen so the two columns below still each have reasonable width
+	   inside this app's existing 640px `.shell` container (see
+	   `$lib/styles/shell.css`): this component deliberately doesn't widen
+	   that shared container itself, so "desktop" here means "the viewport
+	   is wide enough to spare the room," not "the whole page layout
+	   changes," which would be a bigger, app-wide call than one milestone
+	   should make on its own. */
+	.carpool-map-layout {
+		display: block;
+	}
+
+	.carpool-list-panel:not([hidden]),
+	.carpool-map-panel:not([hidden]) {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+	}
+
+	@media (min-width: 860px) {
+		.carpool-view-toggle {
+			display: none;
+		}
+
+		.carpool-map-layout {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) minmax(0, 18rem);
+			gap: 1rem;
+			align-items: start;
+		}
+
+		/* Both panels always show side by side at this width, regardless of
+		   `mapView` (the toggle above is hidden here too, so nothing can
+		   even set `hidden` incorrectly out of sync with what's visible).
+		   This specifically targets `[hidden]` so it outweighs the browser's
+		   own `[hidden] { display: none }` rule. */
+		.carpool-list-panel[hidden],
+		.carpool-map-panel[hidden] {
+			display: flex;
+			flex-direction: column;
+			gap: 1.1rem;
+		}
 	}
 
 	.carpool-event-chip__title {

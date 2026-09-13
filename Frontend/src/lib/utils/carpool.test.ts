@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { driverOfferError, eventFieldsMissing, riderRequestError, selectDefaultCarpoolEventId } from './carpool';
+import {
+	destinationCoordinatesPayload,
+	driverOfferError,
+	eventFieldsMissing,
+	originCoordinatesPayload,
+	riderRequestError,
+	selectDefaultCarpoolEventId
+} from './carpool';
 
 describe('driverOfferError', () => {
 	it('requires an origin label', () => {
@@ -65,5 +72,64 @@ describe('selectDefaultCarpoolEventId', () => {
 
 	it('returns null for an empty list', () => {
 		expect(selectDefaultCarpoolEventId([], null)).toBeNull();
+	});
+});
+
+describe('originCoordinatesPayload', () => {
+	it('returns an empty object with no coordinates at all (Places unavailable, or none picked)', () => {
+		expect(originCoordinatesPayload({})).toEqual({});
+		expect(originCoordinatesPayload({ latitude: null, longitude: null })).toEqual({});
+		expect(originCoordinatesPayload({ latitude: '', longitude: '' })).toEqual({});
+	});
+
+	it('returns an empty object with only one half of the pair set (never sends a half-set pair)', () => {
+		expect(originCoordinatesPayload({ latitude: '37.7', longitude: null })).toEqual({});
+		expect(originCoordinatesPayload({ latitude: null, longitude: '-122.4' })).toEqual({});
+	});
+
+	it('defaults precision to approximate when coordinates are present but no exact choice was recorded', () => {
+		expect(originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4' })).toEqual({
+			origin_latitude: 37.7,
+			origin_longitude: -122.4,
+			origin_precision: 'approximate'
+		});
+	});
+
+	it('carries an explicit exact precision through, and rejects any other value back to approximate', () => {
+		expect(originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4', precision: 'exact' })).toMatchObject({
+			origin_precision: 'exact'
+		});
+		expect(
+			originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4', precision: 'bogus' })
+		).toMatchObject({ origin_precision: 'approximate' });
+	});
+
+	it('accepts numbers directly (a guest proxy body already parsed as JSON), not just form-field strings', () => {
+		expect(originCoordinatesPayload({ latitude: 37.7, longitude: -122.4 })).toMatchObject({
+			origin_latitude: 37.7,
+			origin_longitude: -122.4
+		});
+	});
+
+	it('includes place_id only when one was actually captured', () => {
+		expect(originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4' }).origin_place_id).toBeUndefined();
+		expect(
+			originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4', placeId: 'abc123' }).origin_place_id
+		).toBe('abc123');
+	});
+});
+
+describe('destinationCoordinatesPayload', () => {
+	it('returns an empty object with no coordinates, and never carries a precision field at all', () => {
+		expect(destinationCoordinatesPayload({})).toEqual({});
+		expect(destinationCoordinatesPayload({ latitude: '37.7', longitude: null })).toEqual({});
+	});
+
+	it('passes real coordinates through with no rounding/precision concept', () => {
+		expect(destinationCoordinatesPayload({ latitude: '37.7', longitude: '-122.4', placeId: 'venue-1' })).toEqual({
+			destination_latitude: 37.7,
+			destination_longitude: -122.4,
+			destination_place_id: 'venue-1'
+		});
 	});
 });

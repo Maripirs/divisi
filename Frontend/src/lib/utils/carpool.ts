@@ -32,6 +32,82 @@ export function eventFieldsMissing(title: string, startsAt: string, destinationL
 	return !title.trim() || !startsAt.trim() || !destinationLabel.trim();
 }
 
+/** F35: the driver/rider post forms' optional lat/lng/place-id/precision
+ * fields (a form's hidden inputs, or a guest proxy's JSON body) reduced to
+ * the partial Backend payload shape `CarpoolPostCreate`/`CarpoolPostUpdate`
+ * accept. Raw field values come in as strings (hidden `<input>`s), numbers
+ * (a guest proxy's already-parsed JSON body), or are simply absent (no
+ * place was ever picked, either because Places wasn't available at all or
+ * the user never opened the autocomplete dropdown). This normalizes all
+ * three into one shape so every call site (member form action, guest
+ * proxy route) shares the same coercion instead of repeating it.
+ *
+ * Returns an empty object (no keys at all) whenever there's no usable
+ * coordinate pair, so spreading this into a JSON body never sends a
+ * half-set pair the Backend's own validator would reject, and never
+ * regresses a plain free-text submission into sending `null` coordinates
+ * where today it sends nothing. `precision` defaults to `'approximate'`
+ * whenever real coordinates are present but no exact choice was recorded,
+ * matching the Backend's own default (see `CarpoolPostCreate`'s doc
+ * comment on `origin_precision`). */
+export interface OriginCoordinatesInput {
+	latitude?: string | number | null;
+	longitude?: string | number | null;
+	placeId?: string | null;
+	precision?: string | null;
+}
+
+export interface OriginCoordinatesPayload {
+	origin_latitude?: number;
+	origin_longitude?: number;
+	origin_place_id?: string;
+	origin_precision?: 'exact' | 'approximate';
+}
+
+function toFiniteNumber(value: string | number | null | undefined): number | null {
+	if (value === null || value === undefined || value === '') return null;
+	const n = typeof value === 'number' ? value : Number(value);
+	return Number.isFinite(n) ? n : null;
+}
+
+export function originCoordinatesPayload(input: OriginCoordinatesInput): OriginCoordinatesPayload {
+	const latitude = toFiniteNumber(input.latitude);
+	const longitude = toFiniteNumber(input.longitude);
+	if (latitude === null || longitude === null) return {};
+	const payload: OriginCoordinatesPayload = {
+		origin_latitude: latitude,
+		origin_longitude: longitude,
+		origin_precision: input.precision === 'exact' ? 'exact' : 'approximate'
+	};
+	if (input.placeId) payload.origin_place_id = input.placeId;
+	return payload;
+}
+
+/** Same shape as `originCoordinatesPayload` above, for the admin event
+ * create/edit form's destination pin: no `precision` here at all, since
+ * `destination_*` is never privacy-rounded (see `CarpoolEventCreate`'s doc
+ * comment): a venue pin has nothing to be "approximate" about. */
+export interface DestinationCoordinatesInput {
+	latitude?: string | number | null;
+	longitude?: string | number | null;
+	placeId?: string | null;
+}
+
+export interface DestinationCoordinatesPayload {
+	destination_latitude?: number;
+	destination_longitude?: number;
+	destination_place_id?: string;
+}
+
+export function destinationCoordinatesPayload(input: DestinationCoordinatesInput): DestinationCoordinatesPayload {
+	const latitude = toFiniteNumber(input.latitude);
+	const longitude = toFiniteNumber(input.longitude);
+	if (latitude === null || longitude === null) return {};
+	const payload: DestinationCoordinatesPayload = { destination_latitude: latitude, destination_longitude: longitude };
+	if (input.placeId) payload.destination_place_id = input.placeId;
+	return payload;
+}
+
 /** B26/F32: which event a load should show when the caller didn't pick one
  * via `?event=`. A requested id that matches a real event always wins;
  * otherwise the standing event wins over "first by `starts_at`", which

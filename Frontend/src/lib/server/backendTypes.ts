@@ -149,7 +149,12 @@ export type GroupCustomPageStatus = 'draft' | 'published' | 'archived';
  * reachable state for a non-admin); `audience`/`min_identity` are the same
  * enums the built-in pages use. No content field here on purpose (see the
  * Backend schema's own comment): what a template renders comes from
- * `template_key` alone, not a stored body. */
+ * `template_key` alone, not a stored body.
+ *
+ * B29/F35: `map_enabled` is the admin's per-page "turn the map on" toggle,
+ * off by default. It's generic (lives here, not on a carpool-specific
+ * schema), but only `carpool_board` actually wires it up today, see
+ * `CarpoolBoard.svelte`'s `mapEnabled` prop. */
 export interface GroupCustomPageOut {
 	id: string;
 	group_id: string;
@@ -159,6 +164,7 @@ export interface GroupCustomPageOut {
 	status: GroupCustomPageStatus;
 	audience: PageAudience;
 	min_identity: PageMinIdentity;
+	map_enabled: boolean;
 	created_by: string | null;
 	created_at: string;
 	updated_at: string;
@@ -167,17 +173,26 @@ export interface GroupCustomPageOut {
 export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
 
 /** B24/F28: one dated carpool occurrence on a carpool-template
- * `GroupCustomPage`. No lat/lng anywhere (label-only, no map).
+ * `GroupCustomPage`.
  *
  * B26/F32: `is_standing` marks the one page-scoped, non-dated board every
  * carpool page now bootstraps on first view; `starts_at`/`destination_label`
- * are `null` on that row and required (never `null`) on every dated one. */
+ * are `null` on that row and required (never `null`) on every dated one.
+ *
+ * B29/F35: `destination_latitude`/`destination_longitude`/`destination_place_id`
+ * are the rehearsal venue's pin, optional (most events won't have one) and
+ * never privacy-rounded by the Backend (unlike a `CarpoolPostOut`'s
+ * `origin_*` below): this is a fixed, admin-chosen venue, not someone's home
+ * area. Rendered by `CarpoolMap.svelte`. */
 export interface CarpoolEventOut {
 	id: string;
 	page_id: string;
 	title: string;
 	starts_at: string | null;
 	destination_label: string | null;
+	destination_latitude: number | null;
+	destination_longitude: number | null;
+	destination_place_id: string | null;
 	is_standing: boolean;
 	status: CarpoolEventStatus;
 	created_by: string | null;
@@ -187,6 +202,15 @@ export interface CarpoolEventOut {
 
 export type CarpoolPostKind = 'driver' | 'rider';
 export type CarpoolPostStatus = 'open' | 'hidden' | 'cancelled';
+/** B29/F35: how precisely `origin_latitude`/`origin_longitude` may be
+ * trusted. `approximate` (the default whenever coordinates are sent with no
+ * explicit `exact`) means the Backend has already rounded them to roughly a
+ * 1.1km grid server-side, regardless of what the client originally sent;
+ * `exact` means the poster opted in to sharing their real pin. `null` means
+ * no coordinates at all. The Frontend never rounds anything itself, it only
+ * ever picks which of these to request via the "share exact location"
+ * checkbox (unchecked, i.e. `approximate`, by default). */
+export type CarpoolLocationPrecision = 'exact' | 'approximate';
 
 /** B27: one seat claim against a driver's `CarpoolPost`. `user_id` is the
  * claimant (a real member or an anonymous participant, same actor shapes
@@ -206,7 +230,13 @@ export interface CarpoolSeatClaimOut {
  * B27: `seats_available` is now computed by the Backend from active claims
  * (no longer client-settable, see `carpool.ts`'s create/edit bodies), and
  * `claims` carries the driver post's current claimants; always empty for a
- * rider post. */
+ * rider post.
+ *
+ * B29/F35: `origin_latitude`/`origin_longitude`/`origin_place_id` are a
+ * driver/rider's home-area pin, optional (most posts won't have one).
+ * `origin_precision` says how trustworthy the coordinates are; see that
+ * type's own doc comment for the privacy-rounding rule. Rendered by
+ * `CarpoolMap.svelte`. */
 export interface CarpoolPostOut {
 	id: string;
 	event_id: string;
@@ -215,6 +245,10 @@ export interface CarpoolPostOut {
 	kind: CarpoolPostKind;
 	status: CarpoolPostStatus;
 	origin_label: string;
+	origin_latitude: number | null;
+	origin_longitude: number | null;
+	origin_place_id: string | null;
+	origin_precision: CarpoolLocationPrecision | null;
 	seats_total: number | null;
 	seats_available: number | null;
 	leave_time_text: string | null;

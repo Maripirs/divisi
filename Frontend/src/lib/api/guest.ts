@@ -389,11 +389,15 @@ export async function listGuestPieceRehearsalNotes(
 export interface GuestCustomPage {
 	title: string;
 	templateKey: 'carpool_board';
+	/** B29/F35: threaded through to `CarpoolBoard`'s `mapEnabled` prop, same
+	 * as the member route's `GroupCustomPageOut.map_enabled`. */
+	mapEnabled: boolean;
 }
 
 interface GuestCustomPageResponse {
 	title: string;
 	template_key: 'carpool_board';
+	map_enabled: boolean;
 }
 
 export async function getGuestCustomPage(
@@ -408,7 +412,7 @@ export async function getGuestCustomPage(
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestCustomPageResponse = await res.json();
-	return { title: body.title, templateKey: body.template_key };
+	return { title: body.title, templateKey: body.template_key, mapEnabled: body.map_enabled };
 }
 
 /** B25: the discovery counterpart to `getGuestCustomPage` above — every
@@ -497,6 +501,12 @@ export interface GuestCarpoolEvent {
 	title: string;
 	starts_at: string | null;
 	destination_label: string | null;
+	// B29/F35: same optional venue pin as the member route's
+	// `CarpoolEventOut`, mirrored verbatim (see this file's own doc comment
+	// on why these carpool shapes stay snake_case, no camelCase remap).
+	destination_latitude: number | null;
+	destination_longitude: number | null;
+	destination_place_id: string | null;
 	is_standing: boolean;
 	status: 'open' | 'locked' | 'archived';
 	created_by: string | null;
@@ -522,6 +532,13 @@ export interface GuestCarpoolPost {
 	kind: 'driver' | 'rider';
 	status: 'open' | 'hidden' | 'cancelled';
 	origin_label: string;
+	// B29/F35: same optional home-area pin as the member route's
+	// `CarpoolPostOut`, mirrored verbatim for the same "no adapter in
+	// between" reason as everything else in this interface.
+	origin_latitude: number | null;
+	origin_longitude: number | null;
+	origin_place_id: string | null;
+	origin_precision: 'exact' | 'approximate' | null;
 	seats_total: number | null;
 	seats_available: number | null;
 	leave_time_text: string | null;
