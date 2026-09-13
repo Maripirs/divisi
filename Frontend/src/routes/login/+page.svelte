@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { page } from '$app/state';
 	import AuthShell from '$lib/components/AuthShell.svelte';
@@ -27,6 +28,18 @@
 	// so logging in from a deep link doesn't strand the user back at
 	// `/home` instead of where they were headed.
 	const redirectTo = page.url.searchParams.get('redirectTo') ?? '/home';
+
+	// Guest path: joining a group by code needs no account, so it lives on
+	// this same page rather than sending the visitor off to `/welcome` and
+	// back before they can even type a code (see `/join` for the standalone
+	// version of this same form, used from links elsewhere in the app).
+	let groupCode = $state('');
+	function submitGroupCode(e: SubmitEvent) {
+		e.preventDefault();
+		const trimmed = groupCode.trim();
+		if (!trimmed) return;
+		goto(lh(`/join/${encodeURIComponent(trimmed)}`));
+	}
 </script>
 
 <AuthShell title={mode === 'login' ? m.login_title() : m.login_create_account()}>
@@ -106,7 +119,7 @@
 	</form>
 
 	{#if data.oauthProviders.google || data.oauthProviders.apple}
-		<div class="oauth-row">
+		<div class="card">
 			<span class="oauth-divider">{m.login_or()}</span>
 			{#if data.oauthProviders.google}
 				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/google/start">
@@ -125,11 +138,28 @@
 		<p class="error oauth-error">{m.login_oauth_error()}</p>
 	{/if}
 
-	{#snippet footer()}
-		<p class="note">
-			<a href={lh('/welcome')}>{m.login_back_to_welcome()}</a>
-		</p>
-	{/snippet}
+	<!-- Own card, own form, styled identically to `/join`'s (same `.field`
+	     input, same primary-button pattern) — this is the same guest flow,
+	     just reachable without leaving the login page. -->
+	<form class="card" onsubmit={submitGroupCode}>
+		<p class="card-eyebrow">{m.login_guest_divider()}</p>
+		<label class="field">
+			<span>{m.join_code_label()}</span>
+			<input
+				type="text"
+				placeholder="ABCD-1234"
+				autocomplete="off"
+				autocapitalize="characters"
+				spellcheck="false"
+				bind:value={groupCode}
+			/>
+		</label>
+		<button class="btn btn-outline btn-block" type="submit" disabled={!groupCode.trim()}>
+			{m.join_continue()}
+		</button>
+	</form>
+
+	{#snippet footer()}{/snippet}
 </AuthShell>
 
 <style>
@@ -141,12 +171,6 @@
 
 	.forgot-link a {
 		color: var(--accent);
-	}
-
-	.oauth-row {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
 	}
 
 	.oauth-divider {

@@ -48,6 +48,12 @@
 
 	<div class="btn-row">
 		<a class="btn btn-outline btn-block" href={lh('/join')}>{m.welcome_join_group()}</a>
+		<!-- Secondary to "Join a group": both are outline buttons so "Get
+		     started" stays the only primary. Points at the fixed demo
+		     group's join code (DEMOSATB) — the guest route treats a valid
+		     code as authorization on its own, so this drops the visitor
+		     straight into a real, read-only choir page with no signup. -->
+		<a class="btn btn-outline btn-block" href={lh('/join/DEMOSATB')}>{m.welcome_try_demo()}</a>
 	</div>
 
 	<p class="login-link">{m.welcome_already_have_account()} <a href={lh('/login')}>{m.welcome_log_in()}</a></p>

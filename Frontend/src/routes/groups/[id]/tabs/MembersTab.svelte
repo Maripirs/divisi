@@ -43,7 +43,14 @@
 					{#if member.title}
 						<span class="dim">{member.title}</span>
 					{/if}
-					<span class="dim">{member.email}</span>
+					{#if !member.is_anonymous}
+						<!-- An anonymous participant's email is a synthetic
+						     anon-*.invalid placeholder, not a real address
+						     (see mint_anonymous_participant), so it's just
+						     noise next to the "Unverified" badge above and
+						     is hidden for that row only. -->
+						<span class="dim">{member.email}</span>
+					{/if}
 					{#if mode === 'admin'}
 						<button
 							type="button"
