@@ -821,8 +821,10 @@
 					{#if p.claims.length > 0}
 						<!-- F33: claimant names, same "posted content is visible to
 						     whoever can see the board" stance the rest of carpool
-						     already takes — no ownership check gates this. -->
-						<p class="card-meta">
+						     already takes — no ownership check gates this. A status
+						     fact, not another description line, so it gets a touch
+						     more weight than the plain `card-meta` lines around it. -->
+						<p class="card-meta carpool-post-status">
 							{m.carpool_claimed_by({ names: p.claims.map((c) => c.display_name).join(', ') })}
 						</p>
 					{/if}
@@ -831,7 +833,7 @@
 					     visible to whoever can see the board" stance as `claims`
 					     above — only the phone number itself is gated, not who's
 					     interested. -->
-					<p class="card-meta">
+					<p class="card-meta carpool-post-status">
 						{m.carpool_interested_by({ names: p.interests.map((i) => i.display_name).join(', ') })}
 					</p>
 				{/if}
@@ -842,8 +844,15 @@
 					     exactly like `origin_label`/`notes` above, no client-side
 					     ownership/claim check needed here. `formatContactPhone`
 					     is cosmetic only (the stored value is whatever the poster
-					     actually typed, see its own doc comment). -->
-					<p class="card-meta">{m.carpool_contact_phone_label({ phone: formatContactPhone(p.contact_phone) })}</p>
+					     actually typed, see its own doc comment). A real `tel:`
+					     link, not another `card-meta` line: revealed contact info
+					     is the one fact on this card someone's actually going to
+					     act on (tap to call), so it gets its own accent-colored
+					     weight instead of blending into the gray description
+					     lines above it. -->
+					<a class="carpool-contact-link" href={`tel:${p.contact_phone.replace(/[^\d+]/g, '')}`}>
+						{m.carpool_contact_phone_label({ phone: formatContactPhone(p.contact_phone) })}
+					</a>
 				{/if}
 			</div>
 			<div class="btn-row">
@@ -1568,7 +1577,32 @@
 	.carpool-post-main {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
+		gap: 0.3rem;
+	}
+
+	/* Claimed-by/interested-by is a status fact (something happened on this
+	   post), not a plain description line like origin/seats above it, so it
+	   gets the post's own text color and a little weight instead of reading
+	   as one more line of the same muted gray. */
+	.carpool-post-status {
+		color: var(--text);
+		font-weight: 600;
+	}
+
+	/* B30: the one line on a post someone's actually going to act on (tap to
+	   call), so it reads as an accent-colored link rather than another gray
+	   `card-meta` line lost in the stack above it. */
+	.carpool-contact-link {
+		align-self: flex-start;
+		color: var(--accent);
+		font-weight: 600;
+		font-size: 0.8125rem;
+		text-decoration: none;
+	}
+
+	.carpool-contact-link:hover,
+	.carpool-contact-link:focus-visible {
+		text-decoration: underline;
 	}
 
 	/* F29 guest write path — same shapes as the join page's own responsibility
