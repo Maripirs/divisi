@@ -938,6 +938,15 @@ def test_double_claim_rejected(client):
     assert second.status_code == 400
 
 
+def test_driver_cannot_claim_own_post(client):
+    _admin_headers, driver_headers, _group, _page, _event, driver_post = _setup_driver_post(client, "cp-cl11")
+
+    rejected = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=driver_headers
+    )
+    assert rejected.status_code == 400
+
+
 def test_claiming_a_full_post_rejected(client):
     admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(
         client, "cp-cl3", seats_total=1

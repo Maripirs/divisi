@@ -465,10 +465,12 @@ def create_claim(
 
     Checked in this order: the post must be a driver post (400) before
     anything else runs (no point minting a participant for a request
-    that's wrong regardless of who's asking); the event's lock/archive
-    state (409, same as `create_post`) only blocks a non-admin; then full
-    (400) and already-claimed (400) are checked against the post's current
-    active claims."""
+    that's wrong regardless of who's asking); the actor can't be the
+    driver themselves (400, a seat claim only makes sense for someone else
+    riding along); the event's lock/archive state (409, same as
+    `create_post`) only blocks a non-admin; then full (400) and
+    already-claimed (400) are checked against the post's current active
+    claims."""
     post = _get_post_or_404(driver_post_id, db)
     if post.kind != CarpoolPostKind.driver:
         raise HTTPException(
@@ -480,6 +482,11 @@ def create_claim(
     actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
     if actor is None:
         actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.id == post.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You can't claim a seat on your own post"
+        )
 
     if actor.is_anonymous:
         require_guest_page_access(page.group_id, page, db)

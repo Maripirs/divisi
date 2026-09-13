@@ -733,7 +733,12 @@
 				     only governs a *new* claim — the Backend never blocks a
 				     release on a locked/archived event, so that button ignores
 				     it. A full post with no claim from this viewer renders
-				     nothing here at all, just the seat count/claimant list above. -->
+				     nothing here at all, just the seat count/claimant list above.
+				     `!isOwner` guards the "Claim seat" button specifically: a
+				     driver can't claim a seat on their own post (the Backend
+				     rejects it with 400 too, see `create_claim`'s own doc
+				     comment), so this just keeps the button from ever offering
+				     an action that would fail. -->
 				<div class="btn-row">
 					{#if myClaim}
 						{#if isGuest}
@@ -751,9 +756,9 @@
 								<button type="submit" class="btn btn-outline">{m.carpool_release_seat()}</button>
 							</form>
 						{/if}
-					{:else if canPost && isGuest && guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
+					{:else if !isOwner && canPost && isGuest && guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
 						{@render guestNamePrompt(m.carpool_claim_seat())}
-					{:else if canPost && (p.seats_available ?? 0) > 0}
+					{:else if !isOwner && canPost && (p.seats_available ?? 0) > 0}
 						{#if isGuest}
 							<button
 								type="button"
