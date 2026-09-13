@@ -52,6 +52,7 @@
 		font: inherit;
 		font-weight: 700;
 		color: var(--accent);
+		text-decoration: none;
 		cursor: pointer;
 	}
 </style>
