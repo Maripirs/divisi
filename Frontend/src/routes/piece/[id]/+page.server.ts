@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { getPiece } from '$lib/pieces/registry';
+import { readGuestCookie } from '$lib/server/guestSession';
 import { lh } from '$lib/i18n';
 import type { PageServerLoad } from './$types';
 
@@ -30,7 +31,7 @@ import type { PageServerLoad } from './$types';
  * instead of an unexplained bounce to `/login`. It falls back to that
  * bounce on any error, so a cold Backend still degrades to today's
  * behavior rather than blocking. */
-export const load: PageServerLoad = async ({ params, locals, url, fetch }) => {
+export const load: PageServerLoad = async ({ params, locals, url, fetch, cookies }) => {
 	if (!locals.token) {
 		const code = url.searchParams.get('code');
 		if (!code) {
@@ -87,9 +88,23 @@ export const load: PageServerLoad = async ({ params, locals, url, fetch }) => {
 				);
 			}
 
-			// Guest password group: hand `+page.svelte` the owning group's
-			// name + join code so it can render the group-named gate card in
-			// place of mounting the player.
+			// Guest password group: but if this browser already cleared the
+			// gate for this group (the `divisi_guest_{CODE}` cookie
+			// `submitGuestGatePassword` below mints via `/join/{code}/auth`),
+			// don't ask again. This is also what makes the browser Back
+			// button behave: unlocking the gate is a full-page nav to
+			// `?code=...`, which *pushes* a history entry on top of this bare
+			// URL rather than replacing it, so Back lands right back here. A
+			// stale/expired cookie just means the Backend 401s the guest
+			// routes on `/join/{code}`, which already knows how to recover by
+			// re-prompting, so this redirect is never a dead end.
+			if (readGuestCookie(cookies, owner.join_code)) {
+				throw redirect(303, lh(`/join/${owner.join_code}`));
+			}
+
+			// Guest password group, no cookie yet: hand `+page.svelte` the
+			// owning group's name + join code so it can render the
+			// group-named gate card in place of mounting the player.
 			return {
 				id: params.id,
 				guestGate: { groupName: owner.group_name, code: owner.join_code }
