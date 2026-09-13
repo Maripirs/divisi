@@ -814,20 +814,27 @@
 				</p>
 				<p class="card-meta">{m.carpool_origin_label({ origin: p.origin_label })}</p>
 				{#if p.kind === 'driver'}
-					<p class="card-meta">
-						{m.carpool_seats_left({ available: p.seats_available ?? 0, total: p.seats_total ?? 0 })}
-						{#if p.leave_time_text}· {p.leave_time_text}{/if}
-					</p>
-					{#if p.claims.length > 0}
-						<!-- F33: claimant names, same "posted content is visible to
-						     whoever can see the board" stance the rest of carpool
-						     already takes — no ownership check gates this. A status
-						     fact, not another description line, so it gets a touch
-						     more weight than the plain `card-meta` lines around it. -->
-						<p class="card-meta carpool-post-status">
-							{m.carpool_claimed_by({ names: p.claims.map((c) => c.display_name).join(', ') })}
-						</p>
+					{#if p.leave_time_text}
+						<p class="card-meta">{m.carpool_leaving_at({ time: p.leave_time_text })}</p>
 					{/if}
+					<!-- Per-seat breakdown instead of an aggregate "X/Y left" count:
+					     `p.claims` is oldest-first (first-come-first-served, see
+					     `active_claims_for`'s own doc comment on the Backend), which
+					     is exactly seat-fill order, so seat `i` is `p.claims[i]` when
+					     it exists, empty otherwise. Same "posted content is visible
+					     to whoever can see the board" stance `card-meta` claimant
+					     names already took — no ownership check gates this. -->
+					<div class="carpool-seats">
+						{#each Array.from({ length: p.seats_total ?? 0 }) as _, i (i)}
+							{#if p.claims[i]}
+								<p class="carpool-seat carpool-seat--occupied">
+									{m.carpool_seat_occupied({ number: i + 1, name: p.claims[i].display_name })}
+								</p>
+							{:else}
+								<p class="carpool-seat carpool-seat--empty">{m.carpool_seat_empty({ number: i + 1 })}</p>
+							{/if}
+						{/each}
+					</div>
 				{:else if p.interests.length > 0}
 					<!-- B30: interested drivers' names, same "posted content is
 					     visible to whoever can see the board" stance as `claims`
@@ -1580,13 +1587,59 @@
 		gap: 0.3rem;
 	}
 
-	/* Claimed-by/interested-by is a status fact (something happened on this
-	   post), not a plain description line like origin/seats above it, so it
-	   gets the post's own text color and a little weight instead of reading
-	   as one more line of the same muted gray. */
+	/* Interested-by is a status fact (something happened on this post), not
+	   a plain description line like origin above it, so it gets the post's
+	   own text color and a little weight instead of reading as one more
+	   line of the same muted gray. A driver post's own equivalent (who's
+	   claimed a seat) is folded into the per-seat list below instead of a
+	   separate line like this one, see `.carpool-seats`. */
 	.carpool-post-status {
 		color: var(--text);
 		font-weight: 600;
+	}
+
+	/* Per-seat breakdown replacing the old aggregate "X/Y seats left" line:
+	   one row per seat, occupied (the post's own text color/weight, same
+	   "a status fact" reasoning as `.carpool-post-status`) or empty (muted,
+	   an outline dot rather than a filled one). */
+	.carpool-seats {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.carpool-seat {
+		margin: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.8125rem;
+	}
+
+	.carpool-seat::before {
+		content: '';
+		flex: 0 0 auto;
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+	}
+
+	.carpool-seat--occupied {
+		color: var(--text);
+		font-weight: 600;
+	}
+
+	.carpool-seat--occupied::before {
+		background: var(--accent);
+	}
+
+	.carpool-seat--empty {
+		color: var(--text-muted);
+	}
+
+	.carpool-seat--empty::before {
+		background: transparent;
+		border: 1px solid var(--border);
 	}
 
 	/* B30: the one line on a post someone's actually going to act on (tap to
