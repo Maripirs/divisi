@@ -679,6 +679,12 @@ class GroupCustomPage(Base):
     min_identity: Mapped[PageMinIdentity] = mapped_column(
         SAEnum(PageMinIdentity, native_enum=False), nullable=False, default=PageMinIdentity.anyone
     )
+    # B29: generic per-page toggle (not carpool-specific in name, since a
+    # later template could reuse it) rather than a `carpool_settings` blob
+    # or a second table. Only the carpool_board template wires it up today
+    # (an admin's "turn the map on for this board" switch); any other
+    # template just leaves it `False`.
+    map_enabled: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the page out from under the rest of the group (same
     # convention as `WeeklyNote.created_by`).
@@ -708,7 +714,15 @@ class CarpoolEvent(Base):
     `create_event` makes is still the dated shape (`is_standing = False`,
     both fields required). `starts_at`/`destination_label` are nullable at
     the schema level only so the standing row can exist; `CarpoolEventCreate`
-    still requires both, unchanged."""
+    still requires both, unchanged.
+
+    B29: `destination_latitude`/`destination_longitude`/`destination_place_id`
+    are the venue pin. Unlike `CarpoolPost.origin_*` below, these are never
+    rounded or otherwise fuzzed: a rehearsal venue is a public address, not
+    a rider's home, so there's no privacy reason to degrade it. All three
+    stay nullable, since the free-text `destination_label` alone is still a
+    valid, mapless carpool board (`GroupCustomPage.map_enabled` gates
+    whether the frontend even shows a map at all)."""
 
     __tablename__ = "carpool_events"
 
@@ -717,6 +731,9 @@ class CarpoolEvent(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     destination_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    destination_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    destination_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    destination_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_standing: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     status: Mapped[CarpoolEventStatus] = mapped_column(
         SAEnum(CarpoolEventStatus, native_enum=False),
@@ -743,6 +760,20 @@ class CarpoolPostStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class CarpoolLocationPrecision(str, enum.Enum):
+    """B29: how faithfully `CarpoolPost.origin_latitude`/`_longitude`
+    represent a poster's real location. `approximate` is the default
+    whenever coordinates are provided at all (see `CarpoolPostCreate`/
+    `Update`'s validators) and gets server-side rounded to 2 decimal places
+    (~1.1km) before it's ever written, since a rider's home is a real
+    person's address, not a venue. `exact` is an explicit opt-in (e.g. "meet
+    at this specific corner") and is stored unrounded. Only meaningful when
+    coordinates are actually set; `None` otherwise."""
+
+    exact = "exact"
+    approximate = "approximate"
+
+
 class CarpoolPost(Base):
     """B24: one member's ride offer/request against a `CarpoolEvent`.
     `user_id` is required (not nullable, unlike `ResponsibilitySignup`'s
@@ -750,8 +781,17 @@ class CarpoolPost(Base):
     carpool writes are explicitly deferred (see GROUP_PAGES_CARPOOL_PLAN.md
     and plan.md's B24), so every post traces to a real member. `display_name`
     is captured at post time rather than resolved from `user` at read time,
-    so a later name change doesn't rewrite history. Free-text `origin_label`
-    only, no coordinates until a map milestone justifies storing them."""
+    so a later name change doesn't rewrite history.
+
+    B29: `origin_latitude`/`origin_longitude`/`origin_place_id` are the
+    optional pin behind the still-required free-text `origin_label`. This is
+    a real person's approximate home or meeting point, so it's privacy-
+    sensitive in a way `CarpoolEvent.destination_*` is not: `origin_precision`
+    records whether the coordinates were deliberately rounded
+    (`approximate`, the default whenever coordinates are set) or given
+    exactly (`exact`, an explicit opt-in). The rounding itself happens
+    server-side at write time (`app/api/routes/carpool.py`), never trusting
+    the client to have already done it."""
 
     __tablename__ = "carpool_posts"
 
@@ -767,6 +807,12 @@ class CarpoolPost(Base):
         server_default="open",
     )
     origin_label: Mapped[str] = mapped_column(String, nullable=False)
+    origin_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    origin_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    origin_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    origin_precision: Mapped[CarpoolLocationPrecision | None] = mapped_column(
+        SAEnum(CarpoolLocationPrecision, native_enum=False), nullable=True
+    )
     # Null for a rider post (seat counts don't apply); a driver post always
     # has this set (`CarpoolPostCreate` validates this at the schema layer).
     # B27: `seats_available` used to live here too, a plain number a driver

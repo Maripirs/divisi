@@ -122,6 +122,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B26 | Carpool: a standing (non-dated) board by default, dated events stay for exceptions | ✅ Built 2026-09-12, migration `a1c9e6f2b7d4`; pytest 343 green |
 | B27 | Carpool: claim a seat in a driver's post | ✅ Built 2026-09-12, migration `b3d7f1a9c6e2`; pytest 357 green |
 | B28 | Guests can remove their own responsibility signup | ✅ Built 2026-09-12, no migration; pytest 361 green |
+| B29 | Carpool Map: destination/origin coordinates + admin map_enabled toggle | ✅ Built 2026-09-12, migration `9d09d03dff42`; pytest 372 green |
 
 ### B1 — Backend scaffold [x]
 

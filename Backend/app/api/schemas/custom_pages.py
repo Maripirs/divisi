@@ -22,6 +22,11 @@ class GroupCustomPageCreate(BaseModel):
     template_key: GroupCustomPageTemplate
     audience: PageAudience = PageAudience.members
     min_identity: PageMinIdentity = PageMinIdentity.anyone
+    # B29: generic per-page toggle, off by default. Only the carpool_board
+    # template wires it up today (`app/api/routes/carpool.py`'s guest/member
+    # reads and F35's frontend), but it lives here rather than on a
+    # carpool-specific schema since another template could reuse it later.
+    map_enabled: bool = False
 
 
 class GroupCustomPageUpdate(BaseModel):
@@ -37,6 +42,7 @@ class GroupCustomPageUpdate(BaseModel):
     audience: PageAudience | None = None
     min_identity: PageMinIdentity | None = None
     status: GroupCustomPageStatus | None = None
+    map_enabled: bool | None = None
 
 
 class GroupCustomPageOut(BaseModel):
@@ -48,6 +54,7 @@ class GroupCustomPageOut(BaseModel):
     status: GroupCustomPageStatus
     audience: PageAudience
     min_identity: PageMinIdentity
+    map_enabled: bool
     created_by: str | None
     created_at: datetime
     updated_at: datetime

@@ -56,7 +56,12 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
-from app.services.carpool import active_claims_for, list_events_ordered, serialize_post
+from app.services.carpool import (
+    active_claims_for,
+    list_events_ordered,
+    resolve_origin_coordinates,
+    serialize_post,
+)
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access, require_guest_page_access, require_saved_identity
@@ -144,6 +149,9 @@ def create_event(
         title=payload.title,
         starts_at=payload.starts_at,
         destination_label=payload.destination_label,
+        destination_latitude=payload.destination_latitude,
+        destination_longitude=payload.destination_longitude,
+        destination_place_id=payload.destination_place_id,
         created_by=current_user.id,
     )
     db.add(event)
@@ -205,6 +213,12 @@ def update_event(
         event.starts_at = payload.starts_at
     if "destination_label" in fields and payload.destination_label is not None:
         event.destination_label = payload.destination_label
+    if "destination_latitude" in fields:
+        event.destination_latitude = payload.destination_latitude
+    if "destination_longitude" in fields:
+        event.destination_longitude = payload.destination_longitude
+    if "destination_place_id" in fields:
+        event.destination_place_id = payload.destination_place_id
     if "status" in fields and payload.status is not None:
         event.status = payload.status
     db.commit()
@@ -276,12 +290,19 @@ def create_post(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This event is locked or archived"
         )
+    origin_latitude, origin_longitude, origin_precision = resolve_origin_coordinates(
+        payload.origin_latitude, payload.origin_longitude, payload.origin_precision
+    )
     post = CarpoolPost(
         event_id=event_id,
         user_id=actor.id,
         display_name=actor.name,
         kind=payload.kind,
         origin_label=payload.origin_label,
+        origin_latitude=origin_latitude,
+        origin_longitude=origin_longitude,
+        origin_place_id=payload.origin_place_id if origin_latitude is not None else None,
+        origin_precision=origin_precision,
         seats_total=payload.seats_total,
         leave_time_text=payload.leave_time_text,
         notes=payload.notes,
@@ -359,6 +380,27 @@ def update_post(
         )
     if "origin_label" in fields and payload.origin_label is not None:
         post.origin_label = payload.origin_label
+    origin_fields = {"origin_latitude", "origin_longitude", "origin_place_id", "origin_precision"}
+    if fields & origin_fields:
+        # Coordinates and precision move together, same "the whole pin
+        # moves as a unit" reasoning as `create_post`. A patch that only
+        # touches `origin_place_id`/`origin_precision` without touching the
+        # coordinates re-resolves against whatever lat/lng the post already
+        # has, so precision still gets (re-)applied and re-rounded
+        # consistently rather than trusting a stale stored value.
+        latitude = payload.origin_latitude if "origin_latitude" in fields else post.origin_latitude
+        longitude = payload.origin_longitude if "origin_longitude" in fields else post.origin_longitude
+        precision = payload.origin_precision if "origin_precision" in fields else post.origin_precision
+        origin_latitude, origin_longitude, origin_precision = resolve_origin_coordinates(
+            latitude, longitude, precision
+        )
+        post.origin_latitude = origin_latitude
+        post.origin_longitude = origin_longitude
+        post.origin_precision = origin_precision
+        if "origin_place_id" in fields:
+            post.origin_place_id = payload.origin_place_id if origin_latitude is not None else None
+        elif origin_latitude is None:
+            post.origin_place_id = None
     if "seats_total" in fields:
         if payload.seats_total is not None:
             active_count = len(active_claims_for(post.id, db))

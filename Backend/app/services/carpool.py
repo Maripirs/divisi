@@ -8,14 +8,33 @@ being its own small module rather than logic duplicated per route file.
 B27: same reasoning extended to seat claims — `seats_available_for` and
 `serialize_post` are the one place `seats_total - active claims` gets
 computed and turned into a `CarpoolPostOut`, so the member and guest post
-listings can't compute (or shape) it differently."""
+listings can't compute (or shape) it differently.
+
+B29: `resolve_origin_coordinates` is the one place the approximate-by-
+default rule and the actual privacy rounding happen, so `create_post` and
+`update_post` (`app/api/routes/carpool.py`) can't apply it inconsistently.
+Rounding happens here, server-side, regardless of what a client sends: a
+buggy or malicious client claiming `approximate` while sending exact
+coordinates must still end up rounded on write."""
 
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
 from app.api.schemas.carpool import CarpoolPostOut, CarpoolSeatClaimOut
-from app.db.models import CarpoolEvent, CarpoolPost, CarpoolPostKind, CarpoolSeatClaim, CarpoolSeatClaimStatus
+from app.db.models import (
+    CarpoolEvent,
+    CarpoolLocationPrecision,
+    CarpoolPost,
+    CarpoolPostKind,
+    CarpoolSeatClaim,
+    CarpoolSeatClaimStatus,
+)
+
+# ~1.1km grid at the equator, tightening a touch at mid latitudes. Chosen
+# as "close enough to place a pin near the right neighborhood, not the
+# right building" for a carpool rider's home.
+ORIGIN_ROUNDING_DECIMALS = 2
 
 STANDING_EVENT_TITLE = "Ongoing carpool"
 
@@ -82,6 +101,29 @@ def seats_available_for(post: CarpoolPost, db: Session) -> int | None:
     return post.seats_total - len(active_claims_for(post.id, db))
 
 
+def resolve_origin_coordinates(
+    latitude: float | None,
+    longitude: float | None,
+    precision: CarpoolLocationPrecision | None,
+) -> tuple[float | None, float | None, CarpoolLocationPrecision | None]:
+    """The one place `CarpoolPost.origin_*` coordinates get their default
+    precision and their actual rounding applied, called from the route right
+    before a value is assigned to the model (never from the schema layer,
+    which only validates shape). `precision` defaults to `approximate`
+    whenever coordinates are given and it isn't explicitly `exact`; only an
+    explicit `exact` skips rounding. No coordinates means no precision
+    either, regardless of what was passed in."""
+    if latitude is None or longitude is None:
+        return None, None, None
+    if precision == CarpoolLocationPrecision.exact:
+        return latitude, longitude, CarpoolLocationPrecision.exact
+    return (
+        round(latitude, ORIGIN_ROUNDING_DECIMALS),
+        round(longitude, ORIGIN_ROUNDING_DECIMALS),
+        CarpoolLocationPrecision.approximate,
+    )
+
+
 def serialize_post(post: CarpoolPost, db: Session) -> CarpoolPostOut:
     """The one place a `CarpoolPost` ORM row turns into a `CarpoolPostOut`,
     so the member (`carpool.py`) and guest (`guest.py`) routes can't ship a
@@ -97,6 +139,10 @@ def serialize_post(post: CarpoolPost, db: Session) -> CarpoolPostOut:
         kind=post.kind,
         status=post.status,
         origin_label=post.origin_label,
+        origin_latitude=post.origin_latitude,
+        origin_longitude=post.origin_longitude,
+        origin_place_id=post.origin_place_id,
+        origin_precision=post.origin_precision,
         seats_total=post.seats_total,
         seats_available=seats_available_for(post, db),
         leave_time_text=post.leave_time_text,
