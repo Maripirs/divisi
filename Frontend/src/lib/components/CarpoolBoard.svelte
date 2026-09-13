@@ -7,7 +7,7 @@
 	import ConfirmButton from './ConfirmButton.svelte';
 	import CarpoolMap from './CarpoolMap.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
-	import { driverOfferError, riderRequestError } from '$lib/utils/carpool';
+	import { driverOfferError, formatContactPhone, riderRequestError } from '$lib/utils/carpool';
 	import {
 		forgetCarpoolClaim,
 		forgetCarpoolInterest,
@@ -840,8 +840,10 @@
 					<!-- B30: already visibility-gated by the Backend
 					     (`serialize_post`) — this just renders whatever it got,
 					     exactly like `origin_label`/`notes` above, no client-side
-					     ownership/claim check needed here. -->
-					<p class="card-meta">{m.carpool_contact_phone_label({ phone: p.contact_phone })}</p>
+					     ownership/claim check needed here. `formatContactPhone`
+					     is cosmetic only (the stored value is whatever the poster
+					     actually typed, see its own doc comment). -->
+					<p class="card-meta">{m.carpool_contact_phone_label({ phone: formatContactPhone(p.contact_phone) })}</p>
 				{/if}
 			</div>
 			<div class="btn-row">

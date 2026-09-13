@@ -26,6 +26,29 @@ export function riderRequestError(originLabel: string): RiderRequestError {
 	return originLabel.trim() ? null : 'origin';
 }
 
+/** B30: `CarpoolPost.contact_phone` is stored and validated permissively
+ * (see `Backend/app/api/schemas/carpool.py`'s `_PHONE_RE`, deliberately
+ * loose since there's no SMS-verification infra to check a number is
+ * real), so it's stored exactly as typed, digits with no punctuation
+ * included. This is display-only cosmetics on top of that, applied where
+ * `p.contact_phone` is actually rendered (`CarpoolBoard.svelte`'s
+ * `postRow`): a plain 10-digit US number, with or without a leading "+1"/
+ * "1" country code, gets the familiar "(555) 123-4567" shape. Anything
+ * else, an already-punctuated number, a shorter/longer one, or any other
+ * country's format, is returned exactly as typed rather than risk
+ * mis-grouping digits this can't actually parse as a real phone number. */
+export function formatContactPhone(phone: string): string {
+	const trimmed = phone.trim();
+	const digits = trimmed.replace(/\D/g, '');
+	if (digits.length === 10) {
+		return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+	}
+	if (digits.length === 11 && digits.startsWith('1')) {
+		return `+1 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+	}
+	return trimmed;
+}
+
 /** Admin event create/edit form: title, a real date/time, and a destination
  * label are all required. */
 export function eventFieldsMissing(title: string, startsAt: string, destinationLabel: string): boolean {
