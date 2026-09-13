@@ -968,11 +968,32 @@
 		const token = ++mediaSessionToken;
 		const pdfArtwork = piece?.pdfUrl ? await pdfView?.getArtworkDataUrl() : undefined;
 		const src = pdfArtwork ?? (await getLogoArtworkDataUrl());
+		const type = pdfArtwork ? 'image/jpeg' : 'image/png';
 		if (token !== mediaSessionToken || !navigator.mediaSession.metadata || !piece) return;
+		// Reassigning `mediaSession.metadata` while the tab is backgrounded
+		// (e.g. the phone got locked while this artwork was still being
+		// generated) is what turned out to be dropping background playback
+		// outright on iOS — it read the reassignment as the session going
+		// stale. Retrying once on the next `visibilitychange` instead of
+		// applying now sidesteps that: every actual assignment happens while
+		// the page is confirmed foregrounded, same as the plain title/artist
+		// assignment above always has.
+		if (document.visibilityState !== 'visible') {
+			document.addEventListener('visibilitychange', () => setNowPlayingArtwork(token, src, type), {
+				once: true
+			});
+			return;
+		}
+		setNowPlayingArtwork(token, src, type);
+	}
+
+	function setNowPlayingArtwork(token: number, src: string, type: string) {
+		if (token !== mediaSessionToken || !navigator.mediaSession.metadata || !piece) return;
+		if (document.visibilityState !== 'visible') return;
 		navigator.mediaSession.metadata = new MediaMetadata({
 			title: piece.title,
 			artist: piece.composer,
-			artwork: [{ src, sizes: '512x512', type: pdfArtwork ? 'image/jpeg' : 'image/png' }]
+			artwork: [{ src, sizes: '512x512', type }]
 		});
 	}
 
