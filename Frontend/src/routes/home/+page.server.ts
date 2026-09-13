@@ -47,11 +47,21 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 		)
 	);
 	const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+	const now = new Date();
+	// No due date at all reads as "still relevant" (open-ended), same stance
+	// the Homework tab's own current/past split takes (`HomeworkTab.svelte`);
+	// only a due date that's actually passed makes a homework item past.
+	const isActiveHomework = (hw: HomeworkOut) => hw.due_date === null || new Date(hw.due_date) >= now;
 
 	// Earliest-due-first across every group — the Backend already orders
-	// each group's own list that way, this just merges them.
+	// each group's own list that way, this just merges them. Past-due
+	// homework never surfaces on Home at all (it still lives in its own
+	// group's Homework tab, collapsed under "Past homework"): once it's
+	// overdue there's nothing left to act on it for, so it shouldn't keep
+	// occupying space on the one screen meant to surface what's next.
 	const homework = homeworkByGroup
 		.flat()
+		.filter(isActiveHomework)
 		.sort((a, b) => {
 			if (a.due_date === b.due_date) return 0;
 			if (a.due_date === null) return 1;
@@ -70,7 +80,6 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 	// `group_id` of its own (a date can span several role sets), so the
 	// group is attached here from which per-group fetch produced it, not
 	// looked up afterward.
-	const now = new Date();
 	const responsibilities = responsibilitiesByGroup
 		.flatMap((dates, i) => dates.map((d) => ({ ...d, groupId: groups[i].id, groupName: groups[i].name })))
 		.filter((d) => !d.canceled && new Date(d.date) >= now)
@@ -102,7 +111,10 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 		.slice(0, 3);
 
 	return {
-		groups: groups.map((g, i) => ({ ...g, homeworkCount: homeworkByGroup[i].length })),
+		groups: groups.map((g, i) => ({
+			...g,
+			homeworkCount: homeworkByGroup[i].filter(isActiveHomework).length
+		})),
 		homework,
 		responsibilities
 	};

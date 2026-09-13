@@ -21,89 +21,103 @@
 	// delete-confirm icon, via `formaction`) since both trigger the same
 	// submit/disable/reset behavior.
 	let savingHomework = $state(false);
+
+	// Past due date -> collapsed below the active list, same current/past
+	// split ResponsibilitiesTab already does for dates (`isUpcoming`/
+	// `pastDates` there). No due date at all reads as "still relevant"
+	// (open-ended), so only a due date that's actually passed counts as
+	// past; the Home page's own feed (`routes/home/+page.server.ts`) takes
+	// the same stance to decide what still surfaces there at all.
+	const isPastDue = (hw: { due_date: string | null }) => hw.due_date !== null && new Date(hw.due_date) < new Date();
+	let currentHomework = $derived(data.homework.filter((hw) => !isPastDue(hw)));
+	let pastHomework = $derived(data.homework.filter(isPastDue));
 </script>
 
+{#snippet homeworkRow(hw: (typeof data.homework)[number])}
+	{@const hwItem = {
+		id: hw.id,
+		title: hw.title,
+		range: hw.range,
+		instructions: hw.instructions,
+		dueDate: hw.due_date,
+		pieceTitle: hw.pieceTitle
+	}}
+	<HomeworkCard item={hwItem} collapsible>
+		{#if mode === 'admin' && editingHomeworkId === hw.id}
+			<EditableCard
+				saveAction="?/updateHomework"
+				deleteAction="?/deleteHomework"
+				idName="homeworkId"
+				idValue={hw.id}
+				bind:saving={savingHomework}
+				error={form?.form === 'updateHomework' && form?.error}
+				savingLabel={m.new_homework_assigning()}
+				deleteLabel={m.groups_delete_homework()}
+				deleteConfirmLabel={m.groups_delete_homework_confirm()}
+				onCancel={() => (editingHomeworkId = null)}
+			>
+				{#snippet fields()}
+					<label class="field">
+						<span>{m.new_homework_piece()}</span>
+						<select name="pieceId" bind:value={hwPieceIdDraft}>
+							<option value="">{m.new_homework_no_piece()}</option>
+							{#each data.tracks as track (track.piece_id)}
+								<option value={track.piece_id}>{track.title}</option>
+							{/each}
+						</select>
+					</label>
+					<label class="field">
+						<span>{m.new_homework_title_field()}</span>
+						<input type="text" name="title" bind:value={hwTitleDraft} required />
+					</label>
+					<label class="field">
+						<span>{m.new_homework_range()}</span>
+						<input type="text" name="range" bind:value={hwRangeDraft} required />
+					</label>
+					<label class="field">
+						<span>{m.new_homework_due_date()}</span>
+						<input type="date" name="dueDate" bind:value={hwDueDateDraft} />
+					</label>
+					<label class="field">
+						<span>{m.new_homework_instructions()}</span>
+						<textarea name="instructions" bind:value={hwInstructionsDraft}></textarea>
+					</label>
+				{/snippet}
+			</EditableCard>
+		{:else}
+			{#if hw.piece_id}
+				<div class="btn-row">
+					<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
+				</div>
+			{/if}
+			{#if mode === 'admin'}
+				<button
+					type="button"
+					class="text-link"
+					onclick={() => {
+						hwTitleDraft = hw.title;
+						hwPieceIdDraft = hw.piece_id ?? '';
+						hwRangeDraft = hw.range;
+						hwDueDateDraft = hw.due_date ? hw.due_date.slice(0, 10) : '';
+						hwInstructionsDraft = hw.instructions;
+						editingHomeworkId = hw.id;
+					}}
+				>
+					{m.groups_edit_details()}
+				</button>
+			{/if}
+		{/if}
+	</HomeworkCard>
+{/snippet}
+
 {#if mode === 'admin'}
-	<p class="tab-meta">{m.groups_active_count({ count: data.homework.length })}</p>
+	<p class="tab-meta">{m.groups_active_count({ count: currentHomework.length })}</p>
 {/if}
-{#if data.homework.length === 0}
+{#if currentHomework.length === 0}
 	<p class="empty">{m.join_no_homework()}</p>
 {:else}
-	{#each data.homework as hw (hw.id)}
-		{@const hwItem = {
-			id: hw.id,
-			title: hw.title,
-			range: hw.range,
-			instructions: hw.instructions,
-			dueDate: hw.due_date,
-			pieceTitle: hw.pieceTitle
-		}}
-		<HomeworkCard item={hwItem} collapsible>
-			{#if mode === 'admin' && editingHomeworkId === hw.id}
-				<EditableCard
-					saveAction="?/updateHomework"
-					deleteAction="?/deleteHomework"
-					idName="homeworkId"
-					idValue={hw.id}
-					bind:saving={savingHomework}
-					error={form?.form === 'updateHomework' && form?.error}
-					savingLabel={m.new_homework_assigning()}
-					deleteLabel={m.groups_delete_homework()}
-					deleteConfirmLabel={m.groups_delete_homework_confirm()}
-					onCancel={() => (editingHomeworkId = null)}
-				>
-					{#snippet fields()}
-						<label class="field">
-							<span>{m.new_homework_piece()}</span>
-							<select name="pieceId" bind:value={hwPieceIdDraft}>
-								<option value="">{m.new_homework_no_piece()}</option>
-								{#each data.tracks as track (track.piece_id)}
-									<option value={track.piece_id}>{track.title}</option>
-								{/each}
-							</select>
-						</label>
-						<label class="field">
-							<span>{m.new_homework_title_field()}</span>
-							<input type="text" name="title" bind:value={hwTitleDraft} required />
-						</label>
-						<label class="field">
-							<span>{m.new_homework_range()}</span>
-							<input type="text" name="range" bind:value={hwRangeDraft} required />
-						</label>
-						<label class="field">
-							<span>{m.new_homework_due_date()}</span>
-							<input type="date" name="dueDate" bind:value={hwDueDateDraft} />
-						</label>
-						<label class="field">
-							<span>{m.new_homework_instructions()}</span>
-							<textarea name="instructions" bind:value={hwInstructionsDraft}></textarea>
-						</label>
-					{/snippet}
-				</EditableCard>
-			{:else}
-				{#if hw.piece_id}
-					<div class="btn-row">
-						<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
-					</div>
-				{/if}
-				{#if mode === 'admin'}
-					<button
-						type="button"
-						class="text-link"
-						onclick={() => {
-							hwTitleDraft = hw.title;
-							hwPieceIdDraft = hw.piece_id ?? '';
-							hwRangeDraft = hw.range;
-							hwDueDateDraft = hw.due_date ? hw.due_date.slice(0, 10) : '';
-							hwInstructionsDraft = hw.instructions;
-							editingHomeworkId = hw.id;
-						}}
-					>
-						{m.groups_edit_details()}
-					</button>
-				{/if}
-			{/if}
-		</HomeworkCard>
+	{#each currentHomework as hw (hw.id)}
+		{@render homeworkRow(hw)}
 	{/each}
 {/if}
 {#if mode === 'admin'}
@@ -112,10 +126,35 @@
 	</div>
 {/if}
 
+{#if pastHomework.length > 0}
+	<!-- Collapsed below the active list and the admin's "Add homework"
+	     button, same past/upcoming split ResponsibilitiesTab already uses
+	     for dates: rarely needed once due, still there for reference. -->
+	<details class="past-homework">
+		<summary>{m.homework_past_heading({ count: pastHomework.length })}</summary>
+		{#each pastHomework as hw (hw.id)}
+			{@render homeworkRow(hw)}
+		{/each}
+	</details>
+{/if}
+
 <style>
 	.tab-meta {
 		margin: -0.4rem 0 0;
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+	}
+
+	/* Same treatment as ResponsibilitiesTab's `.past-dates`: a muted
+	   text-link summary, a little breathing room once open. */
+	.past-homework summary {
+		cursor: pointer;
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		padding: 0.35rem 0;
+	}
+
+	.past-homework[open] summary {
+		margin-bottom: 0.5rem;
 	}
 </style>

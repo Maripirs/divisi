@@ -277,6 +277,7 @@
 	"new_homework_assign": "Asignar",
 
 	"homework_detail_practice": "Practicar",
+	"homework_past_heading": "Tareas pasadas ({count})",
 
 	"rehearsal_choose_day_time": "Elige un día y una hora",
 	"groups_enter_email": "Ingresa un correo electrónico",
