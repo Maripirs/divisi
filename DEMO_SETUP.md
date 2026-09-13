@@ -1,5 +1,17 @@
 # Demo mode setup
 
+**Status: done.** Steps 1-3 below (seed, join code, `DEMO_JOIN_CODE` on
+Render) were already complete in production before 2026-09-13; Step 4
+(frontend deploy) landed that day. Verified live: `/join/DEMOSATB` serves
+all four movements, homework, the weekly note, and responsibilities;
+`/welcome` shows "Try the demo". The `demo-admin` account already exists
+in prod under a password set whenever this was first run, not the one
+`DEMO_ADMIN_PASSWORD` names in Step 2 below, that's only for a from-scratch
+setup. Re-running Step 2 against an already-seeded demo is safe and
+idempotent (it skips existing pieces), but it can't log in as `demo-admin`
+without that original password, only whoever set it can re-run it for
+real; everyone else gets a dry run.
+
 One-time steps to stand up the public "Divisi Demo Choir": a fake group,
 pre-populated with four movements of Mozart's Requiem plus homework, a
 weekly note, and a responsibilities schedule, reachable with no login at
