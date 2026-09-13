@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import RoleSwitch from '$lib/components/RoleSwitch.svelte';
 	import HomeworkTab from './tabs/HomeworkTab.svelte';
 	import TracksTab from './tabs/TracksTab.svelte';
 	import WeeklyNotesTab from './tabs/WeeklyNotesTab.svelte';
@@ -89,12 +90,7 @@
 	{/if}
 
 	{#if isAdmin}
-		<div class="role-switch">
-			<span>{m.groups_viewing_as({ role: mode === 'admin' ? m.groups_role_admin() : m.groups_role_member() })}</span>
-			<button type="button" class="text-link" onclick={() => (mode = mode === 'admin' ? 'member' : 'admin')}>
-				{m.groups_switch_to({ role: mode === 'admin' ? m.groups_role_member() : m.groups_role_admin() })}
-			</button>
-		</div>
+		<RoleSwitch {mode} onSwitch={() => (mode = mode === 'admin' ? 'member' : 'admin')} />
 	{/if}
 
 	<div class="tabs" role="tablist">
@@ -129,23 +125,3 @@
 </main>
 
 <BottomNav />
-
-<style>
-	.role-switch {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
-
-	.role-switch .text-link {
-		background: none;
-		border: none;
-		padding: 0;
-		font: inherit;
-		font-weight: 700;
-		color: var(--accent);
-		cursor: pointer;
-	}
-</style>

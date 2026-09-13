@@ -4,6 +4,7 @@
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import CustomPageView from '$lib/components/CustomPageView.svelte';
 	import CarpoolBoard from '$lib/components/CarpoolBoard.svelte';
+	import RoleSwitch from '$lib/components/RoleSwitch.svelte';
 	import { computeGroupTabs } from '../../groupTabs';
 	import '$lib/styles/shell.css';
 	import { lh } from '$lib/i18n';
@@ -21,6 +22,18 @@
 
 <main class="shell">
 	<AppHeader title={data.customPage.title} />
+
+	{#if data.isAdmin}
+		<!-- A custom page is a real route rather than the main group page's
+		     local tab state, so unlike there (`RoleSwitch` gets `onSwitch`
+		     flipping `$state`), this passes `href`: a plain link toggling
+		     `?view=admin` on the current URL, same source of truth the tab
+		     strip below already reads `mode` from. -->
+		<RoleSwitch
+			{mode}
+			href={lh(`/groups/${data.groupId}/pages/${data.customPage.slug}${mode === 'admin' ? '' : '?view=admin'}`)}
+		/>
+	{/if}
 
 	<div class="tabs" role="tablist">
 		{#each tabs as t (t.key ?? t.slug)}

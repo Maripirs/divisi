@@ -21,6 +21,17 @@ function clearFakeGoogle(): void {
 	(window as unknown as Record<string, unknown>).google = undefined;
 }
 
+/** Real Google's loader signals readiness by invoking the function named in
+ * the script's own `callback=` URL param, not by firing the script's `load`
+ * event (see `injectScript`'s doc comment in `googleMaps.ts` for why). Reads
+ * that name back off the injected `<script>` tag and calls it, so these
+ * tests drive `loadGoogleMaps` the same way the real API does. */
+function fireReadyCallback(script: HTMLScriptElement): void {
+	const name = new URL(script.src).searchParams.get('callback');
+	if (!name) throw new Error('injected script has no callback= param');
+	(window as unknown as Record<string, () => void>)[name]();
+}
+
 describe('loadGoogleMaps', () => {
 	beforeEach(() => {
 		_resetGoogleMapsLoaderForTests();
@@ -46,9 +57,10 @@ describe('loadGoogleMaps', () => {
 	});
 
 	it('injects exactly one script tag and resolves the maps handle on success', async () => {
-		// Simulate the real script: once "loaded", it plants `window.google`
-		// itself (same as the real Google bootstrap loader would), then this
-		// fires the `load` event the module is waiting on.
+		// Simulate the real loader: once "ready" it plants `window.google`
+		// itself (same as the real Google bootstrap loader would), then
+		// invokes the `callback=` function the module is waiting on - not a
+		// `load` event, see `fireReadyCallback`'s doc comment.
 		let scriptEl: HTMLScriptElement | null = null;
 		const observer = new MutationObserver(() => {
 			const el = document.head.querySelector<HTMLScriptElement>('script[data-divisi-google-maps]');
@@ -61,7 +73,7 @@ describe('loadGoogleMaps', () => {
 						marker: { AdvancedMarkerElement: vi.fn(), PinElement: vi.fn() }
 					}
 				});
-				el.dispatchEvent(new Event('load'));
+				fireReadyCallback(el);
 			}
 		});
 		observer.observe(document.head, { childList: true });
@@ -81,7 +93,7 @@ describe('loadGoogleMaps', () => {
 			if (el && !el.dataset.fired) {
 				el.dataset.fired = 'true';
 				setFakeGoogle({ maps: { importLibrary: vi.fn().mockResolvedValue({}) } });
-				el.dispatchEvent(new Event('load'));
+				fireReadyCallback(el);
 			}
 		});
 		observer.observe(document.head, { childList: true });
@@ -105,10 +117,10 @@ describe('loadGoogleMaps', () => {
 		observer.disconnect();
 	});
 
-	it('resolves to null if the script loads but never actually defines google.maps', async () => {
+	it('resolves to null if the callback fires but google.maps.importLibrary never actually shows up', async () => {
 		const observer = new MutationObserver(() => {
 			const el = document.head.querySelector<HTMLScriptElement>('script[data-divisi-google-maps]');
-			if (el) el.dispatchEvent(new Event('load'));
+			if (el) fireReadyCallback(el);
 		});
 		observer.observe(document.head, { childList: true });
 

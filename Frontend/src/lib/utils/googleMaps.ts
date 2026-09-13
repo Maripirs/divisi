@@ -43,13 +43,30 @@ export interface GoogleMapsHandle {
 }
 
 const SCRIPT_MARKER_ATTR = 'data-divisi-google-maps';
+// Name of the global callback Google's loader invokes once the API has
+// actually finished initializing. Namespaced so it can't collide with
+// anything else on `window`.
+const CALLBACK_GLOBAL = '__divisiGoogleMapsCallback';
 
 let loadPromise: Promise<GoogleMapsHandle | null> | null = null;
 
-/** Injects the Maps JavaScript API script tag and resolves once it (and the
- * `marker` library Advanced Markers live in) has actually run. Split out of
- * `loadGoogleMaps` only so the "how do we wait for a `<script>` tag" bit
- * isn't tangled up with the memoization/short-circuit logic below. */
+/** Injects the Maps JavaScript API script tag and resolves once the API has
+ * actually finished initializing. Split out of `loadGoogleMaps` only so the
+ * "how do we wait for this" bit isn't tangled up with the
+ * memoization/short-circuit logic below.
+ *
+ * Deliberately waits on Google's `callback` URL parameter rather than the
+ * `<script>` tag's own `onload` event: with `loading=async`, `onload` fires
+ * as soon as the base bootstrap file has executed, but
+ * `google.maps.importLibrary` isn't attached until a moment later (the
+ * bootstrap kicks off a few more chunk fetches - `main.js`, `marker.js`, ...
+ * - after `onload`, and `importLibrary` only exists once those finish).
+ * Calling `importLibrary` right on `onload` intermittently threw `TypeError:
+ * ... is not a function`, which the caller's catch-all silently turned into
+ * "maps unavailable" (caught locally while testing the F35 Google Cloud
+ * setup: the API key/restrictions were fine, every script request came back
+ * 200, but the map never rendered). `callback` is what Google's own docs use
+ * to signal true readiness, so waiting on it instead removes the race. */
 function injectScript(apiKey: string): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const existing = document.querySelector<HTMLScriptElement>(`script[${SCRIPT_MARKER_ATTR}]`);
@@ -58,17 +75,16 @@ function injectScript(apiKey: string): Promise<void> {
 			existing.addEventListener('error', () => reject(new Error('Google Maps script failed to load')));
 			return;
 		}
+		(window as typeof window & Record<string, () => void>)[CALLBACK_GLOBAL] = () => resolve();
 		const script = document.createElement('script');
 		script.setAttribute(SCRIPT_MARKER_ATTR, 'true');
 		// `libraries=marker` preloads Advanced Markers alongside the base
 		// script; `loading=async` plus `v=weekly` is Google's own current
 		// recommendation for this pattern (see the Maps JS API docs' "load
-		// the API" guide) and is what makes `google.maps.importLibrary`
-		// (used lazily for Places, see `$lib/actions/googlePlaces.ts`)
-		// available at all.
-		script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=marker&v=weekly&loading=async`;
+		// the API" guide). `callback` is what actually gates `resolve()`
+		// above on true readiness, see this function's doc comment.
+		script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=marker&v=weekly&loading=async&callback=${CALLBACK_GLOBAL}`;
 		script.async = true;
-		script.onload = () => resolve();
 		script.onerror = () => reject(new Error('Google Maps script failed to load'));
 		document.head.appendChild(script);
 	});
@@ -92,11 +108,11 @@ export async function loadGoogleMaps(config: GoogleMapsConfig): Promise<GoogleMa
 		loadPromise = (async () => {
 			try {
 				const existingGoogle = (window as typeof window & { google?: typeof google }).google;
-				if (!existingGoogle?.maps) {
+				if (!existingGoogle?.maps?.importLibrary) {
 					await injectScript(apiKey);
 				}
 				const g = (window as typeof window & { google?: typeof google }).google;
-				if (!g?.maps) return null;
+				if (!g?.maps?.importLibrary) return null;
 				// `libraries=marker` in the script URL only *permits* the
 				// marker library to load; `importLibrary` is what actually
 				// resolves once it's ready to use (a no-op await if it's
