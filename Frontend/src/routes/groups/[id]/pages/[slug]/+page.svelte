@@ -56,7 +56,7 @@
 	{#if data.customPage.template_key === 'carpool_board'}
 		<CarpoolBoard
 			pageId={data.customPage.id}
-			isAdmin={data.isAdmin}
+			isAdmin={data.isAdmin && mode === 'admin'}
 			userId={data.user.id}
 			userName={data.user.name}
 			events={data.events}
