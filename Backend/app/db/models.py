@@ -817,6 +817,17 @@ class CarpoolPost(Base):
     seats_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
     leave_time_text: Mapped[str | None] = mapped_column(String, nullable=True)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    # B30: an opt-in phone number for coordinating off-app once a real match
+    # exists. Unlike `origin_*`, there's no rounding/precision story here:
+    # a phone number can't be "approximated". Instead it's gated entirely at
+    # *read* time by who's asking (`app.services.carpool.serialize_post`) —
+    # the post's own owner, a group admin, or (for a driver post) a rider
+    # who's claimed a seat / (for a rider post) a driver who's expressed
+    # interest (`CarpoolRiderInterest` below) see the real value; everyone
+    # else gets `None` back from `CarpoolPostOut.contact_phone`, never the
+    # raw column. Format is loosely validated at the schema layer
+    # (`CarpoolPostCreate`/`Update`), not here.
+    contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -855,6 +866,49 @@ class CarpoolSeatClaim(Base):
         SAEnum(CarpoolSeatClaimStatus, native_enum=False),
         nullable=False,
         default=CarpoolSeatClaimStatus.active,
+        server_default="active",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CarpoolRiderInterestStatus(str, enum.Enum):
+    active = "active"
+    removed = "removed"
+
+
+class CarpoolRiderInterest(Base):
+    """B30: the rider-post mirror of `CarpoolSeatClaim` — one driver
+    expressing interest in one rider's `CarpoolPost`. Exists because a
+    rider's request has no seats to claim (there's nothing to reserve), yet
+    a driver still needs *some* way to signal "I can take you" and unlock
+    the rider's `contact_phone` (see that field's docstring on
+    `CarpoolPost`). Its own table rather than a repurposed `CarpoolPost`
+    row, same reasoning as `CarpoolSeatClaim`: a driver expressing interest
+    shouldn't require them to have posted their own "I'm offering a ride"
+    first.
+
+    Soft-removed (`status`/`removed_at`) rather than hard-deleted, same
+    trace-left-behind reasoning as `CarpoolSeatClaim`. No DB-level
+    uniqueness on (rider_post_id, user_id) for the same reason: a released
+    interest stays around as a `removed` row, so a plain unique constraint
+    would block re-expressing interest later. "Already has an active
+    interest on this post" is checked at the API layer against
+    `status == active` only, matching `CarpoolSeatClaim`'s own convention.
+    `display_name` is captured at interest time, same reasoning as
+    `CarpoolSeatClaim.display_name`: a later name change shouldn't rewrite
+    history."""
+
+    __tablename__ = "carpool_rider_interests"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    rider_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[CarpoolRiderInterestStatus] = mapped_column(
+        SAEnum(CarpoolRiderInterestStatus, native_enum=False),
+        nullable=False,
+        default=CarpoolRiderInterestStatus.active,
         server_default="active",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

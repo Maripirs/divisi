@@ -45,6 +45,8 @@ from app.api.schemas.carpool import (
     CarpoolPostCreate,
     CarpoolPostOut,
     CarpoolPostUpdate,
+    CarpoolRiderInterestCreate,
+    CarpoolRiderInterestOut,
     CarpoolSeatClaimCreate,
     CarpoolSeatClaimOut,
 )
@@ -120,6 +122,8 @@ __all__ = [
     "CarpoolPostCreate",
     "CarpoolPostOut",
     "CarpoolPostUpdate",
+    "CarpoolRiderInterestCreate",
+    "CarpoolRiderInterestOut",
     "CarpoolSeatClaimCreate",
     "CarpoolSeatClaimOut",
     "AnnotationOut",

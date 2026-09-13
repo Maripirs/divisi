@@ -6,11 +6,30 @@ rounding rationale."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
 from app.db.models import CarpoolEventStatus, CarpoolLocationPrecision, CarpoolPostKind, CarpoolPostStatus
+
+# B30: deliberately permissive. There's no SMS-verification infra here to
+# check a phone number is real, so this only rejects the obviously-wrong
+# shape (letters, way too short/long) rather than any particular national
+# format: an optional leading "+", then 7-20 characters total of digits,
+# spaces, hyphens, dots, and parentheses.
+_PHONE_RE = re.compile(r"^\+?[0-9 .()-]{7,20}$")
+
+
+def _validate_contact_phone(value: str | None) -> None:
+    """Shared by `CarpoolPostCreate`/`Update`. Only called for a non-empty
+    value, same convention as this module's sibling optional text fields
+    (`notes`, `leave_time_text`): the Frontend normalizes `''` to `None`
+    before sending, so there's nothing special to do here for an empty
+    string. Raises `ValueError` so a pydantic `model_validator` can call
+    this directly and have the message surface as a normal 422."""
+    if value and not _PHONE_RE.match(value):
+        raise ValueError("contact_phone doesn't look like a phone number")
 
 
 def _validate_coordinate_pair(latitude: float | None, longitude: float | None) -> None:
@@ -120,6 +139,11 @@ class CarpoolPostCreate(BaseModel):
     seats_total: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
+    # B30: opt-in contact phone, revealed to a matched counterparty only
+    # once a real match exists (see `CarpoolPost.contact_phone`'s docstring
+    # and `app.services.carpool.serialize_post`). `None` (or omitted) means
+    # nothing set, same as `notes`/`leave_time_text`.
+    contact_phone: str | None = None
     # B25: same anonymous-participant identity fields `ResponsibilitySignupCreate`
     # carries, for the same reason (mint-on-demand, reconnect via local_id).
     # Ignored for a bearer-authenticated member.
@@ -129,6 +153,11 @@ class CarpoolPostCreate(BaseModel):
     @model_validator(mode="after")
     def _validate_origin_coordinates(self) -> "CarpoolPostCreate":
         _validate_coordinate_pair(self.origin_latitude, self.origin_longitude)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_contact_phone_format(self) -> "CarpoolPostCreate":
+        _validate_contact_phone(self.contact_phone)
         return self
 
     @model_validator(mode="after")
@@ -170,6 +199,9 @@ class CarpoolPostUpdate(BaseModel):
     seats_total: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
+    # B30: same opt-in contact phone as `CarpoolPostCreate`, patchable like
+    # `notes`/`leave_time_text`.
+    contact_phone: str | None = None
     status: CarpoolPostStatus | None = None
 
     @model_validator(mode="after")
@@ -177,6 +209,11 @@ class CarpoolPostUpdate(BaseModel):
         fields = self.model_fields_set
         if "origin_latitude" in fields or "origin_longitude" in fields:
             _validate_coordinate_pair(self.origin_latitude, self.origin_longitude)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_contact_phone_format(self) -> "CarpoolPostUpdate":
+        _validate_contact_phone(self.contact_phone)
         return self
 
 
@@ -190,6 +227,24 @@ class CarpoolSeatClaimCreate(BaseModel):
 
 
 class CarpoolSeatClaimOut(BaseModel):
+    id: str
+    user_id: str
+    display_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CarpoolRiderInterestCreate(BaseModel):
+    """B30: same anonymous-participant identity fields `CarpoolSeatClaimCreate`
+    carries, for the same mint-on-demand reason. A guest with no post of
+    their own can still express interest in a rider's request."""
+
+    local_id: str | None = None
+    display_name: str | None = None
+
+
+class CarpoolRiderInterestOut(BaseModel):
     id: str
     user_id: str
     display_name: str
@@ -217,9 +272,18 @@ class CarpoolPostOut(BaseModel):
     seats_available: int | None
     leave_time_text: str | None
     notes: str | None
+    # B30: the *serialized*, already-visibility-gated value
+    # (`app.services.carpool.serialize_post`), never the raw stored column
+    # directly. `None` unless the caller is the post's own owner, a group
+    # admin, or a matched counterparty (see `CarpoolPost.contact_phone`'s
+    # docstring).
+    contact_phone: str | None
     # B27: a driver post's active claims (`id`, `user_id`, `display_name`,
     # `created_at`); always empty for a rider post, which can't be claimed.
     claims: list[CarpoolSeatClaimOut]
+    # B30: a rider post's active interests, same shape as `claims`; always
+    # empty for a driver post, which can't have interest expressed in it.
+    interests: list[CarpoolRiderInterestOut]
     created_at: datetime
     updated_at: datetime
 

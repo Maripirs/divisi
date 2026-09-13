@@ -22,6 +22,12 @@ self-signup branch (`app/api/routes/responsibilities.py`), gated by
 `app/api/routes/guest.py`, not here (this router has no `get_db`-only,
 no-bearer-at-all read path, following the "guest routes live in guest.py"
 convention every other feature uses).
+
+B30: `create_interest`/`release_interest` are the rider-post mirror of
+B27's `create_claim`/`release_claim` — a driver expressing interest in a
+rider's request rather than a rider claiming a driver's seat, which is
+also how a rider's `CarpoolPost.contact_phone` gets revealed to that
+driver (see `app.services.carpool.serialize_post`).
 """
 
 from __future__ import annotations
@@ -39,6 +45,8 @@ from app.api.schemas import (
     CarpoolPostCreate,
     CarpoolPostOut,
     CarpoolPostUpdate,
+    CarpoolRiderInterestCreate,
+    CarpoolRiderInterestOut,
     CarpoolSeatClaimCreate,
     CarpoolSeatClaimOut,
 )
@@ -48,6 +56,8 @@ from app.db.models import (
     CarpoolPost,
     CarpoolPostKind,
     CarpoolPostStatus,
+    CarpoolRiderInterest,
+    CarpoolRiderInterestStatus,
     CarpoolSeatClaim,
     CarpoolSeatClaimStatus,
     GroupCustomPage,
@@ -58,6 +68,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.carpool import (
     active_claims_for,
+    active_interests_for,
     list_events_ordered,
     resolve_origin_coordinates,
     serialize_post,
@@ -109,6 +120,15 @@ def _get_claim_or_404(claim_id: str, db: Session) -> CarpoolSeatClaim:
     if claim.status != CarpoolSeatClaimStatus.active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Claim not found")
     return claim
+
+
+def _get_interest_or_404(interest_id: str, db: Session) -> CarpoolRiderInterest:
+    """B30: the rider-interest mirror of `_get_claim_or_404` — a released
+    interest reads as gone, same "already removed" 404 shape."""
+    interest = get_or_404(db, CarpoolRiderInterest, interest_id, "Interest not found")
+    if interest.status != CarpoolRiderInterestStatus.active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Interest not found")
+    return interest
 
 
 def _page_for_event(event: CarpoolEvent, db: Session) -> GroupCustomPage:
@@ -306,13 +326,14 @@ def create_post(
         seats_total=payload.seats_total,
         leave_time_text=payload.leave_time_text,
         notes=payload.notes,
+        contact_phone=payload.contact_phone,
     )
     db.add(post)
     db.commit()
     db.refresh(post)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
-    return serialize_post(post, db)
+    return serialize_post(post, db, viewer_user_id=actor.id, viewer_is_admin=is_admin)
 
 
 @router.get("/carpool/events/{event_id}/posts", response_model=list[CarpoolPostOut])
@@ -325,8 +346,9 @@ def list_posts(
     page = _page_for_event(event, db)
     require_member(page.group_id, current_user, db)
     require_member_page_access(page.group_id, page, current_user.id, db)
+    is_admin = _is_admin(page.group_id, current_user, db)
     query = db.query(CarpoolPost).filter(CarpoolPost.event_id == event_id)
-    if not _is_admin(page.group_id, current_user, db):
+    if not is_admin:
         # Hidden/cancelled posts are moderated-out or withdrawn: a regular
         # member sees only the active list, same "moderation is invisible
         # to those it's not for" shape as elsewhere in this codebase. An
@@ -334,7 +356,7 @@ def list_posts(
         # still can, directly by id.
         query = query.filter(CarpoolPost.status == CarpoolPostStatus.open)
     posts = query.order_by(CarpoolPost.created_at.asc()).all()
-    return [serialize_post(post, db) for post in posts]
+    return [serialize_post(post, db, viewer_user_id=current_user.id, viewer_is_admin=is_admin) for post in posts]
 
 
 @router.patch("/carpool/posts/{post_id}", response_model=CarpoolPostOut)
@@ -414,9 +436,11 @@ def update_post(
         post.leave_time_text = payload.leave_time_text
     if "notes" in fields:
         post.notes = payload.notes
+    if "contact_phone" in fields:
+        post.contact_phone = payload.contact_phone
     db.commit()
     db.refresh(post)
-    return serialize_post(post, db)
+    return serialize_post(post, db, viewer_user_id=actor.id, viewer_is_admin=is_admin)
 
 
 @router.delete("/carpool/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -543,4 +567,107 @@ def release_claim(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only release your own claim")
     claim.status = CarpoolSeatClaimStatus.removed
     claim.removed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+@router.post(
+    "/carpool/posts/{rider_post_id}/interests",
+    response_model=CarpoolRiderInterestOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_interest(
+    rider_post_id: str,
+    payload: CarpoolRiderInterestCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> CarpoolRiderInterest:
+    """B30: the rider-post mirror of `create_claim` — a driver expressing
+    interest in one rider's request, since a rider's post has no seats to
+    claim. Actor resolution mirrors `create_claim`/`create_post` exactly
+    (bearer member, or mint-or-resolve anonymous participant): a guest with
+    no post of their own at all can still express interest.
+
+    Checked in this order, same shape as `create_claim`: the post must be a
+    rider post (400) before anything else runs; the actor can't be the
+    rider themselves (400, expressing interest in your own request doesn't
+    make sense); the event's lock/archive state (409, same as
+    `create_post`/`create_claim`) only blocks a non-admin; then
+    already-interested (400) is checked against the post's current active
+    interests. No capacity check at all, unlike `create_claim`: a rider's
+    request isn't seat-limited the way a driver's post is."""
+    post = _get_post_or_404(rider_post_id, db)
+    if post.kind != CarpoolPostKind.rider:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Only a rider post can get interest"
+        )
+    event = _event_for_post(post, db)
+    page = _page_for_event(event, db)
+
+    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
+    if actor is None:
+        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+
+    if actor.id == post.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You can't express interest in your own post",
+        )
+
+    if actor.is_anonymous:
+        require_guest_page_access(page.group_id, page, db)
+        require_saved_identity(page.group_id, page, db)
+        ensure_guest_membership(db, page.group_id, actor)
+        is_admin = False
+    else:
+        require_member(page.group_id, actor, db)
+        require_member_page_access(page.group_id, page, actor.id, db)
+        is_admin = _is_admin(page.group_id, actor, db)
+
+    if not is_admin and event.status != CarpoolEventStatus.open:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This event is locked or archived"
+        )
+
+    active = active_interests_for(post.id, db)
+    if any(i.user_id == actor.id for i in active):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="You already have an interest on this post"
+        )
+
+    interest = CarpoolRiderInterest(rider_post_id=post.id, user_id=actor.id, display_name=actor.name)
+    db.add(interest)
+    db.commit()
+    db.refresh(interest)
+    if actor.is_anonymous:
+        set_participant_cookie(response, actor, payload.local_id)
+    return interest
+
+
+@router.delete("/carpool/interests/{interest_id}", status_code=status.HTTP_204_NO_CONTENT)
+def release_interest(
+    interest_id: str,
+    local_id: str | None = None,
+    db: Session = Depends(get_db),
+    maybe_user: User | None = Depends(get_current_user_optional),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> None:
+    """The interested party, the rider post's own owner, or an admin can
+    release an interest; anyone else gets 403. Soft-removed (`status`/
+    `removed_at`), not hard-deleted, same trace-left-behind reasoning as
+    `release_claim`. Actor resolution matches `release_claim`: an actor
+    must already exist, nothing is minted here."""
+    interest = _get_interest_or_404(interest_id, db)
+    post = _get_post_or_404(interest.rider_post_id, db)
+    event = _event_for_post(post, db)
+    page = _page_for_event(event, db)
+    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = _is_admin(page.group_id, actor, db)
+    if actor.id != interest.user_id and actor.id != post.user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Can only release your own interest"
+        )
+    interest.status = CarpoolRiderInterestStatus.removed
+    interest.removed_at = datetime.now(timezone.utc)
     db.commit()

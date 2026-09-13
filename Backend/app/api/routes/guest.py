@@ -45,6 +45,7 @@ from app.api.schemas import (
     ResponsibilityGuestSignupOut,
     WeeklyNoteOut,
 )
+from app.api.deps import get_optional_participant
 from app.core.config import get_settings
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import create_admin_preview_token, create_guest_token, verify_password
@@ -70,6 +71,7 @@ from app.db.models import (
     ResponsibilityDateSchedule,
     ResponsibilityRole,
     ResponsibilitySchedule,
+    User,
     WeeklyNote,
 )
 from app.db.session import get_db
@@ -494,12 +496,22 @@ def list_guest_carpool_posts(
     password: str | None = None,
     token: str | None = None,
     db: Session = Depends(get_db),
+    maybe_participant: User | None = Depends(get_optional_participant),
 ) -> list[CarpoolPostOut]:
     """B25: read-only mirror of the member `GET /carpool/events/{id}/posts`
     — a guest is never an admin, so the moderated-out filter the member
     route only applies to a non-admin caller applies here unconditionally.
     B27: `serialize_post` is the same helper the member route uses, so the
-    two can't ship a different `claims`/`seats_available` shape."""
+    two can't ship a different `claims`/`seats_available` shape.
+
+    B30: `maybe_participant` (the `divisi_participant` cookie, same
+    dependency `create_post`/`create_claim` read) is who a `contact_phone`
+    visibility check runs against. A guest who's never claimed a seat/posted/
+    expressed interest yet has no cookie at all, so `viewer_user_id=None`
+    falls through `serialize_post`'s fail-closed default and every post's
+    `contact_phone` comes back `None` — expected, not a bug, until that
+    guest does something that mints or resolves their participant identity.
+    """
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     event = _get_guest_carpool_event_or_404(group.id, event_id, db)
@@ -509,7 +521,10 @@ def list_guest_carpool_posts(
         .order_by(CarpoolPost.created_at.asc())
         .all()
     )
-    return [serialize_post(post, db) for post in posts]
+    viewer_user_id = maybe_participant.id if maybe_participant else None
+    return [
+        serialize_post(post, db, viewer_user_id=viewer_user_id, viewer_is_admin=False) for post in posts
+    ]
 
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])

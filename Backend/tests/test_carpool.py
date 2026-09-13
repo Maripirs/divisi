@@ -1314,3 +1314,292 @@ def test_post_origin_coordinates_patchable_and_re_round(client):
     assert body["origin_longitude"] == -118.24
 
 
+# --- B30: contact phone + rider interests ---------------------------------
+# `contact_phone` is stored opt-in on `CarpoolPost` but only ever revealed
+# (via `CarpoolPostOut.contact_phone`) to the post's own owner, a group
+# admin, or a matched counterparty: a rider who claimed a driver's seat
+# (`CarpoolSeatClaim`, B27), or a driver who expressed interest in a rider's
+# post (`CarpoolRiderInterest`, new here). See `app.services.carpool.
+# serialize_post` and plan.md's B30.
+
+
+def test_contact_phone_round_trips_for_owner_on_driver_and_rider_posts(client):
+    admin_headers = _register_and_login(client, "cp-ph1-admin@example.com")
+    member_headers = _register_and_login(client, "cp-ph1-member@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-ph1-member@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+
+    driver = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(contact_phone="+1 415-555-0100"),
+        headers=admin_headers,
+    )
+    assert driver.status_code == 201
+    assert driver.json()["contact_phone"] == "+1 415-555-0100"
+
+    rider = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(contact_phone="(415) 555-0101"),
+        headers=member_headers,
+    )
+    assert rider.status_code == 201
+    assert rider.json()["contact_phone"] == "(415) 555-0101"
+
+
+def test_unmatched_member_never_sees_contact_phone(client):
+    admin_headers = _register_and_login(client, "cp-ph2-admin@example.com")
+    owner_headers = _register_and_login(client, "cp-ph2-owner@example.com")
+    other_headers = _register_and_login(client, "cp-ph2-other@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-ph2-owner@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-ph2-other@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    driver_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(contact_phone="415-555-0100"),
+        headers=owner_headers,
+    ).json()
+
+    listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=other_headers).json()
+    post = next(p for p in listing if p["id"] == driver_post["id"])
+    assert post["contact_phone"] is None
+
+
+def test_invalid_contact_phone_format_rejected(client):
+    admin_headers = _register_and_login(client, "cp-ph3-admin@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+
+    rejected = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(contact_phone="call me maybe"),
+        headers=admin_headers,
+    )
+    assert rejected.status_code == 422
+
+
+def test_rider_who_claims_seat_sees_driver_contact_phone_but_others_dont(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-ph4")
+    driver_post = client.patch(
+        "/carpool/posts/" + driver_post["id"],
+        json={"contact_phone": "415-555-0102"},
+        headers=driver_headers,
+    ).json()
+    rider_headers = _register_and_login(client, "cp-ph4-rider@example.com")
+    other_headers = _register_and_login(client, "cp-ph4-other@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-ph4-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-ph4-other@example.com")
+
+    client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+
+    rider_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=rider_headers).json()
+    post = next(p for p in rider_view if p["id"] == driver_post["id"])
+    assert post["contact_phone"] == "415-555-0102"
+
+    other_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=other_headers).json()
+    post_other = next(p for p in other_view if p["id"] == driver_post["id"])
+    assert post_other["contact_phone"] is None
+
+
+def test_admin_always_sees_contact_phone(client):
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-ph5")
+    client.patch(
+        "/carpool/posts/" + driver_post["id"],
+        json={"contact_phone": "415-555-0103"},
+        headers=driver_headers,
+    )
+
+    listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers).json()
+    post = next(p for p in listing if p["id"] == driver_post["id"])
+    assert post["contact_phone"] == "415-555-0103"
+
+
+def test_rider_cannot_express_interest_in_own_post(client):
+    admin_headers = _register_and_login(client, "cp-in1-admin@example.com")
+    rider_headers = _register_and_login(client, "cp-in1-rider@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-in1-rider@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
+    ).json()
+
+    rejected = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=rider_headers
+    )
+    assert rejected.status_code == 400
+
+
+def test_driver_expresses_interest_sees_rider_phone_then_releases(client):
+    admin_headers = _register_and_login(client, "cp-in2-admin@example.com")
+    rider_headers = _register_and_login(client, "cp-in2-rider@example.com")
+    driver_headers = _register_and_login(client, "cp-in2-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-in2-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-in2-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(contact_phone="415-555-0104"),
+        headers=rider_headers,
+    ).json()
+
+    interested = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=driver_headers
+    )
+    assert interested.status_code == 201
+    interest = interested.json()
+    assert interest["display_name"] == "Name"
+
+    listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=driver_headers).json()
+    post = next(p for p in listing if p["id"] == rider_post["id"])
+    assert post["contact_phone"] == "415-555-0104"
+    assert len(post["interests"]) == 1
+    assert post["interests"][0]["id"] == interest["id"]
+
+    released = client.delete("/carpool/interests/" + interest["id"], headers=driver_headers)
+    assert released.status_code == 204
+
+    listing_after = client.get("/carpool/events/" + event["id"] + "/posts", headers=driver_headers).json()
+    post_after = next(p for p in listing_after if p["id"] == rider_post["id"])
+    assert post_after["contact_phone"] is None
+    assert post_after["interests"] == []
+
+
+def test_double_interest_rejected(client):
+    admin_headers = _register_and_login(client, "cp-in3-admin@example.com")
+    rider_headers = _register_and_login(client, "cp-in3-rider@example.com")
+    driver_headers = _register_and_login(client, "cp-in3-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-in3-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-in3-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
+    ).json()
+
+    first = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=driver_headers
+    )
+    assert first.status_code == 201
+    second = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=driver_headers
+    )
+    assert second.status_code == 400
+
+
+def test_interest_on_locked_event_rejected_for_non_admin(client):
+    admin_headers = _register_and_login(client, "cp-in4-admin@example.com")
+    rider_headers = _register_and_login(client, "cp-in4-rider@example.com")
+    driver_headers = _register_and_login(client, "cp-in4-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-in4-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-in4-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
+    ).json()
+    client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
+
+    rejected = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=driver_headers
+    )
+    assert rejected.status_code == 409
+
+
+def test_claiming_a_driver_post_as_interest_rejected(client):
+    """The kind check on `create_interest` mirrors `create_claim`'s own
+    kind check in reverse: a driver post can be claimed but not
+    "interested in"."""
+    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-in5")
+    other_headers = _register_and_login(client, "cp-in5-other@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-in5-other@example.com")
+
+    rejected = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/interests", json={}, headers=other_headers
+    )
+    assert rejected.status_code == 400
+
+
+def test_guest_driver_phone_revealed_only_after_guest_claims_seat(client):
+    """Guest-side mirror of `test_rider_who_claims_seat_sees_driver_contact_phone_but_others_dont`,
+    established the same way `test_guest_can_claim_and_release_a_seat` establishes
+    an anonymous participant: via `local_id`/`display_name` on the claim
+    payload, then reading back through the guest listing route with that
+    participant's cookie forwarded (see `list_guest_carpool_posts`)."""
+    admin_headers = _register_and_login(client, "cp-gph1-admin@example.com")
+    driver_headers = _register_and_login(client, "cp-gph1-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-gph1-driver@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    driver_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(contact_phone="415-555-0199"),
+        headers=driver_headers,
+    ).json()
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    claimed = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims",
+        json={"local_id": "dev-ida", "display_name": "Ida"},
+    )
+    assert claimed.status_code == 201
+    # The claim response set a `divisi_participant` cookie identifying Ida;
+    # the guest listing route (with `get_optional_participant`) picks that
+    # cookie straight off this same client, same as any browser session.
+    posts = client.get("/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts").json()
+    post = next(p for p in posts if p["id"] == driver_post["id"])
+    assert post["contact_phone"] == "415-555-0199"
+
+    # A brand-new, cookie-less guest sees nothing.
+    client.cookies.clear()
+    posts_unmatched = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts"
+    ).json()
+    post_unmatched = next(p for p in posts_unmatched if p["id"] == driver_post["id"])
+    assert post_unmatched["contact_phone"] is None
+
+
+def test_guest_rider_phone_revealed_only_after_guest_driver_expresses_interest(client):
+    admin_headers = _register_and_login(client, "cp-gph2-admin@example.com")
+    group = _make_group(client, admin_headers)
+    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+
+    client.base_url = "https://testserver"
+    client.cookies.clear()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(contact_phone="415-555-0200", local_id="dev-jo", display_name="Jo"),
+    ).json()
+
+    client.cookies.clear()
+    interested = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests",
+        json={"local_id": "dev-kai", "display_name": "Kai"},
+    )
+    assert interested.status_code == 201
+
+    posts = client.get("/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts").json()
+    post = next(p for p in posts if p["id"] == rider_post["id"])
+    assert post["contact_phone"] == "415-555-0200"
+
+    # A brand-new, cookie-less guest (neither Jo nor Kai) sees nothing.
+    client.cookies.clear()
+    posts_unmatched = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts"
+    ).json()
+    post_unmatched = next(p for p in posts_unmatched if p["id"] == rider_post["id"])
+    assert post_unmatched["contact_phone"] is None
+
+
