@@ -1,1 +1,5 @@
 .certs/
+
+# Demo choir source scores pulled in by hand for scripts/seed_demo.py —
+# third-party CPDL editions, not repo fixtures. Only the README is tracked.
+fixtures/demo/*/
