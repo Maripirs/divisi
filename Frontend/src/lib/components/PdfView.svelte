@@ -11,6 +11,7 @@
 	import { createPdfMarkupController } from '$lib/components/pdf/pdfMarkup.svelte';
 	import type { MarkupMark } from '$lib/api/pieceMarkup';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
+	import { cropPageArtwork } from '$lib/media/nowPlayingArtwork';
 	import { m } from '$lib/paraglide/messages';
 
 	/**
@@ -131,6 +132,16 @@
 	 * markup controller through its `aspectFor` dep. */
 	let pageAspects = $state<number[]>([]);
 
+	// Resolves once page 1 has rendered at least once — `getArtworkDataUrl`
+	// (below) awaits this so a caller asking for lock-screen artwork right
+	// after mount doesn't just see an empty canvas; it waits for real
+	// content instead. Re-created per `load()` call (below) so a later PDF
+	// swap doesn't resolve instantly off page 1's *previous* render.
+	let resolveFirstPageRendered: () => void;
+	let firstPageRendered = new Promise<void>((resolve) => {
+		resolveFirstPageRendered = resolve;
+	});
+
 	// --- Markup (freehand drawing) ---
 	// The whole markup editor (tools, stamps, text overlay, eraser, undo, API
 	// sync) lives in `createPdfMarkupController` + `PdfMarkupLayer` +
@@ -194,6 +205,9 @@
 	async function load(url: string): Promise<void> {
 		loading = true;
 		loadError = null;
+		firstPageRendered = new Promise((resolve) => {
+			resolveFirstPageRendered = resolve;
+		});
 		const token = ++renderToken;
 		const previousTask = loadingTask;
 		try {
@@ -238,6 +252,10 @@
 		} catch (e) {
 			loadError = String(e);
 			loading = false;
+			// Nothing will ever render page 1 for this load — unblock any
+			// `getArtworkDataUrl()` caller waiting on it instead of leaving it
+			// hanging forever.
+			resolveFirstPageRendered();
 		}
 	}
 
@@ -275,6 +293,17 @@
 	export function scrollToPage(pageNumber: number): void {
 		const canvas = canvasRefs[pageNumber - 1];
 		if (canvas) canvas.scrollIntoView({ block: 'start', behavior: 'smooth' });
+	}
+
+	/** For Now Playing lock-screen artwork: a cropped segment of page 1,
+	 * once it's actually rendered. This pane stays mounted (just hidden)
+	 * behind the player view, so a caller may ask for this well before the
+	 * PDF pane is ever switched to — awaiting `firstPageRendered` covers
+	 * that instead of the caller needing its own polling/retry logic. */
+	export async function getArtworkDataUrl(): Promise<string | undefined> {
+		await firstPageRendered;
+		const canvas = canvasRefs[0];
+		return canvas ? cropPageArtwork(canvas) : undefined;
 	}
 
 	// Load/resize/zoom/the `active` transition can all independently decide
@@ -318,6 +347,7 @@
 			} finally {
 				if (activeRenderTasks[i] === task) activeRenderTasks[i] = undefined;
 			}
+			if (i === 0) resolveFirstPageRendered();
 		}
 	}
 

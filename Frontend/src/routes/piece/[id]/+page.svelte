@@ -35,6 +35,7 @@
 	import { buildRemotePiece, type RemotePieceMeta } from '$lib/pieces/remotePiece';
 	import type { Piece } from '$lib/pieces/types';
 	import { highlightedMutedInk, resolvedTheme } from '$lib/theme';
+	import { getLogoArtworkDataUrl } from '$lib/media/nowPlayingArtwork';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
@@ -332,6 +333,7 @@
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
 
 	let scoreView: ScoreView | undefined = $state();
+	let pdfView: PdfView | undefined = $state();
 
 	// F4: annotations only ever exist for a real Backend piece (Backend's
 	// `Annotation.piece_id` has to be a real `Piece`), and only for a
@@ -936,14 +938,46 @@
 		setTempo(Math.min(MAX_TEMPO_BPM, Math.max(MIN_TEMPO_BPM, tempoBpm + delta)));
 	}
 
+	// Bumped by `clearMediaSession` so a `getArtworkDataUrl()` still in
+	// flight from a since-left piece doesn't land its result on a
+	// `mediaSession` that's now either cleared or belongs to a different
+	// piece.
+	let mediaSessionToken = 0;
+
 	function setupMediaSession() {
 		if (!('mediaSession' in navigator) || !piece) return;
 		navigator.mediaSession.metadata = new MediaMetadata({ title: piece.title, artist: piece.composer });
 		navigator.mediaSession.setActionHandler('play', () => void togglePlay());
 		navigator.mediaSession.setActionHandler('pause', () => void togglePlay());
+		void applyMediaSessionArtwork();
+	}
+
+	/**
+	 * Fills in lock-screen artwork once it's ready: a segment of the piece's
+	 * PDF when it has one, otherwise the app logo. Split out from
+	 * `setupMediaSession` (rather than awaited inline there) so the
+	 * title/artist and play/pause handlers land immediately — the PDF
+	 * segment can take a moment (page 1 has to actually finish rendering),
+	 * and there's no reason play/pause controls should wait on that.
+	 *
+	 * Without *some* explicit artwork, iOS Safari falls back to the page's
+	 * tiny `/favicon.ico`, which comes out badly pixelated blown up to the
+	 * lock screen's artwork size — this is what replaces that fallback.
+	 */
+	async function applyMediaSessionArtwork() {
+		const token = ++mediaSessionToken;
+		const pdfArtwork = piece?.pdfUrl ? await pdfView?.getArtworkDataUrl() : undefined;
+		const src = pdfArtwork ?? (await getLogoArtworkDataUrl());
+		if (token !== mediaSessionToken || !navigator.mediaSession.metadata || !piece) return;
+		navigator.mediaSession.metadata = new MediaMetadata({
+			title: piece.title,
+			artist: piece.composer,
+			artwork: [{ src, sizes: '512x512', type: pdfArtwork ? 'image/jpeg' : 'image/png' }]
+		});
 	}
 
 	function clearMediaSession() {
+		mediaSessionToken++;
 		if (!('mediaSession' in navigator)) return;
 		navigator.mediaSession.metadata = null;
 		navigator.mediaSession.setActionHandler('play', null);
@@ -1231,6 +1265,7 @@
 				<div class="view-pane" class:hidden={viewMode !== 'pdf'}>
 					<div class="pdf-card">
 						<PdfView
+						bind:this={pdfView}
 						pdfUrl={piece.pdfUrl}
 						bind:zoom={pdfZoomLevel}
 						active={viewMode === 'pdf'}
