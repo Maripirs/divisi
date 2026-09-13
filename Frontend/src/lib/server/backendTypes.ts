@@ -149,12 +149,7 @@ export type GroupCustomPageStatus = 'draft' | 'published' | 'archived';
  * reachable state for a non-admin); `audience`/`min_identity` are the same
  * enums the built-in pages use. No content field here on purpose (see the
  * Backend schema's own comment): what a template renders comes from
- * `template_key` alone, not a stored body.
- *
- * B29/F35: `map_enabled` is the admin's per-page "turn the map on" toggle,
- * off by default. It's generic (lives here, not on a carpool-specific
- * schema), but only `carpool_board` actually wires it up today, see
- * `CarpoolBoard.svelte`'s `mapEnabled` prop. */
+ * `template_key` alone, not a stored body. */
 export interface GroupCustomPageOut {
 	id: string;
 	group_id: string;
@@ -164,7 +159,6 @@ export interface GroupCustomPageOut {
 	status: GroupCustomPageStatus;
 	audience: PageAudience;
 	min_identity: PageMinIdentity;
-	map_enabled: boolean;
 	created_by: string | null;
 	created_at: string;
 	updated_at: string;

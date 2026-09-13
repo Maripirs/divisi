@@ -91,18 +91,12 @@
 	let editCustomTitleDraft = $state('');
 	let editCustomAudienceDraft = $state<PageAudience>('members');
 	let editCustomMinIdentityDraft = $state<PageMinIdentity>('anyone');
-	// F35: the admin's per-page "turn the map on" toggle (`map_enabled`).
-	// Lives here rather than on a carpool-specific settings panel since the
-	// field itself is generic on the Backend (see `GroupCustomPageOut`'s
-	// doc comment); only the carpool_board template wires it up today.
-	let editCustomMapEnabledDraft = $state(false);
 	let savingCustomPageEdit = $state(false);
 
 	function startCustomPageEdit(p: GroupCustomPageOut) {
 		editCustomTitleDraft = p.title;
 		editCustomAudienceDraft = p.audience;
 		editCustomMinIdentityDraft = p.min_identity;
-		editCustomMapEnabledDraft = p.map_enabled;
 		editingCustomPageId = p.id;
 	}
 
@@ -355,10 +349,6 @@
 								<option value="saved">{m.pages_min_identity_saved()}</option>
 							</select>
 						</label>
-						<label class="checkline">
-							<input type="checkbox" name="mapEnabled" bind:checked={editCustomMapEnabledDraft} />
-							<span>{m.pages_map_enabled_field()}</span>
-						</label>
 					{/snippet}
 				</EditableCard>
 			{:else}
@@ -425,10 +415,6 @@
 					<option value="anyone">{m.pages_min_identity_anyone()}</option>
 					<option value="saved">{m.pages_min_identity_saved()}</option>
 				</select>
-			</label>
-			<label class="checkline">
-				<input type="checkbox" name="mapEnabled" />
-				<span>{m.pages_map_enabled_field()}</span>
 			</label>
 			{#if form?.form === 'createPage' && form?.error}
 				<p class="error">{form.error}</p>

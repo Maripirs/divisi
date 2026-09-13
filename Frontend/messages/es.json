@@ -662,7 +662,6 @@
 	"carpool_map_destination_label": "Destino",
 	"carpool_map_no_pins": "Todavía no hay marcadores en el mapa.",
 	"carpool_map_aria_label": "Mapa de marcadores de conductores, pasajeros y destino",
-	"pages_map_enabled_field": "Mostrar un mapa en esta página",
 
 	"error_404_title": "Página no encontrada",
 	"error_403_title": "No permitido",

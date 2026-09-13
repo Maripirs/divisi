@@ -12,7 +12,6 @@ function page(overrides: Partial<GroupCustomPageOut> = {}): GroupCustomPageOut {
 		status: 'published',
 		audience: 'members',
 		min_identity: 'anyone',
-		map_enabled: false,
 		created_by: null,
 		created_at: '',
 		updated_at: '',

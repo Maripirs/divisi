@@ -62,7 +62,6 @@
 			events={data.events}
 			selectedEventId={data.selectedEventId}
 			posts={data.posts}
-			mapEnabled={data.customPage.map_enabled}
 			{form}
 		/>
 	{:else}

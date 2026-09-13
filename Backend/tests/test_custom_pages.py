@@ -311,7 +311,6 @@ def test_no_arbitrary_html_field_on_the_model(client):
         "status",
         "audience",
         "min_identity",
-        "map_enabled",
         "created_by",
         "created_at",
         "updated_at",

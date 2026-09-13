@@ -47,14 +47,14 @@
 	 * `$lib` piece rather than one tied to a specific route's generated
 	 * types.
 	 *
-	 * F35 (Carpool Map): `mapEnabled` mirrors `GroupCustomPageOut.map_enabled`
-	 * (member route) / `GuestCustomPage.mapEnabled` (guest route), the
-	 * admin's per-page "turn the map on" toggle. It's necessary but not
-	 * sufficient for actually showing a map: `mapsAvailable` below also has
-	 * to confirm the loader itself resolved a real handle (a real api key
-	 * configured, script actually reachable), so this component still falls
-	 * back to today's list-only layout when `mapEnabled` is true but Maps
-	 * isn't really usable, e.g. no key configured yet. */
+	 * F35 (Carpool Map): there's no admin on/off toggle for the map. Maps
+	 * always attempts to load once this board mounts; whether anything
+	 * actually renders comes down to `mapsAvailable` below (the loader
+	 * resolved a real handle: a real api key configured, script actually
+	 * reachable) and, inside `CarpoolMap` itself, whether the selected
+	 * event/posts have a real pin to show at all (`hasAnyPin`). So this
+	 * component falls back to today's list-only layout whenever Maps isn't
+	 * usable or there's simply nothing to put a pin on. */
 	let {
 		pageId,
 		isAdmin,
@@ -64,8 +64,7 @@
 		selectedEventId,
 		posts,
 		form,
-		guest = null,
-		mapEnabled = false
+		guest = null
 	}: {
 		pageId: string;
 		isAdmin: boolean;
@@ -83,7 +82,6 @@
 		posts: CarpoolPostOut[];
 		form: { form?: string; error?: string } | null;
 		guest?: { code: string } | null;
-		mapEnabled?: boolean;
 	} = $props();
 
 	let isGuest = $derived(guest !== null);
@@ -101,20 +99,20 @@
 	let canPost = $derived(isAdmin || selectedEvent?.status === 'open');
 
 	// --- F35 map state -----------------------------------------------------
-	// Loaded once, lazily, only when this page actually has `map_enabled`:
-	// never at import time, never for a page that doesn't use maps at all
-	// (see `googleMaps.ts`'s own doc comment on the loader's "singleton,
-	// on-demand" contract). `mapsHandle` triples as "still loading" (`null`),
-	// "confirmed unavailable" (`false`), and "ready" (the real handle), so
-	// `mapsAvailable` below, and every "only when Maps/Places is actually
-	// usable" gate in the markup, all read off the one value.
+	// Loaded once, lazily, on mount: never at import time (see `googleMaps.ts`'s
+	// own doc comment on the loader's "singleton, on-demand" contract). No
+	// admin toggle gates this attempt any more; a missing/unreachable api key
+	// just resolves to `false` below like any other carpool board would.
+	// `mapsHandle` triples as "still loading" (`null`), "confirmed unavailable"
+	// (`false`), and "ready" (the real handle), so `mapsAvailable` below, and
+	// every "only when Maps/Places is actually usable" gate in the markup,
+	// all read off the one value.
 	const mapsConfig = {
 		apiKey: env.PUBLIC_GOOGLE_MAPS_API_KEY || undefined,
 		mapId: env.PUBLIC_GOOGLE_MAPS_MAP_ID || undefined
 	};
 	let mapsHandle: GoogleMapsHandle | null | false = $state(null);
 	onMount(() => {
-		if (!mapEnabled) return;
 		let cancelled = false;
 		void loadGoogleMaps(mapsConfig).then((h) => {
 			if (!cancelled) mapsHandle = h ?? false;
@@ -953,11 +951,10 @@
 		</section>
 
 		<!-- F35: side-by-side list+map on desktop, a List/Map single-view
-		     toggle on mobile, both only once `mapsAvailable` (the admin's
-		     `map_enabled` toggle is on AND the loader actually confirmed
-		     Maps/Places usable). Otherwise this falls straight through to
-		     `driversRidersSections` with no wrapper at all, i.e. today's
-		     exact list-only markup, unchanged. -->
+		     toggle on mobile, both only once `mapsAvailable` (the loader
+		     actually confirmed Maps/Places usable). Otherwise this falls
+		     straight through to `driversRidersSections` with no wrapper at
+		     all, i.e. today's exact list-only markup, unchanged. -->
 		{#if mapsAvailable}
 			<div class="carpool-view-toggle" role="group" aria-label={m.carpool_view_toggle_label()}>
 				<button type="button" class:active={mapView === 'list'} onclick={() => (mapView = 'list')}>
@@ -978,7 +975,7 @@
 					{@render driversRidersSections(ev)}
 				</div>
 				<div class="carpool-map-panel" hidden={mapView !== 'map'}>
-					<CarpoolMap mapEnabled={true} destination={ev} {drivers} {riders} />
+					<CarpoolMap destination={ev} {drivers} {riders} />
 				</div>
 			</div>
 		{:else}

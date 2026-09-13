@@ -12,15 +12,6 @@ function readVisibility(form: FormData): { audience: PageAudience; min_identity:
 	};
 }
 
-// F35: same "whole form always resubmits every field" convention as
-// `readVisibility` above and `updatePageSettings`'s `enabled_${page}`
-// checkboxes (`group.ts`) — an unchecked checkbox is simply absent from
-// `FormData`, so this reads `false` for that case rather than needing a
-// separate hidden fallback input.
-function readMapEnabled(form: FormData): boolean {
-	return form.get('mapEnabled') === 'on';
-}
-
 export const customPageActions = {
 	// Admin-only. `template_key` is always `carpool_board` today (the one
 	// value `GroupCustomPageTemplate` has), but still read from the form
@@ -41,8 +32,7 @@ export const customPageActions = {
 					body: JSON.stringify({
 						title,
 						template_key: templateKey,
-						...readVisibility(form),
-						map_enabled: readMapEnabled(form)
+						...readVisibility(form)
 					})
 				},
 				fetch
@@ -66,7 +56,7 @@ export const customPageActions = {
 				`/groups/${params.id}/custom-pages/${pageId}`,
 				{
 					method: 'PATCH',
-					body: JSON.stringify({ title, ...readVisibility(form), map_enabled: readMapEnabled(form) })
+					body: JSON.stringify({ title, ...readVisibility(form) })
 				},
 				fetch
 			)

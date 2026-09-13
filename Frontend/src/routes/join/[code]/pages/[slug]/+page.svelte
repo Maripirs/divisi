@@ -41,7 +41,6 @@
 			events={data.events}
 			selectedEventId={data.selectedEventId}
 			posts={data.posts}
-			mapEnabled={data.customPage.mapEnabled}
 			form={null}
 			guest={{ code: data.code }}
 		/>

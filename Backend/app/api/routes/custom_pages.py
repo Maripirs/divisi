@@ -57,7 +57,6 @@ def create_custom_page(
         template_key=payload.template_key,
         audience=payload.audience,
         min_identity=payload.min_identity,
-        map_enabled=payload.map_enabled,
         created_by=current_user.id,
     )
     db.add(page)
@@ -141,8 +140,6 @@ def update_custom_page(
         page.min_identity = payload.min_identity
     if "status" in fields and payload.status is not None:
         page.status = payload.status
-    if "map_enabled" in fields and payload.map_enabled is not None:
-        page.map_enabled = payload.map_enabled
     db.commit()
     db.refresh(page)
     return page

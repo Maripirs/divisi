@@ -9,15 +9,14 @@
 	 * `CarpoolBoard.svelte` alongside (desktop) or instead of (mobile "Map"
 	 * toggle) the plain driver/rider lists it already renders unconditionally.
 	 *
-	 * Every rule below exists to keep "no Google Maps configured" (today's
-	 * real state, see `googleMaps.ts`'s own doc comment) behaving exactly
-	 * like "the map toggle doesn't exist": this component calls the loader
-	 * itself, on mount, only once actually included in the DOM (`CarpoolBoard`
-	 * only renders it at all once `mapEnabled` is true and its own layout
-	 * decides the map view is the one showing, see that component's "Map
-	 * toggle" section), never at import time, never speculatively for a
-	 * page that might show it later. When the loader reports maps
-	 * unavailable, or `mapEnabled` is false, this renders nothing: no
+	 * There's no admin on/off switch for this any more: this component always
+	 * attempts to load Maps itself, on mount, as soon as it's actually
+	 * included in the DOM (never at import time, never speculatively for a
+	 * page that might show it later). Whether anything actually renders comes
+	 * down to two independent checks: the loader has to confirm a real handle
+	 * (see `googleMaps.ts`'s own doc comment on "no Google Maps configured"
+	 * behaving as a safe no-op), and there has to be at least one real pin to
+	 * show (`hasAnyPin` below). Either one failing renders nothing: no
 	 * placeholder box, no error, nothing a screen reader or a layout would
 	 * even notice is missing.
 	 *
@@ -32,12 +31,10 @@
 	 * empty/default view, or skip rendering and say so"). Skipping avoids
 	 * ever having to invent a center with no real content to justify it. */
 	let {
-		mapEnabled,
 		destination,
 		drivers,
 		riders
 	}: {
-		mapEnabled: boolean;
 		destination: CarpoolEventOut | null;
 		drivers: CarpoolPostOut[];
 		riders: CarpoolPostOut[];
@@ -49,7 +46,6 @@
 	let handle: GoogleMapsHandle | null | false = $state(null);
 
 	onMount(() => {
-		if (!mapEnabled) return;
 		let cancelled = false;
 		void loadGoogleMaps({
 			apiKey: env.PUBLIC_GOOGLE_MAPS_API_KEY || undefined,
@@ -142,7 +138,7 @@
 	});
 </script>
 
-{#if mapEnabled && handle}
+{#if handle}
 	{#if hasAnyPin}
 		<div class="carpool-map" bind:this={containerEl} role="img" aria-label={m.carpool_map_aria_label()}></div>
 	{:else}

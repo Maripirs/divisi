@@ -662,7 +662,6 @@
 	"carpool_map_destination_label": "Destination",
 	"carpool_map_no_pins": "No pins on the map yet.",
 	"carpool_map_aria_label": "Map of driver, rider, and destination pins",
-	"pages_map_enabled_field": "Show a map on this page",
 
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",

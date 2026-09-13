@@ -679,12 +679,6 @@ class GroupCustomPage(Base):
     min_identity: Mapped[PageMinIdentity] = mapped_column(
         SAEnum(PageMinIdentity, native_enum=False), nullable=False, default=PageMinIdentity.anyone
     )
-    # B29: generic per-page toggle (not carpool-specific in name, since a
-    # later template could reuse it) rather than a `carpool_settings` blob
-    # or a second table. Only the carpool_board template wires it up today
-    # (an admin's "turn the map on for this board" switch); any other
-    # template just leaves it `False`.
-    map_enabled: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the page out from under the rest of the group (same
     # convention as `WeeklyNote.created_by`).
@@ -721,8 +715,8 @@ class CarpoolEvent(Base):
     rounded or otherwise fuzzed: a rehearsal venue is a public address, not
     a rider's home, so there's no privacy reason to degrade it. All three
     stay nullable, since the free-text `destination_label` alone is still a
-    valid, mapless carpool board (`GroupCustomPage.map_enabled` gates
-    whether the frontend even shows a map at all)."""
+    valid, mapless carpool board: a map only ever shows once something
+    actually has a pin."""
 
     __tablename__ = "carpool_events"
 

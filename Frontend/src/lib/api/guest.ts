@@ -389,15 +389,11 @@ export async function listGuestPieceRehearsalNotes(
 export interface GuestCustomPage {
 	title: string;
 	templateKey: 'carpool_board';
-	/** B29/F35: threaded through to `CarpoolBoard`'s `mapEnabled` prop, same
-	 * as the member route's `GroupCustomPageOut.map_enabled`. */
-	mapEnabled: boolean;
 }
 
 interface GuestCustomPageResponse {
 	title: string;
 	template_key: 'carpool_board';
-	map_enabled: boolean;
 }
 
 export async function getGuestCustomPage(
@@ -412,7 +408,7 @@ export async function getGuestCustomPage(
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 
 	const body: GuestCustomPageResponse = await res.json();
-	return { title: body.title, templateKey: body.template_key, mapEnabled: body.map_enabled };
+	return { title: body.title, templateKey: body.template_key };
 }
 
 /** B25: the discovery counterpart to `getGuestCustomPage` above — every

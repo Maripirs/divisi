@@ -1,9 +1,9 @@
 /** F35 (Carpool Map): lazy-loading singleton for the Google Maps JavaScript
  * API. Nothing in this module runs at import time or app boot: the Maps
  * `<script>` tag is only injected the first time `loadGoogleMaps()` is
- * actually called, which only happens once a carpool page with
- * `map_enabled` is visible (see `CarpoolMap.svelte` and `CarpoolBoard.svelte`,
- * both of which call this on mount, never eagerly).
+ * actually called, which only happens once a carpool board is visible (see
+ * `CarpoolMap.svelte` and `CarpoolBoard.svelte`, both of which call this on
+ * mount, never eagerly).
  *
  * Deliberately framework-free: this file never imports `$env/static/public`
  * or `$env/dynamic/public` itself. The api key / map id are read by

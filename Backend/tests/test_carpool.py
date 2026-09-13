@@ -1284,30 +1284,3 @@ def test_post_origin_coordinates_patchable_and_re_round(client):
     assert body["origin_longitude"] == -118.24
 
 
-def test_map_enabled_defaults_false_and_admin_only_toggle_round_trips(client):
-    admin_headers = _register_and_login(client, "cp-map11-admin@example.com")
-    member_headers = _register_and_login(client, "cp-map11-member@example.com")
-    group = _make_group(client, admin_headers)
-    _add_member(client, admin_headers, group["id"], "cp-map11-member@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], publish=False)
-    assert page["map_enabled"] is False
-
-    forbidden = client.patch(
-        "/groups/" + group["id"] + "/custom-pages/" + page["id"],
-        json={"map_enabled": True},
-        headers=member_headers,
-    )
-    assert forbidden.status_code == 403
-
-    patched = client.patch(
-        "/groups/" + group["id"] + "/custom-pages/" + page["id"],
-        json={"map_enabled": True},
-        headers=admin_headers,
-    )
-    assert patched.status_code == 200
-    assert patched.json()["map_enabled"] is True
-
-    fetched = client.get(
-        "/groups/" + group["id"] + "/custom-pages/" + page["id"], headers=admin_headers
-    ).json()
-    assert fetched["map_enabled"] is True
