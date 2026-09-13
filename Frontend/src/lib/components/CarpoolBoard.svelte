@@ -123,12 +123,6 @@
 	});
 	let mapsAvailable = $derived(mapsHandle !== null && mapsHandle !== false);
 
-	// Mobile List/Map single-view toggle. Desktop shows both panels side by
-	// side regardless of this (see `.carpool-map-layout`'s breakpoint in this
-	// component's own stylesheet), so this state only actually matters below
-	// that breakpoint.
-	let mapView = $state<'list' | 'map'>('list');
-
 	// --- F35 approximate-pin picker state -----------------------------------
 	// One `PlaceSelection | null` (what Places Autocomplete last resolved,
 	// `null` meaning "no place picked", either because Places isn't
@@ -955,37 +949,15 @@
 			{/if}
 		</section>
 
-		<!-- F35: side-by-side list+map on desktop, a List/Map single-view
-		     toggle on mobile, both only once `mapsAvailable` (the loader
-		     actually confirmed Maps/Places usable). Otherwise this falls
-		     straight through to `driversRidersSections` with no wrapper at
+		<!-- F35: one stacked view, map above the list, whenever `mapsAvailable`
+		     (the loader actually confirmed Maps/Places usable), no separate
+		     list/map subpage or toggle to switch between them. Otherwise this
+		     falls straight through to `driversRidersSections` with no map at
 		     all, i.e. today's exact list-only markup, unchanged. -->
 		{#if mapsAvailable}
-			<div class="carpool-view-toggle" role="group" aria-label={m.carpool_view_toggle_label()}>
-				<button type="button" class:active={mapView === 'list'} onclick={() => (mapView = 'list')}>
-					{m.carpool_view_list()}
-				</button>
-				<button type="button" class:active={mapView === 'map'} onclick={() => (mapView = 'map')}>
-					{m.carpool_view_map()}
-				</button>
-			</div>
-			<div class="carpool-map-layout">
-				<!-- The `hidden` attribute, not a conditional block: on mobile
-				     this shows exactly one panel at a time per `mapView`; the
-				     `.carpool-map-layout` breakpoint in this component's own
-				     stylesheet overrides both back to visible side by side on
-				     desktop regardless of `mapView`, matching the plan doc's
-				     desktop sketch. -->
-				<div class="carpool-list-panel" hidden={mapView !== 'list'}>
-					{@render driversRidersSections(ev)}
-				</div>
-				<div class="carpool-map-panel" hidden={mapView !== 'map'}>
-					<CarpoolMap destination={ev} {drivers} {riders} />
-				</div>
-			</div>
-		{:else}
-			{@render driversRidersSections(ev)}
+			<CarpoolMap destination={ev} {drivers} {riders} />
 		{/if}
+		{@render driversRidersSections(ev)}
 	{/if}
 {/if}
 
@@ -1337,81 +1309,6 @@
 		border-color: var(--accent);
 		box-shadow: inset 0 0 0 1px var(--accent);
 		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-	}
-
-	/* F35: mobile List/Map single-view toggle, same pill-button shape as the
-	   event chips above. Hidden above the `.carpool-map-layout` breakpoint
-	   below, where both panels already show side by side and the toggle
-	   would be redundant. */
-	.carpool-view-toggle {
-		display: flex;
-		gap: 0.5rem;
-	}
-
-	.carpool-view-toggle button {
-		flex: 1;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		color: var(--text);
-		font-weight: 600;
-		font-size: 0.875rem;
-	}
-
-	.carpool-view-toggle button.active {
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-	}
-
-	/* Mobile default: one panel at a time, whichever `mapView` picked (the
-	   other carries the native `hidden` attribute, which the browser's own
-	   stylesheet already turns into `display: none` with no rule needed
-	   here. `:not([hidden])` below only supplies the *visible* panel's
-	   flex/gap, so it never fights that native hiding). The 860px
-	   breakpoint is the same kind of "list becomes wide enough to split"
-	   cutoff `.carpool-event-strip` already uses one media query up from,
-	   chosen so the two columns below still each have reasonable width
-	   inside this app's existing 640px `.shell` container (see
-	   `$lib/styles/shell.css`): this component deliberately doesn't widen
-	   that shared container itself, so "desktop" here means "the viewport
-	   is wide enough to spare the room," not "the whole page layout
-	   changes," which would be a bigger, app-wide call than one milestone
-	   should make on its own. */
-	.carpool-map-layout {
-		display: block;
-	}
-
-	.carpool-list-panel:not([hidden]),
-	.carpool-map-panel:not([hidden]) {
-		display: flex;
-		flex-direction: column;
-		gap: 1.1rem;
-	}
-
-	@media (min-width: 860px) {
-		.carpool-view-toggle {
-			display: none;
-		}
-
-		.carpool-map-layout {
-			display: grid;
-			grid-template-columns: minmax(0, 1fr) minmax(0, 18rem);
-			gap: 1rem;
-			align-items: start;
-		}
-
-		/* Both panels always show side by side at this width, regardless of
-		   `mapView` (the toggle above is hidden here too, so nothing can
-		   even set `hidden` incorrectly out of sync with what's visible).
-		   This specifically targets `[hidden]` so it outweighs the browser's
-		   own `[hidden] { display: none }` rule. */
-		.carpool-list-panel[hidden],
-		.carpool-map-panel[hidden] {
-			display: flex;
-			flex-direction: column;
-			gap: 1.1rem;
-		}
 	}
 
 	.carpool-event-chip__title {

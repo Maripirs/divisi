@@ -5,9 +5,9 @@
 	import { m } from '$lib/paraglide/messages';
 	import type { CarpoolEventOut, CarpoolPostOut } from '$lib/server/backendTypes';
 
-	/** F35 (Carpool Map): the map half of a carpool board, rendered by
-	 * `CarpoolBoard.svelte` alongside (desktop) or instead of (mobile "Map"
-	 * toggle) the plain driver/rider lists it already renders unconditionally.
+	/** F35 (Carpool Map): sits above the plain driver/rider lists
+	 * `CarpoolBoard.svelte` already renders unconditionally, one stacked view
+	 * rather than a separate list/map subpage.
 	 *
 	 * There's no admin on/off switch for this any more: this component always
 	 * attempts to load Maps itself, on mount, as soon as it's actually
@@ -149,8 +149,8 @@
 <style>
 	.carpool-map {
 		width: 100%;
-		height: 100%;
-		min-height: 18rem;
+		height: 18rem;
+		margin-bottom: 1.1rem;
 		border-radius: var(--radius-md);
 		border: 1px solid var(--border);
 		overflow: hidden;
@@ -158,6 +158,7 @@
 
 	.carpool-map-empty {
 		min-height: 8rem;
+		margin-bottom: 1.1rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
