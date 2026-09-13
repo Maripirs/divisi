@@ -803,6 +803,26 @@ def test_standing_event_cannot_be_archived(client):
     assert rejected.status_code == 400
 
 
+def test_member_cannot_edit_standing_event(client):
+    """Same `require_admin` gate as `test_member_cannot_edit_event`, exercised
+    against the standing event specifically: `update_event` checks admin
+    status before it ever looks at `is_standing`, so a member is blocked here
+    too rather than the standing row getting a carve-out by accident."""
+    admin_headers = _register_and_login(client, "cp-st-member1-admin@example.com")
+    member_headers = _register_and_login(client, "cp-st-member1@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-st-member1@example.com")
+    page = _make_carpool_page(client, admin_headers, group["id"])
+    standing = client.get(
+        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=member_headers
+    ).json()[0]
+
+    forbidden = client.patch(
+        "/carpool/events/" + standing["id"], json={"title": "Hijacked"}, headers=member_headers
+    )
+    assert forbidden.status_code == 403
+
+
 def test_standing_event_can_be_locked_and_reopened(client):
     admin_headers = _register_and_login(client, "cp-st-admin6@example.com")
     group = _make_group(client, admin_headers)
