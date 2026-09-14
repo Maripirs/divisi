@@ -27,7 +27,6 @@ from app.api.schemas import (
     AdminPreviewOut,
     CarpoolEventOut,
     CarpoolPostOut,
-    GroupCustomPageOut,
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupInfoOut,
@@ -53,17 +52,14 @@ from app.core.security import create_admin_preview_token, create_guest_token, ve
 from app.db.models import (
     CarpoolEvent,
     CarpoolPost,
+    CarpoolPostDirection,
     CarpoolPostStatus,
     Distribution,
     Group,
-    GroupCustomPage,
-    GroupCustomPageStatus,
-    GroupCustomPageTemplate,
     GroupMembership,
     GroupPage,
     GroupRole,
     Homework,
-    PageAudience,
     Piece,
     PieceMarkupMark,
     PieceRehearsalNote,
@@ -78,7 +74,6 @@ from app.db.models import (
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
 from app.services.carpool import list_events_ordered, serialize_post
-from app.services.custom_pages import get_custom_page_by_slug_or_404
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
 from app.services.responsibilities import role_coverage, signup_display_name
@@ -390,65 +385,25 @@ def list_guest_weekly_notes(
     )
 
 
-@router.get("/{join_code}/pages/{slug}", response_model=GroupCustomPageOut)
-def get_guest_custom_page(
-    join_code: str,
-    slug: str,
-    password: str | None = None,
-    token: str | None = None,
-    db: Session = Depends(get_db),
-) -> GroupCustomPage:
-    """B23: a custom page's guest gate is exactly `require_guest_page_access`
-    given the page row itself instead of a `GroupPage` enum member (see
-    `app/services/pages.py`) — `enabled` there is standing in for
-    `status == published`, and a draft/archived page 404s exactly like a
-    disabled built-in page would, never revealing its title."""
-    group = _get_group_by_join_code_or_404(join_code, db)
-    _authorize_guest(group, password, token)
-    page = get_custom_page_by_slug_or_404(group.id, slug, db)
-    require_guest_page_access(group.id, page, db)
-    return page
-
-
-@router.get("/{join_code}/pages", response_model=list[GroupCustomPageOut])
-def list_guest_custom_pages(
-    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
-) -> list[GroupCustomPage]:
-    """B25: mirrors `list_member_custom_pages`'s published-only list
-    (`app/api/routes/custom_pages.py`) so a guest can discover a page
-    without a shared slug link, further filtered to `audience == everyone`
-    — the member list doesn't filter on audience since audience only ever
-    decides guest reachability, not member visibility."""
-    group = _get_group_by_join_code_or_404(join_code, db)
-    _authorize_guest(group, password, token)
-    return (
-        db.query(GroupCustomPage)
-        .filter(
-            GroupCustomPage.group_id == group.id,
-            GroupCustomPage.status == GroupCustomPageStatus.published,
-            GroupCustomPage.audience == PageAudience.everyone,
-        )
-        .order_by(GroupCustomPage.created_at.asc())
-        .all()
-    )
-
-
 @router.get("/{join_code}/tabs", response_model=GuestTabsOut)
 def get_guest_tabs(
     join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
 ) -> GuestTabsOut:
     """F31 fast-follow: `pages/[slug]/+page.server.ts` needs to know which
-    of homework/weekly_notes/responsibilities are guest-visible to render
-    its copy of the tab strip, but has no other use for those pages' actual
-    data. It used to get the three booleans as a side effect of calling
+    of homework/weekly_notes/responsibilities/carpool are guest-visible to
+    render its copy of the tab strip, but has no other use for those pages'
+    actual data. It used to get the booleans as a side effect of calling
     `list_guest_homework`/`list_guest_weekly_notes`/
     `list_guest_responsibility_dates` and discarding the result, which
-    quadrupled (with `list_guest_custom_pages`) the guest requests a single
-    page view cost, tripping `rate_limit_guest`'s 60-second window during
-    perfectly normal tab-to-tab navigation. This checks
-    `require_guest_page_access` directly (the same gate, no `Homework`/
-    `WeeklyNote`/`ResponsibilityDate` query at all) and folds the custom
-    pages list in alongside it, one call instead of four."""
+    multiplied the guest requests a single page view cost, tripping
+    `rate_limit_guest`'s 60-second window during perfectly normal
+    tab-to-tab navigation. This checks `require_guest_page_access` directly
+    (the same gate, no `Homework`/`WeeklyNote`/`ResponsibilityDate`/
+    `CarpoolEvent` query at all), one call instead of several.
+
+    B31: carpool joined this list as a built-in `GroupPage` once the
+    generic `GroupCustomPage` system (and the `custom_pages` field this
+    used to also return) was dropped."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
 
@@ -459,77 +414,50 @@ def get_guest_tabs(
         except HTTPException:
             return False
 
-    custom_pages = (
-        db.query(GroupCustomPage)
-        .filter(
-            GroupCustomPage.group_id == group.id,
-            GroupCustomPage.status == GroupCustomPageStatus.published,
-            GroupCustomPage.audience == PageAudience.everyone,
-        )
-        .order_by(GroupCustomPage.created_at.asc())
-        .all()
-    )
     return GuestTabsOut(
         homework_visible=_visible(GroupPage.homework),
         weekly_notes_visible=_visible(GroupPage.weekly_notes),
         responsibilities_visible=_visible(GroupPage.responsibilities),
-        custom_pages=[GroupCustomPageOut.model_validate(p) for p in custom_pages],
+        carpool_visible=_visible(GroupPage.carpool),
         group_name=group.name,
     )
-
-
-def _get_guest_carpool_page_or_404(group_id: str, slug: str, db: Session) -> GroupCustomPage:
-    """Same by-slug resolution + `require_guest_page_access` gate as
-    `get_guest_custom_page`, plus the same "wrong template is a caller
-    mistake, not a privacy boundary" 400 `carpool.py`'s
-    `_get_carpool_page_or_404` uses for a page reached by id."""
-    page = get_custom_page_by_slug_or_404(group_id, slug, db)
-    require_guest_page_access(group_id, page, db)
-    if page.template_key != GroupCustomPageTemplate.carpool_board:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="This page is not a carpool board"
-        )
-    return page
 
 
 def _get_guest_carpool_event_or_404(group_id: str, event_id: str, db: Session) -> CarpoolEvent:
     """Same "wrong group -> 404, not 403" shape as `carpool.py`'s own
     helpers: an event id from another group (or a bare made-up one) 404s
-    exactly like a nonexistent one, then the owning page's guest gate
+    exactly like a nonexistent one, then the group's carpool guest gate
     applies on top."""
     event = db.get(CarpoolEvent, event_id)
-    if event is None:
+    if event is None or event.group_id != group_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    page = db.get(GroupCustomPage, event.page_id)
-    if page is None or page.group_id != group_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-    require_guest_page_access(group_id, page, db)
+    require_guest_page_access(group_id, GroupPage.carpool, db)
     return event
 
 
-@router.get("/{join_code}/pages/{slug}/carpool/events", response_model=list[CarpoolEventOut])
+@router.get("/{join_code}/carpool/events", response_model=list[CarpoolEventOut])
 def list_guest_carpool_events(
     join_code: str,
-    slug: str,
     password: str | None = None,
     token: str | None = None,
     db: Session = Depends(get_db),
 ) -> list[CarpoolEvent]:
     """B25: the guest-facing carpool board, same events a member sees via
-    `GET /groups/{id}/pages/{page_id}/carpool/events` — reached by slug
-    since a guest never has a raw page id. B26: same standing-event
-    bootstrap and ordering as the member route, via the shared
-    `list_events_ordered` helper so the two paths can't drift apart."""
+    `GET /groups/{id}/carpool/events`. B26: same standing-event bootstrap
+    and ordering as the member route, via the shared `list_events_ordered`
+    helper so the two paths can't drift apart. B31: reached directly by
+    group (no more slug indirection through a `GroupCustomPage`)."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
-    page = _get_guest_carpool_page_or_404(group.id, slug, db)
-    return list_events_ordered(page.id, db)
+    require_guest_page_access(group.id, GroupPage.carpool, db)
+    return list_events_ordered(group.id, db)
 
 
 @router.get("/{join_code}/carpool/events/{event_id}/posts", response_model=list[CarpoolPostOut])
 def list_guest_carpool_posts(
     join_code: str,
     event_id: str,
+    direction: CarpoolPostDirection | None = None,
     password: str | None = None,
     token: str | None = None,
     db: Session = Depends(get_db),
@@ -548,16 +476,18 @@ def list_guest_carpool_posts(
     falls through `serialize_post`'s fail-closed default and every post's
     `contact_phone` comes back `None` — expected, not a bug, until that
     guest does something that mints or resolves their participant identity.
-    """
+
+    B32: same optional `direction` filter as the member listing (see
+    `app.api.routes.carpool.list_posts`)."""
     group = _get_group_by_join_code_or_404(join_code, db)
     _authorize_guest(group, password, token)
     event = _get_guest_carpool_event_or_404(group.id, event_id, db)
-    posts = (
-        db.query(CarpoolPost)
-        .filter(CarpoolPost.event_id == event.id, CarpoolPost.status == CarpoolPostStatus.open)
-        .order_by(CarpoolPost.created_at.asc())
-        .all()
+    query = db.query(CarpoolPost).filter(
+        CarpoolPost.event_id == event.id, CarpoolPost.status == CarpoolPostStatus.open
     )
+    if direction is not None:
+        query = query.filter(CarpoolPost.direction.in_([direction, CarpoolPostDirection.round_trip]))
+    posts = query.order_by(CarpoolPost.created_at.asc()).all()
     viewer_user_id = maybe_participant.id if maybe_participant else None
     return [
         serialize_post(post, db, viewer_user_id=viewer_user_id, viewer_is_admin=False) for post in posts

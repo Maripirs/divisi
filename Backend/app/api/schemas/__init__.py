@@ -50,12 +50,6 @@ from app.api.schemas.carpool import (
     CarpoolSeatClaimCreate,
     CarpoolSeatClaimOut,
 )
-from app.api.schemas.custom_pages import (
-    GroupCustomPageCreate,
-    GroupCustomPageOut,
-    GroupCustomPageUpdate,
-    GuestTabsOut,
-)
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
@@ -67,6 +61,7 @@ from app.api.schemas.library import (
     GuestNameMatchOut,
     GuestPieceOut,
     GuestPieceOwnerOut,
+    GuestTabsOut,
     LibraryEntryOut,
     PieceDefaultTempoUpdate,
     PieceDetailsUpdate,
@@ -135,9 +130,6 @@ __all__ = [
     "DistributionOut",
     "ForgotPasswordRequest",
     "GroupCreate",
-    "GroupCustomPageCreate",
-    "GroupCustomPageOut",
-    "GroupCustomPageUpdate",
     "GroupDescriptionUpdate",
     "GroupGuestSettingsUpdate",
     "GroupMemberAdd",

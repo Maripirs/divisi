@@ -123,6 +123,8 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B27 | Carpool: claim a seat in a driver's post | ✅ Built 2026-09-12, migration `b3d7f1a9c6e2`; pytest 357 green |
 | B28 | Guests can remove their own responsibility signup | ✅ Built 2026-09-12, no migration; pytest 361 green |
 | B29 | Carpool Map: destination/origin coordinates + admin map_enabled toggle | ✅ Built 2026-09-12, migration `9d09d03dff42`; pytest 372 green |
+| B31 | Promote Carpool to a built-in tab, drop the generic Custom Pages system | ✅ Built 2026-09-14, migration `a5f3d8c1e6b4`; pytest 374 green |
+| B32 | Carpool direction: there / back / round trip | ✅ Built 2026-09-14, migration `b7e2f4a9c3d8`; pytest 374 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1573,6 +1575,138 @@ cleanup, not blocking this.
 **Tasks — Human:**
 - [ ] None expected.
 
+### B31 — Promote Carpool to a built-in tab, drop the generic Custom Pages system [x]
+
+Carpool (B23-B30) was built as the one template on a generic
+`GroupCustomPage` system, on the plan that other templates (potluck, event
+logistics, section resources) would follow. None have; carpool is still the
+only one, and the generic layer (per-group dynamic pages, slugs, a template
+picker, a draft/publish/archive lifecycle) now just adds indirection without
+earning it. Drop `GroupCustomPage` entirely and make carpool the sixth
+built-in `GroupPage`, gated by `GroupPageSettings` exactly like
+Homework/Members/Responsibilities/Weekly Notes/About.
+
+Acceptance criteria:
+- [x] `GroupPage` enum gains `carpool`; `GroupPageSettings` seeding (new
+  groups) and a migration backfill (existing groups) both cover it.
+- [x] Every group's pre-existing `group_custom_pages` row (template_key
+  `carpool_board`, if any) has its effective enabled/audience/min_identity
+  state carried over onto the new `GroupPageSettings(page=carpool)` row
+  before the table is dropped: `draft`/`archived` status both map to
+  `enabled=False`, `published` maps to that page's own `audience`/
+  `min_identity`, not the built-in defaults. A group with no such row yet
+  gets carpool's own sensible default (members-only, matches
+  `GROUP_PAGES_CARPOOL_PLAN.md`'s privacy stance), same shape as every other
+  built-in page's `DEFAULT_AUDIENCE` entry.
+- [x] `carpool_events.group_id` (nullable at first, backfilled from
+  `group_custom_pages.group_id` via the old `page_id`, then not-null)
+  replaces `page_id`; `page_id` column and the `group_custom_pages` table
+  are dropped in the same migration chain, in that order, in a way that
+  survives a real prod run (no dropped data if a step fails partway).
+- [x] `GroupCustomPage`, `GroupCustomPageTemplate`, `GroupCustomPageStatus`
+  models, `app/services/custom_pages.py`, `app/api/routes/custom_pages.py`,
+  `app/api/schemas/custom_pages.py` all removed. The custom-page branch in
+  `app/services/pages.py`'s gate functions removed (`PageLike` back down to
+  plain `GroupPage`), and the custom-page reads in `app/api/routes/guest.py`
+  removed.
+- [x] Carpool routes move to being directly group-scoped (drop the
+  `custom-pages/{page_id}` segment from the current URLs in
+  `app/api/routes/carpool.py`), gated via `require_member_page_access` /
+  `require_guest_page_access` / `require_saved_identity` with
+  `GroupPage.carpool`, same call shape as any other built-in.
+- [x] `app/services/carpool.py`'s `get_or_create_standing_event` takes
+  `group_id` instead of `page_id`.
+- [x] Existing carpool/seat-claim/rider-interest tests updated for the new
+  URL shape and green; migration up/down both checked against the local
+  test DB, never against `Backend/.env`'s prod connection.
+- [x] No group loses existing carpool data (events, posts, seat claims,
+  rider interest, contact phone) in the migration; only the page's own
+  settings row and the `carpool_events.page_id` → `group_id` linkage
+  change.
+
+**Built 2026-09-14**, migration `a5f3d8c1e6b4` (chained off B30's
+`c4e8a2b0d7f3`), pytest 374 green. Verified live: `docker compose up -d
+postgres`, fixture rows for a draft/published/archived `group_custom_pages`
+carpool row (plus one group with none at all) and a `carpool_events`/
+`carpool_posts` row hanging off the published one, `alembic upgrade head`,
+inspected the backfilled `carpool_events.group_id` and the resulting
+`group_page_settings` rows, `alembic downgrade -1` twice (back to
+`c4e8a2b0d7f3`), then `alembic upgrade head` again to confirm a rollback
+can be reapplied, before `docker compose down`.
+
+**Deviations from the plan text:**
+- **Migration idempotency on re-upgrade after a downgrade.** Not spelled
+  out in the acceptance criteria, but the live verification pass surfaced
+  it directly: `downgrade()` deliberately leaves the seeded
+  `group_page_settings(page=carpool)` rows in place (reconstructing them
+  isn't worth it, per the plan's own downgrade guidance), so a bare
+  re-`upgrade()` afterward would re-insert the same `(group_id, 'carpool')`
+  row and crash on `uq_group_page_settings`. `upgrade()` now skips seeding
+  any group that already has a carpool settings row, making an
+  upgrade -> downgrade -> upgrade cycle (a rollback, then reapplying) safe.
+- **Winner-picking logic factored into `app/services/pages.py`, not the
+  migration file.** The brief allowed either location; `app.services.
+  pages.resolve_carpool_page_settings_from_custom_pages(candidates)` is a
+  pure function (`(status, audience, min_identity, created_at)` tuples in,
+  `(enabled, audience, min_identity)` out) imported by the migration and
+  unit-tested directly in `tests/test_carpool.py`, since pytest never runs
+  Alembic against its SQLite test DB. Multiple `published` rows (never
+  actually created by the product, but never blocked by a DB constraint
+  either) resolve to the earliest-created one, for determinism.
+- **`GuestTabsOut` moved to `app/api/schemas/library.py`**, alongside the
+  other `Guest*Out` shapes there, since `app/api/schemas/custom_pages.py`
+  (its previous home) no longer exists. `custom_pages` field replaced with
+  `carpool_visible`, computed the same `require_guest_page_access` way the
+  other three booleans already were.
+- **Old page-scoped carpool URLs are gone, not redirected.** `POST
+  /groups/{id}/pages/{page_id}/carpool/events` and
+  `GET /guest/{join_code}/pages/{slug}/carpool/events` 404 now (no route
+  matches); no compatibility shim, since B31 explicitly drops the generic
+  pages system these URLs were shaped around and no frontend work happens
+  in this milestone.
+
+### B32 — Carpool direction: there / back / round trip [x]
+
+Starts once B31 lands (new URL shape). A driver or rider post today doesn't
+distinguish "I'm driving to rehearsal" from "I can bring people home after."
+Concerts and evening rehearsals are exactly where those diverge: someone
+drives over and catches a ride home with someone else. Add a direction to
+`CarpoolPost`.
+
+Acceptance criteria:
+- [x] `CarpoolPost.direction: there | back | round_trip`; migration
+  backfills every existing row to `round_trip` (the closest match to
+  today's undifferentiated single-post behavior).
+- [x] Post create/update schemas accept `direction`, defaulting to
+  `round_trip` so an old client that doesn't send it keeps working.
+- [x] The member/guest post-list views can be split into "on the way
+  there" / "on the way back," with a round-trip post appearing in both
+  (server-side filter param or client-side split, whichever fits
+  `CarpoolPostOut`'s current shape with less churn).
+- [x] Seat claims and rider interest are unaffected by direction, still
+  keyed to the post itself.
+- [x] Tests cover the backfill default and each `direction` value
+  round-tripping through create/read.
+
+**Built 2026-09-14**, migration `b7e2f4a9c3d8` (chained off B31's
+`a5f3d8c1e6b4`), pytest 374 green. `server_default='round_trip'` covers
+every pre-existing row on its own, no Python-loop backfill needed.
+
+**Deviations from the plan text:**
+- **Server-side filter param, not a client-side split.** Went with the
+  plan's first option: an optional `direction` query param on both
+  `GET /carpool/events/{id}/posts` (member) and the guest posts listing
+  route. Omitted, it's unfiltered (unchanged behavior); given `there` or
+  `back`, the query matches that exact direction plus `round_trip` (a
+  round-trip post appears in both filtered views, as the acceptance
+  criteria calls for), via `CarpoolPost.direction.in_([direction,
+  CarpoolPostDirection.round_trip])`.
+- **`direction` is otherwise a plain content field.** No new gate, no new
+  service function: `create_post` sets it, `update_post` patches it
+  through the same `model_fields_set` block as `leave_time_text`/`notes`,
+  and `serialize_post` passes it straight through to `CarpoolPostOut`,
+  same pattern every other post field already follows.
+
 ## Backlog
 
 - **B16 fast-follow — promote a weekly note into a piece note**: an admin
@@ -1606,6 +1740,8 @@ cleanup, not blocking this.
 ## Log
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
+
+- 2026-09-14: Built B31 (promote Carpool to a built-in `GroupPage`, drop the generic Custom Pages system) and B32 (carpool post `direction`: there/back/round_trip). `GroupCustomPage`/`GroupCustomPageTemplate`/`GroupCustomPageStatus`, `app/services/custom_pages.py`, and `app/api/routes/custom_pages.py` are gone; `CarpoolEvent.page_id` became `group_id`, backfilled per group by a winner-picking rule (`app.services.pages.resolve_carpool_page_settings_from_custom_pages`) over each group's old `carpool_board` pages. Carpool routes are now flat (`/groups/{id}/carpool/events`, no more `/pages/{page_id}/`); `GuestTabsOut` moved to `app/api/schemas/library.py` with `carpool_visible` replacing `custom_pages`. `CarpoolPost.direction` defaults/backfills to `round_trip`; an optional `direction` query param on both the member and guest post-list routes filters to that direction plus `round_trip`. `pytest` 374 green (was 388: -22 from deleting `tests/test_custom_pages.py` outright, +8 net in the `tests/test_carpool.py` rewrite after retiring/renaming the old custom-pages-shaped tests and adding new B31/B32 coverage). Both migrations (`a5f3d8c1e6b4`, `b7e2f4a9c3d8`) verified live against the local docker-compose Postgres with fixture rows in each `group_custom_pages` status, including an upgrade -> downgrade -> upgrade cycle (surfaced and fixed a re-seeding idempotency bug on that path). Not pushed/deployed.
 
 - 2026-09-12: Built B26 (carpool: a standing, non-dated board by default, dated events stay for exceptions). `CarpoolEvent.starts_at`/`destination_label` went nullable, plus a new `is_standing` boolean (migration `a1c9e6f2b7d4`, chained off B25's `48a30562ab06`); no `CarpoolPost` change. `app/services/carpool.py` (new): `get_or_create_standing_event` bootstraps the one page-scoped standing row (title `"Ongoing carpool"`, `starts_at`/`destination_label` both `None`) lazily on first listing rather than admin-created, and `list_events_ordered` wraps it plus dated-by-`starts_at`-ascending ordering so `list_events` (`carpool.py`) and the guest events route (`guest.py`) share one call. `update_event` rejects (400) `status=archived` and any `starts_at` patch on a standing event; lock/unlock and title/destination edits still work. Two existing B24/B25 listing-count tests needed a one-line filter (`is_standing == False`) since the standing event now rides along in every listing, by design; no other B24/B25 test changed. `pytest` 343 green (was 334; +9 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
 - 2026-09-12: Built B25 (guest carpool access: read + write, via existing anonymous-participant flow). No new mechanism, all wiring: `POST /carpool/events/{id}/posts` and `PATCH`/`DELETE /carpool/posts/{id}` (`app/api/routes/carpool.py`) now take `maybe_user`/`maybe_participant` optional-auth dependencies and resolve the caller exactly like `create_signup`'s self-signup branch (mint-on-demand, `require_guest_page_access` + `require_saved_identity`, `ensure_guest_membership`, `divisi_participant` cookie). Three new guest reads in `app/api/routes/guest.py`: `GET /guest/{join_code}/pages` (published + `audience=everyone`), `.../pages/{slug}/carpool/events`, `.../carpool/events/{event_id}/posts`, all 404ing the same generic way `get_guest_custom_page` does. `CarpoolPostCreate` gained `local_id`/`display_name`; no `CarpoolPost` schema/column change (an anonymous participant is already a real `User` row). `pytest` 334 green (was 321; +13 new). Not pushed/deployed.

@@ -1,9 +1,8 @@
 """B26: the standing (non-dated) carpool event, get-or-created lazily
-rather than admin-created, so a brand-new carpool page has one from its
-very first view. One shared helper so the member (`app/api/routes/
+rather than admin-created, so a brand-new group's carpool board has one
+from its very first view. One shared helper so the member (`app/api/routes/
 carpool.py`) and guest (`app/api/routes/guest.py`) read paths can't drift
-out of sync on this, same reasoning as `app/services/custom_pages.py`
-being its own small module rather than logic duplicated per route file.
+out of sync on this.
 
 B27: same reasoning extended to seat claims — `seats_available_for` and
 `serialize_post` are the one place `seats_total - active claims` gets
@@ -23,7 +22,12 @@ real phone number or `None`, so the member (`carpool.py`) and guest
 (`guest.py`) routes can't ship a different visibility rule for the same
 post. `active_interests_for` is the rider-post mirror of
 `active_claims_for`, backing that decision for a rider post the same way
-`active_claims_for` already does for a driver post."""
+`active_claims_for` already does for a driver post.
+
+B32: `serialize_post` also just passes `post.direction` straight through
+to `CarpoolPostOut` — no computation involved, unlike `seats_available`/
+`contact_phone`, it's included here purely so every `CarpoolPostOut` still
+comes from this one function."""
 
 from __future__ import annotations
 
@@ -49,19 +53,19 @@ ORIGIN_ROUNDING_DECIMALS = 2
 STANDING_EVENT_TITLE = "Ongoing carpool"
 
 
-def get_or_create_standing_event(page_id: str, db: Session) -> CarpoolEvent:
-    """Idempotent: a second call for the same page returns the same row,
+def get_or_create_standing_event(group_id: str, db: Session) -> CarpoolEvent:
+    """Idempotent: a second call for the same group returns the same row,
     never a duplicate. `starts_at`/`destination_label` stay `None`, the
     whole point of the standing shape."""
     event = (
         db.query(CarpoolEvent)
-        .filter(CarpoolEvent.page_id == page_id, CarpoolEvent.is_standing.is_(True))
+        .filter(CarpoolEvent.group_id == group_id, CarpoolEvent.is_standing.is_(True))
         .first()
     )
     if event is not None:
         return event
     event = CarpoolEvent(
-        page_id=page_id,
+        group_id=group_id,
         title=STANDING_EVENT_TITLE,
         starts_at=None,
         destination_label=None,
@@ -73,17 +77,17 @@ def get_or_create_standing_event(page_id: str, db: Session) -> CarpoolEvent:
     return event
 
 
-def list_events_ordered(page_id: str, db: Session) -> list[CarpoolEvent]:
+def list_events_ordered(group_id: str, db: Session) -> list[CarpoolEvent]:
     """The standing event first, then dated events by `starts_at`
     ascending. Ordered explicitly rather than via a raw `ORDER BY
     starts_at` (a `NULL` there sorts unpredictably across backends) so a
     caller in `carpool.py` or `guest.py` doesn't have to re-derive this.
     Bootstraps the standing event first, so this is also the one call a
     listing route needs to make."""
-    standing = get_or_create_standing_event(page_id, db)
+    standing = get_or_create_standing_event(group_id, db)
     dated = (
         db.query(CarpoolEvent)
-        .filter(CarpoolEvent.page_id == page_id, CarpoolEvent.is_standing.is_(False))
+        .filter(CarpoolEvent.group_id == group_id, CarpoolEvent.is_standing.is_(False))
         .order_by(CarpoolEvent.starts_at.asc())
         .all()
     )
@@ -203,6 +207,7 @@ def serialize_post(
         display_name=post.display_name,
         kind=post.kind,
         status=post.status,
+        direction=post.direction,
         origin_label=post.origin_label,
         origin_latitude=post.origin_latitude,
         origin_longitude=post.origin_longitude,

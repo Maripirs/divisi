@@ -1,8 +1,8 @@
-"""B24: `CarpoolEvent`/`CarpoolPost` create/update/out shapes, scoped to a
-carpool-template `GroupCustomPage`. B29 added the map pins (`destination_*`
+"""B24: `CarpoolEvent`/`CarpoolPost` create/update/out shapes, scoped to the
+group's built-in carpool page (B31). B29 added the map pins (`destination_*`
 on the event, `origin_*` on the post): see `app/db/models.py`'s `CarpoolEvent`/
 `CarpoolPost` docstrings for the shape and plan.md's B29 for the privacy
-rounding rationale."""
+rounding rationale. B32 added `direction` (there/back/round_trip)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from app.db.models import CarpoolEventStatus, CarpoolLocationPrecision, CarpoolPostKind, CarpoolPostStatus
+from app.db.models import (
+    CarpoolEventStatus,
+    CarpoolLocationPrecision,
+    CarpoolPostDirection,
+    CarpoolPostKind,
+    CarpoolPostStatus,
+)
 
 # B30: deliberately permissive. There's no SMS-verification infra here to
 # check a phone number is real, so this only rejects the obviously-wrong
@@ -70,7 +76,7 @@ class CarpoolEventCreate(BaseModel):
 
 class CarpoolEventUpdate(BaseModel):
     """Partial patch, checked via `model_fields_set` (same convention as
-    `GroupCustomPageUpdate`/`ResponsibilityDateUpdate`). `status` transitions
+    `ResponsibilityDateUpdate`). `status` transitions
     (lock/archive/reopen) ride this same endpoint rather than dedicated
     `/lock`/`/archive` actions, matching `ResponsibilityDateUpdate`'s
     "edit/lock/cancel in one endpoint" precedent.
@@ -104,7 +110,7 @@ class CarpoolEventUpdate(BaseModel):
 
 class CarpoolEventOut(BaseModel):
     id: str
-    page_id: str
+    group_id: str
     title: str
     starts_at: datetime | None
     destination_label: str | None
@@ -136,6 +142,10 @@ class CarpoolPostCreate(BaseModel):
     origin_longitude: float | None = None
     origin_place_id: str | None = None
     origin_precision: CarpoolLocationPrecision | None = None
+    # B32: which leg of the trip this post covers. Defaults to
+    # `round_trip` so an old client that doesn't send it keeps working
+    # exactly like every pre-B32 post did.
+    direction: CarpoolPostDirection = CarpoolPostDirection.round_trip
     seats_total: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
@@ -180,7 +190,7 @@ class CarpoolPostCreate(BaseModel):
 class CarpoolPostUpdate(BaseModel):
     """Content fields only. `kind` isn't here at all (immutable after
     create, same "identity fields don't change" convention as
-    `GroupCustomPage.template_key`); `status` is included but admin-only,
+    `CarpoolPostKind` itself); `status` is included but admin-only,
     enforced in the route since whether it's allowed depends on who's
     calling, not on the payload shape. B27: `seats_available` dropped, same
     reason as `CarpoolPostCreate`; the route rejects lowering `seats_total`
@@ -196,6 +206,9 @@ class CarpoolPostUpdate(BaseModel):
     origin_longitude: float | None = None
     origin_place_id: str | None = None
     origin_precision: CarpoolLocationPrecision | None = None
+    # B32: patchable like every other content field here, checked via
+    # `model_fields_set` in the route.
+    direction: CarpoolPostDirection | None = None
     seats_total: int | None = None
     leave_time_text: str | None = None
     notes: str | None = None
@@ -260,6 +273,8 @@ class CarpoolPostOut(BaseModel):
     display_name: str
     kind: CarpoolPostKind
     status: CarpoolPostStatus
+    # B32: which leg of the trip this post covers.
+    direction: CarpoolPostDirection
     origin_label: str
     origin_latitude: float | None
     origin_longitude: float | None

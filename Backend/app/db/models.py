@@ -162,6 +162,9 @@ class GroupPage(str, enum.Enum):
     about = "about"
     responsibilities = "responsibilities"
     weekly_notes = "weekly_notes"
+    # B31: promoted from the generic `GroupCustomPage` system (its one and
+    # only template) to a built-in page like every other one here.
+    carpool = "carpool"
 
 
 class PageAudience(str, enum.Enum):
@@ -628,65 +631,6 @@ class OmrJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
-class GroupCustomPageTemplate(str, enum.Enum):
-    """B23: exactly one template for now. Adding a second is a migration
-    (append a value), not a schema redesign, since the column is already a
-    real enum rather than a free-text string."""
-
-    carpool_board = "carpool_board"
-
-
-class GroupCustomPageStatus(str, enum.Enum):
-    draft = "draft"
-    published = "published"
-    archived = "archived"
-
-
-class GroupCustomPage(Base):
-    """B23: an admin-created page distinct from the built-in `GroupPage`
-    enum/`GroupPageSettings` row (B12) — a dynamic row per page instead of
-    a fixed enum member, so a group can have zero or several. Reuses
-    `PageAudience`/`PageMinIdentity` rather than new enums, and
-    `app/services/pages.py`'s existing gate helpers rather than a parallel
-    set: `status == published` stands in for a built-in page's `enabled`
-    bool (draft and archived are both unreachable outside the owning
-    group's admins). No `GroupPageBlock`: one template doesn't justify a
-    generic block system yet (see plan.md's B23).
-
-    `slug` is generated from `title` at creation and immutable after
-    (`app/services/custom_pages.py`), unique per group, not globally.
-    """
-
-    __tablename__ = "group_custom_pages"
-    __table_args__ = (UniqueConstraint("group_id", "slug", name="uq_group_custom_page_slug"),)
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    slug: Mapped[str] = mapped_column(String, nullable=False)
-    template_key: Mapped[GroupCustomPageTemplate] = mapped_column(
-        SAEnum(GroupCustomPageTemplate, native_enum=False), nullable=False
-    )
-    status: Mapped[GroupCustomPageStatus] = mapped_column(
-        SAEnum(GroupCustomPageStatus, native_enum=False),
-        nullable=False,
-        default=GroupCustomPageStatus.draft,
-        server_default="draft",
-    )
-    audience: Mapped[PageAudience] = mapped_column(
-        SAEnum(PageAudience, native_enum=False), nullable=False, default=PageAudience.members
-    )
-    min_identity: Mapped[PageMinIdentity] = mapped_column(
-        SAEnum(PageMinIdentity, native_enum=False), nullable=False, default=PageMinIdentity.anyone
-    )
-    # Nullable so deleting the creator's account can null this out rather
-    # than deleting the page out from under the rest of the group (same
-    # convention as `WeeklyNote.created_by`).
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
-
-
 class CarpoolEventStatus(str, enum.Enum):
     open = "open"
     locked = "locked"
@@ -694,14 +638,14 @@ class CarpoolEventStatus(str, enum.Enum):
 
 
 class CarpoolEvent(Base):
-    """B24: one dated carpool occurrence on a carpool-template
-    `GroupCustomPage`. `status` gates member writes (`app/api/routes/
-    carpool.py`): `open` accepts new posts and post edits, `locked`/
-    `archived` both reject them (an admin still bypasses either state, same
-    admin-always-wins convention as Responsibilities' `locked` dates). No
-    lat/lng: MVP is label-only, no map (plan.md's B24).
+    """B24: one dated carpool occurrence on the group's carpool board.
+    `status` gates member writes (`app/api/routes/carpool.py`): `open`
+    accepts new posts and post edits, `locked`/`archived` both reject them
+    (an admin still bypasses either state, same admin-always-wins
+    convention as Responsibilities' `locked` dates). No lat/lng: MVP is
+    label-only, no map (plan.md's B24).
 
-    B26: `is_standing` marks the one page-scoped, non-dated board that's
+    B26: `is_standing` marks the one group-scoped, non-dated board that's
     always there for regular rehearsals (`starts_at`/`destination_label`
     both `None`), lazily get-or-created by `app.services.carpool.
     get_or_create_standing_event` rather than admin-created. Everything
@@ -716,12 +660,18 @@ class CarpoolEvent(Base):
     a rider's home, so there's no privacy reason to degrade it. All three
     stay nullable, since the free-text `destination_label` alone is still a
     valid, mapless carpool board: a map only ever shows once something
-    actually has a pin."""
+    actually has a pin.
+
+    B31: carpool was originally scoped to a carpool-template
+    `GroupCustomPage` row (`page_id`). That generic system was dropped and
+    carpool promoted to a built-in `GroupPage`, so this now scopes directly
+    to the owning `Group` via `group_id` (migration `a5f3d8c1e6b4` backfilled
+    every existing event from its old page's `group_id`)."""
 
     __tablename__ = "carpool_events"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    page_id: Mapped[str] = mapped_column(String, ForeignKey("group_custom_pages.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     destination_label: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -737,7 +687,7 @@ class CarpoolEvent(Base):
     )
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the event out from under the rest of the group (same
-    # convention as `GroupCustomPage.created_by`).
+    # convention as `WeeklyNote.created_by`).
     created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -746,6 +696,17 @@ class CarpoolEvent(Base):
 class CarpoolPostKind(str, enum.Enum):
     driver = "driver"
     rider = "rider"
+
+
+class CarpoolPostDirection(str, enum.Enum):
+    """B32: which leg of a rehearsal/concert trip a post covers. Lets a
+    driver post "I'm driving to rehearsal" separately from "I can bring
+    people home after" — exactly the case where a driver and rider end up
+    splitting the two legs (drives over, catches a ride home)."""
+
+    there = "there"
+    back = "back"
+    round_trip = "round_trip"
 
 
 class CarpoolPostStatus(str, enum.Enum):
@@ -806,6 +767,15 @@ class CarpoolPost(Base):
     origin_place_id: Mapped[str | None] = mapped_column(String, nullable=True)
     origin_precision: Mapped[CarpoolLocationPrecision | None] = mapped_column(
         SAEnum(CarpoolLocationPrecision, native_enum=False), nullable=True
+    )
+    # B32: which leg of the trip this post covers. Defaults (and
+    # server-defaults, for the backfill) to `round_trip` — the closest match
+    # to every pre-B32 post, which didn't distinguish legs at all.
+    direction: Mapped[CarpoolPostDirection] = mapped_column(
+        SAEnum(CarpoolPostDirection, native_enum=False),
+        nullable=False,
+        default=CarpoolPostDirection.round_trip,
+        server_default="round_trip",
     )
     # Null for a rider post (seat counts don't apply); a driver post always
     # has this set (`CarpoolPostCreate` validates this at the schema layer).

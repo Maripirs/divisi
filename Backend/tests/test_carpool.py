@@ -1,9 +1,22 @@
-"""B24: `CarpoolEvent`/`CarpoolPost` on a carpool-template `GroupCustomPage`
-- admin event CRUD (create/edit/lock/archive), member post CRUD, ownership
-(can't edit/delete someone else's post), admin moderation (hide/delete any
-post), and locked/archived events rejecting new posts. Fixture shape
-follows `tests/test_custom_pages.py` (B23) and `tests/test_responsibilities.py`
-(B13, the closest "own row vs. admin moderation" precedent)."""
+"""`CarpoolEvent`/`CarpoolPost` on the group's built-in carpool page (B31;
+originally B24 scoped these to a carpool-template `GroupCustomPage`, a
+generic system since dropped): admin event CRUD (create/edit/lock/archive),
+member post CRUD, ownership (can't edit/delete someone else's post), admin
+moderation (hide/delete any post), and locked/archived events rejecting new
+posts. Fixture shape follows `tests/test_responsibilities.py` (B13, the
+closest "own row vs. admin moderation" precedent).
+
+B31: carpool is enabled/members-only by default for every freshly created
+group (`app.services.pages.DEFAULT_AUDIENCE`), so most tests below need no
+page-settings setup call at all — only a test that needs
+`audience="everyone"`, `min_identity="saved"`, or a disabled page calls
+`_set_carpool_page_settings` explicitly.
+
+B32: `direction` (there/back/round_trip) tests live in their own section
+near the bottom.
+"""
+
+from app.services.pages import resolve_carpool_page_settings_from_custom_pages
 
 
 def _register_and_login(client, email, name="Name", password="hunter22"):
@@ -21,36 +34,24 @@ def _add_member(client, admin_headers, group_id, email):
     client.post("/groups/" + group_id + "/members", json={"email": email}, headers=admin_headers)
 
 
-def _make_carpool_page(
-    client, admin_headers, group_id, title="Carpool", publish=True, audience=None, min_identity=None
+def _set_carpool_page_settings(
+    client, admin_headers, group_id, enabled=True, audience="members", min_identity="anyone"
 ):
-    payload = {"title": title, "template_key": "carpool_board"}
-    if audience is not None:
-        payload["audience"] = audience
-    if min_identity is not None:
-        payload["min_identity"] = min_identity
-    page = client.post(
-        "/groups/" + group_id + "/custom-pages",
-        json=payload,
+    return client.put(
+        "/groups/" + group_id + "/page-settings",
+        json={"pages": [{"page": "carpool", "enabled": enabled, "audience": audience, "min_identity": min_identity}]},
         headers=admin_headers,
-    ).json()
-    if publish:
-        client.post(
-            "/groups/" + group_id + "/custom-pages/" + page["id"] + "/publish", headers=admin_headers
-        )
-    return page
+    )
 
 
-def _make_event(client, admin_headers, group_id, page_id, title="Sep 16 rehearsal", **kwargs):
+def _make_event(client, admin_headers, group_id, title="Sep 16 rehearsal", **kwargs):
     payload = {
         "title": title,
         "starts_at": "2026-09-16T18:00:00Z",
         "destination_label": "SFCC rehearsal hall",
         **kwargs,
     }
-    return client.post(
-        "/groups/" + group_id + "/pages/" + page_id + "/carpool/events", json=payload, headers=admin_headers
-    )
+    return client.post("/groups/" + group_id + "/carpool/events", json=payload, headers=admin_headers)
 
 
 def _driver_post(origin_label="Mission", seats_total=3, **kwargs):
@@ -64,15 +65,14 @@ def _rider_post(origin_label="Sunset", **kwargs):
 def test_admin_can_create_event(client):
     admin_headers = _register_and_login(client, "cp-ev-admin1@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
-    created = _make_event(client, admin_headers, group["id"], page["id"])
+    created = _make_event(client, admin_headers, group["id"])
     assert created.status_code == 201
     body = created.json()
     assert body["title"] == "Sep 16 rehearsal"
     assert body["destination_label"] == "SFCC rehearsal hall"
     assert body["status"] == "open"
-    assert body["page_id"] == page["id"]
+    assert body["group_id"] == group["id"]
 
 
 def test_member_cannot_create_event(client):
@@ -80,9 +80,8 @@ def test_member_cannot_create_event(client):
     member_headers = _register_and_login(client, "cp-ev-member2@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ev-member2@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
-    forbidden = _make_event(client, member_headers, group["id"], page["id"])
+    forbidden = _make_event(client, member_headers, group["id"])
     assert forbidden.status_code == 403
 
 
@@ -91,37 +90,31 @@ def test_member_can_list_published_events(client):
     member_headers = _register_and_login(client, "cp-ev-member4@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ev-member4@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    _make_event(client, admin_headers, group["id"], page["id"])
+    _make_event(client, admin_headers, group["id"])
 
-    listing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=member_headers
-    )
+    listing = client.get("/groups/" + group["id"] + "/carpool/events", headers=member_headers)
     assert listing.status_code == 200
-    # B26: every listing also carries the page's standing event now, so this
+    # B26: every listing also carries the group's standing event now, so this
     # checks the dated event specifically rather than the raw list length.
     dated = [e for e in listing.json() if not e["is_standing"]]
     assert len(dated) == 1
 
 
-def test_member_cannot_list_events_on_draft_page(client):
+def test_member_cannot_list_events_when_carpool_disabled(client):
     admin_headers = _register_and_login(client, "cp-ev-admin5@example.com")
     member_headers = _register_and_login(client, "cp-ev-member5@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ev-member5@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], publish=False)
+    _set_carpool_page_settings(client, admin_headers, group["id"], enabled=False)
 
-    listing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=member_headers
-    )
+    listing = client.get("/groups/" + group["id"] + "/carpool/events", headers=member_headers)
     assert listing.status_code == 403
 
 
 def test_admin_can_edit_lock_and_archive_event(client):
     admin_headers = _register_and_login(client, "cp-ev-admin6@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     edited = client.patch(
         "/carpool/events/" + event["id"], json={"title": "Renamed rehearsal"}, headers=admin_headers
@@ -147,8 +140,7 @@ def test_member_cannot_edit_event(client):
     member_headers = _register_and_login(client, "cp-ev-member7@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ev-member7@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     forbidden = client.patch(
         "/carpool/events/" + event["id"], json={"title": "Hijacked"}, headers=member_headers
@@ -161,8 +153,7 @@ def test_member_can_create_driver_and_rider_posts(client):
     member_headers = _register_and_login(client, "cp-post-member1@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-member1@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     driver = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_driver_post(), headers=admin_headers
@@ -188,8 +179,7 @@ def test_member_can_create_driver_and_rider_posts(client):
 def test_driver_post_requires_seats(client):
     admin_headers = _register_and_login(client, "cp-post-admin2@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     missing_seats = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -202,8 +192,7 @@ def test_driver_post_requires_seats(client):
 def test_rider_post_rejects_seat_fields(client):
     admin_headers = _register_and_login(client, "cp-post-admin3@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     bad = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -218,8 +207,7 @@ def test_member_can_edit_and_delete_own_post(client):
     member_headers = _register_and_login(client, "cp-post-member4@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-member4@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
@@ -241,8 +229,7 @@ def test_member_cannot_edit_or_delete_others_post(client):
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-owner5@example.com")
     _add_member(client, admin_headers, group["id"], "cp-post-other5@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=owner_headers
     ).json()
@@ -261,8 +248,7 @@ def test_member_cannot_set_own_post_status(client):
     member_headers = _register_and_login(client, "cp-post-member6@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-member6@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
@@ -278,8 +264,7 @@ def test_admin_can_hide_and_delete_any_post(client):
     member_headers = _register_and_login(client, "cp-post-member7@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-member7@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
@@ -299,8 +284,7 @@ def test_list_posts_hides_non_open_from_members_but_not_admin(client):
     member_headers = _register_and_login(client, "cp-post-member8@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-post-member8@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
@@ -320,8 +304,7 @@ def test_locked_event_rejects_new_post(client):
     member_headers = _register_and_login(client, "cp-lock-member1@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-lock-member1@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
 
     rejected = client.post(
@@ -335,8 +318,7 @@ def test_archived_event_rejects_new_post(client):
     member_headers = _register_and_login(client, "cp-lock-member2@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-lock-member2@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     client.patch("/carpool/events/" + event["id"], json={"status": "archived"}, headers=admin_headers)
 
     rejected = client.post(
@@ -350,8 +332,7 @@ def test_locked_event_rejects_post_edit_but_allows_delete(client):
     member_headers = _register_and_login(client, "cp-lock-member3@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-lock-member3@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
@@ -371,8 +352,7 @@ def test_locked_event_rejects_post_edit_but_allows_delete(client):
 def test_admin_bypasses_locked_event_when_posting(client):
     admin_headers = _register_and_login(client, "cp-lock-admin4@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
 
     allowed = client.post(
@@ -381,43 +361,22 @@ def test_admin_bypasses_locked_event_when_posting(client):
     assert allowed.status_code == 201
 
 
-def test_cross_group_page_id_404s(client):
-    admin_headers = _register_and_login(client, "cp-xg-admin1@example.com")
-    group_a = _make_group(client, admin_headers, name="A24")
-    group_b = _make_group(client, admin_headers, name="B24")
-    page = _make_carpool_page(client, admin_headers, group_a["id"])
-
-    assert _make_event(client, admin_headers, group_b["id"], page["id"]).status_code == 404
-
-
-def test_unknown_group_or_page_404s(client):
+def test_unknown_group_404s(client):
     admin_headers = _register_and_login(client, "cp-xg-admin2@example.com")
-    assert _make_event(client, admin_headers, "does-not-exist", "also-nope").status_code == 404
+    assert _make_event(client, admin_headers, "does-not-exist").status_code == 404
 
 
 # --- B25: guest carpool access (read + write via anonymous participants) ---
 
 
-def test_guest_can_list_published_everyone_pages(client):
-    admin_headers = _register_and_login(client, "cp-g-admin1@example.com")
-    group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    # A draft page and a published members-only page must not show up.
-    _make_carpool_page(client, admin_headers, group["id"], title="Draft", publish=False)
-    _make_carpool_page(client, admin_headers, group["id"], title="Members Only", audience="members")
-
-    listing = client.get("/guest/" + group["join_code"] + "/pages")
-    assert listing.status_code == 200
-    assert [p["id"] for p in listing.json()] == [page["id"]]
-
-
-def test_guest_tabs_reports_visibility_and_custom_pages(client):
-    """Guest fast-follow (2026-09-12): one call instead of the four
-    `list_guest_homework`/`list_guest_weekly_notes`/
-    `list_guest_responsibility_dates`/`list_guest_custom_pages` calls
-    `pages/[slug]/+page.server.ts` used to make just to learn these
-    booleans, which was tripping `rate_limit_guest` during ordinary
-    tab-to-tab navigation."""
+def test_guest_tabs_reports_visibility_including_carpool(client):
+    """Guest fast-follow (2026-09-12), repurposed for B31: one call instead
+    of several `list_guest_homework`/`list_guest_weekly_notes`/
+    `list_guest_responsibility_dates` calls `pages/[slug]/+page.server.ts`
+    used to make just to learn these booleans, which was tripping
+    `rate_limit_guest` during ordinary tab-to-tab navigation. B31 dropped
+    the `custom_pages` field this test used to also assert on; carpool
+    joined the boolean flags instead."""
     admin_headers = _register_and_login(client, "cp-tabs-admin1@example.com")
     group = _make_group(client, admin_headers)
     client.put(
@@ -425,8 +384,7 @@ def test_guest_tabs_reports_visibility_and_custom_pages(client):
         json={"pages": [{"page": "homework", "enabled": True, "audience": "everyone"}]},
         headers=admin_headers,
     )
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    _make_carpool_page(client, admin_headers, group["id"], title="Draft", publish=False)
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
 
     tabs = client.get("/guest/" + group["join_code"] + "/tabs")
     assert tabs.status_code == 200
@@ -437,7 +395,7 @@ def test_guest_tabs_reports_visibility_and_custom_pages(client):
     # so a plain join code with no page-settings override sees neither.
     assert body["weekly_notes_visible"] is False
     assert body["responsibilities_visible"] is False
-    assert [p["id"] for p in body["custom_pages"]] == [page["id"]]
+    assert body["carpool_visible"] is True
 
 
 def test_guest_tabs_unknown_join_code_404s(client):
@@ -449,13 +407,13 @@ def test_guest_can_list_carpool_events_and_posts(client):
     member_headers = _register_and_login(client, "cp-g-member2@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-g-member2@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
     ).json()
 
-    events = client.get("/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events")
+    events = client.get("/guest/" + group["join_code"] + "/carpool/events")
     assert events.status_code == 200
     # B26: the standing event rides along in every listing now; check the
     # dated event specifically rather than the raw list.
@@ -470,8 +428,8 @@ def test_guest_can_list_carpool_events_and_posts(client):
 def test_guest_post_list_hides_non_open_posts(client):
     admin_headers = _register_and_login(client, "cp-g-admin3@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers
     ).json()
@@ -485,13 +443,10 @@ def test_guest_post_list_hides_non_open_posts(client):
 def test_guest_carpool_routes_404_for_members_audience_page(client):
     admin_headers = _register_and_login(client, "cp-g-admin4@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="members")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    # Members-only audience is already the default for a fresh group.
+    event = _make_event(client, admin_headers, group["id"]).json()
 
-    assert (
-        client.get("/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events").status_code
-        == 404
-    )
+    assert client.get("/guest/" + group["join_code"] + "/carpool/events").status_code == 404
     assert (
         client.get(
             "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts"
@@ -503,8 +458,8 @@ def test_guest_carpool_routes_404_for_members_audience_page(client):
 def test_guest_self_post_mints_participant_and_sets_cookie(client):
     admin_headers = _register_and_login(client, "cp-g-admin5@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     # The backend sets the participant cookie `Secure`, only round-tripped
     # by the TestClient over https.
@@ -528,9 +483,9 @@ def test_guest_self_post_mints_participant_and_sets_cookie(client):
 def test_second_guest_post_from_same_client_reuses_participant(client):
     admin_headers = _register_and_login(client, "cp-g-admin6@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event1 = _make_event(client, admin_headers, group["id"], page["id"], title="Event 1").json()
-    event2 = _make_event(client, admin_headers, group["id"], page["id"], title="Event 2").json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event1 = _make_event(client, admin_headers, group["id"], title="Event 1").json()
+    event2 = _make_event(client, admin_headers, group["id"], title="Event 2").json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -551,9 +506,9 @@ def test_second_guest_post_from_same_client_reuses_participant(client):
 def test_guest_post_reuses_via_local_id_when_cookie_is_gone(client):
     admin_headers = _register_and_login(client, "cp-g-admin7@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event1 = _make_event(client, admin_headers, group["id"], page["id"], title="Event 1").json()
-    event2 = _make_event(client, admin_headers, group["id"], page["id"], title="Event 2").json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event1 = _make_event(client, admin_headers, group["id"], title="Event 1").json()
+    event2 = _make_event(client, admin_headers, group["id"], title="Event 2").json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -575,10 +530,10 @@ def test_guest_post_reuses_via_local_id_when_cookie_is_gone(client):
 def test_min_identity_saved_blocks_anonymous_post_but_not_member_or_read(client):
     admin_headers = _register_and_login(client, "cp-g-admin8@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(
+    _set_carpool_page_settings(
         client, admin_headers, group["id"], audience="everyone", min_identity="saved"
     )
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -603,8 +558,8 @@ def test_min_identity_saved_blocks_anonymous_post_but_not_member_or_read(client)
 def test_members_audience_page_gives_anonymous_post_a_404(client):
     admin_headers = _register_and_login(client, "cp-g-admin9@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="members")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    # Members-only audience is already the default for a fresh group.
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -625,8 +580,8 @@ def test_members_audience_page_gives_anonymous_post_a_404(client):
 def test_guest_owner_can_edit_and_delete_own_post(client):
     admin_headers = _register_and_login(client, "cp-g-admin10@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -646,8 +601,8 @@ def test_guest_owner_can_edit_and_delete_own_post(client):
 def test_guest_cannot_edit_or_delete_another_guests_post(client):
     admin_headers = _register_and_login(client, "cp-g-admin11@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -673,8 +628,7 @@ def test_guest_cannot_edit_or_delete_another_guests_post(client):
 def test_no_actor_resolves_gives_401_on_edit_or_delete(client):
     admin_headers = _register_and_login(client, "cp-g-admin12@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers
     ).json()
@@ -691,8 +645,8 @@ def test_no_actor_resolves_gives_401_on_edit_or_delete(client):
 def test_admin_can_moderate_a_guests_post(client):
     admin_headers = _register_and_login(client, "cp-g-admin13@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -717,11 +671,8 @@ def test_admin_can_moderate_a_guests_post(client):
 def test_first_listing_bootstraps_standing_event(client):
     admin_headers = _register_and_login(client, "cp-st-admin1@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
-    listing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
-    ).json()
+    listing = client.get("/groups/" + group["id"] + "/carpool/events", headers=admin_headers).json()
     assert len(listing) == 1
     standing = listing[0]
     assert standing["is_standing"] is True
@@ -733,14 +684,9 @@ def test_first_listing_bootstraps_standing_event(client):
 def test_second_listing_reuses_same_standing_event(client):
     admin_headers = _register_and_login(client, "cp-st-admin2@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
-    first = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
-    ).json()
-    second = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
-    ).json()
+    first = client.get("/groups/" + group["id"] + "/carpool/events", headers=admin_headers).json()
+    second = client.get("/groups/" + group["id"] + "/carpool/events", headers=admin_headers).json()
     assert len(second) == 1
     assert second[0]["id"] == first[0]["id"]
 
@@ -748,24 +694,20 @@ def test_second_listing_reuses_same_standing_event(client):
 def test_guest_listing_bootstraps_and_reuses_same_standing_event(client):
     admin_headers = _register_and_login(client, "cp-st-admin3@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
 
-    first = client.get(
-        "/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events"
-    ).json()
+    first = client.get("/guest/" + group["join_code"] + "/carpool/events").json()
     assert len(first) == 1
     assert first[0]["is_standing"] is True
 
-    second = client.get(
-        "/guest/" + group["join_code"] + "/pages/" + page["slug"] + "/carpool/events"
-    ).json()
+    second = client.get("/guest/" + group["join_code"] + "/carpool/events").json()
     assert len(second) == 1
     assert second[0]["id"] == first[0]["id"]
 
     # The member route's bootstrap and the guest route's bootstrap must be
     # the exact same row, not two independent standing events.
     member_view = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()
     assert len(member_view) == 1
     assert member_view[0]["id"] == first[0]["id"]
@@ -774,18 +716,15 @@ def test_guest_listing_bootstraps_and_reuses_same_standing_event(client):
 def test_listing_orders_standing_first_then_dated_by_starts_at(client):
     admin_headers = _register_and_login(client, "cp-st-admin4@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
     later = _make_event(
-        client, admin_headers, group["id"], page["id"], title="Later", starts_at="2026-10-01T18:00:00Z"
+        client, admin_headers, group["id"], title="Later", starts_at="2026-10-01T18:00:00Z"
     ).json()
     earlier = _make_event(
-        client, admin_headers, group["id"], page["id"], title="Earlier", starts_at="2026-09-20T18:00:00Z"
+        client, admin_headers, group["id"], title="Earlier", starts_at="2026-09-20T18:00:00Z"
     ).json()
 
-    listing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
-    ).json()
+    listing = client.get("/groups/" + group["id"] + "/carpool/events", headers=admin_headers).json()
     assert [e["is_standing"] for e in listing] == [True, False, False]
     assert [e["id"] for e in listing[1:]] == [earlier["id"], later["id"]]
 
@@ -793,9 +732,8 @@ def test_listing_orders_standing_first_then_dated_by_starts_at(client):
 def test_standing_event_cannot_be_archived(client):
     admin_headers = _register_and_login(client, "cp-st-admin5@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()[0]
 
     rejected = client.patch(
@@ -813,9 +751,8 @@ def test_member_cannot_edit_standing_event(client):
     member_headers = _register_and_login(client, "cp-st-member1@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-st-member1@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=member_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=member_headers
     ).json()[0]
 
     forbidden = client.patch(
@@ -827,9 +764,8 @@ def test_member_cannot_edit_standing_event(client):
 def test_standing_event_can_be_locked_and_reopened(client):
     admin_headers = _register_and_login(client, "cp-st-admin6@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()[0]
 
     locked = client.patch(
@@ -848,9 +784,8 @@ def test_standing_event_can_be_locked_and_reopened(client):
 def test_standing_event_title_and_destination_are_editable(client):
     admin_headers = _register_and_login(client, "cp-st-admin7@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()[0]
 
     edited = client.patch(
@@ -866,9 +801,8 @@ def test_standing_event_title_and_destination_are_editable(client):
 def test_standing_event_rejects_starts_at_patch(client):
     admin_headers = _register_and_login(client, "cp-st-admin8@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()[0]
 
     rejected = client.patch(
@@ -882,9 +816,8 @@ def test_standing_event_rejects_starts_at_patch(client):
 def test_standing_event_can_still_accept_posts(client):
     admin_headers = _register_and_login(client, "cp-st-admin9@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
     standing = client.get(
-        "/groups/" + group["id"] + "/pages/" + page["id"] + "/carpool/events", headers=admin_headers
+        "/groups/" + group["id"] + "/carpool/events", headers=admin_headers
     ).json()[0]
 
     post = client.post(
@@ -901,18 +834,17 @@ def _setup_driver_post(client, admin_email_prefix, seats_total=2):
     driver_headers = _register_and_login(client, admin_email_prefix + "-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], admin_email_prefix + "-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     driver_post = client.post(
         "/carpool/events/" + event["id"] + "/posts",
         json=_driver_post(seats_total=seats_total),
         headers=driver_headers,
     ).json()
-    return admin_headers, driver_headers, group, page, event, driver_post
+    return admin_headers, driver_headers, group, event, driver_post
 
 
 def test_member_can_claim_a_seat(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl1")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl1")
     rider_headers = _register_and_login(client, "cp-cl1-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl1-rider@example.com")
 
@@ -929,7 +861,7 @@ def test_member_can_claim_a_seat(client):
 
 
 def test_double_claim_rejected(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl2")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl2")
     rider_headers = _register_and_login(client, "cp-cl2-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl2-rider@example.com")
 
@@ -940,7 +872,7 @@ def test_double_claim_rejected(client):
 
 
 def test_driver_cannot_claim_own_post(client):
-    _admin_headers, driver_headers, _group, _page, _event, driver_post = _setup_driver_post(client, "cp-cl11")
+    _admin_headers, driver_headers, _group, _event, driver_post = _setup_driver_post(client, "cp-cl11")
 
     rejected = client.post(
         "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=driver_headers
@@ -949,7 +881,7 @@ def test_driver_cannot_claim_own_post(client):
 
 
 def test_claiming_a_full_post_rejected(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(
         client, "cp-cl3", seats_total=1
     )
     rider1 = _register_and_login(client, "cp-cl3-rider1@example.com")
@@ -968,8 +900,7 @@ def test_claiming_a_rider_post_rejected(client):
     member_headers = _register_and_login(client, "cp-cl4-member@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-cl4-member@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     rider_post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers
     ).json()
@@ -981,7 +912,7 @@ def test_claiming_a_rider_post_rejected(client):
 
 
 def test_claiming_on_locked_event_rejected_for_non_admin(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl5")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl5")
     rider_headers = _register_and_login(client, "cp-cl5-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl5-rider@example.com")
     client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
@@ -993,7 +924,7 @@ def test_claiming_on_locked_event_rejected_for_non_admin(client):
 
 
 def test_admin_can_claim_on_locked_event(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl6")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl6")
     client.patch("/carpool/events/" + event["id"], json={"status": "locked"}, headers=admin_headers)
 
     allowed = client.post(
@@ -1003,7 +934,7 @@ def test_admin_can_claim_on_locked_event(client):
 
 
 def test_claimant_can_release_own_claim(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl7")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl7")
     rider_headers = _register_and_login(client, "cp-cl7-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl7-rider@example.com")
     claim = client.post(
@@ -1023,7 +954,7 @@ def test_claimant_can_release_own_claim(client):
 
 
 def test_driver_can_release_someone_elses_claim(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl8")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl8")
     rider_headers = _register_and_login(client, "cp-cl8-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl8-rider@example.com")
     claim = client.post(
@@ -1035,7 +966,7 @@ def test_driver_can_release_someone_elses_claim(client):
 
 
 def test_admin_can_release_any_claim(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl9")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl9")
     rider_headers = _register_and_login(client, "cp-cl9-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl9-rider@example.com")
     claim = client.post(
@@ -1047,7 +978,7 @@ def test_admin_can_release_any_claim(client):
 
 
 def test_unrelated_member_cannot_release_a_claim(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-cl10")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-cl10")
     rider_headers = _register_and_login(client, "cp-cl10-rider@example.com")
     other_headers = _register_and_login(client, "cp-cl10-other@example.com")
     _add_member(client, admin_headers, group["id"], "cp-cl10-rider@example.com")
@@ -1061,7 +992,7 @@ def test_unrelated_member_cannot_release_a_claim(client):
 
 
 def test_seats_total_cannot_drop_below_active_claims(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(
         client, "cp-cl11", seats_total=2
     )
     rider_headers = _register_and_login(client, "cp-cl11-rider@example.com")
@@ -1085,8 +1016,8 @@ def test_guest_can_claim_and_release_a_seat(client):
     driver_headers = _register_and_login(client, "cp-cl12-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-cl12-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
     driver_post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_driver_post(), headers=driver_headers
     ).json()
@@ -1129,13 +1060,11 @@ def test_guest_can_claim_and_release_a_seat(client):
 def test_event_destination_coordinates_round_trip(client):
     admin_headers = _register_and_login(client, "cp-map1-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
     created = _make_event(
         client,
         admin_headers,
         group["id"],
-        page["id"],
         destination_latitude=37.774900,
         destination_longitude=-122.419400,
         destination_place_id="ChIJIQBpAG2ahYAR_6128GcTUEo",
@@ -1151,10 +1080,9 @@ def test_event_destination_coordinates_round_trip(client):
 def test_event_destination_coordinate_out_of_range_rejected(client):
     admin_headers = _register_and_login(client, "cp-map2-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
     rejected = _make_event(
-        client, admin_headers, group["id"], page["id"], destination_latitude=95.0, destination_longitude=0.0
+        client, admin_headers, group["id"], destination_latitude=95.0, destination_longitude=0.0
     )
     assert rejected.status_code == 422
 
@@ -1162,17 +1090,15 @@ def test_event_destination_coordinate_out_of_range_rejected(client):
 def test_event_destination_coordinate_half_set_rejected(client):
     admin_headers = _register_and_login(client, "cp-map3-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
 
-    rejected = _make_event(client, admin_headers, group["id"], page["id"], destination_latitude=37.7)
+    rejected = _make_event(client, admin_headers, group["id"], destination_latitude=37.7)
     assert rejected.status_code == 422
 
 
 def test_event_destination_coordinates_patchable(client):
     admin_headers = _register_and_login(client, "cp-map4-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     patched = client.patch(
         "/carpool/events/" + event["id"],
@@ -1190,8 +1116,7 @@ def test_post_origin_approximate_is_the_default_and_rounds_server_side(client):
     driver_headers = _register_and_login(client, "cp-map5-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map5-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     # A client claims nothing about precision at all; the server still
     # rounds, and reports `approximate` back, not whatever exact value was
@@ -1215,8 +1140,7 @@ def test_post_origin_approximate_rounds_even_if_client_claims_it_already_did(cli
     driver_headers = _register_and_login(client, "cp-map6-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map6-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     created = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1238,8 +1162,7 @@ def test_post_origin_exact_precision_is_not_rounded(client):
     driver_headers = _register_and_login(client, "cp-map7-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map7-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     created = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1262,8 +1185,7 @@ def test_post_origin_coordinate_out_of_range_rejected(client):
     driver_headers = _register_and_login(client, "cp-map8-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map8-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     rejected = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1278,8 +1200,7 @@ def test_post_origin_coordinate_half_set_rejected(client):
     driver_headers = _register_and_login(client, "cp-map9-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map9-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     rejected = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1294,8 +1215,7 @@ def test_post_origin_coordinates_patchable_and_re_round(client):
     driver_headers = _register_and_login(client, "cp-map10-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-map10-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_driver_post(), headers=driver_headers
     ).json()
@@ -1328,8 +1248,7 @@ def test_contact_phone_round_trips_for_owner_on_driver_and_rider_posts(client):
     member_headers = _register_and_login(client, "cp-ph1-member@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ph1-member@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     driver = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1355,8 +1274,7 @@ def test_unmatched_member_never_sees_contact_phone(client):
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-ph2-owner@example.com")
     _add_member(client, admin_headers, group["id"], "cp-ph2-other@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     driver_post = client.post(
         "/carpool/events/" + event["id"] + "/posts",
         json=_driver_post(contact_phone="415-555-0100"),
@@ -1371,8 +1289,7 @@ def test_unmatched_member_never_sees_contact_phone(client):
 def test_invalid_contact_phone_format_rejected(client):
     admin_headers = _register_and_login(client, "cp-ph3-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     rejected = client.post(
         "/carpool/events/" + event["id"] + "/posts",
@@ -1383,7 +1300,7 @@ def test_invalid_contact_phone_format_rejected(client):
 
 
 def test_rider_who_claims_seat_sees_driver_contact_phone_but_others_dont(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-ph4")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-ph4")
     driver_post = client.patch(
         "/carpool/posts/" + driver_post["id"],
         json={"contact_phone": "415-555-0102"},
@@ -1406,7 +1323,7 @@ def test_rider_who_claims_seat_sees_driver_contact_phone_but_others_dont(client)
 
 
 def test_admin_always_sees_contact_phone(client):
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-ph5")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-ph5")
     client.patch(
         "/carpool/posts/" + driver_post["id"],
         json={"contact_phone": "415-555-0103"},
@@ -1423,8 +1340,7 @@ def test_rider_cannot_express_interest_in_own_post(client):
     rider_headers = _register_and_login(client, "cp-in1-rider@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-in1-rider@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     rider_post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
     ).json()
@@ -1442,8 +1358,7 @@ def test_driver_expresses_interest_sees_rider_phone_then_releases(client):
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-in2-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-in2-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     rider_post = client.post(
         "/carpool/events/" + event["id"] + "/posts",
         json=_rider_post(contact_phone="415-555-0104"),
@@ -1479,8 +1394,7 @@ def test_double_interest_rejected(client):
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-in3-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-in3-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     rider_post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
     ).json()
@@ -1502,8 +1416,7 @@ def test_interest_on_locked_event_rejected_for_non_admin(client):
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-in4-rider@example.com")
     _add_member(client, admin_headers, group["id"], "cp-in4-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"])
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    event = _make_event(client, admin_headers, group["id"]).json()
     rider_post = client.post(
         "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
     ).json()
@@ -1519,7 +1432,7 @@ def test_claiming_a_driver_post_as_interest_rejected(client):
     """The kind check on `create_interest` mirrors `create_claim`'s own
     kind check in reverse: a driver post can be claimed but not
     "interested in"."""
-    admin_headers, driver_headers, group, page, event, driver_post = _setup_driver_post(client, "cp-in5")
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-in5")
     other_headers = _register_and_login(client, "cp-in5-other@example.com")
     _add_member(client, admin_headers, group["id"], "cp-in5-other@example.com")
 
@@ -1539,8 +1452,8 @@ def test_guest_driver_phone_revealed_only_after_guest_claims_seat(client):
     driver_headers = _register_and_login(client, "cp-gph1-driver@example.com")
     group = _make_group(client, admin_headers)
     _add_member(client, admin_headers, group["id"], "cp-gph1-driver@example.com")
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
     driver_post = client.post(
         "/carpool/events/" + event["id"] + "/posts",
         json=_driver_post(contact_phone="415-555-0199"),
@@ -1573,8 +1486,8 @@ def test_guest_driver_phone_revealed_only_after_guest_claims_seat(client):
 def test_guest_rider_phone_revealed_only_after_guest_driver_expresses_interest(client):
     admin_headers = _register_and_login(client, "cp-gph2-admin@example.com")
     group = _make_group(client, admin_headers)
-    page = _make_carpool_page(client, admin_headers, group["id"], audience="everyone")
-    event = _make_event(client, admin_headers, group["id"], page["id"]).json()
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
 
     client.base_url = "https://testserver"
     client.cookies.clear()
@@ -1603,3 +1516,191 @@ def test_guest_rider_phone_revealed_only_after_guest_driver_expresses_interest(c
     assert post_unmatched["contact_phone"] is None
 
 
+# --- B31: promotion to a built-in page ------------------------------------
+
+
+def test_resolve_carpool_page_settings_no_existing_page_defaults_to_members():
+    """Unit coverage of the migration's winner-picking logic (pytest never
+    runs Alembic against its SQLite test DB, so this exercises the pure
+    function directly rather than the migration file itself). No candidate
+    rows at all -> carpool's own members-only default, matching
+    `DEFAULT_AUDIENCE`."""
+    enabled, audience, min_identity = resolve_carpool_page_settings_from_custom_pages([])
+    assert (enabled, audience, min_identity) == (True, "members", "anyone")
+
+
+def test_resolve_carpool_page_settings_prefers_published_row():
+    from datetime import datetime, timezone
+
+    candidates = [
+        ("draft", "members", "anyone", datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        ("published", "everyone", "saved", datetime(2026, 2, 1, tzinfo=timezone.utc)),
+        ("archived", "members", "anyone", datetime(2026, 3, 1, tzinfo=timezone.utc)),
+    ]
+    enabled, audience, min_identity = resolve_carpool_page_settings_from_custom_pages(candidates)
+    assert (enabled, audience, min_identity) == (True, "everyone", "saved")
+
+
+def test_resolve_carpool_page_settings_no_published_row_uses_earliest_and_disables():
+    from datetime import datetime, timezone
+
+    candidates = [
+        ("archived", "everyone", "anyone", datetime(2026, 3, 1, tzinfo=timezone.utc)),
+        ("draft", "members", "saved", datetime(2026, 1, 1, tzinfo=timezone.utc)),
+    ]
+    enabled, audience, min_identity = resolve_carpool_page_settings_from_custom_pages(candidates)
+    # The earliest-created row wins (the draft one), but disabled either way.
+    assert (enabled, audience, min_identity) == (False, "members", "saved")
+
+
+def test_old_page_scoped_carpool_url_is_gone(client):
+    admin_headers = _register_and_login(client, "cp-oldurl-admin@example.com")
+    group = _make_group(client, admin_headers)
+
+    old_shape = client.post(
+        "/groups/" + group["id"] + "/pages/some-page-id/carpool/events",
+        json={
+            "title": "Sep 16 rehearsal",
+            "starts_at": "2026-09-16T18:00:00Z",
+            "destination_label": "SFCC rehearsal hall",
+        },
+        headers=admin_headers,
+    )
+    assert old_shape.status_code in (404, 405)
+
+
+def test_new_flat_carpool_url_works(client):
+    admin_headers = _register_and_login(client, "cp-newurl-admin@example.com")
+    group = _make_group(client, admin_headers)
+
+    new_shape = _make_event(client, admin_headers, group["id"])
+    assert new_shape.status_code == 201
+
+
+# --- B32: carpool post direction (there / back / round_trip) -------------
+
+
+def test_post_direction_defaults_to_round_trip(client):
+    admin_headers = _register_and_login(client, "cp-dir1-admin@example.com")
+    group = _make_group(client, admin_headers)
+    event = _make_event(client, admin_headers, group["id"]).json()
+
+    created = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers
+    )
+    assert created.status_code == 201
+    assert created.json()["direction"] == "round_trip"
+
+
+def test_post_direction_round_trips_through_create_and_read(client):
+    admin_headers = _register_and_login(client, "cp-dir2-admin@example.com")
+    group = _make_group(client, admin_headers)
+    event = _make_event(client, admin_headers, group["id"]).json()
+
+    for direction in ("there", "back", "round_trip"):
+        created = client.post(
+            "/carpool/events/" + event["id"] + "/posts",
+            json=_rider_post(direction=direction),
+            headers=admin_headers,
+        )
+        assert created.status_code == 201
+        post_id = created.json()["id"]
+        assert created.json()["direction"] == direction
+
+        listing = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers).json()
+        post = next(p for p in listing if p["id"] == post_id)
+        assert post["direction"] == direction
+
+
+def test_post_direction_is_patchable(client):
+    admin_headers = _register_and_login(client, "cp-dir3-admin@example.com")
+    group = _make_group(client, admin_headers)
+    event = _make_event(client, admin_headers, group["id"]).json()
+    post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(direction="there"), headers=admin_headers
+    ).json()
+
+    patched = client.patch(
+        "/carpool/posts/" + post["id"], json={"direction": "back"}, headers=admin_headers
+    )
+    assert patched.status_code == 200
+    assert patched.json()["direction"] == "back"
+
+
+def test_member_post_list_direction_filter(client):
+    admin_headers = _register_and_login(client, "cp-dir4-admin@example.com")
+    group = _make_group(client, admin_headers)
+    event = _make_event(client, admin_headers, group["id"]).json()
+    there_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="A", direction="there"),
+        headers=admin_headers,
+    ).json()
+    back_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="B", direction="back"),
+        headers=admin_headers,
+    ).json()
+    round_trip_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="C", direction="round_trip"),
+        headers=admin_headers,
+    ).json()
+
+    there_view = client.get(
+        "/carpool/events/" + event["id"] + "/posts", params={"direction": "there"}, headers=admin_headers
+    ).json()
+    assert {p["id"] for p in there_view} == {there_post["id"], round_trip_post["id"]}
+
+    back_view = client.get(
+        "/carpool/events/" + event["id"] + "/posts", params={"direction": "back"}, headers=admin_headers
+    ).json()
+    assert {p["id"] for p in back_view} == {back_post["id"], round_trip_post["id"]}
+
+    unfiltered_view = client.get(
+        "/carpool/events/" + event["id"] + "/posts", headers=admin_headers
+    ).json()
+    assert {p["id"] for p in unfiltered_view} == {there_post["id"], back_post["id"], round_trip_post["id"]}
+
+
+def test_guest_post_list_direction_filter(client):
+    admin_headers = _register_and_login(client, "cp-dir5-admin@example.com")
+    group = _make_group(client, admin_headers)
+    _set_carpool_page_settings(client, admin_headers, group["id"], audience="everyone")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    there_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="A", direction="there"),
+        headers=admin_headers,
+    ).json()
+    back_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="B", direction="back"),
+        headers=admin_headers,
+    ).json()
+    round_trip_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_rider_post(origin_label="C", direction="round_trip"),
+        headers=admin_headers,
+    ).json()
+
+    there_view = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts",
+        params={"direction": "there"},
+    ).json()
+    assert {p["id"] for p in there_view} == {there_post["id"], round_trip_post["id"]}
+
+    back_view = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts",
+        params={"direction": "back"},
+    ).json()
+    assert {p["id"] for p in back_view} == {back_post["id"], round_trip_post["id"]}
+
+    unfiltered_view = client.get(
+        "/guest/" + group["join_code"] + "/carpool/events/" + event["id"] + "/posts"
+    ).json()
+    assert {p["id"] for p in unfiltered_view} == {
+        there_post["id"],
+        back_post["id"],
+        round_trip_post["id"],
+    }

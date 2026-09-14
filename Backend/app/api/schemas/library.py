@@ -240,6 +240,34 @@ class GuestAuthOut(BaseModel):
     token: str
 
 
+class GuestTabsOut(BaseModel):
+    """F31's guest tab strip needs `homework`/`weekly_notes`/
+    `responsibilities`/`carpool` visibility to render itself, but
+    `pages/[slug]/+page.server.ts` doesn't otherwise need any of that data.
+    Before this, it got the booleans as a side effect of fetching (and
+    discarding) each page's full list, separate guest calls just to learn a
+    yes/no. This is that same set of flags in one call, backed by
+    `require_guest_page_access`'s existing gate check rather than a real
+    query against Homework/WeeklyNote/ResponsibilityDate/CarpoolEvent at
+    all, so it's cheaper than the calls it replaces individually too, not
+    just fewer round trips.
+
+    B31: `custom_pages` is gone along with the generic `GroupCustomPage`
+    system it listed — carpool (its only template) is now a built-in
+    `GroupPage`, so `carpool_visible` joins the other three booleans here
+    instead."""
+
+    homework_visible: bool
+    weekly_notes_visible: bool
+    responsibilities_visible: bool
+    carpool_visible: bool
+    # The header on a guest's tab route needs the group's own name, same as
+    # every other guest tab already shows there. `group` is already loaded
+    # in `get_guest_tabs` to run its own visibility checks, so this is a
+    # free field on an existing row, not a second query.
+    group_name: str
+
+
 class TimeSignatureOut(BaseModel):
     numerator: int
     denominator: int
