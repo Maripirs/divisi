@@ -18,7 +18,31 @@ import { customPageActions } from './actions/customPages';
 // itself: the piece library (for the Tracks tab and homework's
 // `pieceTitle`), and the two admin-only management lists.
 export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
-	const { group, isAdmin, homework } = await parent();
+	const parentData = await parent();
+	// Logged-out visitor on a password-gated group's bare link: the shared
+	// `+layout.server.ts` already resolved this down to a gate card instead
+	// of the group data below, and there's nothing of this page's own left
+	// to fetch: the gate is the entire page (see `+page.svelte`). A
+	// truthiness check, not `'gate' in parentData`: the layout always
+	// returns a `gate` key (see its own comment on why), just `undefined`
+	// outside this branch.
+	//
+	// `homework`/`tracks`/`schedules`/`pageSettings` get the same empty
+	// placeholders here as the layout's own gate branch gives its fields,
+	// and for the same reason: matching this load's two branches to the
+	// same shape (never `undefined`-vs-"present") is what keeps every Tab
+	// component's own `data.homework`/`data.tracks`/etc. typed as a plain
+	// array instead of `... | undefined` everywhere, gated or not.
+	if (parentData.gate) return { gate: parentData.gate, homework: [], tracks: [], schedules: [], pageSettings: [] };
+	const { group, isAdmin, homework } = parentData;
+	if (!group) {
+		// Unreachable in practice: the layout only omits `group` in the same
+		// branch that sets `gate`, which the check above already returned on.
+		// Exists so TypeScript can narrow `group` for the rest of this load
+		// (its type is `GroupOut | undefined` purely to accommodate that
+		// gate branch) rather than because this can actually happen.
+		throw error(500, 'Group missing outside the guest gate');
+	}
 
 	try {
 		const library = await backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch);
@@ -43,6 +67,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 		const trackTitleById = new Map(tracks.map((t) => [t.piece_id, t.title]));
 
 		return {
+			gate: undefined,
 			homework: homework.map((hw) => ({
 				...hw,
 				pieceTitle: hw.piece_id ? (trackTitleById.get(hw.piece_id) ?? null) : null

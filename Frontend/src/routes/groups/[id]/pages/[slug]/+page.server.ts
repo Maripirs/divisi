@@ -25,7 +25,24 @@ import { carpoolActions } from './actions/carpool';
  * event's posts to show; it defaults to the standing event (B26/F32) via
  * `selectDefaultCarpoolEventId`, not "first by `starts_at`" as before. */
 export const load: PageServerLoad = async ({ parent, locals, fetch, params, url }) => {
-	const { isAdmin } = await parent();
+	const parentData = await parent();
+	// Logged-out visitor on a password-gated group's custom-page link: same
+	// short-circuit as the main group page's own load: the shared
+	// `+layout.server.ts` already resolved the gate, nothing here to fetch.
+	// A truthiness check, not `'gate' in parentData`: the layout always
+	// returns a `gate` key, just `undefined` outside this branch.
+	//
+	// `groupId` is always `params.id` regardless of the gate, and
+	// `events`/`selectedEventId`/`posts` get the same empty placeholders
+	// this load's normal branch would use for a non-carpool page, matching
+	// shapes between branches the same way (and for the same reason) as
+	// `+layout.server.ts`'s own gate branch does. `customPage` has no such
+	// placeholder (there's no "empty" custom page); this route's own
+	// `+page.svelte` narrows that one field explicitly instead.
+	if (parentData.gate) {
+		return { gate: parentData.gate, groupId: params.id, events: [], selectedEventId: null, posts: [] };
+	}
+	const { isAdmin } = parentData;
 
 	try {
 		const customPage = await backendJson<GroupCustomPageOut>(
@@ -56,7 +73,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, params, url 
 			}
 		}
 
-		return { groupId: params.id, isAdmin, customPage, events, selectedEventId, posts };
+		return { gate: undefined, groupId: params.id, isAdmin, customPage, events, selectedEventId, posts };
 	} catch (err) {
 		if (err instanceof BackendApiError) throw error(err.status, err.message);
 		throw err;

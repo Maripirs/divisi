@@ -157,6 +157,38 @@ def test_piece_owner_endpoint_404s_for_a_personal_or_undistributed_piece(client)
     assert client.get("/guest/pieces/does-not-exist/owner").status_code == 404
 
 
+def test_group_info_endpoint_names_the_group_and_reports_password_required(client):
+    admin_headers = _register_and_login(client, "ginfo-pw@example.com")
+    group, _piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)
+    client.put(
+        "/groups/" + group["id"] + "/guest-settings",
+        json={"guest_password": "s3cret"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/groups/{group['id']}/info")
+    assert response.status_code == 200
+    assert response.json() == {
+        "group_name": "Choir",
+        "join_code": group["join_code"],
+        "guest_password_required": True,
+    }
+
+
+def test_group_info_endpoint_reports_no_password_when_group_has_none(client):
+    admin_headers = _register_and_login(client, "ginfo-nopw@example.com")
+    group = client.post("/groups", json={"name": "Choir GInfo"}, headers=admin_headers).json()
+
+    body = client.get(f"/guest/groups/{group['id']}/info").json()
+    assert body["group_name"] == "Choir GInfo"
+    assert body["join_code"] == group["join_code"]
+    assert body["guest_password_required"] is False
+
+
+def test_group_info_endpoint_404s_for_an_unknown_group(client):
+    assert client.get("/guest/groups/does-not-exist/info").status_code == 404
+
+
 @pytest.mark.integration  # fetches a rendered stem -> runs the FluidSynth pipeline
 def test_guest_can_fetch_manifest_and_stem_for_a_distributed_piece(client):
     admin_headers = _register_and_login(client, "admin2@example.com")

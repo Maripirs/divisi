@@ -30,6 +30,7 @@ from app.api.schemas import (
     GroupCustomPageOut,
     GuestAuthIn,
     GuestAuthOut,
+    GuestGroupInfoOut,
     GuestGroupOut,
     GuestNameMatchOut,
     GuestPieceOut,
@@ -183,6 +184,42 @@ def get_guest_piece_owner(piece_id: str, db: Session = Depends(get_db)) -> Guest
         # impossibility; fail closed rather than 500 if it ever happens.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Piece not found")
     return GuestPieceOwnerOut(
+        group_name=group.name,
+        join_code=group.join_code,
+        guest_password_required=group.guest_password_hash is not None,
+    )
+
+
+# Registered before the `/{join_code}/...` routes for the same reason as
+# `get_guest_piece_owner` above: the literal `groups` first segment can
+# never collide with an 8-char join code, so a `/guest/groups/...` path is
+# never ambiguous with a `/guest/{join_code}/...` one.
+@router.get("/groups/{group_id}/info", response_model=GuestGroupInfoOut)
+def get_guest_group_info(group_id: str, db: Session = Depends(get_db)) -> GuestGroupInfoOut:
+    """Map a group's own id to its guest-entry info: its name, its join
+    code, and whether it has a guest password (`guest_password_required`).
+
+    Exists for the same reason `get_guest_piece_owner` does, one level up:
+    a group's real "member" link (`/groups/{id}` or
+    `/groups/{id}/pages/{slug}`) opened logged out has no join code at all,
+    so without this a visitor just bounces to `/login` with no idea which
+    group the link was even for. No auth of any kind, same as
+    `get_guest_piece_owner`: it has to answer before the visitor has
+    proven anything.
+
+    The Frontend uses `guest_password_required` exactly like the piece
+    version: `false` -> redirect straight into the guest view (`/join/{code}`
+    or `/join/{code}/pages/{slug}`) with the resolved join code; `true` ->
+    show a "this page belongs to {group}" gate whose password field is
+    checked against `POST /guest/{join_code}/auth`. Same accepted tradeoff
+    as the piece lookup: a group id now reveals its own name and join code
+    to any caller, the same trust level as a shared join link (group ids
+    are non-guessable UUIDs, and the join code already grants full guest
+    reads on its own)."""
+    group = db.query(Group).filter(Group.id == group_id).first()
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return GuestGroupInfoOut(
         group_name=group.name,
         join_code=group.join_code,
         guest_password_required=group.guest_password_hash is not None,

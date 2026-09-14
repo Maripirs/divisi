@@ -198,6 +198,21 @@ class GuestPieceOwnerOut(BaseModel):
     guest_password_required: bool
 
 
+class GuestGroupInfoOut(BaseModel):
+    """A group's public guest-entry info, looked up by its own id rather
+    than its join code. Exists so an unauthenticated visitor who opens a
+    member link (`/groups/{id}/...`, not a `/join/{code}` link) sees a
+    gate naming the group instead of an unexplained bounce to login: the
+    group-id counterpart to `GuestPieceOwnerOut`. Same trust tradeoff:
+    group ids are non-guessable UUIDs, and revealing name + join code here
+    is the same trust level as the join code itself, which already grants
+    full guest read access on its own."""
+
+    group_name: str
+    join_code: str
+    guest_password_required: bool
+
+
 class GuestNameMatchOut(BaseModel):
     """B21: one candidate a typed name might be — an existing *guest*
     participant already in this same group (never a real member/admin,

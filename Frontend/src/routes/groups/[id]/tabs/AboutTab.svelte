@@ -7,9 +7,17 @@
 	import { m } from '$lib/paraglide/messages';
 	import type { GroupCustomPageOut, GroupPage, PageAudience, PageMinIdentity } from '$lib/server/backendTypes';
 	import { WEEKDAY_LABELS, formatRehearsalSchedule } from '../rehearsalSchedule';
+	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
 
 	let { data, form, mode }: { data: PageData; form: ActionData; mode: 'member' | 'admin' } = $props();
+	// This tab only ever mounts from `+page.svelte`'s non-gate branch, so
+	// `data.group`/`data.user` are always genuinely defined here: see
+	// `groupTabs.ts`'s `assertUngated` doc comment for why they're typed
+	// optional/nullable in `PageData` at all. A one-time check at mount, not
+	// a reactive read of `data` (it never meaningfully changes afterward).
+	// svelte-ignore state_referenced_locally
+	assertUngated(data);
 
 	// Info/About tab: the admin's description editor.
 	let editingDescription = $state(false);
@@ -31,7 +39,12 @@
 	// elsewhere in this file for a one-shot action with no server round trip.
 	let joinLinkCopied = $state(false);
 	async function copyJoinLink() {
-		const link = `${page.url.origin}/join/${data.group.join_code}`;
+		// `data.group!`, not plain `data.group`: `assertUngated(data)` above
+		// narrows it for this file's own top-level code, but not inside a
+		// closure like this one (TS doesn't carry narrowing into a function
+		// body that might run later). See `groupTabs.ts`'s `assertUngated`
+		// doc comment.
+		const link = `${page.url.origin}/join/${data.group!.join_code}`;
 		try {
 			await navigator.clipboard.writeText(link);
 		} catch {

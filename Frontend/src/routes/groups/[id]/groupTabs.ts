@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
-import type { GroupCustomPageOut } from '$lib/server/backendTypes';
+import type { GroupCustomPageOut, GroupOut } from '$lib/server/backendTypes';
+import type { SessionUser } from '../../+layout.server';
 
 /** The six built-in tabs, in their fixed display order. `+page.svelte`
  * still switches between these with local `$state` (zero navigation); from
@@ -26,6 +27,29 @@ export interface GroupTabData {
 	membersEnabled: boolean;
 	responsibilitiesEnabled: boolean;
 	customPages: GroupCustomPageOut[];
+}
+
+/** `data.group`/`data.user` are typed `GroupOut | undefined` /
+ * `SessionUser | null` in every `PageData` under this route tree, purely to
+ * accommodate the shared `+layout.server.ts`'s guest-gate branch (a
+ * logged-out visitor on a password-gated group's member link: see that
+ * file's own comment on why its two branches have to line up field for
+ * field). Every actual consumer of `data.group`/`data.user`, every Tab
+ * component, and the two leaf `+page.svelte` files themselves, only ever
+ * renders once the caller has already checked `data.gate` and taken the
+ * non-gate branch, where both are always genuinely present. This is the one
+ * place that invariant gets asserted, so call sites can go back to treating
+ * them as the plain, always-defined values they actually are at runtime.
+ *
+ * Throws (rather than silently falling back to something wrong) if the
+ * invariant is somehow violated: that would mean a real bug in the
+ * `data.gate` branching upstream, not a normal path through this code. */
+export function assertUngated<T extends { group?: GroupOut; user?: SessionUser | null }>(
+	data: T
+): asserts data is T & { group: GroupOut; user: SessionUser } {
+	if (!data.group || !data.user) {
+		throw new Error('Group page data missing outside the guest gate, should be unreachable.');
+	}
 }
 
 /** F31: the ordered, filtered, labeled tab list shared by the main group

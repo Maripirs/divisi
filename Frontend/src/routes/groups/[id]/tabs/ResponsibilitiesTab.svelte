@@ -16,9 +16,17 @@
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
 	import { formatRehearsalSchedule, nextRehearsalDatetimeLocal } from '../rehearsalSchedule';
+	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
 
 	let { data, form, mode }: { data: PageData; form: ActionData; mode: 'member' | 'admin' } = $props();
+	// This tab only ever mounts from `+page.svelte`'s non-gate branch, so
+	// `data.group`/`data.user` are always genuinely defined here: see
+	// `groupTabs.ts`'s `assertUngated` doc comment for why they're typed
+	// optional/nullable in `PageData` at all. A one-time check at mount, not
+	// a reactive read of `data` (it never meaningfully changes afterward).
+	// svelte-ignore state_referenced_locally
+	assertUngated(data);
 
 	let creatingSchedule = $state(false);
 	let addingDate = $state(false);
