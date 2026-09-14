@@ -9,6 +9,7 @@ import type {
 	GroupCustomPageOut,
 	GroupMemberOut,
 	GroupOut,
+	GroupPageSettingOut,
 	HomeworkOut,
 	ResponsibilityDateOut,
 	WeeklyNoteOut
@@ -140,7 +141,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 					weeklyNotes: [],
 					weeklyNotesEnabled: false,
 					customPages: [],
-					customPagesEnabled: false
+					customPagesEnabled: false,
+					pageSettings: []
 				};
 			}
 		}
@@ -156,7 +158,7 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homeworkResult, membersResult, responsibilitiesResult, weeklyNotesResult, customPagesResult] =
+		const [homeworkResult, membersResult, responsibilitiesResult, weeklyNotesResult, customPagesResult, pageSettings] =
 			await Promise.all([
 				fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
 				fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
@@ -178,7 +180,24 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 						fetch
 					),
 					[]
-				)
+				),
+				// The one authoritative source for a built-in page's real
+				// `enabled` setting: unlike the four `fetchPageOrDisabled`
+				// fetches above, an admin's own request to these page routes
+				// never 403s (the Backend's `require_member_page_access`
+				// always lets an admin through), so `homeworkEnabled` etc.
+				// stay `true` for an admin even when a page is actually
+				// disabled. That's fine for the admin's *real* view, but it
+				// means `groupTabs.ts`'s member-mode preview (an admin using
+				// the in-app "view as member" toggle, still the same
+				// request) can't tell a truly-enabled page from an
+				// admin-bypassed one without this. `GET .../page-settings`
+				// itself 403s for a non-admin, so only fetched here; a
+				// non-admin doesn't need it; their own `*Enabled` flags
+				// above are already accurate for them.
+				isAdmin
+					? backendJson<GroupPageSettingOut[]>(locals.token, `/groups/${group.id}/page-settings`, undefined, fetch)
+					: Promise.resolve<GroupPageSettingOut[]>([])
 			]);
 
 		return {
@@ -207,7 +226,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			weeklyNotes: weeklyNotesResult.data,
 			weeklyNotesEnabled: weeklyNotesResult.enabled,
 			customPages: customPagesResult.data,
-			customPagesEnabled: customPagesResult.enabled
+			customPagesEnabled: customPagesResult.enabled,
+			pageSettings
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) throw error(err.status, err.message);

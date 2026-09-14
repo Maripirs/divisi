@@ -1,5 +1,5 @@
 import { m } from '$lib/paraglide/messages';
-import type { GroupCustomPageOut, GroupOut } from '$lib/server/backendTypes';
+import type { GroupCustomPageOut, GroupOut, GroupPage, GroupPageSettingOut } from '$lib/server/backendTypes';
 import type { SessionUser } from '../../+layout.server';
 
 /** The six built-in tabs, in their fixed display order. `+page.svelte`
@@ -27,6 +27,29 @@ export interface GroupTabData {
 	membersEnabled: boolean;
 	responsibilitiesEnabled: boolean;
 	customPages: GroupCustomPageOut[];
+	/** B12's real, admin-set per-page `enabled` value (`GET
+	 * .../page-settings`, admin-only). Empty for a non-admin caller, whose
+	 * own `*Enabled` flags above are already accurate for them (see
+	 * `realEnabled` below). For an admin, this is the only accurate source:
+	 * their own `*Enabled` flags above always read `true` because the
+	 * Backend lets an admin's request through regardless of a page's real
+	 * setting. */
+	pageSettings: GroupPageSettingOut[];
+}
+
+/** Looks up `page`'s real, admin-set `enabled` value out of
+ * `data.pageSettings`. Falls back to `fallback` (one of the `*Enabled`
+ * flags) when no matching row exists, which is always the case for a
+ * non-admin caller (`pageSettings` is `[]` for them) — their `*Enabled`
+ * flags are already correct, so the fallback is exactly right for them. For
+ * an admin, a matching row is always present (the Backend returns all six
+ * pages) and wins over `fallback`, which is what lets `mode === 'member'`
+ * (the in-app "view as member" preview, still a real admin request under
+ * the hood) reflect the actual setting instead of the admin's own
+ * always-true bypassed fetch. */
+function realEnabled(data: GroupTabData, page: GroupPage, fallback: boolean): boolean {
+	const setting = data.pageSettings.find((s) => s.page === page);
+	return setting ? setting.enabled : fallback;
 }
 
 /** `data.group`/`data.user` are typed `GroupOut | undefined` /
@@ -68,15 +91,23 @@ export function computeGroupTabs(data: GroupTabData, mode: 'member' | 'admin'): 
 	const builtins: { key: BuiltinTabKey; visible: boolean; label: string }[] = [
 		{
 			key: 'primary',
-			visible: mode === 'admin' || data.homeworkEnabled,
+			visible: mode === 'admin' || realEnabled(data, 'homework', data.homeworkEnabled),
 			label: mode === 'admin' ? m.groups_assignments() : m.homework_tab_title()
 		},
 		{ key: 'tracks', visible: true, label: mode === 'admin' ? m.groups_tracks() : m.tracks_tab_title() },
-		{ key: 'weeklyNotes', visible: mode === 'admin' || data.weeklyNotesEnabled, label: m.weekly_notes_tab_title() },
-		{ key: 'members', visible: mode === 'admin' || data.membersEnabled, label: m.groups_members_tab_title() },
+		{
+			key: 'weeklyNotes',
+			visible: mode === 'admin' || realEnabled(data, 'weekly_notes', data.weeklyNotesEnabled),
+			label: m.weekly_notes_tab_title()
+		},
+		{
+			key: 'members',
+			visible: mode === 'admin' || realEnabled(data, 'members', data.membersEnabled),
+			label: m.groups_members_tab_title()
+		},
 		{
 			key: 'responsibilities',
-			visible: mode === 'admin' || data.responsibilitiesEnabled,
+			visible: mode === 'admin' || realEnabled(data, 'responsibilities', data.responsibilitiesEnabled),
 			label: m.responsibilities_tab_title()
 		}
 	];

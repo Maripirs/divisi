@@ -24,7 +24,8 @@ const allEnabled: GroupTabData = {
 	weeklyNotesEnabled: true,
 	membersEnabled: true,
 	responsibilitiesEnabled: true,
-	customPages: []
+	customPages: [],
+	pageSettings: []
 };
 
 describe('computeGroupTabs', () => {
@@ -40,10 +41,32 @@ describe('computeGroupTabs', () => {
 
 	it('admin mode shows every built-in tab regardless of the member flags', () => {
 		const tabs = computeGroupTabs(
-			{ homeworkEnabled: false, weeklyNotesEnabled: false, membersEnabled: false, responsibilitiesEnabled: false, customPages: [] },
+			{
+				homeworkEnabled: false,
+				weeklyNotesEnabled: false,
+				membersEnabled: false,
+				responsibilitiesEnabled: false,
+				customPages: [],
+				pageSettings: []
+			},
 			'admin'
 		);
 		expect(tabs.map((t) => t.key)).toEqual(['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'about']);
+	});
+
+	it("member-mode preview reflects pageSettings' real enabled value, not the admin-bypassed *Enabled flags", () => {
+		// B12 fix: an admin's own `homeworkEnabled` etc. are always `true`
+		// (the Backend lets an admin's request through regardless), so the
+		// "view as member" preview must consult the real `page-settings` row
+		// instead when one is present.
+		const tabs = computeGroupTabs(
+			{
+				...allEnabled,
+				pageSettings: [{ page: 'homework', enabled: false, audience: 'members', min_identity: 'anyone' }]
+			},
+			'member'
+		);
+		expect(tabs.map((t) => t.key)).toEqual(['tracks', 'weeklyNotes', 'members', 'responsibilities', 'about']);
 	});
 
 	it('places one entry per published custom page between Responsibilities and Info for a member', () => {

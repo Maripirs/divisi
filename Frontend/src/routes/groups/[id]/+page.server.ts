@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
-import type { GroupPageSettingOut, LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
+import type { LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
 import { groupActions } from './actions/group';
 import { memberActions } from './actions/members';
@@ -11,12 +11,16 @@ import { responsibilityActions } from './actions/responsibilities';
 import { customPageActions } from './actions/customPages';
 
 // F31: the group/role lookup, the four built-in pages' lists (+ their
-// enabled flags), and the custom pages list all moved up to
-// `./+layout.server.ts` — shared with `pages/[slug]/+page.server.ts`, which
-// needs the same data to render the same tab strip. `parent()` hands all of
-// that back here; this load only adds what's specific to the main page
-// itself: the piece library (for the Tracks tab and homework's
-// `pieceTitle`), and the two admin-only management lists.
+// enabled flags), the custom pages list, and (B12 fix) the admin-only real
+// `page-settings` list all moved up to `./+layout.server.ts` — shared with
+// `pages/[slug]/+page.server.ts`, which needs the same data to render the
+// same tab strip (`page-settings` specifically is what lets the tab strip's
+// admin "view as member" preview reflect a page's real enabled setting
+// instead of the admin's own always-passing fetch, see `groupTabs.ts`).
+// `parent()` hands all of that back here; this load only adds what's
+// specific to the main page itself: the piece library (for the Tracks tab
+// and homework's `pieceTitle`), and the one remaining admin-only management
+// list (responsibility schedules).
 export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	const parentData = await parent();
 	// Logged-out visitor on a password-gated group's bare link: the shared
@@ -34,7 +38,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	// component's own `data.homework`/`data.tracks`/etc. typed as a plain
 	// array instead of `... | undefined` everywhere, gated or not.
 	if (parentData.gate) return { gate: parentData.gate, homework: [], tracks: [], schedules: [], pageSettings: [] };
-	const { group, isAdmin, homework } = parentData;
+	const { group, isAdmin, homework, pageSettings } = parentData;
 	if (!group) {
 		// Unreachable in practice: the layout only omits `group` in the same
 		// branch that sets `gate`, which the check above already returned on.
@@ -47,20 +51,18 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	try {
 		const library = await backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch);
 
-		// Admin-only management data — these two endpoints 403 for a
-		// non-admin, so only fetched when the caller actually is one.
+		// Admin-only management data — this endpoint 403s for a non-admin, so
+		// only fetched when the caller actually is one. (`page-settings` used
+		// to be fetched here too; it moved up to `./+layout.server.ts`, which
+		// `pageSettings` above is now sourced from.)
 		let schedules: ResponsibilityScheduleOut[] = [];
-		let pageSettings: GroupPageSettingOut[] = [];
 		if (isAdmin) {
-			[schedules, pageSettings] = await Promise.all([
-				backendJson<ResponsibilityScheduleOut[]>(
-					locals.token,
-					`/groups/${group.id}/responsibilities/schedules`,
-					undefined,
-					fetch
-				),
-				backendJson<GroupPageSettingOut[]>(locals.token, `/groups/${group.id}/page-settings`, undefined, fetch)
-			]);
+			schedules = await backendJson<ResponsibilityScheduleOut[]>(
+				locals.token,
+				`/groups/${group.id}/responsibilities/schedules`,
+				undefined,
+				fetch
+			);
 		}
 
 		const tracks = library.filter((entry) => entry.owner_type === 'group' && entry.owner_id === group.id);
