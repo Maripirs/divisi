@@ -1,3 +1,14 @@
+> **Superseded (2026-09-14):** this doc predates the discovery that Carpool
+> already shipped (`Backend/plan.md` B23-B30, `Frontend/plan.md` F27-F35),
+> built on a generic Custom Group Pages system this doc also proposed from
+> scratch. The actual next steps (dropping that generic layer, promoting
+> Carpool to a built-in tab, and the "on the way there / back" direction
+> layer this doc's edit added) are now tracked as real milestones: see
+> `Backend/plan.md`'s B31/B32 and `Frontend/plan.md`'s F36/F37/F38. Kept
+> below for its privacy-model and Google Maps research, which is still
+> accurate; ignore the Data Model / Backend API / Milestones sections, they
+> describe a system that isn't being built this way.
+
 # Divisi Plan: Custom Group Pages + Carpool Map
 
 Prepared for Divisi as a product/backend/frontend plan. This is a planning artifact only; it does not change the project.
@@ -79,6 +90,8 @@ Carpool to Wednesday Rehearsal
 
 [Sep 16 rehearsal] [Sep 23 rehearsal] [Concert call]
 
+[On the way there] [On the way back]
+
 I can drive                         Map
 Name      From        Seats Notes   pins for drivers/riders
 Maripi    Mission     3     leaving 6:15
@@ -91,6 +104,11 @@ Priya     Oakland     can meet at BART
 
 [I can drive] [I need a ride]
 ```
+
+A post can be marked "there," "back," or "round trip." Round-trip posts appear in both
+tabs; one-way posts appear only in the leg they cover. This matters most for evening
+rehearsals and concerts, where someone might drive over but catch a ride home, or the
+reverse.
 
 ## Google Maps Recommendation
 
@@ -215,6 +233,7 @@ CarpoolEvent
   page_id
   title
   starts_at
+  return_starts_at   nullable, for a distinct return-leg time (e.g. concert call vs end)
   destination_label
   destination_lat
   destination_lng
@@ -231,6 +250,7 @@ CarpoolPost
   user_id
   display_name
   kind: driver | rider
+  direction: there | back | round_trip
   status: open | matched | hidden | cancelled
   origin_label
   origin_lat
@@ -239,13 +259,16 @@ CarpoolPost
   seats_total
   seats_available
   leave_time_text
-  return_trip: yes | no | maybe
   route_points_json
   contact_note
   notes
   created_at
   updated_at
 ```
+
+`direction` replaces a plain `return_trip` yes/no/maybe flag. A round-trip post is one
+row shown in both the "there" and "back" lists, so drivers and riders don't have to
+double-post to cover both legs.
 
 Optional later:
 
@@ -417,17 +440,18 @@ Post form:
 ```text
 I can drive
   Name
+  Direction: There / Back / Round trip
   From
   Approximate pin
   Seats
   Leaving around
-  Can return
   Contact / notes
 ```
 
 ```text
 I need a ride
   Name
+  Direction: There / Back / Round trip
   From
   Approximate pin
   Time flexibility
@@ -534,6 +558,7 @@ Acceptance criteria:
 - Admin can create a carpool page.
 - Admin can create carpool events.
 - Members can add driver/rider posts.
+- Members can mark a post as "there," "back," or "round trip"; round-trip posts show in both legs.
 - Members can edit/delete their own posts.
 - Admins can moderate all posts.
 - Event archives after the date or through admin action.
