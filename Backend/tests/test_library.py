@@ -1,4 +1,8 @@
 import io
+from pathlib import Path
+
+from app.core.config import get_settings
+from app.db.models import PieceVersion
 
 
 def _register_and_login(client, email, name="Name", password="hunter22"):
@@ -394,6 +398,33 @@ def test_delete_piece_non_owner_and_non_admin_forbidden(client):
 
     admin_res = client.delete(f"/library/pieces/{group_piece_id}", headers=admin_headers)
     assert admin_res.status_code == 204
+
+
+def test_delete_piece_removes_local_storage_files(client, db_session, monkeypatch):
+    # Force the local-disk branch regardless of whether this environment's
+    # `.env` carries real object-storage credentials (dev boxes may; CI
+    # doesn't) — this test is about `delete_file`'s local-disk-unlink path.
+    monkeypatch.setattr(get_settings(), "aws_access_key_id", "")
+    headers = _register_and_login(client, "deletefiles@example.com")
+    upload = _upload_file(client, headers, include_music=True, include_pdf=True)
+    piece_id = upload.json()["piece"]["id"]
+    version_id = upload.json()["version"]["id"]
+
+    # Object storage is disabled in tests, so the upload landed on local
+    # disk under `storage_dir` (see `save_file`) — confirm both files are
+    # really there before asserting the delete cleans them up.
+    db_session.rollback()
+    version = db_session.get(PieceVersion, version_id)
+    storage_dir = Path(get_settings().storage_dir)
+    music_path = storage_dir / version.file_path
+    pdf_path = storage_dir / version.pdf_file_path
+    assert music_path.is_file()
+    assert pdf_path.is_file()
+
+    res = client.delete(f"/library/pieces/{piece_id}", headers=headers)
+    assert res.status_code == 204
+    assert not music_path.is_file()
+    assert not pdf_path.is_file()
 
 
 # --- Real piece uploads: MIDI/MusicXML + PDF + reference audio ---

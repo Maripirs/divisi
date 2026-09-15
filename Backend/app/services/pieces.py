@@ -34,7 +34,7 @@ from app.db.models import (
 from app.rendering.pipeline import discard_render_cache
 from app.services.common import get_or_404
 from app.services.groups import group_role  # noqa: F401  (re-exported for existing `from app.services.pieces import group_role` call sites; home is now app/services/groups.py)
-from app.storage.files import load_file, save_file
+from app.storage.files import delete_file, load_file, save_file
 
 
 def get_piece_or_404(piece_id: str, db: Session) -> Piece:
@@ -303,13 +303,12 @@ def delete_piece(piece: Piece, db: Session) -> None:
     exception: nullable by design ("an assignment can exist before a piece
     is picked" — see `Homework`'s doc comment), so a homework entry
     survives its piece being deleted, just pointing at nothing again.
-    Storage files (`file_path`/`pdf_file_path`) are deliberately left where
-    they are, not deleted — local-disk ones get wiped on the next free-tier
-    restart anyway, and the object-storage ones become harmless orphans
-    (small, private bucket; a sweep-by-prefix cleanup pass is a Backlog
-    item). Nothing else here depends on reclaiming them immediately.
+    Storage files (`file_path`/`pdf_file_path`) are reclaimed via
+    `delete_file` for every version being removed, best-effort — see its
+    own doc comment for why a storage-cleanup failure never blocks this.
     """
-    version_ids = [v.id for v in db.query(PieceVersion.id).filter(PieceVersion.piece_id == piece.id)]
+    versions = db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).all()
+    version_ids = [v.id for v in versions]
     annotation_ids = [a.id for a in db.query(Annotation.id).filter(Annotation.piece_id == piece.id)]
 
     if annotation_ids:
@@ -322,6 +321,9 @@ def delete_piece(piece: Piece, db: Session) -> None:
         db.query(Distribution).filter(Distribution.piece_version_id.in_(version_ids)).delete(
             synchronize_session=False
         )
+    for version in versions:
+        delete_file(version.file_path)
+        delete_file(version.pdf_file_path)
     db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).delete(synchronize_session=False)
     # "Generate music from PDF" jobs tagged with this piece — their derived
     # result may already have been imported as a version (deleted just

@@ -18,6 +18,7 @@ A stored file path resolves against one of three backends:
   (tests, local dev without credentials).
 """
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +27,8 @@ from app.core.config import get_settings
 
 FIXTURES_PREFIX = "fixtures/"
 OBJECT_PREFIX = "obj/"
+
+logger = logging.getLogger("divisi.storage")
 
 
 @lru_cache
@@ -117,3 +120,34 @@ def resolve_existing_source_path(file_path: str) -> Path:
 
 def load_file(path: str) -> bytes:
     return resolve_source_path(path).read_bytes()
+
+
+def delete_file(path: str | None) -> None:
+    """Reclaim a stored file's bytes when the row that pointed at it is
+    gone (e.g. `delete_piece` on its versions' `file_path`/`pdf_file_path`).
+    No-op on `None`/empty (a slot that was never filled) and on anything
+    under `FIXTURES_PREFIX` (read-only, version-controlled, never touched).
+    Best-effort throughout: reclaiming storage is far less important than
+    whatever caller triggered the delete, so every failure here is caught
+    and logged rather than raised."""
+    if not path or path.startswith(FIXTURES_PREFIX):
+        return
+    settings = get_settings()
+    if path.startswith(OBJECT_PREFIX):
+        if settings.object_storage_enabled:
+            try:
+                _s3_client().delete_object(Bucket=settings.s3_bucket, Key=path)
+            except Exception:
+                logger.warning("Failed to delete object storage file %s", path, exc_info=True)
+        cache_path = Path(settings.storage_dir) / "_object_cache" / path[len(OBJECT_PREFIX):]
+        try:
+            cache_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to remove cached copy of %s", path, exc_info=True)
+        return
+    # Legacy local-disk path (pre object-storage upload, or any write made
+    # while `object_storage_enabled` is false).
+    try:
+        (Path(settings.storage_dir) / path).unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Failed to delete local storage file %s", path, exc_info=True)
