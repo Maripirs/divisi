@@ -6,7 +6,7 @@ import { readGuestCookie } from '$lib/server/guestSession';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type {
-	GroupCustomPageOut,
+	CarpoolEventOut,
 	GroupMemberOut,
 	GroupOut,
 	GroupPageSettingOut,
@@ -30,15 +30,19 @@ async function fetchPageOrDisabled<T>(promise: Promise<T>, fallback: T): Promise
 }
 
 /** The group-id counterpart to `piece/[id]/+page.server.ts`'s bare-piece-link
- * lookup: a logged-out visitor on a real "member" link (`/groups/{id}` or
- * `/groups/{id}/pages/{slug}`, as opposed to a `/join/{code}` guest link)
- * gets a chance at the guest view instead of an unexplained bounce straight
- * to `/login`. `GET /guest/groups/{id}/info` is the unauthenticated,
- * no-argument-needed lookup (mirrors `/guest/pieces/{id}/owner`).
+ * lookup: a logged-out visitor on a real "member" link (`/groups/{id}`, as
+ * opposed to a `/join/{code}` guest link) gets a chance at the guest view
+ * instead of an unexplained bounce straight to `/login`. `GET
+ * /guest/groups/{id}/info` is the unauthenticated, no-argument-needed lookup
+ * (mirrors `/guest/pieces/{id}/owner`).
  *
- * `guestSuffix` is `''` for the bare group page or `/pages/{slug}` for a
- * custom page, with the visited URL's own `?query` already appended by the
- * caller: it becomes the matching suffix on the `/join/{code}` route tree.
+ * `guestSuffix` is always `''` now that carpool (the last `GroupCustomPage`,
+ * once addressed via its own `/groups/{id}/pages/{slug}` route) became a
+ * plain built-in tab (B31/F36) — every page under `/groups/[id]` lives on
+ * the one bare route now, so there's no longer a second suffix to compute.
+ * Kept as a parameter (rather than inlined as `''` at the one call site)
+ * since it still becomes the matching suffix on the `/join/{code}` route
+ * tree, with the visited URL's own `?query` already appended by the caller.
  *
  * Same fetch-failure stance as the piece lookup: wrapped in try/catch, any
  * thrown error or non-OK response returns `null`, which the caller treats
@@ -81,31 +85,29 @@ async function resolveGroupGuestGate(
  * member. Lives here once instead of duplicated in both leaf loads.
  *
  * As a side benefit, the main page's own load (`+page.server.ts`) now pulls
- * the homework/members/responsibilities/weekly-notes lists it needs for its
- * own tab content back out of `parent()` instead of fetching them a second
- * time. A custom page's route pays for these same four fetches too (it
- * didn't before), but that's a small, fixed cost independent of how many
- * custom pages exist — unlike a custom page's own carpool content (its
- * events, then a selected event's posts), which stays on that page's own
- * route alone. Loading *that* here for every custom page on every group
- * request is exactly what B24/F28's lazy-load stance (and this milestone's
- * own design note) rules out. */
+ * the homework/members/responsibilities/weekly-notes/carpool-events lists it
+ * needs for its own tab content back out of `parent()` instead of fetching
+ * them a second time.
+ *
+ * B31/F36: carpool joined the four `fetchPageOrDisabled` fetches below as a
+ * fifth once it became a built-in `GroupPage` like the others — there's only
+ * ever one carpool page per group now (no more per-custom-page fan-out the
+ * old B24/F28 design note warned against), so loading its events list here
+ * is the same small, fixed cost as everything else in this `Promise.all`.
+ * The *selected* event's posts still stay on `+page.server.ts` alone (they
+ * depend on the `?event=` query param, which this layout has no per-tab
+ * reason to read). */
 export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, url, cookies, route }) => {
 	const { user } = await parent();
 	if (!user) {
-		// The guest gate only exists for the two routes that actually have a
-		// `/join/{code}` counterpart: the bare group page and a custom page.
-		// Anything else under this tree (e.g. `/groups/[id]/admin`) has no
-		// guest-facing equivalent to send a visitor into, so it keeps today's
-		// plain login-redirect behavior. `route.id` (not `url.pathname`) is
-		// what decides that: this app is localized and a pathname can carry a
+		// The guest gate only exists for the one route that actually has a
+		// `/join/{code}` counterpart: the bare group page. Anything else
+		// under this tree (e.g. `/groups/[id]/admin`) has no guest-facing
+		// equivalent to send a visitor into, so it keeps today's plain
+		// login-redirect behavior. `route.id` (not `url.pathname`) is what
+		// decides that: this app is localized and a pathname can carry a
 		// locale prefix (`/es/...`) that `route.id` never does.
-		const guestSuffix =
-			route.id === '/groups/[id]'
-				? ''
-				: route.id === '/groups/[id]/pages/[slug]'
-					? `/pages/${(params as { slug?: string }).slug}`
-					: null;
+		const guestSuffix = route.id === '/groups/[id]' ? '' : null;
 		if (guestSuffix !== null) {
 			const gate = await resolveGroupGuestGate(params.id, guestSuffix + url.search, cookies, fetch);
 			if (gate) {
@@ -140,8 +142,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 					responsibilitiesEnabled: false,
 					weeklyNotes: [],
 					weeklyNotesEnabled: false,
-					customPages: [],
-					customPagesEnabled: false,
+					carpoolEvents: [],
+					carpoolEnabled: false,
 					pageSettings: []
 				};
 			}
@@ -158,7 +160,7 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homeworkResult, membersResult, responsibilitiesResult, weeklyNotesResult, customPagesResult, pageSettings] =
+		const [homeworkResult, membersResult, responsibilitiesResult, weeklyNotesResult, carpoolEventsResult, pageSettings] =
 			await Promise.all([
 				fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
 				fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
@@ -167,18 +169,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 					[]
 				),
 				fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
-				// B23 fast-follow: `GET .../custom-pages` is the admin
-				// *management* list (every status), so an admin gets that;
-				// a member gets the published-only `.../pages` list instead
-				// of 403ing into the empty fallback the other pages above
-				// use for a disabled page.
 				fetchPageOrDisabled(
-					backendJson<GroupCustomPageOut[]>(
-						locals.token,
-						isAdmin ? `/groups/${group.id}/custom-pages` : `/groups/${group.id}/pages`,
-						undefined,
-						fetch
-					),
+					backendJson<CarpoolEventOut[]>(locals.token, `/groups/${group.id}/carpool/events`, undefined, fetch),
 					[]
 				),
 				// The one authoritative source for a built-in page's real
@@ -225,8 +217,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			responsibilitiesEnabled: responsibilitiesResult.enabled,
 			weeklyNotes: weeklyNotesResult.data,
 			weeklyNotesEnabled: weeklyNotesResult.enabled,
-			customPages: customPagesResult.data,
-			customPagesEnabled: customPagesResult.enabled,
+			carpoolEvents: carpoolEventsResult.data,
+			carpoolEnabled: carpoolEventsResult.enabled,
 			pageSettings
 		};
 	} catch (err) {

@@ -131,6 +131,21 @@ export function destinationCoordinatesPayload(input: DestinationCoordinatesInput
 	return payload;
 }
 
+/** B32/F37: the two directions the board's toggle actually switches between
+ * (there's no "show round trip only" view — a round-trip post always shows
+ * under both, same as the Backend's own `direction` query-param filter). */
+export type CarpoolDirectionFilter = 'there' | 'back';
+
+/** Whether `postDirection` belongs on the `filter` leg of the board: an
+ * exact match, or a `round_trip` post, which always shows under both legs.
+ * Mirrors the Backend's `list_posts` filter (`CarpoolPost.direction.in_([direction,
+ * round_trip])`) so the client-side toggle (filtering the already-fetched
+ * `posts` array, no extra round trip) agrees with what `?direction=` would
+ * return server-side. */
+export function postMatchesDirection(postDirection: string, filter: CarpoolDirectionFilter): boolean {
+	return postDirection === filter || postDirection === 'round_trip';
+}
+
 /** B26/F32: which event a load should show when the caller didn't pick one
  * via `?event=`. A requested id that matches a real event always wins;
  * otherwise the standing event wins over "first by `starts_at`", which

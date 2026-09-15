@@ -5,6 +5,7 @@ import {
 	eventFieldsMissing,
 	formatContactPhone,
 	originCoordinatesPayload,
+	postMatchesDirection,
 	riderRequestError,
 	selectDefaultCarpoolEventId
 } from './carpool';
@@ -145,6 +146,23 @@ describe('originCoordinatesPayload', () => {
 		expect(
 			originCoordinatesPayload({ latitude: '37.7', longitude: '-122.4', placeId: 'abc123' }).origin_place_id
 		).toBe('abc123');
+	});
+});
+
+describe('postMatchesDirection', () => {
+	it('matches a post whose direction exactly equals the filter', () => {
+		expect(postMatchesDirection('there', 'there')).toBe(true);
+		expect(postMatchesDirection('back', 'back')).toBe(true);
+	});
+
+	it('rejects a post whose direction is the other leg', () => {
+		expect(postMatchesDirection('there', 'back')).toBe(false);
+		expect(postMatchesDirection('back', 'there')).toBe(false);
+	});
+
+	it('always matches a round-trip post, on either leg', () => {
+		expect(postMatchesDirection('round_trip', 'there')).toBe(true);
+		expect(postMatchesDirection('round_trip', 'back')).toBe(true);
 	});
 });
 

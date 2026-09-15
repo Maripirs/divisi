@@ -10,30 +10,32 @@ import {
 } from '$lib/utils/carpool';
 import { m } from '$lib/paraglide/messages';
 import type { Actions } from '../$types';
-// Reuses the same `runAction` tail the group page's own action files share
-// (see its own doc comment) rather than a second copy of 12 identical lines.
-import { runAction } from '../../../actions/_shared';
+import { runAction } from './_shared';
 
-/** B24/F28: form actions for one carpool board (`routes/groups/[id]/pages/
- * [slug]`). Every Backend route these call requires a real bearer-
- * authenticated member (no guest carpool routes exist at all), which this
- * route already guarantees via its own `load`.
+/** B24/F28/B31/F36: form actions for the group's built-in carpool page
+ * (`routes/groups/[id]`, moved here from the old `pages/[slug]/actions/
+ * carpool.ts` once carpool stopped being a `GroupCustomPage` and became a
+ * plain `GroupPage` like every other built-in tab). Every Backend route
+ * these call requires a real bearer-authenticated member (no guest carpool
+ * write routes exist here — those live behind `join/[code]/carpool/...`'s
+ * own proxies instead).
  *
- * `pageId`/`eventId`/`postId` all travel as hidden form fields rather than
- * route params: this route's own params are only `{ id, slug }`, and the
- * carpool routes nest under the custom page's real id (`GroupCustomPage.id`,
- * not the slug) or address an event/post directly once the caller has that
- * id, same "no group/page prefix once you have an id" shape the Backend
- * router itself documents. */
+ * `eventId`/`postId` etc. still travel as hidden form fields rather than
+ * route params: this route's own params are only `{ id }` (the group), and
+ * the carpool routes address an event/post directly by id once the caller
+ * has it, same "no group prefix once you have an id" shape the Backend
+ * router itself documents. Creating an event is the one exception — it's
+ * genuinely group-scoped (`/groups/{id}/carpool/events`), so it uses
+ * `params.id` directly instead of a hidden `pageId` field the old
+ * custom-page version needed (there's no more per-page id to carry). */
 export const carpoolActions = {
 	// Admin-only, Backend-enforced (403 surfaces via `runAction`).
 	createCarpoolEvent: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
-		const pageId = String(form.get('pageId') ?? '');
 		const title = String(form.get('title') ?? '').trim();
 		const startsAt = String(form.get('startsAt') ?? '');
 		const destinationLabel = String(form.get('destinationLabel') ?? '').trim();
-		if (!pageId || eventFieldsMissing(title, startsAt, destinationLabel)) {
+		if (eventFieldsMissing(title, startsAt, destinationLabel)) {
 			return fail(400, { error: m.carpool_fill_event_fields(), form: 'createEvent' });
 		}
 
@@ -44,7 +46,7 @@ export const carpoolActions = {
 		return runAction('createEvent', () =>
 			backendFetch(
 				locals.token,
-				`/groups/${params.id}/pages/${pageId}/carpool/events`,
+				`/groups/${params.id}/carpool/events`,
 				{
 					method: 'POST',
 					body: JSON.stringify({
@@ -120,6 +122,10 @@ export const carpoolActions = {
 		const leaveTimeText = String(form.get('leaveTimeText') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
 		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		// B32/F37: There / Back / Round trip, defaulting to round trip when
+		// the form somehow omits it (matches the Backend's own
+		// `CarpoolPostCreate.direction` default).
+		const direction = String(form.get('direction') ?? 'round_trip');
 		if (!eventId) return fail(400, { error: m.carpool_missing_event(), form: 'offerRide' });
 		const invalid = driverOfferError(originLabel, Number.isNaN(seatsTotal) ? null : seatsTotal);
 		if (invalid) {
@@ -134,7 +140,7 @@ export const carpoolActions = {
 		// form's origin field (see `CarpoolBoard.svelte`'s hidden
 		// `originLatitude`/`originLongitude`/`originPlaceId`/`originPrecision`
 		// inputs), so a plain free-text submission (Maps unconfigured, or the
-		// member just typed a label) behaves exactly as it does today.
+		// member just typed a label) behaves exactly as it did before.
 		return runAction('offerRide', () =>
 			backendFetch(
 				locals.token,
@@ -143,6 +149,7 @@ export const carpoolActions = {
 					method: 'POST',
 					body: JSON.stringify({
 						kind: 'driver',
+						direction,
 						origin_label: originLabel,
 						seats_total: seatsTotal,
 						leave_time_text: leaveTimeText || null,
@@ -168,6 +175,7 @@ export const carpoolActions = {
 		const originLabel = String(form.get('originLabel') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
 		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		const direction = String(form.get('direction') ?? 'round_trip');
 		if (!eventId) return fail(400, { error: m.carpool_missing_event(), form: 'requestRide' });
 		if (riderRequestError(originLabel)) {
 			return fail(400, { error: m.carpool_enter_origin(), form: 'requestRide' });
@@ -181,6 +189,7 @@ export const carpoolActions = {
 					method: 'POST',
 					body: JSON.stringify({
 						kind: 'rider',
+						direction,
 						origin_label: originLabel,
 						notes: notes || null,
 						contact_phone: contactPhone || null,
@@ -197,8 +206,8 @@ export const carpoolActions = {
 		);
 	},
 
-	// Owner edits their own post's content (origin/seats/leave-time/notes/
-	// contact phone). Admin moderation (`status`) goes through
+	// Owner edits their own post's content (direction/origin/seats/leave-time/
+	// notes/contact phone). Admin moderation (`status`) goes through
 	// `moderateCarpoolPost` below, kept as a separate action so this form
 	// can never accidentally flip it.
 	updateCarpoolPost: async ({ request, locals, fetch }) => {
@@ -207,12 +216,14 @@ export const carpoolActions = {
 		if (!postId) return fail(400, { error: m.carpool_missing_post(), form: 'editPost' });
 
 		const body: {
+			direction?: string;
 			origin_label?: string;
 			seats_total?: number | null;
 			leave_time_text?: string | null;
 			notes?: string | null;
 			contact_phone?: string | null;
 		} = {};
+		if (form.has('direction')) body.direction = String(form.get('direction') ?? 'round_trip');
 		if (form.has('originLabel')) body.origin_label = String(form.get('originLabel') ?? '').trim();
 		if (form.has('seatsTotal')) {
 			const raw = String(form.get('seatsTotal') ?? '').trim();

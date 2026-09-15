@@ -7,6 +7,7 @@
 	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import Disclosure from '$lib/components/Disclosure.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
+	import CarpoolBoard from '$lib/components/CarpoolBoard.svelte';
 	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import { invalidateAll } from '$app/navigation';
@@ -58,14 +59,12 @@
 	});
 
 	type Tab = GuestBuiltinTabKey;
-	// F31: a custom page's own tab is a real link to `pages/[slug]`, so it
-	// carries no local state here (see `+page.svelte`'s member-side
-	// counterpart, `groups/[id]/+page.svelte`) — `Tab` only ever cycles
-	// through the four built-ins. A deep link back from that route
-	// (`?tab=homework`) restores the tab it points at; anything else
-	// (missing, stale, or not actually visible once `result` resolves)
-	// falls through to the tracks content below, the same safe default a
-	// fresh visit gets.
+	// B31/F36: every guest tab is a plain built-in now that carpool dropped
+	// its own `pages/[slug]` route (`joinTabs.ts`'s `GuestBuiltinTabKey`), so
+	// `Tab` just cycles through the five of them, no separate slug-addressed
+	// state to carry. A stale/missing `?tab=` (or one not actually visible
+	// once `result` resolves) falls through to the tracks content below, the
+	// same safe default a fresh visit gets.
 	let tab = $state<Tab>((page.url.searchParams.get('tab') as Tab | null) ?? 'tracks');
 
 	// F23: local-only responsibility self-signup. A visitor with no account
@@ -308,19 +307,15 @@
 				</section>
 			{/if}
 
-			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.customPages.length > 0}
-				<!-- F31: same shared-tab-list shape the member side uses
-				     (`groupTabs.ts`'s `computeGroupTabs`) — built-ins stay
-				     `<button>`s (zero navigation), a custom page's own tab is a
-				     real link to its route (`joinTabs.ts`). -->
-				<div class="tabs" role="tablist">
-					{#each computeGuestTabs(result) as t (t.key ?? t.slug)}
-						{@const key = t.key}
-						{#if key !== null}
-							<button class="tab" class:active={tab === key} onclick={() => (tab = key)}>{t.label}</button>
-						{:else}
-							<a class="tab" href={lh(`/join/${data.code}/pages/${t.slug}`)}>{t.label}</a>
-						{/if}
+			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.carpoolVisible}
+				<!-- F31/B31: same shared-tab-list shape the member side uses
+				     (`groupTabs.ts`'s `computeGroupTabs`) — every entry is a
+				     plain `<button>` now that carpool dropped its own
+				     `pages/[slug]` route (`joinTabs.ts`). F38: `.tab-strip`
+				     keeps this one row on mobile instead of wrapping. -->
+				<div class="tabs tab-strip" role="tablist">
+					{#each computeGuestTabs(result) as t (t.key)}
+						<button class="tab" class:active={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
 					{/each}
 				</div>
 			{/if}
@@ -479,6 +474,27 @@
 						/>
 					{/each}
 				{/if}
+			{:else if tab === 'carpool' && result.carpoolVisible}
+				<!-- B31/F36: carpool as a plain guest tab, same `CarpoolBoard`
+				     the member/admin route renders (`groups/[id]/tabs/
+				     CarpoolTab.svelte`), just fed from this page's own
+				     resolved guest data instead of a form-action `PageData`.
+				     `isAdmin={false}`/`userId=""`: a guest is never an admin,
+				     and ownership here is decided by `guest` (`isGuest`
+				     inside `CarpoolBoard`, via `carpoolOwnership.ts`), not by
+				     comparing a real user id. `form={null}`: every write goes
+				     through the `/join/[code]/carpool/...` fetch proxies
+				     `CarpoolBoard` swaps to whenever `guest` is set, never a
+				     SvelteKit form action. -->
+				<CarpoolBoard
+					isAdmin={false}
+					userId=""
+					events={result.carpoolEvents}
+					selectedEventId={result.carpoolSelectedEventId}
+					posts={result.carpoolPosts}
+					form={null}
+					guest={{ code: data.code }}
+				/>
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees
 				     pieces that actually have a practice file wired up (no dead

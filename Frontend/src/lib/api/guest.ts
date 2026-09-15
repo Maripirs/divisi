@@ -379,76 +379,19 @@ export async function listGuestPieceRehearsalNotes(
 	return body.map((n) => ({ id: n.id, body: n.body, createdAt: n.created_at }));
 }
 
-/** B23: one admin-created custom page (`carpool_board` is the only
- * `templateKey` today), reached by its slug rather than listed: there's no
- * guest "list every custom page" route, same gap the Backend's own comment
- * on the member-facing route describes: a page is reached via a link
- * someone shares, not a browse view. Guest-visible only when the page is
- * published *and* `audience: everyone`; a draft, archived, or members-only
- * page 404s here exactly like a disabled built-in page would. */
-export interface GuestCustomPage {
-	title: string;
-	templateKey: 'carpool_board';
-}
-
-interface GuestCustomPageResponse {
-	title: string;
-	template_key: 'carpool_board';
-}
-
-export async function getGuestCustomPage(
-	code: string,
-	slug: string,
-	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
-): Promise<GuestCustomPage> {
-	const res = await guestFetch(
-		guestUrl(`/guest/${encodeURIComponent(code)}/pages/${encodeURIComponent(slug)}`, { password, token }),
-		fetchFn
-	);
-	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
-
-	const body: GuestCustomPageResponse = await res.json();
-	return { title: body.title, templateKey: body.template_key };
-}
-
-/** B25: the discovery counterpart to `getGuestCustomPage` above — every
- * published, `audience: everyone` custom page, so a guest can find one
- * without a shared slug link (fed into `/join/[code]`'s own "Pages" tab).
- * Never 404s for a valid join code (an empty array just means this group
- * has no such page yet), unlike every other guest list here. */
-export interface GuestCustomPageListItem {
-	id: string;
-	title: string;
-	slug: string;
-	templateKey: 'carpool_board';
-}
-
-interface GuestCustomPageListItemResponse {
-	id: string;
-	title: string;
-	slug: string;
-	template_key: 'carpool_board';
-}
-
-export async function listGuestCustomPages(
-	code: string,
-	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
-): Promise<GuestCustomPageListItem[]> {
-	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/pages`, { password, token }), fetchFn);
-	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
-
-	const body: GuestCustomPageListItemResponse[] = await res.json();
-	return body.map((p) => ({ id: p.id, title: p.title, slug: p.slug, templateKey: p.template_key }));
-}
-
+/** B31: `/join/[code]`'s own load calls the individual list endpoints
+ * directly (it needs their real data, not just whether they're visible), so
+ * this is unused there; kept for any future caller that only needs the
+ * visibility booleans, same reasoning `getGuestTabs` documented before the
+ * generic custom-page system (and this type's `customPages` field) was
+ * dropped. */
 export interface GuestTabs {
 	homeworkVisible: boolean;
 	weeklyNotesVisible: boolean;
 	responsibilitiesVisible: boolean;
-	customPages: GuestCustomPageListItem[];
-	/** The group's own name, for a guest custom page's `AppHeader` (same
-	 * field `GuestGroup.groupName` carries on the join landing page) rather
-	 * than that one page's own title. */
+	carpoolVisible: boolean;
+	/** The group's own name, for a guest tab's `AppHeader` (same field
+	 * `GuestGroup.groupName` carries on the join landing page). */
 	groupName: string;
 }
 
@@ -456,18 +399,10 @@ interface GuestTabsResponse {
 	homework_visible: boolean;
 	weekly_notes_visible: boolean;
 	responsibilities_visible: boolean;
-	custom_pages: GuestCustomPageListItemResponse[];
+	carpool_visible: boolean;
 	group_name: string;
 }
 
-/** F31 fast-follow: `pages/[slug]/+page.server.ts` used to learn these same
- * three booleans as a side effect of calling `listGuestHomework`/
- * `listGuestWeeklyNotes`/`listGuestResponsibilityDates` and discarding the
- * result, plus a separate `listGuestCustomPages` call, four guest requests
- * just to render the tab strip. One call now, and it's the only one that
- * route needs to make beyond its own page's actual content. `/join/[code]`'s
- * own load still calls the individual list endpoints directly, since it
- * needs their real data (not just whether they're visible), not this. */
 export async function getGuestTabs(
 	code: string,
 	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
@@ -480,12 +415,7 @@ export async function getGuestTabs(
 		homeworkVisible: body.homework_visible,
 		weeklyNotesVisible: body.weekly_notes_visible,
 		responsibilitiesVisible: body.responsibilities_visible,
-		customPages: body.custom_pages.map((p) => ({
-			id: p.id,
-			title: p.title,
-			slug: p.slug,
-			templateKey: p.template_key
-		})),
+		carpoolVisible: body.carpool_visible,
 		groupName: body.group_name
 	};
 }
@@ -499,7 +429,7 @@ export async function getGuestTabs(
  * caller's data with no adapter in between. */
 export interface GuestCarpoolEvent {
 	id: string;
-	page_id: string;
+	group_id: string;
 	title: string;
 	starts_at: string | null;
 	destination_label: string | null;
@@ -543,6 +473,10 @@ export interface GuestCarpoolPost {
 	display_name: string;
 	kind: 'driver' | 'rider';
 	status: 'open' | 'hidden' | 'cancelled';
+	// B32/F37: which leg of the trip this post covers, same
+	// `CarpoolPostDirection` shape the member route's `CarpoolPostOut`
+	// carries.
+	direction: 'there' | 'back' | 'round_trip';
 	origin_label: string;
 	// B29/F35: same optional home-area pin as the member route's
 	// `CarpoolPostOut`, mirrored verbatim for the same "no adapter in
@@ -567,23 +501,16 @@ export interface GuestCarpoolPost {
 	updated_at: string;
 }
 
-/** Only reachable at all once `getGuestCustomPage` has already confirmed the
- * page is published, `audience: everyone`, and a carpool board — a 404 here
- * (wrong audience, or `getGuestCustomPage` skipped) is a real error, not an
- * "opted out" signal the way it is for homework/responsibilities/weekly
- * notes above. */
+/** B31: reached directly by join code (no more slug indirection through a
+ * `GroupCustomPage`) — a 404 here means the group's admin hasn't enabled
+ * guest visibility on the `carpool` page, the same "opted out" signal
+ * `listGuestHomework`/`listGuestResponsibilityDates`/`listGuestWeeklyNotes`
+ * already give. */
 export async function listGuestCarpoolEvents(
 	code: string,
-	slug: string,
 	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
 ): Promise<GuestCarpoolEvent[]> {
-	const res = await guestFetch(
-		guestUrl(`/guest/${encodeURIComponent(code)}/pages/${encodeURIComponent(slug)}/carpool/events`, {
-			password,
-			token
-		}),
-		fetchFn
-	);
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/carpool/events`, { password, token }), fetchFn);
 	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
 	return res.json();
 }

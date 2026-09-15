@@ -28,6 +28,9 @@ function backendPostUrl(postId: string, localId: string | null | undefined): str
 export const PATCH: RequestHandler = async ({ request, params, cookies, locals, fetch }) => {
 	let body: {
 		originLabel?: string;
+		// B32/F37: same optional direction field the member form action
+		// forwards (`actions/carpool.ts`'s `updateCarpoolPost`).
+		direction?: 'there' | 'back' | 'round_trip';
 		seatsTotal?: number | null;
 		leaveTimeText?: string | null;
 		notes?: string | null;
@@ -48,6 +51,7 @@ export const PATCH: RequestHandler = async ({ request, params, cookies, locals, 
 	// `model_fields_set` convention the Backend's own schema checks against.
 	const patchBody: Record<string, unknown> = {};
 	if (body.originLabel !== undefined) patchBody.origin_label = body.originLabel.trim();
+	if (body.direction !== undefined) patchBody.direction = body.direction;
 	if (body.seatsTotal !== undefined) patchBody.seats_total = body.seatsTotal;
 	if (body.leaveTimeText !== undefined) patchBody.leave_time_text = body.leaveTimeText || null;
 	if (body.notes !== undefined) patchBody.notes = body.notes || null;

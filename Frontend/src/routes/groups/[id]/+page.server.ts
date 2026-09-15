@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
-import type { LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
+import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
+import type { CarpoolPostOut, LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
 import { groupActions } from './actions/group';
 import { memberActions } from './actions/members';
@@ -8,20 +9,18 @@ import { trackActions } from './actions/tracks';
 import { homeworkActions } from './actions/homework';
 import { weeklyNoteActions } from './actions/weeklyNotes';
 import { responsibilityActions } from './actions/responsibilities';
-import { customPageActions } from './actions/customPages';
+import { carpoolActions } from './actions/carpool';
 
-// F31: the group/role lookup, the four built-in pages' lists (+ their
-// enabled flags), the custom pages list, and (B12 fix) the admin-only real
-// `page-settings` list all moved up to `./+layout.server.ts` — shared with
-// `pages/[slug]/+page.server.ts`, which needs the same data to render the
-// same tab strip (`page-settings` specifically is what lets the tab strip's
-// admin "view as member" preview reflect a page's real enabled setting
-// instead of the admin's own always-passing fetch, see `groupTabs.ts`).
-// `parent()` hands all of that back here; this load only adds what's
-// specific to the main page itself: the piece library (for the Tracks tab
-// and homework's `pieceTitle`), and the one remaining admin-only management
-// list (responsibility schedules).
-export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
+// F31/B31: the group/role lookup, the five built-in pages' lists (+ their
+// enabled flags, carpool's events among them), and the admin-only real
+// `page-settings` list all live in `./+layout.server.ts`. `parent()` hands
+// all of that back here; this load only adds what's specific to the main
+// page itself: the piece library (for the Tracks tab and homework's
+// `pieceTitle`), the one remaining admin-only management list
+// (responsibility schedules), and carpool's selected-event posts (the one
+// piece of carpool content that depends on this page's own `?event=` query
+// param, so it can't live in the shared layout).
+export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 	const parentData = await parent();
 	// Logged-out visitor on a password-gated group's bare link: the shared
 	// `+layout.server.ts` already resolved this down to a gate card instead
@@ -31,14 +30,25 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	// returns a `gate` key (see its own comment on why), just `undefined`
 	// outside this branch.
 	//
-	// `homework`/`tracks`/`schedules`/`pageSettings` get the same empty
-	// placeholders here as the layout's own gate branch gives its fields,
-	// and for the same reason: matching this load's two branches to the
-	// same shape (never `undefined`-vs-"present") is what keeps every Tab
-	// component's own `data.homework`/`data.tracks`/etc. typed as a plain
-	// array instead of `... | undefined` everywhere, gated or not.
-	if (parentData.gate) return { gate: parentData.gate, homework: [], tracks: [], schedules: [], pageSettings: [] };
-	const { group, isAdmin, homework, pageSettings } = parentData;
+	// `homework`/`tracks`/`schedules`/`pageSettings`/`carpoolSelectedEventId`/
+	// `carpoolPosts` get the same empty placeholders here as the layout's own
+	// gate branch gives its fields, and for the same reason: matching this
+	// load's two branches to the same shape (never `undefined`-vs-"present")
+	// is what keeps every Tab component's own `data.homework`/`data.tracks`/
+	// etc. typed as a plain array instead of `... | undefined` everywhere,
+	// gated or not.
+	if (parentData.gate) {
+		return {
+			gate: parentData.gate,
+			homework: [],
+			tracks: [],
+			schedules: [],
+			pageSettings: [],
+			carpoolSelectedEventId: null,
+			carpoolPosts: []
+		};
+	}
+	const { group, isAdmin, homework, pageSettings, carpoolEvents } = parentData;
 	if (!group) {
 		// Unreachable in practice: the layout only omits `group` in the same
 		// branch that sets `gate`, which the check above already returned on.
@@ -65,6 +75,16 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 			);
 		}
 
+		// B31/F36: carpool's events list already came down from the shared
+		// layout (`carpoolEvents`); only the selected event's posts are
+		// fetched here, same `?event=<id>` selection convention the old
+		// `pages/[slug]/+page.server.ts` used (defaulting to the standing
+		// event via `selectDefaultCarpoolEventId`, not "first by `starts_at`").
+		const carpoolSelectedEventId = selectDefaultCarpoolEventId(carpoolEvents, url.searchParams.get('event'));
+		const carpoolPosts: CarpoolPostOut[] = carpoolSelectedEventId
+			? await backendJson<CarpoolPostOut[]>(locals.token, `/carpool/events/${carpoolSelectedEventId}/posts`, undefined, fetch)
+			: [];
+
 		const tracks = library.filter((entry) => entry.owner_type === 'group' && entry.owner_id === group.id);
 		const trackTitleById = new Map(tracks.map((t) => [t.piece_id, t.title]));
 
@@ -76,7 +96,9 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 			})),
 			tracks,
 			schedules,
-			pageSettings
+			pageSettings,
+			carpoolSelectedEventId,
+			carpoolPosts
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) throw error(err.status, err.message);
@@ -84,10 +106,10 @@ export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
 	}
 };
 
-// The 30 form actions this page exposes live in `./actions/*.ts`, grouped
-// by the tab they belong to (see CLEANUP.md step 7). Each module exports
-// one `*Actions` object; they're spread-composed here into the single
-// `actions` export SvelteKit expects. Every action shares `runAction`
+// The form actions this page exposes live in `./actions/*.ts`, grouped by
+// the tab they belong to (see CLEANUP.md step 7). Each module exports one
+// `*Actions` object; they're spread-composed here into the single `actions`
+// export SvelteKit expects. Every action shares `runAction`
 // (`./actions/_shared.ts`) for its Backend-error-to-`fail` tail.
 export const actions: Actions = {
 	...groupActions,
@@ -96,5 +118,5 @@ export const actions: Actions = {
 	...homeworkActions,
 	...weeklyNoteActions,
 	...responsibilityActions,
-	...customPageActions
+	...carpoolActions
 };

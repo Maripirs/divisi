@@ -7,10 +7,17 @@ import type { PageLoad } from './$types';
 // httpOnly guest-token cookie is actually readable.
 export type { GuestJoinResult };
 
-export const load: PageLoad = ({ params, fetch }) => {
+export const load: PageLoad = ({ params, fetch, url }) => {
 	// Join codes are generated uppercase (see Backend's join_codes.py) but
 	// people typing/reading one aloud shouldn't have to get the case right.
 	const code = params.code.toUpperCase();
+	// B31/F36: carpool's event switcher (`CarpoolBoard.svelte`'s event chips)
+	// links to `?event=<id>` on this same page — forwarded to the `data`
+	// endpoint below so a clicked event actually changes which one's posts
+	// come back, same query param the member/admin main page reads directly
+	// in its own `+page.server.ts`.
+	const eventQuery = url.searchParams.get('event');
+	const dataUrl = `/join/${code}/data${eventQuery ? `?event=${encodeURIComponent(eventQuery)}` : ''}`;
 
 	// The guest data is returned as an UNAWAITED promise. The Backend runs
 	// on Render's free tier, which sleeps after inactivity and takes ~30s to
@@ -29,7 +36,7 @@ export const load: PageLoad = ({ params, fetch }) => {
 	// `load` cannot on a client-side navigation. A rejected or non-ok fetch
 	// resolves to `{ error: 'server' }`, the same shape +page.svelte's
 	// retry-card branch already handles.
-	const result: Promise<GuestJoinResult> = fetch(`/join/${code}/data`)
+	const result: Promise<GuestJoinResult> = fetch(dataUrl)
 		.then((res) => (res.ok ? (res.json() as Promise<GuestJoinResult>) : ({ error: 'server' } as const)))
 		.catch(() => ({ error: 'server' }) as const);
 

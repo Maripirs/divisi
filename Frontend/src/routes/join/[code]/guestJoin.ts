@@ -1,17 +1,20 @@
 import {
 	GuestApiError,
 	JoinCodeNotFoundError,
-	listGuestCustomPages,
+	listGuestCarpoolEvents,
+	listGuestCarpoolPosts,
 	listGuestHomework,
 	listGuestResponsibilityDates,
 	listGuestWeeklyNotes,
 	resolveJoinCode,
-	type GuestCustomPageListItem,
+	type GuestCarpoolEvent,
+	type GuestCarpoolPost,
 	type GuestGroup,
 	type GuestHomework,
 	type GuestResponsibilityDate,
 	type GuestWeeklyNote
 } from '$lib/api/guest';
+import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
 
 /** The resolved shape of the streamed guest promise. A discriminated union
  * on `error` so `./$types` infers `data.result` as a single consistent
@@ -40,7 +43,15 @@ export type GuestJoinResult =
 			responsibilitiesVisible: boolean;
 			weeklyNotes: GuestWeeklyNote[];
 			weeklyNotesVisible: boolean;
-			customPages: GuestCustomPageListItem[];
+			// B31/F36: carpool joined the other three built-in pages here once it
+			// stopped being a `GroupCustomPage` — same `...Visible` shape, plus
+			// its actual content (the events list and the selected one's posts),
+			// since there's no more separate `pages/[slug]` route to fetch those
+			// lazily on its own.
+			carpoolVisible: boolean;
+			carpoolEvents: GuestCarpoolEvent[];
+			carpoolSelectedEventId: string | null;
+			carpoolPosts: GuestCarpoolPost[];
 	  };
 
 /** Runs every guest fetch and resolves (never rejects) to a `GuestJoinResult`
@@ -53,11 +64,16 @@ export type GuestJoinResult =
  * The guest routes authorize on the join code alone now, so the token is no
  * longer required for access — it is still forwarded when present (set by
  * `POST /guest/{code}/auth`, the no-`?code=` piece-link gate) so it isn't
- * silently dropped. */
+ * silently dropped.
+ *
+ * `requestedEventId` is the guest page's own `?event=` query param (mirrors
+ * the member/admin main page's own carpool event selector), threaded down
+ * from `./data/+server.ts`. */
 export async function loadGuestJoin(
 	code: string,
 	token: string | undefined,
-	fetch: typeof globalThis.fetch
+	fetch: typeof globalThis.fetch,
+	requestedEventId: string | null = null
 ): Promise<GuestJoinResult> {
 	try {
 		const group = await resolveJoinCode(code, { token, fetchFn: fetch });
@@ -99,12 +115,27 @@ export async function loadGuestJoin(
 			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
 		}
 
-		// B25/F29: published + `audience: everyone` custom pages (carpool
-		// boards, today). Unlike the three lists above, this route has no
-		// per-group opt-in to gate on — it always answers with whatever
-		// matches, possibly empty — so there's no `...Visible` flag: an empty
-		// array already means "nothing to discover."
-		const customPages = await listGuestCustomPages(code, { token, fetchFn: fetch });
+		// B31/F36: same optional-page shape as the three lists above, now that
+		// carpool is a built-in `GroupPage` rather than a `GroupCustomPage`. A
+		// 404 here means this group hasn't opted `carpool` into guest
+		// visibility. When it has, also resolve the selected event's posts the
+		// same way the member/admin main page does (`selectDefaultCarpoolEventId`,
+		// standing event over "first by `starts_at`"), since there's no more
+		// separate `pages/[slug]` route to fetch those lazily on its own.
+		let carpoolEvents: GuestCarpoolEvent[] = [];
+		let carpoolVisible = false;
+		let carpoolSelectedEventId: string | null = null;
+		let carpoolPosts: GuestCarpoolPost[] = [];
+		try {
+			carpoolEvents = await listGuestCarpoolEvents(code, { token, fetchFn: fetch });
+			carpoolVisible = true;
+			carpoolSelectedEventId = selectDefaultCarpoolEventId(carpoolEvents, requestedEventId);
+			if (carpoolSelectedEventId) {
+				carpoolPosts = await listGuestCarpoolPosts(code, carpoolSelectedEventId, { token, fetchFn: fetch });
+			}
+		} catch (err) {
+			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
+		}
 
 		return {
 			error: null,
@@ -115,7 +146,10 @@ export async function loadGuestJoin(
 			responsibilitiesVisible,
 			weeklyNotes,
 			weeklyNotesVisible,
-			customPages
+			carpoolVisible,
+			carpoolEvents,
+			carpoolSelectedEventId,
+			carpoolPosts
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };

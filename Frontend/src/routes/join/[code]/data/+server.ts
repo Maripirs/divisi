@@ -11,11 +11,11 @@ import type { RequestHandler } from './$types';
  * `GuestJoinResult`. `+page.ts` just `fetch`es this (unawaited, so Render
  * cold-start streaming behavior is preserved) and hands the promise to the
  * component. */
-export const GET: RequestHandler = async ({ params, cookies, fetch }) => {
+export const GET: RequestHandler = async ({ params, cookies, fetch, url }) => {
 	const code = params.code.toUpperCase();
 	const token = readGuestCookie(cookies, code) ?? undefined;
 	try {
-		return json(await loadGuestJoin(code, token, fetch));
+		return json(await loadGuestJoin(code, token, fetch, url.searchParams.get('event')));
 	} catch {
 		// `loadGuestJoin` only throws for a genuinely unexpected failure (the
 		// known guest errors resolve to a string variant). Surface it as the

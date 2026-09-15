@@ -2,10 +2,9 @@
 	import { page } from '$app/state';
 	import { enhance } from '$app/forms';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
-	import EditableCard from '$lib/components/EditableCard.svelte';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
-	import type { GroupCustomPageOut, GroupPage, PageAudience, PageMinIdentity } from '$lib/server/backendTypes';
+	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
 	import { WEEKDAY_LABELS, formatRehearsalSchedule } from '../rehearsalSchedule';
 	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
@@ -67,9 +66,18 @@
 		weekly_notes: m.weekly_notes_tab_title,
 		members: m.groups_members_tab_title,
 		about: m.groups_about_tab_title,
-		responsibilities: m.responsibilities_tab_title
+		responsibilities: m.responsibilities_tab_title,
+		carpool: m.carpool_tab_title
 	};
-	const PAGE_ORDER: GroupPage[] = ['homework', 'tracks', 'weekly_notes', 'members', 'about', 'responsibilities'];
+	const PAGE_ORDER: GroupPage[] = [
+		'homework',
+		'tracks',
+		'weekly_notes',
+		'members',
+		'about',
+		'responsibilities',
+		'carpool'
+	];
 	// Real two-way local state for the page-visibility form (matching the
 	// tabs' order, not the Backend's alphabetical one) — a plain one-way
 	// `checked={...}`/`selected={...}` binding here was the actual bug
@@ -89,35 +97,6 @@
 		})
 	);
 
-	// F30: custom pages (carpool board, etc.) moved here from PagesTab so
-	// all page-visibility controls, built-in and custom, live in one place.
-	const CUSTOM_PAGE_STATUS_LABELS: Record<GroupCustomPageOut['status'], () => string> = {
-		draft: m.pages_status_draft,
-		published: m.pages_status_published,
-		archived: m.pages_status_archived
-	};
-
-	// Inline edit (title + visibility) for a custom page, same shape as the
-	// per-page edit state PagesTab used to hold. `status` isn't editable
-	// here: that's the toggle/Archive controls below, not this form.
-	let editingCustomPageId = $state<string | null>(null);
-	let editCustomTitleDraft = $state('');
-	let editCustomAudienceDraft = $state<PageAudience>('members');
-	let editCustomMinIdentityDraft = $state<PageMinIdentity>('anyone');
-	let savingCustomPageEdit = $state(false);
-
-	function startCustomPageEdit(p: GroupCustomPageOut) {
-		editCustomTitleDraft = p.title;
-		editCustomAudienceDraft = p.audience;
-		editCustomMinIdentityDraft = p.min_identity;
-		editingCustomPageId = p.id;
-	}
-
-	// Admin create-page flow. Only Carpool board exists as a template today
-	// (`GroupCustomPageTemplate` has one member), but the field is still a
-	// real `<select>` sent to the Backend rather than hardcoded, so a second
-	// template value shows up here first.
-	let creatingCustomPage = $state(false);
 </script>
 
 {#if mode === 'admin'}
@@ -321,119 +300,6 @@
 
 			<button class="btn btn-primary btn-block" type="submit" disabled={savingPageSettings}>
 				{savingPageSettings ? m.reset_password_saving() : m.groups_save_page_settings()}
-			</button>
-		</form>
-
-		<!-- Custom pages (carpool board, etc.) as siblings of the built-in
-		     rows above, same card/list, not a separate section: the only
-		     reason this isn't inside the `<form>` above is that HTML
-		     forbids nesting a `<form>` inside another `<form>`, and a
-		     custom page's toggle needs its own per-row submit (publish/
-		     unpublish), unlike the built-in rows' one shared batch save. -->
-		{#each data.customPages as p (p.id)}
-			{#if editingCustomPageId === p.id}
-				<EditableCard
-					saveAction="?/updateCustomPage"
-					deleteAction="?/deleteCustomPage"
-					idName="pageId"
-					idValue={p.id}
-					bind:saving={savingCustomPageEdit}
-					error={form?.form === 'editPage' && form?.error}
-					deleteLabel={m.pages_delete()}
-					deleteConfirmLabel={m.pages_delete_confirm()}
-					onCancel={() => (editingCustomPageId = null)}
-				>
-					{#snippet fields()}
-						<label class="field">
-							<span>{m.new_homework_title_field()}</span>
-							<input name="title" bind:value={editCustomTitleDraft} required />
-						</label>
-						<label class="field">
-							<span>{m.pages_visibility_field()}</span>
-							<select name="audience" bind:value={editCustomAudienceDraft}>
-								<option value="members">{m.groups_members_only()}</option>
-								<option value="everyone">{m.groups_everyone_guests_too()}</option>
-							</select>
-						</label>
-						<label class="field">
-							<span>{m.pages_min_identity_field()}</span>
-							<select name="minIdentity" bind:value={editCustomMinIdentityDraft}>
-								<option value="anyone">{m.pages_min_identity_anyone()}</option>
-								<option value="saved">{m.pages_min_identity_saved()}</option>
-							</select>
-						</label>
-					{/snippet}
-				</EditableCard>
-			{:else}
-				<div class="page-setting-row">
-					<!-- A custom page has three states, not the built-in rows'
-					     plain boolean, so the checkbox only maps draft<->published
-					     (via the existing publish/unpublish actions); archived is a
-					     separate, more final state reached only through the
-					     explicit Archive button below, never by re-checking this
-					     box. -->
-					<form method="POST" action={p.status === 'published' ? '?/unpublishCustomPage' : '?/publishCustomPage'} use:enhance>
-						<input type="hidden" name="pageId" value={p.id} />
-						<label class="checkline">
-							<input
-								type="checkbox"
-								checked={p.status === 'published'}
-								disabled={p.status === 'archived'}
-								onchange={(e) => (e.currentTarget as HTMLInputElement).form?.requestSubmit()}
-							/>
-							<span>{p.title}</span>
-						</label>
-					</form>
-					<span class="dim">{CUSTOM_PAGE_STATUS_LABELS[p.status]()}</span>
-				</div>
-				<div class="btn-row">
-					<button type="button" class="btn btn-outline" onclick={() => startCustomPageEdit(p)}>{m.drawer_edit()}</button>
-					{#if p.status !== 'archived'}
-						<form method="POST" action="?/archiveCustomPage" use:enhance>
-							<input type="hidden" name="pageId" value={p.id} />
-							<button type="submit" class="btn btn-outline">{m.pages_archive()}</button>
-						</form>
-					{/if}
-				</div>
-				{#if form?.form === 'pageStatus' && form?.error}
-					<p class="error">{form.error}</p>
-				{/if}
-			{/if}
-		{/each}
-	</section>
-
-	<section class="card">
-		<p class="card-eyebrow">{m.pages_create_page()}</p>
-		<form method="POST" action="?/createCustomPage" use:enhance={withSubmitting((v) => (creatingCustomPage = v))}>
-			<label class="field">
-				<span>{m.new_homework_title_field()}</span>
-				<input name="title" required />
-			</label>
-			<label class="field">
-				<span>{m.pages_template_field()}</span>
-				<select name="templateKey">
-					<option value="carpool_board">{m.pages_template_carpool_board()}</option>
-				</select>
-			</label>
-			<label class="field">
-				<span>{m.pages_visibility_field()}</span>
-				<select name="audience">
-					<option value="members">{m.groups_members_only()}</option>
-					<option value="everyone">{m.groups_everyone_guests_too()}</option>
-				</select>
-			</label>
-			<label class="field">
-				<span>{m.pages_min_identity_field()}</span>
-				<select name="minIdentity">
-					<option value="anyone">{m.pages_min_identity_anyone()}</option>
-					<option value="saved">{m.pages_min_identity_saved()}</option>
-				</select>
-			</label>
-			{#if form?.form === 'createPage' && form?.error}
-				<p class="error">{form.error}</p>
-			{/if}
-			<button class="btn btn-primary btn-block" type="submit" disabled={creatingCustomPage}>
-				{creatingCustomPage ? m.pages_creating() : m.pages_create_button()}
 			</button>
 		</form>
 	</section>

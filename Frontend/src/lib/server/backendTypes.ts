@@ -25,8 +25,10 @@ export interface GroupOut {
 }
 
 /** B12: per-(group, page) visibility, replacing the old single
- * `guest_homework_visible` flag — one row per page, always all 5. */
-export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities' | 'weekly_notes';
+ * `guest_homework_visible` flag — one row per page, always all 6 (B31 added
+ * `carpool`, promoted from the generic `GroupCustomPage` system, its one and
+ * only template, to a built-in page like every other one here). */
+export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities' | 'weekly_notes' | 'carpool';
 export type PageAudience = 'members' | 'everyone';
 /** B19: whether a shared *write* on this page requires a Saved account.
  * `anyone` (default) lets an anonymous local-only participant act;
@@ -138,39 +140,15 @@ export interface WeeklyNoteOut {
 	created_at: string;
 }
 
-/** B23: one template value for now (a second is a migration, not a schema
- * change, per the Backend's own comment on `GroupCustomPageTemplate`). */
-export type GroupCustomPageTemplate = 'carpool_board';
-export type GroupCustomPageStatus = 'draft' | 'published' | 'archived';
-
-/** B23: an admin-created page distinct from the built-in `GroupPage` enum
- * above, one dynamic row per page instead of a fixed member. `status`
- * stands in for a built-in page's `enabled` bool (`published` is the only
- * reachable state for a non-admin); `audience`/`min_identity` are the same
- * enums the built-in pages use. No content field here on purpose (see the
- * Backend schema's own comment): what a template renders comes from
- * `template_key` alone, not a stored body. */
-export interface GroupCustomPageOut {
-	id: string;
-	group_id: string;
-	title: string;
-	slug: string;
-	template_key: GroupCustomPageTemplate;
-	status: GroupCustomPageStatus;
-	audience: PageAudience;
-	min_identity: PageMinIdentity;
-	created_by: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
 export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
 
-/** B24/F28: one dated carpool occurrence on a carpool-template
- * `GroupCustomPage`.
+/** B24/F28: one dated carpool occurrence on the group's built-in carpool
+ * page. B31 promoted carpool from a carpool-template `GroupCustomPage` (the
+ * generic system's one and only template) to a built-in `GroupPage`, so this
+ * is now scoped directly to `group_id` rather than a custom page's own id.
  *
- * B26/F32: `is_standing` marks the one page-scoped, non-dated board every
- * carpool page now bootstraps on first view; `starts_at`/`destination_label`
+ * B26/F32: `is_standing` marks the one group-scoped, non-dated board every
+ * group's carpool page now bootstraps on first view; `starts_at`/`destination_label`
  * are `null` on that row and required (never `null`) on every dated one.
  *
  * B29/F35: `destination_latitude`/`destination_longitude`/`destination_place_id`
@@ -180,7 +158,7 @@ export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
  * area. Rendered by `CarpoolMap.svelte`. */
 export interface CarpoolEventOut {
 	id: string;
-	page_id: string;
+	group_id: string;
 	title: string;
 	starts_at: string | null;
 	destination_label: string | null;
@@ -196,6 +174,10 @@ export interface CarpoolEventOut {
 
 export type CarpoolPostKind = 'driver' | 'rider';
 export type CarpoolPostStatus = 'open' | 'hidden' | 'cancelled';
+/** B32: which leg of the trip a post covers. `round_trip` (the default for
+ * an old client that doesn't send one) matches either direction filter on
+ * `GET .../posts?direction=`, alongside its own exact-direction match. */
+export type CarpoolPostDirection = 'there' | 'back' | 'round_trip';
 /** B29/F35: how precisely `origin_latitude`/`origin_longitude` may be
  * trusted. `approximate` (the default whenever coordinates are sent with no
  * explicit `exact`) means the Backend has already rounded them to roughly a
@@ -259,6 +241,7 @@ export interface CarpoolPostOut {
 	display_name: string;
 	kind: CarpoolPostKind;
 	status: CarpoolPostStatus;
+	direction: CarpoolPostDirection;
 	origin_label: string;
 	origin_latitude: number | null;
 	origin_longitude: number | null;

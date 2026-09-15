@@ -7,7 +7,13 @@
 	import ConfirmButton from './ConfirmButton.svelte';
 	import CarpoolMap from './CarpoolMap.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
-	import { driverOfferError, formatContactPhone, riderRequestError } from '$lib/utils/carpool';
+	import {
+		driverOfferError,
+		formatContactPhone,
+		postMatchesDirection,
+		riderRequestError,
+		type CarpoolDirectionFilter
+	} from '$lib/utils/carpool';
 	import {
 		forgetCarpoolClaim,
 		forgetCarpoolInterest,
@@ -25,30 +31,33 @@
 	import { lh } from '$lib/i18n';
 	import type {
 		CarpoolEventOut,
+		CarpoolPostDirection,
 		CarpoolPostOut,
 		CarpoolRiderInterestOut,
 		CarpoolSeatClaimOut
 	} from '$lib/server/backendTypes';
 
-	/** B24/F28: the real content behind a carpool-template `GroupCustomPage`
-	 * (event selector, driver/rider lists, the "I can drive"/"I need a
+	/** B24/F28/B31/F36: the real content behind the group's built-in carpool
+	 * page (event selector, driver/rider lists, the "I can drive"/"I need a
 	 * ride" forms, owner edit/delete, and, for an admin, event create/edit/
 	 * lock/archive plus post moderation). Rendered directly by `routes/
-	 * groups/[id]/pages/[slug]/+page.svelte` in place of `CustomPageView`'s
-	 * placeholder once `template_key === 'carpool_board'`.
+	 * groups/[id]/tabs/CarpoolTab.svelte`, one plain tab like every other
+	 * builtin — there's no more custom-page id to carry: `createCarpoolEvent`
+	 * (`actions/carpool.ts`) reads the group id straight off that route's own
+	 * `params.id` instead of a hidden form field.
 	 *
 	 * F29/B25: the `guest` prop is what a guest render passes (`routes/
-	 * join/[code]/pages/[slug]/+page.svelte`) instead of leaving it unset.
-	 * Its presence swaps every write control's mechanics from a SvelteKit
-	 * form action (`use:enhance` against `?/offerRide` etc., resolved by
-	 * this component's own route's `+page.server.ts`) to a plain `fetch`
-	 * against the `/join/[code]/carpool/...` proxy routes, since a guest
-	 * write needs the local profile's name/`local_id` and the lazy
-	 * name-prompt/`SAVE_REQUIRED` handling those proxies (and only those)
-	 * carry — the same reason the guest join page's own responsibility
-	 * self-signup isn't a form action either. `isAdmin` is always `false`
-	 * for a guest (never true), so every admin-only block below already
-	 * stays hidden with no `guest`-specific branch needed.
+	 * join/[code]/+page.svelte`) instead of leaving it unset. Its presence
+	 * swaps every write control's mechanics from a SvelteKit form action
+	 * (`use:enhance` against `?/offerRide` etc., resolved by the group
+	 * route's own `+page.server.ts`) to a plain `fetch` against the
+	 * `/join/[code]/carpool/...` proxy routes, since a guest write needs the
+	 * local profile's name/`local_id` and the lazy name-prompt/`SAVE_REQUIRED`
+	 * handling those proxies (and only those) carry — the same reason the
+	 * guest join page's own responsibility self-signup isn't a form action
+	 * either. `isAdmin` is always `false` for a guest (never true), so every
+	 * admin-only block below already stays hidden with no `guest`-specific
+	 * branch needed.
 	 *
 	 * `form`/`ActionData` is typed loosely rather than imported from this
 	 * route's own `./$types`, so this component stays a plain, reusable
@@ -62,9 +71,14 @@
 	 * reachable) and, inside `CarpoolMap` itself, whether the selected
 	 * event/posts have a real pin to show at all (`hasAnyPin`). So this
 	 * component falls back to today's list-only layout whenever Maps isn't
-	 * usable or there's simply nothing to put a pin on. */
+	 * usable or there's simply nothing to put a pin on.
+	 *
+	 * B32/F37: `directionFilter` defaults to `'there'` — the driver/rider
+	 * lists only ever show one of the two toggle states at a time, and
+	 * "there" reads naturally as the first leg of a trip. A round-trip post
+	 * matches either state (`postMatchesDirection`, `$lib/utils/carpool.ts`),
+	 * so it's never actually hidden by this toggle. */
 	let {
-		pageId,
 		isAdmin,
 		userId,
 		userName = null,
@@ -74,7 +88,6 @@
 		form,
 		guest = null
 	}: {
-		pageId: string;
 		isAdmin: boolean;
 		userId: string;
 		/** A member's own account name, shown as "Posting as {name}" on the
@@ -100,8 +113,16 @@
 	let postingAsName = $derived(isGuest ? $localProfile.displayName : (userName ?? ''));
 
 	let selectedEvent = $derived(events.find((e) => e.id === selectedEventId) ?? null);
-	let drivers = $derived(posts.filter((p) => p.kind === 'driver'));
-	let riders = $derived(posts.filter((p) => p.kind === 'rider'));
+
+	// B32/F37: "On the way there" / "On the way back" toggle above the
+	// driver/rider lists, filtering the already-fetched `posts` array
+	// client-side (`postMatchesDirection`) rather than a second round trip —
+	// a round-trip post matches either state, so it's never hidden by this.
+	let directionFilter = $state<CarpoolDirectionFilter>('there');
+	let drivers = $derived(
+		posts.filter((p) => p.kind === 'driver' && postMatchesDirection(p.direction, directionFilter))
+	);
+	let riders = $derived(posts.filter((p) => p.kind === 'rider' && postMatchesDirection(p.direction, directionFilter)));
 	// Admin always bypasses the lock/archive gate when posting (the Backend
 	// does the same); a member can only post to a genuinely open event.
 	let canPost = $derived(isAdmin || selectedEvent?.status === 'open');
@@ -238,6 +259,10 @@
 	// Owner's own post: inline edit (content only; status is admin-only).
 	let editingPostId = $state<string | null>(null);
 	let editOriginDraft = $state('');
+	// B32/F37: There / Back / Round trip, editable the same as any other
+	// post field — shared by both the member (`EditableCard`) and guest
+	// (fetch-based) edit form variants, same as every other draft below.
+	let editDirectionDraft = $state<CarpoolPostDirection>('round_trip');
 	let editSeatsDraft = $state<number | undefined>(undefined);
 	let editLeaveDraft = $state('');
 	let editNotesDraft = $state('');
@@ -247,6 +272,7 @@
 	let savingPostEdit = $state(false);
 	function startEditPost(p: CarpoolPostOut) {
 		editOriginDraft = p.origin_label;
+		editDirectionDraft = p.direction;
 		editSeatsDraft = p.seats_total ?? undefined;
 		editLeaveDraft = p.leave_time_text ?? '';
 		editNotesDraft = p.notes ?? '';
@@ -283,11 +309,16 @@
 	let guestInterestTargetPostId = $state<string | null>(null);
 
 	let guestOfferOrigin = $state('');
+	// B32/F37: same There/Back/Round trip choice the member offer/request
+	// forms carry, defaulting to round trip like the Backend's own
+	// `CarpoolPostCreate.direction` default.
+	let guestOfferDirection = $state<CarpoolPostDirection>('round_trip');
 	let guestOfferSeats = $state<number | undefined>(undefined);
 	let guestOfferLeaveTime = $state('');
 	let guestOfferNotes = $state('');
 	let guestOfferContactPhone = $state('');
 	let guestRequestOrigin = $state('');
+	let guestRequestDirection = $state<CarpoolPostDirection>('round_trip');
 	let guestRequestNotes = $state('');
 	let guestRequestContactPhone = $state('');
 
@@ -381,6 +412,7 @@
 			eventId,
 			{
 				kind: 'driver',
+				direction: guestOfferDirection,
 				originLabel: guestOfferOrigin,
 				seatsTotal: guestOfferSeats,
 				leaveTimeText: guestOfferLeaveTime,
@@ -398,6 +430,7 @@
 			() => {
 				offeringRide = false;
 				guestOfferOrigin = '';
+				guestOfferDirection = 'round_trip';
 				guestOfferSeats = undefined;
 				guestOfferLeaveTime = '';
 				guestOfferNotes = '';
@@ -418,6 +451,7 @@
 			eventId,
 			{
 				kind: 'rider',
+				direction: guestRequestDirection,
 				originLabel: guestRequestOrigin,
 				notes: guestRequestNotes,
 				contactPhone: guestRequestContactPhone,
@@ -433,6 +467,7 @@
 			() => {
 				requestingRide = false;
 				guestRequestOrigin = '';
+				guestRequestDirection = 'round_trip';
 				guestRequestNotes = '';
 				guestRequestContactPhone = '';
 				guestRequestPlace = null;
@@ -451,6 +486,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					originLabel: editOriginDraft,
+					direction: editDirectionDraft,
 					seatsTotal: p.kind === 'driver' ? (editSeatsDraft ?? null) : undefined,
 					leaveTimeText: editLeaveDraft || null,
 					notes: editNotesDraft || null,
@@ -700,6 +736,14 @@
 						<span>{m.carpool_origin_field()}</span>
 						<input bind:value={editOriginDraft} required />
 					</label>
+					<label class="field">
+						<span>{m.carpool_direction_field()}</span>
+						<select bind:value={editDirectionDraft}>
+							<option value="round_trip">{m.carpool_direction_round_trip()}</option>
+							<option value="there">{m.carpool_direction_there()}</option>
+							<option value="back">{m.carpool_direction_back()}</option>
+						</select>
+					</label>
 					{#if p.kind === 'driver'}
 						<label class="field">
 							<span>{m.carpool_seats_field()}</span>
@@ -777,6 +821,14 @@
 						<label class="field">
 							<span>{m.carpool_origin_field()}</span>
 							<input name="originLabel" bind:value={editOriginDraft} required />
+						</label>
+						<label class="field">
+							<span>{m.carpool_direction_field()}</span>
+							<select name="direction" bind:value={editDirectionDraft}>
+								<option value="round_trip">{m.carpool_direction_round_trip()}</option>
+								<option value="there">{m.carpool_direction_there()}</option>
+								<option value="back">{m.carpool_direction_back()}</option>
+							</select>
 						</label>
 						{#if p.kind === 'driver'}
 							<label class="field">
@@ -1044,7 +1096,6 @@
 				};
 			}}
 		>
-			<input type="hidden" name="pageId" value={pageId} />
 			<label class="field">
 				<span>{m.carpool_event_title_field()}</span>
 				<input name="title" required />
@@ -1187,6 +1238,19 @@
 		{#if mapsAvailable}
 			<CarpoolMap destination={ev} {drivers} {riders} />
 		{/if}
+
+		<!-- B32/F37: same tab-strip look as the group's own built-in tabs
+		     (`.tabs`/`.tab`, `shell.css`), reused here for the direction
+		     toggle rather than a bespoke widget. -->
+		<div class="tabs" role="tablist" aria-label={m.carpool_direction_field()}>
+			<button type="button" class="tab" class:active={directionFilter === 'there'} onclick={() => (directionFilter = 'there')}>
+				{m.carpool_direction_there()}
+			</button>
+			<button type="button" class="tab" class:active={directionFilter === 'back'} onclick={() => (directionFilter = 'back')}>
+				{m.carpool_direction_back()}
+			</button>
+		</div>
+
 		{@render driversRidersSections(ev)}
 	{/if}
 {/if}
@@ -1232,6 +1296,14 @@
 									<span>{m.carpool_share_exact_location()}</span>
 								</label>
 							{/if}
+							<label class="field">
+								<span>{m.carpool_direction_field()}</span>
+								<select bind:value={guestOfferDirection}>
+									<option value="round_trip">{m.carpool_direction_round_trip()}</option>
+									<option value="there">{m.carpool_direction_there()}</option>
+									<option value="back">{m.carpool_direction_back()}</option>
+								</select>
+							</label>
 							<label class="field">
 								<span>{m.carpool_seats_field()}</span>
 								<input type="number" min="1" bind:value={guestOfferSeats} required />
@@ -1295,6 +1367,14 @@
 								</label>
 							{/if}
 							{@render originHiddenFields(offerPlace, offerExact)}
+							<label class="field">
+								<span>{m.carpool_direction_field()}</span>
+								<select name="direction">
+									<option value="round_trip" selected>{m.carpool_direction_round_trip()}</option>
+									<option value="there">{m.carpool_direction_there()}</option>
+									<option value="back">{m.carpool_direction_back()}</option>
+								</select>
+							</label>
 							<label class="field">
 								<span>{m.carpool_seats_field()}</span>
 								<input name="seatsTotal" type="number" min="1" required />
@@ -1375,6 +1455,14 @@
 								</label>
 							{/if}
 							<label class="field">
+								<span>{m.carpool_direction_field()}</span>
+								<select bind:value={guestRequestDirection}>
+									<option value="round_trip">{m.carpool_direction_round_trip()}</option>
+									<option value="there">{m.carpool_direction_there()}</option>
+									<option value="back">{m.carpool_direction_back()}</option>
+								</select>
+							</label>
+							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input bind:value={guestRequestNotes} placeholder={m.groups_optional()} />
 							</label>
@@ -1429,6 +1517,14 @@
 								</label>
 							{/if}
 							{@render originHiddenFields(requestPlace, requestExact)}
+							<label class="field">
+								<span>{m.carpool_direction_field()}</span>
+								<select name="direction">
+									<option value="round_trip" selected>{m.carpool_direction_round_trip()}</option>
+									<option value="there">{m.carpool_direction_there()}</option>
+									<option value="back">{m.carpool_direction_back()}</option>
+								</select>
+							</label>
 							<label class="field">
 								<span>{m.carpool_notes_field()}</span>
 								<input name="notes" placeholder={m.groups_optional()} />

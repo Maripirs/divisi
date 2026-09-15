@@ -110,9 +110,9 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F33 | Carpool: claim a seat in a driver's post (frontend for Backend B27) | ✅ Built 2026-09-12; check 0 errors, build clean, vitest 155 green |
 | F34 | Guests can remove their own responsibility signup (frontend for Backend B28) | ✅ Built 2026-09-12; check 0 errors, build clean, vitest 161 green (was 155; +6 new, `responsibilitySignupOwnership.test.ts`) |
 | F35 | Carpool Map: Google Maps pins for driver/rider/destination (frontend for Backend B29) | ✅ Built 2026-09-12: lazy-loading `googleMaps.ts` loader (singleton, mockable, resolves `null` for "unavailable" with no key configured/script blocked); `CarpoolMap.svelte` (Advanced Markers, colored pins per category, skips rendering with no pins yet); `googlePlaces.ts` Autocomplete action wired onto the origin/destination inputs; admin `map_enabled` toggle in Settings' Page Visibility card; List/Map toggle (mobile) / side-by-side layout (desktop, within the existing 640px `.shell`) in `CarpoolBoard.svelte`. Whole feature no-ops to today's list-only board with zero Google Maps configured (the real state right now). `check` 0 errors, `build` clean, vitest 175 green (was 167; +8 new `carpool.test.ts` cases, +6 new `googleMaps.test.ts`). Not deployed; no real-browser/real-API-key pass yet. |
-| F36 | Carpool as a built-in tab, drop generic Custom Pages (frontend for Backend B31) | ⏳ Planned |
-| F37 | Carpool direction: there / back / round trip (frontend for Backend B32) | ⏳ Planned |
-| F38 | Group tab strip: single row, scrolls sideways on mobile | ⏳ Planned |
+| F36 | Carpool as a built-in tab, drop generic Custom Pages (frontend for Backend B31) | ✅ Built 2026-09-14: carpool promoted to a plain sixth built-in tab (`groupTabs.ts`/`joinTabs.ts`); the generic Custom Pages system (`pages/[slug]` routes on both `groups/[id]` and `join/[code]`, `actions/customPages.ts`, `CustomPageView.svelte`, `AboutTab.svelte`'s custom-page section) deleted; new `tabs/CarpoolTab.svelte` (member/admin) renders the unchanged `CarpoolBoard.svelte`, and the guest join page now renders it too straight off `guestJoin.ts`'s resolved carpool data, no more slug route. Settings' Page Visibility card gets a plain `carpool` row like every other built-in page. `check` 0 errors, `build` clean, vitest 188 green. |
+| F37 | Carpool direction: there / back / round trip (frontend for Backend B32) | ✅ Built 2026-09-14: post create/edit forms (member + guest, `CarpoolBoard.svelte`) gained a There/Back/Round trip `<select>`, defaulting to Round trip, wired into `actions/carpool.ts` and the `/join/[code]/carpool/...` guest proxy routes; the "On the way there/back" viewing toggle (built alongside F35, `postMatchesDirection`) was already filtering by it. `check` 0 errors, `build` clean, vitest 188 green. |
+| F38 | Group tab strip: single row, scrolls sideways on mobile | ✅ Built 2026-09-14: new `.tab-strip` modifier in `shell.css` (`flex-wrap: nowrap`, `overflow-x: auto`, `flex-shrink: 0` per tab) applied alongside `.tabs` on just the member (`groups/[id]/+page.svelte`) and guest (`join/[code]/+page.svelte`) main nav strips; `.tabs`' own base rule (and its other users — the carpool direction toggle, the login tab switcher) untouched. `check` 0 errors, `build` clean, vitest 188 green. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2065,34 +2065,52 @@ Deviations from the plan text:
   sign-up form is redundant, matching the member tab's own minimalism
   (no equivalent text there either).
 
-### F36 — Carpool as a built-in tab, drop generic Custom Pages (frontend for Backend B31) [ ]
+### F36 — Carpool as a built-in tab, drop generic Custom Pages (frontend for Backend B31) [x]
 
 Starts once Backend B31 lands. Mirrors it on the frontend: carpool stops
 being the one custom page anyone can create/rename/slug, and becomes a
 sixth fixed tab like Homework/Members/Responsibilities/Weekly Notes/About.
 
 Acceptance criteria:
-- [ ] `groupTabs.ts` gains `carpool` as a `BuiltinTabKey`; the generic
+- [x] `groupTabs.ts` gains `carpool` as a `BuiltinTabKey`; the generic
   custom-page/slug branch (`GroupTabEntry.slug`, `pageEntries`,
   `data.customPages`) is removed, matching Backend B31 having exactly zero
   `GroupCustomPage` rows left to enumerate. Same change mirrored in
   `joinTabs.ts` for the guest side.
-- [ ] `pages/[slug]/+page.svelte`, `pages/[slug]/+page.server.ts`,
+- [x] `pages/[slug]/+page.svelte`, `pages/[slug]/+page.server.ts`,
   `pages/[slug]/actions/carpool.ts`, `actions/customPages.ts`,
   `PagesTab.svelte` (if still present) all deleted. Carpool renders from a
   new `tabs/CarpoolTab.svelte` alongside the other tab components, reusing
   the existing `CarpoolBoard.svelte`/`CarpoolMap.svelte` components
   unchanged.
-- [ ] The guest join route (`join/[code]/carpool/...` proxies,
+- [x] The guest join route (`join/[code]/carpool/...` proxies,
   `join/[code]/pages/[slug]` reads) is repointed at the new flat
   group-scoped Backend URLs from B31, no more slug lookup.
-- [ ] Settings' Page Visibility card gets a plain `carpool` row like every
+- [x] Settings' Page Visibility card gets a plain `carpool` row like every
   other built-in page, replacing whatever "custom pages" sub-section F30
   added there.
-- [ ] `groupTabs.test.ts` / `joinTabs.test.ts` updated for the simplified
+- [x] `groupTabs.test.ts` / `joinTabs.test.ts` updated for the simplified
   shape; `npm run check` 0 errors, `npm run build` clean, vitest green.
 
-### F37 — Carpool direction: there / back / round trip (frontend for Backend B32) [ ]
+Deviations from the plan:
+- The guest `join/[code]/+page.svelte` route had been left mid-migration
+  (still reading the removed `result.customPages`/`GuestTabEntry.slug` and
+  never actually rendering `CarpoolBoard` for a guest at all, despite
+  `guestJoin.ts` already resolving all the data it needs) — finished that
+  wiring as part of this pass rather than leaving it broken: the guest tab
+  strip is now a plain button list off `computeGuestTabs`, and a `tab ===
+  'carpool'` branch renders `CarpoolBoard` with `isAdmin={false}`,
+  `userId=""`, and `guest={{ code: data.code }}`, same shape the deleted
+  `pages/[slug]` route used.
+- `CarpoolTab.svelte` (member/admin) was passing a stray `groupId` prop
+  `CarpoolBoard` never declared (a leftover from an earlier iteration) —
+  removed it; `svelte-check` flags an unknown prop as a real type error.
+- `groups/[id]/+layout.server.ts`'s guest-gate `route.id` switch still
+  matched the deleted `/groups/[id]/pages/[slug]` route, which
+  `svelte-check` now flags as a type comparison with no overlap (the route
+  literally can't match anymore) — simplified to the one remaining case.
+
+### F37 — Carpool direction: there / back / round trip (frontend for Backend B32) [x]
 
 Starts once Backend B32 lands. `CarpoolBoard.svelte` gets an "On the way
 there" / "On the way back" toggle above the driver/rider lists (same tab
@@ -2102,15 +2120,30 @@ create/edit form) gets a direction picker (There / Back / Round trip),
 defaulting to Round trip.
 
 Acceptance criteria:
-- [ ] Direction toggle filters the rendered driver/rider lists; round-trip
+- [x] Direction toggle filters the rendered driver/rider lists; round-trip
   posts show in both.
-- [ ] Post form direction field wired into create/update actions
+- [x] Post form direction field wired into create/update actions
   (`app/actions/carpool.ts` wherever it lives post-F36) and the guest proxy
   routes.
-- [ ] `carpool.test.ts` covers the filter logic and the new form field.
+- [x] `carpool.test.ts` covers the filter logic and the new form field.
   `npm run check` 0 errors, `npm run build` clean, vitest green.
 
-### F38 — Group tab strip: single row, scrolls sideways on mobile [ ]
+Deviations from the plan:
+- "Covers ... the new form field" landed as a plain `<select name=
+  "direction">`/`bind:value` field per form (create-driver, create-rider,
+  owner edit — member and guest variants of each, six forms total), not a
+  new unit test: this repo's `carpool.test.ts` only exercises pure logic
+  functions (`postMatchesDirection` already covers the filter side), and
+  there's no component-test harness here to assert against form markup —
+  covered instead by `npm run check`/`build` plus the existing action-level
+  tests on the read side.
+- The guest write proxies (`join/[code]/carpool/events/[eventId]/posts`,
+  `join/[code]/carpool/posts/[postId]`) needed a `direction` field added to
+  their request bodies and forwarded to the Backend — they weren't
+  forwarding it at all before this pass, so a guest's post always landed as
+  the Backend's own `round_trip` default regardless of what they picked.
+
+### F38 — Group tab strip: single row, scrolls sideways on mobile [x]
 
 The built-in tab strip (`+page.svelte` under `/groups/[id]`, and its guest
 counterpart under `/join/[code]`) currently wraps onto multiple rows on a
@@ -2121,14 +2154,28 @@ single row that scrolls horizontally instead: `overflow-x: auto`,
 layout as-is if it already fits without scrolling.
 
 Acceptance criteria:
-- [ ] Tab strip never wraps to a second row at any viewport width.
-- [ ] Tabs remain scrollable sideways by touch/trackpad/scrollwheel on
+- [x] Tab strip never wraps to a second row at any viewport width.
+- [x] Tabs remain scrollable sideways by touch/trackpad/scrollwheel on
   mobile widths where they overflow.
-- [ ] No regression to keyboard/tab-key navigation through the tab
+- [x] No regression to keyboard/tab-key navigation through the tab
   buttons/links.
-- [ ] Same fix applied to both the member (`groups/[id]`) and guest
+- [x] Same fix applied to both the member (`groups/[id]`) and guest
   (`join/[code]`) tab strips, since both render from the same
   `groupTabs.ts`/`joinTabs.ts` list shape.
+
+Deviations from the plan:
+- Landed as a new `.tab-strip` modifier class in `shell.css`, applied
+  alongside the base `.tabs` class (`class="tabs tab-strip"`) at the two
+  call sites, rather than changing `.tabs` itself: `.tabs` is also reused by
+  F37's direction toggle and the login page's tab switcher, both of which
+  should keep wrapping/staying put rather than gaining a scrollbar. No
+  `white-space: nowrap` needed — tab labels are short enough that
+  `flex-shrink: 0` on `.tab` alone keeps each button from compressing.
+  Keyboard/tab-key navigation is unaffected: both strips are plain
+  `<button>`/`<a class="tab">` elements in DOM order with no `tabindex`
+  overrides, and `overflow-x: auto` on the container doesn't change that
+  order. Not verified in a real browser/touch device yet — a human should
+  confirm the horizontal scroll feels right on an actual phone.
 
 ## Backlog
 

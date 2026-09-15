@@ -27,6 +27,10 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ request, params, cookies, locals, fetch }) => {
 	let body: {
 		kind?: 'driver' | 'rider';
+		// B32/F37: There / Back / Round trip, same optional field the member
+		// form action forwards (`actions/carpool.ts`'s `offerRide`/
+		// `requestRide`); the Backend defaults to `round_trip` when absent.
+		direction?: 'there' | 'back' | 'round_trip';
 		originLabel?: string;
 		seatsTotal?: number;
 		leaveTimeText?: string;
@@ -61,6 +65,7 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 
 	const payload = {
 		kind,
+		direction: body.direction ?? 'round_trip',
 		origin_label: originLabel,
 		// Riders never send seat fields at all (the Backend rejects a rider
 		// payload that carries them), same "one form per kind" shape the

@@ -367,6 +367,24 @@
 	color: var(--accent);
 }
 
+/* F38: the group's own main navigation strip (`groups/[id]/+page.svelte`,
+   `join/[code]/+page.svelte`) needs single-row horizontal scroll on mobile
+   instead of `.tabs`' own wrap, since wrapping there pushes page content
+   down by a variable, layout-shifting amount as tabs are toggled on/off.
+   A modifier alongside the base `.tabs` class, not a change to `.tabs`
+   itself: other `.tabs` strips (the carpool direction toggle, the login
+   page's tab switcher) are only two items and should keep wrapping/staying
+   put rather than gaining a scrollbar. */
+.tab-strip {
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.tab-strip .tab {
+	flex-shrink: 0;
+}
+
 /* ---------- Lists ---------- */
 
 .list-row {

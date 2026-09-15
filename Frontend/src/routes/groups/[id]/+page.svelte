@@ -9,6 +9,7 @@
 	import WeeklyNotesTab from './tabs/WeeklyNotesTab.svelte';
 	import MembersTab from './tabs/MembersTab.svelte';
 	import ResponsibilitiesTab from './tabs/ResponsibilitiesTab.svelte';
+	import CarpoolTab from './tabs/CarpoolTab.svelte';
 	import AboutTab from './tabs/AboutTab.svelte';
 	import { computeGroupTabs, type BuiltinTabKey } from './groupTabs';
 	import '$lib/styles/shell.css';
@@ -18,8 +19,8 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// The six built-in tabs still switch with local `$state` (zero
-	// navigation) — a custom page is never one of these, see `groupTabs.ts`.
+	// The seven built-in tabs switch with local `$state` (zero navigation) —
+	// see `groupTabs.ts`.
 	type Tab = BuiltinTabKey;
 
 	// Admin mode is a *view* of this same group page, not a separate
@@ -43,9 +44,8 @@
 	// inside a ternary.
 	const isAdmin = data.gate ? false : data.group!.role === 'admin';
 
-	// F31: the ordered, filtered, labeled tab list — built-ins plus one
-	// entry per visible custom page — shared with `pages/[slug]/+page.svelte`
-	// so the strip renders identically on either route. See `groupTabs.ts`.
+	// F31/B31: the ordered, filtered, labeled built-in tab list. See
+	// `groupTabs.ts`.
 	let tabs = $derived(data.gate ? [] : computeGroupTabs(data, mode));
 	function builtinVisible(key: Tab): boolean {
 		return tabs.some((t) => t.key === key);
@@ -126,19 +126,12 @@
 		<RoleSwitch {mode} onSwitch={() => (mode = mode === 'admin' ? 'member' : 'admin')} />
 	{/if}
 
-	<div class="tabs" role="tablist">
-		{#each tabs as t (t.key ?? t.slug)}
-			{@const key = t.key}
-			{#if key !== null}
-				<button class="tab" class:active={tab === key} onclick={() => (tab = key)}>{t.label}</button>
-			{:else}
-				<!-- F31: a custom page is a real route, not local state — this is
-				     a plain link, carrying the current admin/member view along so
-				     landing on it (and coming back) doesn't reset that choice. -->
-				<a class="tab" href={lh(`/groups/${data.group!.id}/pages/${t.slug}${mode === 'admin' ? '?view=admin' : ''}`)}>
-					{t.label}
-				</a>
-			{/if}
+	<!-- F38: `.tab-strip` keeps this one row on mobile (horizontal scroll)
+	     instead of `.tabs`' own wrap, which pushed page content down by a
+	     variable amount as tabs toggled on/off. -->
+	<div class="tabs tab-strip" role="tablist">
+		{#each tabs as t (t.key)}
+			<button class="tab" class:active={tab === t.key} onclick={() => (tab = t.key)}>{t.label}</button>
 		{/each}
 	</div>
 
@@ -152,6 +145,8 @@
 		<MembersTab {data} {form} {mode} />
 	{:else if tab === 'responsibilities'}
 		<ResponsibilitiesTab {data} {form} {mode} />
+	{:else if tab === 'carpool'}
+		<CarpoolTab {data} {form} {mode} />
 	{:else}
 		<AboutTab {data} {form} {mode} />
 	{/if}
