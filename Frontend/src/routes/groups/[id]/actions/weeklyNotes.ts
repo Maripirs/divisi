@@ -52,5 +52,25 @@ export const weeklyNoteActions = {
 		return runAction('editWeeklyNote', () =>
 			backendFetch(locals.token, `/weekly-notes/${noteId}`, { method: 'DELETE' }, fetch)
 		);
+	},
+
+	// Backlog: admin-only, turns a weekly note into a durable
+	// `PieceRehearsalNote` pinned to `pieceId`. Title/body default to the
+	// weekly note's own on the Backend when omitted — this form never
+	// overrides them, keeping the picker to just the one required choice.
+	promoteWeeklyNote: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const noteId = String(form.get('noteId') ?? '');
+		const pieceId = String(form.get('pieceId') ?? '');
+		if (!noteId || !pieceId) return fail(400, { error: m.groups_promote_select_piece(), form: 'promoteWeeklyNote' });
+
+		return runAction('promoteWeeklyNote', () =>
+			backendFetch(
+				locals.token,
+				`/weekly-notes/${noteId}/promote`,
+				{ method: 'POST', body: JSON.stringify({ piece_id: pieceId }) },
+				fetch
+			)
+		);
 	}
 } satisfies Actions;

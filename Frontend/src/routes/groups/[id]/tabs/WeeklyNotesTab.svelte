@@ -18,6 +18,14 @@
 	let weeklyNoteDateDraft = $state('');
 	let weeklyNoteBodyDraft = $state('');
 	let savingWeeklyNoteEdit = $state(false);
+
+	// Backlog: "Promote to rehearsal note" — same click-to-reveal pattern as
+	// the edit form above, just a one-field piece picker instead of a full
+	// edit. `data.tracks` is the same "this group's pieces" source
+	// `HomeworkTab.svelte`'s own piece dropdown already reuses.
+	let promotingWeeklyNoteId = $state<string | null>(null);
+	let promotingPieceIdDraft = $state('');
+	let savingPromote = $state(false);
 </script>
 
 {#if mode === 'admin'}
@@ -102,7 +110,48 @@
 					>
 						{m.drawer_edit()}
 					</button>
+					{#if promotingWeeklyNoteId !== n.id}
+						<button
+							type="button"
+							class="btn btn-outline"
+							onclick={() => {
+								promotingPieceIdDraft = '';
+								promotingWeeklyNoteId = n.id;
+							}}
+						>
+							{m.groups_promote_to_rehearsal_note()}
+						</button>
+					{/if}
 				</div>
+				{#if promotingWeeklyNoteId === n.id}
+					<form
+						method="POST"
+						action="?/promoteWeeklyNote"
+						use:enhance={withSubmitting((v) => (savingPromote = v), () => (promotingWeeklyNoteId = null))}
+					>
+						<input type="hidden" name="noteId" value={n.id} />
+						<label class="field">
+							<span>{m.groups_promote_piece_field()}</span>
+							<select name="pieceId" bind:value={promotingPieceIdDraft} required>
+								<option value="" disabled>{m.groups_promote_choose_piece()}</option>
+								{#each data.tracks as track (track.piece_id)}
+									<option value={track.piece_id}>{track.title}</option>
+								{/each}
+							</select>
+						</label>
+						{#if form?.form === 'promoteWeeklyNote' && form?.error}
+							<p class="error">{form.error}</p>
+						{/if}
+						<div class="btn-row">
+							<button type="button" class="btn btn-outline" onclick={() => (promotingWeeklyNoteId = null)}>
+								{m.action_cancel()}
+							</button>
+							<button class="btn btn-primary" type="submit" disabled={savingPromote}>
+								{savingPromote ? m.groups_promoting() : m.groups_promote_action()}
+							</button>
+						</div>
+					</form>
+				{/if}
 			{/if}
 		</WeeklyNoteCard>
 	{/each}

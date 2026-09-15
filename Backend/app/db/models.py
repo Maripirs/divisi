@@ -467,6 +467,20 @@ class PieceRehearsalNote(Base):
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the note out from under the rest of the group.
     created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    # Backlog: "promote a weekly note into a durable rehearsal note". Set
+    # only by `POST /weekly-notes/{id}/promote` (`app/api/routes/
+    # weekly_notes.py`), never by the plain create route. Nullable and left
+    # dangling (not nulled out) if the source `WeeklyNote` is later deleted:
+    # unlike `created_by` (a live account another table still needs to
+    # resolve for display), this is a one-time provenance breadcrumb with no
+    # DB-level cascade in this codebase's style (see `Homework.piece_id`'s
+    # own "no DB-level cascade, cleaned up by hand where it matters" norm) —
+    # a note that outlived its source is exactly the point of promoting it,
+    # so a stale id here is harmless, never dereferenced for anything but an
+    # optional "promoted from" display.
+    source_weekly_note_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("weekly_notes.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 

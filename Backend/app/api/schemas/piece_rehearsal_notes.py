@@ -38,6 +38,9 @@ class PieceRehearsalNoteOut(BaseModel):
     measure_label: str | None
     part_scope: str | None
     created_by: str | None
+    # Backlog: set when this note was promoted from a `WeeklyNote` (`POST
+    # /weekly-notes/{id}/promote`); `None` for a note created directly here.
+    source_weekly_note_id: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
