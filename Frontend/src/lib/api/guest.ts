@@ -14,6 +14,10 @@ export interface GuestPiece {
 	distributedAt: string;
 	composer: string | null;
 	youtubeUrl: string | null;
+	/** Admin-set default playback tempo (BPM), same field the member
+	 * Tracks tab rides via its `?defaultTempo=` query param on the
+	 * practice link — see `TracksTab.svelte`'s `tempoQuery`. */
+	defaultTempoBpm: number | null;
 	hasMusic: boolean;
 	hasPdf: boolean;
 }
@@ -151,6 +155,7 @@ interface GuestPieceResponse {
 	distributed_at: string;
 	composer: string | null;
 	youtube_url: string | null;
+	default_tempo_bpm: number | null;
 	has_music: boolean;
 	has_pdf: boolean;
 }
@@ -288,6 +293,7 @@ export async function resolveJoinCode(code: string, { password, token, fetchFn =
 			distributedAt: p.distributed_at,
 			composer: p.composer,
 			youtubeUrl: p.youtube_url,
+			defaultTempoBpm: p.default_tempo_bpm,
 			hasMusic: p.has_music,
 			hasPdf: p.has_pdf
 		})),

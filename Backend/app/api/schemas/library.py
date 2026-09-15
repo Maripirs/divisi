@@ -160,6 +160,7 @@ class GuestPieceOut(BaseModel):
     distributed_at: datetime
     composer: str | None = None
     youtube_url: str | None = None
+    default_tempo_bpm: int | None = None
     presentation: PiecePresentation | None = None
     has_music: bool = False
     has_pdf: bool = False

@@ -592,6 +592,11 @@
 						{@const availableHasPlayer = availability.hasPlayer}
 						{@const availableHasReference = availability.hasReference}
 						{@const availableHasPdf = availability.hasPdf}
+						<!-- Rides the admin-set default tempo along on the practice
+						     link, same `?defaultTempo=` convention as the member
+						     Tracks tab's `tempoQuery` (`TracksTab.svelte`) — `&`
+						     here since `?code=` already claims the `?`. -->
+						{@const tempoQuery = piece.defaultTempoBpm ? `&defaultTempo=${piece.defaultTempoBpm}` : ''}
 						<section class="card track-card">
 							<div class="track-card-row">
 								<div class="track-info">
@@ -613,7 +618,7 @@
 								</div>
 								<a
 									class="piece-action piece-action--primary"
-									href={lh(`/piece/${practiceId}?code=${data.code}`)}
+									href={lh(`/piece/${practiceId}?code=${data.code}${tempoQuery}`)}
 									aria-label={m.join_open_player()}
 								>
 									<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

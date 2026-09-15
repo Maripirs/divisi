@@ -333,6 +333,7 @@ def resolve_join_code(
                 distributed_at=distribution.distributed_at,
                 composer=piece.composer,
                 youtube_url=piece.youtube_url,
+                default_tempo_bpm=piece.default_tempo_bpm,
                 presentation=piece.presentation,
                 has_music=version.file_path is not None,
                 has_pdf=version.pdf_file_path is not None,
