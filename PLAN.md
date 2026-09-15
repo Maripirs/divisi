@@ -129,7 +129,20 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   `PUT /groups/{id}/members/{user_id}/role`, or
   `DELETE /responsibilities/schedules/{id}`/`.../roles/{id}`.
 - Pick a transactional email provider (Resend/Postmark) so password-reset
-  links work for real, in place of the current server-log-only send.
+  links work for real, in place of the current server-log-only send. Now a
+  shared dependency for a second thing (see next item), which raises its
+  priority.
+- Carpool match notifications: email each side once a match exists
+  (`CarpoolSeatClaim`/`CarpoolRiderInterest` created), pointing them at
+  each other's contact info to coordinate off-app. Chosen 2026-09-14 over
+  SMS (no Twilio-style provider today, and "Google phone" isn't a real
+  automatable-SMS option) and over in-app-only (not proactive enough).
+  Depends on the transactional-email item above; also needs an email
+  field on `CarpoolPost` (today it only collects an opt-in
+  `contact_phone` — no email is collected for carpool at all yet).
+  Decided 2026-09-14: optional, same as `contact_phone` — but the
+  post/claim form warns that skipping it means no match notification
+  (in-app reveal is the only fallback then).
 - Re-enable Google Sign-In: publish the OAuth consent screen out of
   Testing in Cloud Console (project `divisi-506916`), re-add
   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` on Render, restart the service.
