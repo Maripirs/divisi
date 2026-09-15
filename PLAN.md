@@ -91,6 +91,17 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Backlog
 
+- Chord-based divisi split for the mixer: a track that resolves to one
+  plain voice part (no name-based split) but whose notes stack into
+  exactly 2 simultaneous notes at each onset should still split into two
+  mixer desks (like the existing named "Soprano 1"/"Soprano 2" split), by
+  pitch rank per onset. The generic `VoicePartInfo`/`MixPart` plumbing
+  already supports this once split; only the detection is missing (see
+  `notation/voicePartAssignment.ts`'s name-based split for the existing
+  shape to match). Open design call: when only 1 note sounds at some
+  onset in an otherwise-2-voice track, do both desks play it (probably
+  right — a unison moment within a divisi passage) or just desk 1? Raised
+  2026-09-14, not yet scoped.
 - Lyrics in the player: sung text isn't captured anywhere today. Leaning
   toward a lighter text-only OCR pass on the PDF (just lyric lines) rather
   than routing through the full Audiveris transcription pipeline —
