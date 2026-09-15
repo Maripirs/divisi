@@ -186,7 +186,4 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   `origin/main` — so the only genuinely open work left is a manual frontend
   redeploy, a batch of human real-browser/touchscreen passes, a handful of
   backlog-tracked decisions, and the parked OMR/editor branch.
-- 2026-09-14: Dropped the old milestone-ID vocabulary (`B33`, `F43`, `E1`,
-  etc.) from this file and the READMEs — those IDs only meant anything
-  against the retired per-milestone breakdown, which is no longer kept in
-  the repo, so citing them read as a pointer to nothing.
+
