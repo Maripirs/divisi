@@ -114,7 +114,8 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F37 | Carpool direction: there / back / round trip (frontend for Backend B32) | ✅ Built 2026-09-14: post create/edit forms (member + guest, `CarpoolBoard.svelte`) gained a There/Back/Round trip `<select>`, defaulting to Round trip, wired into `actions/carpool.ts` and the `/join/[code]/carpool/...` guest proxy routes; the "On the way there/back" viewing toggle (built alongside F35, `postMatchesDirection`) was already filtering by it. `check` 0 errors, `build` clean, vitest 188 green. |
 | F38 | Group tab strip: single row, scrolls sideways on mobile | ✅ Built 2026-09-14: new `.tab-strip` modifier in `shell.css` (`flex-wrap: nowrap`, `overflow-x: auto`, `flex-shrink: 0` per tab) applied alongside `.tabs` on just the member (`groups/[id]/+page.svelte`) and guest (`join/[code]/+page.svelte`) main nav strips; `.tabs`' own base rule (and its other users — the carpool direction toggle, the login tab switcher) untouched. `check` 0 errors, `build` clean, vitest 188 green. |
 | F39 | Guest About/Info tab (frontend for Backend B33) | ✅ Built 2026-09-14: `about` joined `joinTabs.ts`'s `GuestBuiltinTabKey`, gated on a new `aboutVisible` flag (unlike the member side's unconditional `about`); `$lib/api/guest.ts` gained `listGuestAbout`/`GuestAbout` plus `about_visible` on `getGuestTabs`'s (currently-unused) response type, threaded through `guestJoin.ts`'s fan-out the same optional-page way as weekly notes/carpool. `join/[code]/+page.svelte` renders a read-only About section (description + `formatRehearsalSchedule`, reused from `../groups/[id]/rehearsalSchedule`) with no editors/leave-group/join-link controls — reused existing `groups_about_tab_title`/`groups_rehearsals`/`groups_no_description` keys, no new ones needed. `check` 0 errors, `build` clean, vitest 189 green. |
-| F40 | Carpool direction: grouped legs instead of an exclusive toggle | ✅ Built 2026-09-14: dropped the "On the way there/back" toggle from `CarpoolBoard.svelte`; new `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides flat vs. "Getting there"/"Getting home" grouping per card (Drivers/Riders independently); reworded direction `<select>` options and added the two group-heading i18n strings (`en.json`/`es.json`). `check` 0 errors, `build` clean, vitest 194 green (was 189; +5 new). |
+| F40 | Carpool direction: grouped legs instead of an exclusive toggle | ⚠️ Built 2026-09-14, superseded same day by F41: dropped the "On the way there/back" toggle from `CarpoolBoard.svelte`; new `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides flat vs. "Getting there"/"Getting home" grouping per card (Drivers/Riders independently); reworded direction `<select>` options and added the two group-heading i18n strings (`en.json`/`es.json`). `check` 0 errors, `build` clean, vitest 194 green (was 189; +5 new). Human feedback after using it: the auto-collapsing split read as inconsistent; wanted an explicit toggle back. |
+| F41 | Carpool direction: bring the toggle back, extend it to the map | ✅ Built 2026-09-14: reverted F40's per-card grouping in `CarpoolBoard.svelte` back to F37's explicit "On the way there"/"On the way home" toggle (`directionFilter`, `postMatchesDirection`), placed above the map so `drivers`/`riders` are filtered before `CarpoolMap` reads them too, fixing the gap F37 never covered (F40 accidentally fixed it as a side effect, F41 makes it deliberate). Reused `carpool_leg_there`/`carpool_leg_back` as the tab labels ("On the way there"/"On the way home") instead of F40's group-heading text; removed `carpoolPostsNeedDirectionGrouping` (`carpool.ts`), its 5 tests, the `directionGroupedPosts` snippet, and `.carpool-leg-heading`. `check` 0 errors, `build` clean, vitest 189 green (was 194; -5 from the removed grouping tests). |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2289,6 +2290,55 @@ Spanish "Solo de ida"/"Solo de vuelta"/"Ida y vuelta"), added
 `carpool_leg_there`/`carpool_leg_back` ("Getting there"/"Getting home",
 Spanish "De ida"/"De vuelta") in both `en.json`/`es.json`. `check` 0 errors,
 `build` clean, vitest 194 green (was 189; +5 new `carpoolPostsNeedDirectionGrouping` cases).
+
+### F41 — Carpool direction: bring the toggle back, extend it to the map
+
+Human feedback 2026-09-14, right after using F40: the auto-collapsing
+per-card grouping ("flat when everyone's round trip, headings appear once
+someone posts one-way") reads as inconsistent, the board's shape changing
+underneath you depending on what other people posted. Revert to an
+explicit toggle, F37's shape, but carry over F40's better labels and fix
+the gap F37 never covered: the map never respected the toggle at all,
+always plotting every pin regardless of which leg was selected.
+
+Acceptance criteria:
+- [x] `directionFilter` state and the tab-strip toggle return to
+  `CarpoolBoard.svelte`, above the map and the driver/rider lists,
+  defaulting to `'there'` (same reasoning as F37: reads as the first leg).
+- [x] Tab labels read "On the way there" / "On the way home" (the user's
+  own wording; "home" instead of F37's "back"). Reuse the F40
+  `carpool_leg_there`/`carpool_leg_back` keys for this rather than adding
+  new ones, updating their English/Spanish strings to the tab-label
+  wording, since F40's group-heading usage of those keys is going away in
+  this same change.
+- [x] `drivers`/`riders` go back to being filtered by `directionFilter`
+  (`postMatchesDirection`), one flat list per card, no grouping/headings.
+  Remove `carpoolPostsNeedDirectionGrouping` (`carpool.ts`), its test
+  cases, the `directionGroupedPosts` snippet, and the `.carpool-leg-
+  heading` style added in F40, now unused.
+- [x] `CarpoolMap` receives the same (now direction-filtered) `drivers`/
+  `riders` the lists use, so switching the toggle changes which pins show
+  too. This should need no changes inside `CarpoolMap.svelte` itself, it
+  already just plots whatever `drivers`/`riders` arrays it's given, same
+  as F35/F37 originally did before F40 changed what those arrays held.
+- [x] Keep F40's reworded post-form `<select>` options ("Just getting
+  there" / "Just getting home" / "Both ways") as is, that framing wasn't
+  the complaint, only the viewing split's shape was.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green.
+
+**Built 2026-09-14:** reverted `CarpoolBoard.svelte`'s `drivers`/`riders`
+`$derived`s to filter by `directionFilter`/`postMatchesDirection` again
+(F37's shape), brought back the `.tabs`/`.tab` toggle markup, now placed
+above the map as well as the lists so `CarpoolMap`'s `{drivers}`/`{riders}`
+props inherit the filtering with zero changes inside `CarpoolMap.svelte`
+itself. Removed `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) and its
+5 test cases, the `directionGroupedPosts` snippet, and the
+`.carpool-leg-heading` style. Repointed `carpool_leg_there`/`carpool_leg_back`
+(`en.json`/`es.json`) from F40's group-heading text to the tab-label
+wording ("On the way there" / "On the way home"; Spanish "De ida" / "De
+vuelta a casa"). F40's reworded post-form `<select>` options were left
+untouched. `check` 0 errors, `build` clean, vitest 189 green (was 194; -5
+from the removed grouping tests).
 
 ## Backlog
 

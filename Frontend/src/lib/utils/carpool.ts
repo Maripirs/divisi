@@ -146,22 +146,6 @@ export function postMatchesDirection(postDirection: string, filter: CarpoolDirec
 	return postDirection === filter || postDirection === 'round_trip';
 }
 
-/** F40: whether a card's post list (the Drivers card's posts, or the
- * Riders card's, decided independently for each) needs to split into
- * "Getting there" / "Getting home" subsections at all, replacing the old
- * exclusive there/back toggle. The common case, every post round trip
- * (this also covers an empty list, which trivially satisfies "every post is
- * round trip"), stays exactly as simple as it was before F37: one flat
- * list, no headings. A single genuinely one-way post (`there` or `back`)
- * is enough to earn the split, since that's precisely the case the old
- * toggle could hide from a viewer sitting on the other tab. Each
- * subsection's membership once split is still `postMatchesDirection`
- * itself, so grouped mode has identical semantics to the toggle it
- * replaces, both legs simply visible at once instead of one at a time. */
-export function carpoolPostsNeedDirectionGrouping(posts: { direction: string }[]): boolean {
-	return posts.some((p) => p.direction === 'there' || p.direction === 'back');
-}
-
 /** B26/F32: which event a load should show when the caller didn't pick one
  * via `?event=`. A requested id that matches a real event always wins;
  * otherwise the standing event wins over "first by `starts_at`", which

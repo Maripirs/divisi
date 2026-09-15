@@ -620,7 +620,7 @@
 	"carpool_direction_back": "Solo de vuelta",
 	"carpool_direction_round_trip": "Ida y vuelta",
 	"carpool_leg_there": "De ida",
-	"carpool_leg_back": "De vuelta",
+	"carpool_leg_back": "De vuelta a casa",
 	"carpool_origin_field": "Sale desde",
 	"carpool_origin_label": "Desde {origin}",
 	"carpool_seats_field": "Asientos disponibles",

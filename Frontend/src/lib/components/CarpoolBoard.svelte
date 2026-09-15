@@ -8,11 +8,11 @@
 	import CarpoolMap from './CarpoolMap.svelte';
 	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
 	import {
-		carpoolPostsNeedDirectionGrouping,
 		driverOfferError,
 		formatContactPhone,
 		postMatchesDirection,
-		riderRequestError
+		riderRequestError,
+		type CarpoolDirectionFilter
 	} from '$lib/utils/carpool';
 	import {
 		forgetCarpoolClaim,
@@ -73,11 +73,22 @@
 	 * component falls back to today's list-only layout whenever Maps isn't
 	 * usable or there's simply nothing to put a pin on.
 	 *
-	 * F40: the Drivers/Riders lists used to sit behind an exclusive "On the
-	 * way there"/"On the way back" tab strip (B32/F37); that toggle is gone.
-	 * Both legs are always visible now, each card deciding independently
-	 * (`carpoolPostsNeedDirectionGrouping`) whether it even needs the split,
-	 * see `driversRidersSections` below. */
+	 * B32/F37: `directionFilter` defaults to `'there'` — the driver/rider
+	 * lists only ever show one of the two toggle states at a time, and
+	 * "there" reads naturally as the first leg of a trip. A round-trip post
+	 * matches either state (`postMatchesDirection`, `$lib/utils/carpool.ts`),
+	 * so it's never actually hidden by this toggle.
+	 *
+	 * F40 briefly replaced this exclusive toggle with per-card auto-grouping
+	 * (a flat list when every post was round trip, "Getting there"/"Getting
+	 * home" subsections the moment a one-way post appeared). Human feedback:
+	 * the board's shape changing depending on what other people posted read
+	 * as inconsistent. F41 reverts to this explicit toggle, F37's shape, and
+	 * fixes the one thing F37 never covered: the map used to always plot
+	 * every pin regardless of which leg was selected, since it read from an
+	 * unfiltered `posts` array; now that `drivers`/`riders` are filtered by
+	 * `directionFilter` again, `CarpoolMap` inherits that filtering for
+	 * free, see the `drivers`/`riders` `$derived`s below. */
 	let {
 		isAdmin,
 		userId,
@@ -114,12 +125,19 @@
 
 	let selectedEvent = $derived(events.find((e) => e.id === selectedEventId) ?? null);
 
-	// F40: full per-event lists, no direction filtering (the old B32/F37
-	// there/back toggle is gone) — `driversRidersSections` below decides,
-	// separately for each card, whether this list needs the there/home
-	// split at all.
-	let drivers = $derived(posts.filter((p) => p.kind === 'driver'));
-	let riders = $derived(posts.filter((p) => p.kind === 'rider'));
+	// F41: "On the way there" / "On the way home" toggle above the map and
+	// the driver/rider lists, filtering the already-fetched `posts` array
+	// client-side (`postMatchesDirection`) rather than a second round trip —
+	// a round-trip post matches either state, so it's never hidden by this.
+	// `CarpoolMap` below is passed these same filtered arrays, so the map's
+	// pins respect the toggle too (F37 never did this; F40 accidentally did,
+	// as a side effect of its own since-reverted filtering, so F41 makes it
+	// deliberate).
+	let directionFilter = $state<CarpoolDirectionFilter>('there');
+	let drivers = $derived(
+		posts.filter((p) => p.kind === 'driver' && postMatchesDirection(p.direction, directionFilter))
+	);
+	let riders = $derived(posts.filter((p) => p.kind === 'rider' && postMatchesDirection(p.direction, directionFilter)));
 	// Admin always bypasses the lock/archive gate when posting (the Backend
 	// does the same); a member can only post to a genuinely open event.
 	let canPost = $derived(isAdmin || selectedEvent?.status === 'open');
@@ -1227,11 +1245,29 @@
 			{/if}
 		</section>
 
+		<!-- F41: same tab-strip look as the group's own built-in tabs
+		     (`.tabs`/`.tab`, `shell.css`), reused here for the direction
+		     toggle rather than a bespoke widget. Sits above the map (not just
+		     the lists, F37's original placement) since `drivers`/`riders` are
+		     filtered before either one reads them, so the toggle now visibly
+		     governs both. -->
+		<div class="tabs" role="tablist" aria-label={m.carpool_direction_field()}>
+			<button type="button" class="tab" class:active={directionFilter === 'there'} onclick={() => (directionFilter = 'there')}>
+				{m.carpool_leg_there()}
+			</button>
+			<button type="button" class="tab" class:active={directionFilter === 'back'} onclick={() => (directionFilter = 'back')}>
+				{m.carpool_leg_back()}
+			</button>
+		</div>
+
 		<!-- F35: one stacked view, map above the list, whenever `mapsAvailable`
 		     (the loader actually confirmed Maps/Places usable), no separate
 		     list/map subpage or toggle to switch between them. Otherwise this
 		     falls straight through to `driversRidersSections` with no map at
-		     all, i.e. today's exact list-only markup, unchanged. -->
+		     all, i.e. today's exact list-only markup, unchanged. F41: `drivers`/
+		     `riders` are already direction-filtered above, so the map's pins
+		     respect the toggle too, no prop changes needed inside
+		     `CarpoolMap.svelte` itself. -->
 		{#if mapsAvailable}
 			<CarpoolMap destination={ev} {drivers} {riders} />
 		{/if}
@@ -1240,47 +1276,14 @@
 	{/if}
 {/if}
 
-<!-- F40: shared by both the Drivers and Riders cards below, each passing its
-     own full per-event list and empty-state message. Falls straight through
-     to one flat list (today's exact pre-F37 markup) whenever
-     `carpoolPostsNeedDirectionGrouping` says every post is round trip;
-     otherwise splits into "Getting there"/"Getting home" subsections, each
-     built with the same `postMatchesDirection` membership test the old
-     there/back toggle used, so grouped mode has identical semantics, both
-     legs visible at once instead of hidden behind a tab. A round-trip post
-     deliberately appears in both subsections; an empty subsection (e.g. no
-     "back" posts but some "there" ones) just renders no heading rather than
-     the card's own "no drivers/riders yet" message, since the card as a
-     whole isn't actually empty. -->
-{#snippet directionGroupedPosts(list: CarpoolPostOut[], emptyMessage: string)}
-	{#if list.length === 0}
-		<p class="empty">{emptyMessage}</p>
-	{:else if !carpoolPostsNeedDirectionGrouping(list)}
-		{#each list as p (p.id)}
-			{@render postRow(p)}
-		{/each}
-	{:else}
-		{@const there = list.filter((p) => postMatchesDirection(p.direction, 'there'))}
-		{@const back = list.filter((p) => postMatchesDirection(p.direction, 'back'))}
-		{#if there.length > 0}
-			<p class="carpool-leg-heading">{m.carpool_leg_there()}</p>
-			{#each there as p (p.id)}
-				{@render postRow(p)}
-			{/each}
-		{/if}
-		{#if back.length > 0}
-			<p class="carpool-leg-heading">{m.carpool_leg_back()}</p>
-			{#each back as p (p.id)}
-				{@render postRow(p)}
-			{/each}
-		{/if}
-	{/if}
-{/snippet}
-
 {#snippet driversRidersSections(ev: CarpoolEventOut)}
 	<section class="card">
 		<p class="card-eyebrow">{m.carpool_drivers_heading()}</p>
-		{@render directionGroupedPosts(drivers, m.carpool_no_drivers())}
+		{#each drivers as p (p.id)}
+			{@render postRow(p)}
+		{:else}
+			<p class="empty">{m.carpool_no_drivers()}</p>
+		{/each}
 			{#if canPost}
 				{#if isGuest && guestNamePromptFor === 'offer'}
 					{@render guestNamePrompt(m.carpool_offer_ride())}
@@ -1434,7 +1437,11 @@
 
 		<section class="card">
 			<p class="card-eyebrow">{m.carpool_riders_heading()}</p>
-			{@render directionGroupedPosts(riders, m.carpool_no_riders())}
+			{#each riders as p (p.id)}
+				{@render postRow(p)}
+			{:else}
+				<p class="empty">{m.carpool_no_riders()}</p>
+			{/each}
 			{#if canPost}
 				{#if isGuest && guestNamePromptFor === 'request'}
 					{@render guestNamePrompt(m.carpool_request_ride())}
@@ -1675,17 +1682,6 @@
 
 	.carpool-event-chip__sub {
 		font-size: 0.75rem;
-		color: var(--text-muted);
-	}
-
-	/* F40: "Getting there"/"Getting home" subsection labels within a Drivers
-	   or Riders card, one level lighter than `.card-eyebrow` (no uppercase or
-	   letter-spacing) since it's a nested sub-heading inside a card that
-	   already has its own eyebrow, not a second card-level label. */
-	.carpool-leg-heading {
-		margin: 0.75rem 0 0.35rem;
-		font-size: 0.75rem;
-		font-weight: 600;
 		color: var(--text-muted);
 	}
 
