@@ -91,6 +91,16 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Backlog
 
+- Lyrics in the player: sung text isn't captured anywhere today. Leaning
+  toward a lighter text-only OCR pass on the PDF (just lyric lines) rather
+  than routing through the full Audiveris transcription pipeline —
+  complements the piece's existing (already-correct) music data instead of
+  regenerating a new OMR version that risks disturbing it. Still needs (1)
+  a concrete OCR approach (Tesseract directly on lyric-line crops? reuse
+  Audiveris's lyric-OCR step in isolation?) and (2) a sync mechanism to the
+  playback clock (per-line, per-measure, or per-syllable onset — and
+  whether that sync is auto-derived or hand-placed, maybe reusing the
+  existing PDF cue-point anchors). Raised 2026-09-14, not yet scoped.
 - Real job queue (Celery/RQ) if background-task OMR processing, or
   Responsibilities recurrence/reminders, or the anonymous-participant
   sweep, ever need real scheduling instead of a manual command.
