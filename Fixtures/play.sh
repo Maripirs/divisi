@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Simple MIDI player for the Divisi test fixtures (or any .mid file).
 # Usage: ./play.sh requiem-satb-plain.mid
-#        ./play.sh                          # plays all three fixtures in turn
+#        ./play.sh                          # plays both fixtures in turn
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -14,7 +14,7 @@ fi
 
 FILES=("$@")
 if [ ${#FILES[@]} -eq 0 ]; then
-  FILES=(requiem-satb-plain.mid requiem-satb-lyrics.mid requiem-satb-accompanied.mid)
+  FILES=(requiem-satb-plain.mid requiem-satb-accompanied.mid)
 fi
 
 for f in "${FILES[@]}"; do

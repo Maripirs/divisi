@@ -8,9 +8,8 @@ additionally carries `SFCC/` (see below), while this copy carries the
 
 ## Synthetic MIDI (for the parsers)
 
-`generate.py` (`pip install mido`) writes three small SATB fixtures —
-`requiem-satb-plain.mid`, `requiem-satb-lyrics.mid`,
-`requiem-satb-accompanied.mid` — approximating the opening of Mozart's Requiem,
+`generate.py` (`pip install mido`) writes two small SATB fixtures —
+`requiem-satb-plain.mid`, `requiem-satb-accompanied.mid` — approximating the opening of Mozart's Requiem,
 K.626 Introitus (D minor, Adagio, 8 bars, tracks named
 `Soprano`/`Alto`/`Tenor`/`Bass`; the accompanied one adds an `Organ` pad track
 to check non-vocal tracks aren't misread as a voice part).
@@ -30,7 +29,7 @@ Real score exports used as demo/bundled repertoire:
 
 - `Mozart_Lacrymosa_from_Requiem_SATB_with_piano.mid` / `.mxl` — kept public
   (not owned by any real group).
-- `The_Challenge_of_Thor_Elgar.*` (mid / musicxml / pdf / playscore) — the
+- `The_Challenge_of_Thor_Elgar.*` (mid / musicxml / pdf) — the
   worked example of the no-auth direct-URL path.
 - `SFCC/` — San Francisco City Chorus repertoire (Brahms, Coleridge-Taylor,
   Fauré, Gardiner, Massenet, …). Access-gated: the Frontend removed these from

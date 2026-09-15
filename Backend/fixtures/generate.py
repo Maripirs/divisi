@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generates 3 small SATB MIDI fixtures approximating the opening choral
+Generates 2 small SATB MIDI fixtures approximating the opening choral
 entrance of Mozart's Requiem, K.626 - Introitus ("Requiem aeternam dona eis,
 Domine... et lux perpetua luceat eis"), D minor, Adagio.
 
@@ -54,7 +54,7 @@ def beats_to_ticks(beats):
     return int(beats * TICKS_PER_BEAT)
 
 
-def build_voice_track(voice_key, with_lyrics):
+def build_voice_track(voice_key):
     track = MidiTrack()
     track.append(MetaMessage("track_name", name=VOICE_NAMES[voice_key], time=0))
     pending_wait = 0  # ticks of rest to prepend to the next event
@@ -66,9 +66,6 @@ def build_voice_track(voice_key, with_lyrics):
                 # rest: just accumulate wait time for the next note
                 pending_wait += dur_ticks
                 continue
-            if with_lyrics:
-                track.append(MetaMessage("lyrics", text=syllable, time=pending_wait))
-                pending_wait = 0
             track.append(Message("note_on", note=pitch, velocity=VELOCITY, time=pending_wait))
             pending_wait = 0
             track.append(Message("note_off", note=pitch, velocity=0, time=dur_ticks))
@@ -97,7 +94,7 @@ def build_accompaniment_track():
     return track
 
 
-def build_file(path, with_lyrics, with_accompaniment):
+def build_file(path, with_accompaniment):
     mid = MidiFile(ticks_per_beat=TICKS_PER_BEAT, type=1)
 
     conductor = MidiTrack()
@@ -109,19 +106,18 @@ def build_file(path, with_lyrics, with_accompaniment):
     mid.tracks.append(conductor)
 
     for voice_key in ("S", "A", "T", "B"):
-        mid.tracks.append(build_voice_track(voice_key, with_lyrics))
+        mid.tracks.append(build_voice_track(voice_key))
 
     if with_accompaniment:
         mid.tracks.append(build_accompaniment_track())
 
     mid.save(path)
-    print(f"wrote {path}  (tracks={len(mid.tracks)}, lyrics={with_lyrics}, accompaniment={with_accompaniment})")
+    print(f"wrote {path}  (tracks={len(mid.tracks)}, accompaniment={with_accompaniment})")
 
 
 if __name__ == "__main__":
     import os
     out_dir = os.path.expanduser("~/projects/divisi/Fixtures")
     os.makedirs(out_dir, exist_ok=True)
-    build_file(os.path.join(out_dir, "requiem-satb-plain.mid"), with_lyrics=False, with_accompaniment=False)
-    build_file(os.path.join(out_dir, "requiem-satb-lyrics.mid"), with_lyrics=True, with_accompaniment=False)
-    build_file(os.path.join(out_dir, "requiem-satb-accompanied.mid"), with_lyrics=False, with_accompaniment=True)
+    build_file(os.path.join(out_dir, "requiem-satb-plain.mid"), with_accompaniment=False)
+    build_file(os.path.join(out_dir, "requiem-satb-accompanied.mid"), with_accompaniment=True)
