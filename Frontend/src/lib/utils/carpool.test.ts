@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	carpoolPostsNeedDirectionGrouping,
 	destinationCoordinatesPayload,
 	driverOfferError,
 	eventFieldsMissing,
@@ -163,6 +164,34 @@ describe('postMatchesDirection', () => {
 	it('always matches a round-trip post, on either leg', () => {
 		expect(postMatchesDirection('round_trip', 'there')).toBe(true);
 		expect(postMatchesDirection('round_trip', 'back')).toBe(true);
+	});
+});
+
+describe('carpoolPostsNeedDirectionGrouping', () => {
+	it('stays flat when every post is round trip', () => {
+		expect(
+			carpoolPostsNeedDirectionGrouping([{ direction: 'round_trip' }, { direction: 'round_trip' }])
+		).toBe(false);
+	});
+
+	it('stays flat for an empty list', () => {
+		expect(carpoolPostsNeedDirectionGrouping([])).toBe(false);
+	});
+
+	it('groups once a there-only post is present', () => {
+		expect(
+			carpoolPostsNeedDirectionGrouping([{ direction: 'round_trip' }, { direction: 'there' }])
+		).toBe(true);
+	});
+
+	it('groups once a back-only post is present', () => {
+		expect(
+			carpoolPostsNeedDirectionGrouping([{ direction: 'round_trip' }, { direction: 'back' }])
+		).toBe(true);
+	});
+
+	it('groups with a mix of there and back', () => {
+		expect(carpoolPostsNeedDirectionGrouping([{ direction: 'there' }, { direction: 'back' }])).toBe(true);
 	});
 });
 

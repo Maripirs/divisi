@@ -114,6 +114,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F37 | Carpool direction: there / back / round trip (frontend for Backend B32) | ✅ Built 2026-09-14: post create/edit forms (member + guest, `CarpoolBoard.svelte`) gained a There/Back/Round trip `<select>`, defaulting to Round trip, wired into `actions/carpool.ts` and the `/join/[code]/carpool/...` guest proxy routes; the "On the way there/back" viewing toggle (built alongside F35, `postMatchesDirection`) was already filtering by it. `check` 0 errors, `build` clean, vitest 188 green. |
 | F38 | Group tab strip: single row, scrolls sideways on mobile | ✅ Built 2026-09-14: new `.tab-strip` modifier in `shell.css` (`flex-wrap: nowrap`, `overflow-x: auto`, `flex-shrink: 0` per tab) applied alongside `.tabs` on just the member (`groups/[id]/+page.svelte`) and guest (`join/[code]/+page.svelte`) main nav strips; `.tabs`' own base rule (and its other users — the carpool direction toggle, the login tab switcher) untouched. `check` 0 errors, `build` clean, vitest 188 green. |
 | F39 | Guest About/Info tab (frontend for Backend B33) | ✅ Built 2026-09-14: `about` joined `joinTabs.ts`'s `GuestBuiltinTabKey`, gated on a new `aboutVisible` flag (unlike the member side's unconditional `about`); `$lib/api/guest.ts` gained `listGuestAbout`/`GuestAbout` plus `about_visible` on `getGuestTabs`'s (currently-unused) response type, threaded through `guestJoin.ts`'s fan-out the same optional-page way as weekly notes/carpool. `join/[code]/+page.svelte` renders a read-only About section (description + `formatRehearsalSchedule`, reused from `../groups/[id]/rehearsalSchedule`) with no editors/leave-group/join-link controls — reused existing `groups_about_tab_title`/`groups_rehearsals`/`groups_no_description` keys, no new ones needed. `check` 0 errors, `build` clean, vitest 189 green. |
+| F40 | Carpool direction: grouped legs instead of an exclusive toggle | ✅ Built 2026-09-14: dropped the "On the way there/back" toggle from `CarpoolBoard.svelte`; new `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides flat vs. "Getting there"/"Getting home" grouping per card (Drivers/Riders independently); reworded direction `<select>` options and added the two group-heading i18n strings (`en.json`/`es.json`). `check` 0 errors, `build` clean, vitest 194 green (was 189; +5 new). |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2214,6 +2215,80 @@ homework/weekly_notes/carpool) — matches the existing dead-but-kept
 convention documented on `GuestTabs` itself. No new i18n keys: the member
 `groups_about_tab_title`/`groups_rehearsals`/`groups_no_description`
 strings already say exactly the right thing for a guest.
+
+### F40 — Carpool direction: grouped legs instead of an exclusive toggle
+
+Human feedback 2026-09-14, right after F37 shipped: the "On the way there" /
+"On the way back" tab strip above the driver/rider lists doesn't hold up in
+practice. Two real problems, surfaced by walking through the actual use
+case (someone needs a ride from work to rehearsal, then rehearsal to home,
+often with two different drivers):
+
+- A post never shows its own direction anywhere. The only way to learn a
+  post is one-way is which tab it happens to be sitting under right now —
+  so a rider looking at the default "there" tab can miss a "back only"
+  driver post entirely.
+- The tab hides one leg while showing the other, which is actively wrong
+  for this feature's whole reason for existing: the two legs can have
+  completely different drivers, so a rider needs to see both lists, not
+  pick one.
+- Round trip (the default, and the common case for a same-driver-both-ways
+  rehearsal) still pays the full toggle tax for no benefit, since a
+  round-trip post shows under both tabs unchanged.
+
+Exact pickup/dropoff times are deliberately out of scope here: the human's
+call is that the rehearsal's own start/end time is anchor enough, and the
+existing optional `leave_time_text` note plus contact info covers
+coordination. No new time field, no backend/schema change — `direction`
+already round-trips correctly (B32); this is a `CarpoolBoard.svelte`
+presentation rework.
+
+New shape:
+- Drop `directionFilter` and the tab-strip toggle above the lists.
+- Within each of the existing Drivers/Riders cards, split the post list
+  into "Getting there" and "Getting home" groups (`postMatchesDirection`
+  already implements the right membership test — a round-trip post
+  belongs in both groups, unchanged semantics from the toggle version).
+- Skip the group headings entirely, rendering one flat list exactly like
+  today, whenever every post in that card is round trip (no post with
+  `direction` of `there` or `back`) — the common case stays exactly as
+  simple as it was before F37.
+- Post form direction field: reword the three options so they read as two
+  optional legs rather than an abstract enum (e.g. "Just getting there" /
+  "Just getting home" / "Both ways"), and rename the `en.json`/`es.json`
+  strings accordingly; add the two new group-heading strings.
+
+Acceptance criteria:
+- [x] No `directionFilter` state or direction tab strip left in
+  `CarpoolBoard.svelte`.
+- [x] A pure helper (`$lib/utils/carpool.ts`) decides "flat list" vs.
+  "grouped," unit tested for: all round trip → flat; empty list → flat;
+  any `there`/`back` present → grouped, each group's membership matching
+  `postMatchesDirection`.
+- [x] Both Drivers and Riders cards use that helper/grouping independently
+  (a driver-only split shouldn't force headings onto an all-round-trip
+  rider list, or vice versa).
+- [x] Post form direction `<select>` options and the new group headings
+  read as "getting there" / "getting home" language, not "there"/"back"/
+  "round trip" as a bare enum.
+- [x] `leave_time_text` stays optional, unchanged.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green.
+
+✅ Built 2026-09-14: dropped `directionFilter`/`CarpoolDirectionFilter` state
+and the tab-strip toggle from `CarpoolBoard.svelte`; `drivers`/`riders`
+derive the full per-event list again, with no direction filtering, same as
+before F37. New `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides
+flat-vs-grouped per list; a shared `directionGroupedPosts` snippet renders
+either one flat list or "Getting there"/"Getting home" subsections (each
+built with `postMatchesDirection`, a round-trip post intentionally in both),
+used independently by the Drivers and Riders cards so one card's split never
+forces headings on the other. New `.carpool-leg-heading` style, one level
+lighter than `.card-eyebrow`. Reworded `carpool_direction_there/back/
+round_trip` to "Just getting there"/"Just getting home"/"Both ways" (and
+Spanish "Solo de ida"/"Solo de vuelta"/"Ida y vuelta"), added
+`carpool_leg_there`/`carpool_leg_back` ("Getting there"/"Getting home",
+Spanish "De ida"/"De vuelta") in both `en.json`/`es.json`. `check` 0 errors,
+`build` clean, vitest 194 green (was 189; +5 new `carpoolPostsNeedDirectionGrouping` cases).
 
 ## Backlog
 
