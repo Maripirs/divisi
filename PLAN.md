@@ -117,10 +117,6 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   sweep, ever need real scheduling instead of a manual command.
 - Mid-piece tempo changes drift the OMR editor's playhead (piecewise
   ms→onset map, or a walkable tempo-map, needed).
-- Promote a weekly note into a durable `PieceRehearsalNote`
-  (`source_weekly_note_id` + a promote action).
-- `group_resources`: stable group links (playlist, portal, shared doc, join
-  link) as a small table + CRUD.
 - Weekly note structured sections/items (deferred pending evidence admins
   want structure over prose; a JSONB `structured` column is the cheap
   first step if so).
@@ -198,4 +194,16 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   only; other schemes render as plain text). Guest join page's practice
   link now carries the admin-set default tempo (`GuestPieceOut.
   default_tempo_bpm`), matching the member Tracks tab.
+- 2026-09-14: Shipped two backlog items. `group_resources` (a group's
+  stable link list — playlist, portal, shared doc): new `GroupResource`
+  model/migration, admin CRUD at `/groups/{id}/resources`, a guest read
+  route, and a Resources section on the Info/About tab (member read
+  rides along with that page's existing `about` gate rather than a new
+  `GroupPage` of its own). Weekly-note promotion: `PieceRehearsalNote`
+  gained a nullable `source_weekly_note_id`, plus `POST
+  /weekly-notes/{id}/promote` (admin picks the piece; title/body default
+  to the source note's own) and a "Promote to rehearsal note" action on
+  the Weekly Notes tab. Both migrations verified upgrade/downgrade
+  clean against the local disposable Postgres; backend/frontend suites
+  green.
 
