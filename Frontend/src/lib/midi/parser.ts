@@ -1,6 +1,6 @@
 import { parseMidi } from 'midi-file';
 import type { MidiEvent } from 'midi-file';
-import { assignVoiceParts } from '../notation/voicePartAssignment.ts';
+import { assignVoiceParts, splitChordalDivisi } from '../notation/voicePartAssignment.ts';
 import {
 	DEFAULT_TIME_SIGNATURE,
 	type BackingNote,
@@ -83,19 +83,31 @@ export function parseMidiFile(bytes: ArrayLike<number>): ParsedMIDI {
 	backingNotes.sort((a, b) => a.startMs - b.startMs);
 	lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
+	// Recover unnamed chord-based divisi (a plain SATB track whose notes
+	// still stack into 2-voice chords per onset) into the same two-desk
+	// shape a named split produces. `trackParts`/`voicePartChannels` above
+	// intentionally still reflect the pre-split, track-level id (a chord-
+	// split track has no per-desk source track to point at) -- neither
+	// field is consumed anywhere outside these parser files, so the
+	// imprecision is harmless.
+	const split = splitChordalDivisi(allParts, notes, lyrics);
+
+	split.notes.sort((a, b) => a.startMs - b.startMs);
+	split.lyrics.sort((a, b) => a.timeMs - b.timeMs);
+
 	// Key signature: first occurrence wins, in track order — mid-file
 	// changes aren't tracked, see `ParsedMIDI`'s doc comment.
 	const keySignatureFifths = rawTracks.map((t) => t.keySignatureFifths).find((v) => v != null) ?? 0;
 	const { bpm, timeSignature } = readInitialTempoAndTimeSignature(globalAbsoluteTracks);
 
 	return {
-		notes,
+		notes: split.notes,
 		backingNotes,
-		lyrics,
+		lyrics: split.lyrics,
 		tempoBPM: bpm,
 		timeSignature,
 		keySignatureFifths,
-		parts: allParts,
+		parts: split.parts,
 		trackParts,
 		voicePartChannels
 	};

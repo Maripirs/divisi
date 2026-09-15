@@ -1,4 +1,4 @@
-import { assignVoiceParts } from '../notation/voicePartAssignment.ts';
+import { assignVoiceParts, splitChordalDivisi } from '../notation/voicePartAssignment.ts';
 import {
 	DEFAULT_TIME_SIGNATURE,
 	type BackingNote,
@@ -88,6 +88,18 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	backingNotes.sort((a, b) => a.startMs - b.startMs);
 	lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
+	// Recover unnamed chord-based divisi (a plain SATB part whose notes still
+	// stack into 2-voice chords per onset) into the same two-desk shape a
+	// named split produces. `trackParts` above intentionally still reflects
+	// the pre-split, part-level id (a chord-split part has no per-desk
+	// source part to point at) -- not consumed anywhere outside these parser
+	// files, so the imprecision is harmless. `voicePartChannels` is always
+	// empty here regardless (MusicXML has no MIDI channel concept), so
+	// there's nothing to reconcile there.
+	const split = splitChordalDivisi(allParts, notes, lyrics);
+	split.notes.sort((a, b) => a.startMs - b.startMs);
+	split.lyrics.sort((a, b) => a.timeMs - b.timeMs);
+
 	// First-occurrence-in-part-order wins — same simplification
 	// `midi/parser.ts` already makes for these two fields (see its own doc
 	// comment): a single steady time signature/key for the whole piece, not
@@ -99,13 +111,13 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	const tempoBPM = scoreTempoBPM;
 
 	return {
-		notes,
+		notes: split.notes,
 		backingNotes,
-		lyrics,
+		lyrics: split.lyrics,
 		tempoBPM,
 		timeSignature,
 		keySignatureFifths,
-		parts: allParts,
+		parts: split.parts,
 		trackParts,
 		voicePartChannels: {}
 	};

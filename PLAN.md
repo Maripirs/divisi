@@ -37,7 +37,9 @@ branch, not on `main`.
   toggle, group layer, cue points), audio-source picker, local-profile/
   guest-reconnect flow, demo Preview Admin entry point, Carpool UI (board,
   map, claims, direction, guest posting, contact-phone/rider-interest),
-  tab-strip/navigation cleanups, piece-list availability + sort.
+  tab-strip/navigation cleanups, piece-list availability + sort,
+  chord-based divisi auto-split (pitch-rank-per-onset, unison onsets on
+  both desks).
 - **iOS app**: paused 2026-08-27, code removed from `main` 2026-09-14 (see
   the `pre-cleanup-audit-20260914` tag to recover it). Portability
   constraint (keep pure-algorithm logic free of platform types) stands if
@@ -91,17 +93,6 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Backlog
 
-- Chord-based divisi split for the mixer: a track that resolves to one
-  plain voice part (no name-based split) but whose notes stack into
-  exactly 2 simultaneous notes at each onset should still split into two
-  mixer desks (like the existing named "Soprano 1"/"Soprano 2" split), by
-  pitch rank per onset. The generic `VoicePartInfo`/`MixPart` plumbing
-  already supports this once split; only the detection is missing (see
-  `notation/voicePartAssignment.ts`'s name-based split for the existing
-  shape to match). Open design call: when only 1 note sounds at some
-  onset in an otherwise-2-voice track, do both desks play it (probably
-  right — a unison moment within a divisi passage) or just desk 1? Raised
-  2026-09-14, not yet scoped.
 - Lyrics in the player: sung text isn't captured anywhere today. Leaning
   toward a lighter text-only OCR pass on the PDF (just lyric lines) rather
   than routing through the full Audiveris transcription pipeline —
@@ -173,6 +164,22 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: Chord-based divisi split for the mixer, resolving the
+  backlog item's open design call. New `splitChordalDivisi` in
+  `notation/voicePartAssignment.ts`: groups a plain (unsplit) SATB voice's
+  notes by exact `startMs` onset, and where a real 2-note onset exists
+  somewhere in the voice, splits it into `${base}-1`/`${base}-2` desks by
+  pitch rank (higher pitch to desk 1). A 1-note onset duplicates onto both
+  desks rather than picking one, since both parts are genuinely sounding
+  the same pitch there. Bails out (leaves the voice unsplit) if any onset
+  stacks more than 2 notes, or if the voice never has a 2-note onset at
+  all. Wired into both `midi/parser.ts` and `musicxml/parser.ts` as a
+  post-process step after the existing name-based `assignVoiceParts` call,
+  so a file that already names its own split (e.g. "Soprano 1"/"Soprano
+  2") is untouched. New `voicePartAssignment.test.ts` covers clean splits,
+  mixed unison/2-note onsets, monophonic (no-op), 3+-note bail-out, lyric
+  duplication, and already-split no-op; full suite green (214 tests),
+  `npm run check` clean.
 - 2026-09-15: "Mostly Me" mix preset now drops non-focus parts to silence
   (0) instead of a quiet 0.15, matching a +50/-50 delta from the 0.5 Even
   baseline (focus was already at the +50 cap). Deployed the frontend

@@ -1,4 +1,4 @@
-import { VOICE_PARTS, type VoicePart, type VoicePartInfo } from '../midi/types.ts';
+import { VOICE_PARTS, type MIDILyricEvent, type MIDINote, type VoicePart, type VoicePartInfo } from '../midi/types.ts';
 
 /**
  * Maps a track/part's name and note pitches to a voice part — and, when the
@@ -177,4 +177,113 @@ export function assignVoiceParts(tracks: { name: string | null; pitches: number[
 	});
 
 	return { trackParts, parts };
+}
+
+/**
+ * Detects and splits *unnamed* divisi within a single plain SATB voice part
+ * (a track/part that `assignVoiceParts` above resolved to a plain
+ * `soprano`/`alto`/`tenor`/`bass` id, i.e. the file never named its own
+ * split like "Soprano 1"/"Soprano 2"). Some sources still write real
+ * two-voice divisi onto one staff/track, distinguishable only by looking at
+ * which notes share an onset -- this recovers the same two-desk shape the
+ * name-based split above produces, by pitch rank per onset rather than by
+ * name.
+ *
+ * Rule: group a base voice's notes by exact `startMs` (same "onset" concept
+ * the MusicXML parser's own `isChord`/`lastNoteStartMs` handling uses --
+ * exact-ms equality, no epsilon, because the tempo-map conversion that
+ * produces `startMs` is deterministic, so truly simultaneous notes always
+ * land on the same ms value). At a 2-note onset, the higher pitch goes to
+ * desk 1, the lower to desk 2 -- sopranos/altos/tenors/basses are written
+ * top-voice-first by convention, so "desk 1" reads as "the higher part"
+ * the same way "Soprano 1" does in a named split.
+ *
+ * At a 1-note onset (a unison moment within an otherwise-2-voice passage,
+ * or a monophonic stretch inside a piece that also has real divisi
+ * elsewhere), **both desks get the note** -- it's cloned, not assigned to
+ * just one desk. This was an explicit human product decision, not an
+ * obvious default: the alternative (parking every unison note on desk 1
+ * only) would make desk 2 silent through the unison stretch, which sounds
+ * like a missing voice rather than what's actually happening (both parts
+ * are correctly singing the same pitch). Duplicating is the choice that
+ * matches what the ear actually hears.
+ *
+ * A base voice only gets split when it *actually has* a real 2-note onset
+ * somewhere -- a monophonic line left alone rather than duplicated onto two
+ * identical rows for no reason (see the "no group has exactly 2 notes"
+ * bail-out below). And a base voice with any onset stacking *more than* 2
+ * notes is left alone entirely, not partially split -- this function only
+ * handles clean 2-way divisi, not general chord-stacking; a 3+-note onset
+ * has no unambiguous "desk 1 vs desk 2" pitch-rank mapping the way a 2-note
+ * onset does, so it bails out rather than guessing.
+ *
+ * Lyrics have no pitch, and after a split both desks have a sounding note
+ * at every onset, so a lyric at a split base's `startMs`/`timeMs` is
+ * duplicated onto both desks too, same reasoning as the 1-note-onset note
+ * case above -- there's no way to prefer one desk over the other.
+ */
+export function splitChordalDivisi(
+	parts: VoicePartInfo[],
+	notes: MIDINote[],
+	lyrics: MIDILyricEvent[]
+): { parts: VoicePartInfo[]; notes: MIDINote[]; lyrics: MIDILyricEvent[] } {
+	let outParts = parts;
+	let outNotes = notes;
+	let outLyrics = lyrics;
+
+	for (const base of VOICE_PARTS) {
+		// Only a *plain*, unsplit voice is a candidate -- a track the file
+		// already name-split (e.g. `soprano-1`/`soprano-2` already in `parts`)
+		// has no entry with `id === base` at all, so this naturally skips it.
+		const partIndex = outParts.findIndex((p) => p.id === base);
+		if (partIndex === -1) continue;
+
+		const baseNotes = outNotes.filter((n) => n.partId === base);
+		if (baseNotes.length === 0) continue;
+
+		const byOnset = new Map<number, MIDINote[]>();
+		for (const note of baseNotes) {
+			const group = byOnset.get(note.startMs) ?? [];
+			group.push(note);
+			byOnset.set(note.startMs, group);
+		}
+
+		const groups = [...byOnset.values()];
+		if (groups.some((g) => g.length > 2)) continue; // 3+-note onset: bail out, no clean pitch-rank split
+		if (!groups.some((g) => g.length === 2)) continue; // never actually splits: leave the plain voice alone
+
+		const desk1Id = `${base}-1`;
+		const desk2Id = `${base}-2`;
+		const splitNotes: MIDINote[] = [];
+		for (const group of groups) {
+			if (group.length === 2) {
+				const [hi, lo] = [...group].sort((a, b) => b.pitch - a.pitch);
+				splitNotes.push({ ...hi, partId: desk1Id }, { ...lo, partId: desk2Id });
+			} else {
+				// 1-note onset: both desks play it (see doc comment above).
+				const [only] = group;
+				splitNotes.push({ ...only, partId: desk1Id }, { ...only, partId: desk2Id });
+			}
+		}
+
+		const desk1Info: VoicePartInfo = { id: desk1Id, base, subIndex: 1, label: `${capitalize(base)} 1` };
+		const desk2Info: VoicePartInfo = { id: desk2Id, base, subIndex: 2, label: `${capitalize(base)} 2` };
+		outParts = [...outParts.slice(0, partIndex), desk1Info, desk2Info, ...outParts.slice(partIndex + 1)];
+
+		outNotes = [
+			...outNotes.filter((n) => n.partId !== base),
+			...splitNotes.sort((a, b) => a.startMs - b.startMs)
+		];
+
+		outLyrics = outLyrics.flatMap((lyric) =>
+			lyric.partId === base
+				? [
+						{ ...lyric, partId: desk1Id },
+						{ ...lyric, partId: desk2Id }
+					]
+				: [lyric]
+		);
+	}
+
+	return { parts: outParts, notes: outNotes, lyrics: outLyrics };
 }
