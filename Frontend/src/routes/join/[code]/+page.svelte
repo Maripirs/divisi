@@ -10,6 +10,8 @@
 	import CarpoolBoard from '$lib/components/CarpoolBoard.svelte';
 	import { listGuestGroupNotes } from '$lib/api/pieceNotes';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { pieceAvailability, resourceCount } from '$lib/pieces/availability';
+	import type { GuestPiece } from '$lib/api/guest';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -36,6 +38,14 @@
 	import type { ResponsibilityRole } from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
+
+	// F43: same bundled-fallback rule as the piece-card block's own filter
+	// below, reused so a piece's sort position matches what its F42 display
+	// line says it offers.
+	function guestPieceResourceCount(piece: GuestPiece): number {
+		const bundled = piece.hasMusic || piece.hasPdf ? undefined : getPieceByTitle(piece.title);
+		return resourceCount(pieceAvailability(piece.hasMusic, piece.hasPdf, piece.youtubeUrl, bundled));
+	}
 
 	// F24: feeds `$lib/demoPreview.ts`'s store, which the globally-mounted
 	// `SettingsDrawer` reads to decide whether to show "Preview Admin".
@@ -517,9 +527,15 @@
 				     pieces that actually have a practice file wired up (no dead
 				     "not wired up" entries), each its own card with the same
 				     circle-play icon button as the personal Library. -->
-				{@const visiblePieces = result.group.pieces.filter(
-					(piece) => getPieceByTitle(piece.title) || piece.hasMusic || piece.hasPdf
-				)}
+				<!-- F43: most-resourced pieces first, same rule and shared helper
+				     as the member Tracks tab's sort. `.sort()` on a copy with no
+				     secondary key: JS's stable sort keeps ties in their pre-sort
+				     relative order on its own. -->
+				{@const visiblePieces = [
+					...result.group.pieces.filter(
+						(piece) => getPieceByTitle(piece.title) || piece.hasMusic || piece.hasPdf
+					)
+				].sort((a, b) => guestPieceResourceCount(b) - guestPieceResourceCount(a))}
 				{#if visiblePieces.length === 0}
 					<p class="empty">{m.library_no_tracks()}</p>
 				{:else}
@@ -531,13 +547,16 @@
 						     identical fix for the real bug this closed. -->
 						{@const bundled = piece.hasMusic || piece.hasPdf ? undefined : getPieceByTitle(piece.title)}
 						{@const practiceId = bundled ? bundled.id : piece.pieceId}
-						<!-- F42: same has-music/has-pdf/youtube-url vocabulary as the
-						     member Tracks tab's admin badge row, counting the bundled
-						     fixture's own player/PDF/reference too so a demo piece
-						     (no Backend flags set) still shows what it offers. -->
-						{@const availableHasPlayer = piece.hasMusic || !!bundled?.load}
-						{@const availableHasReference = !!piece.youtubeUrl || !!bundled?.youtubeUrl}
-						{@const availableHasPdf = piece.hasPdf || !!bundled?.pdfUrl}
+						<!-- F42/F43: shared with the sort above via `$lib/pieces/
+						     availability` so the two never drift — same has-music/
+						     has-pdf/youtube-url vocabulary as the member Tracks tab's
+						     admin badge row, counting the bundled fixture's own
+						     player/PDF/reference too so a demo piece (no Backend
+						     flags set) still shows what it offers. -->
+						{@const availability = pieceAvailability(piece.hasMusic, piece.hasPdf, piece.youtubeUrl, bundled)}
+						{@const availableHasPlayer = availability.hasPlayer}
+						{@const availableHasReference = availability.hasReference}
+						{@const availableHasPdf = availability.hasPdf}
 						<section class="card track-card">
 							<div class="track-card-row">
 								<div class="track-info">

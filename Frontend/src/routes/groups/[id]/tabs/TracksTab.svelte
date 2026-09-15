@@ -5,6 +5,7 @@
 	import Disclosure from '$lib/components/Disclosure.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
+	import { pieceAvailability, resourceCount } from '$lib/pieces/availability';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -60,10 +61,25 @@
 	// could do about it anyway. F5: a track is practicable either by
 	// title-matching a bundled fixture (the old path) or, now, by being a
 	// real Backend piece with its own music file/PDF — either is enough.
+	// F43: same bundled-fallback rule as the filter above, reused so a
+	// track's sort position matches what the F42 display line below says
+	// it offers.
+	function trackResourceCount(track: PageData['tracks'][number]): number {
+		const bundled = track.has_music || track.has_pdf ? undefined : getPieceByTitle(track.title);
+		return resourceCount(pieceAvailability(track.has_music, track.has_pdf, track.youtube_url, bundled));
+	}
+
 	let visibleTracks = $derived(
 		mode === 'admin'
 			? data.tracks
-			: data.tracks.filter((track) => getPieceByTitle(track.title) || track.has_music || track.has_pdf)
+			: // F43: most-resourced pieces first (player + reference + PDF count,
+				// descending) so a member sees what they can actually do the most
+				// with up top, not raw Backend order. `.sort()` on a copy (never
+				// `data.tracks` itself) with no secondary key: JS's stable sort
+				// keeps ties in their pre-sort relative order on its own.
+				[...data.tracks.filter((track) => getPieceByTitle(track.title) || track.has_music || track.has_pdf)].sort(
+					(a, b) => trackResourceCount(b) - trackResourceCount(a)
+				)
 	);
 </script>
 
@@ -90,13 +106,16 @@
 			: track.has_music || track.has_pdf
 				? lh(`/piece/${track.piece_id}${tempoQuery}`)
 				: null}
-			<!-- F42: same has_music/has_pdf/youtube_url vocabulary as the
-			     admin ✓/– badge row below, but counting the bundled fixture's
-			     own player/PDF/reference too (a demo piece like Lacrymosa has
-			     none of the Backend flags set, yet clearly offers a player). -->
-			{@const availableHasPlayer = track.has_music || !!bundled?.load}
-			{@const availableHasReference = !!track.youtube_url || !!bundled?.youtubeUrl}
-			{@const availableHasPdf = track.has_pdf || !!bundled?.pdfUrl}
+			<!-- F42/F43: shared with the sort above via `$lib/pieces/availability`
+			     so the two never drift — same has_music/has_pdf/youtube_url
+			     vocabulary as the admin ✓/– badge row below, but counting the
+			     bundled fixture's own player/PDF/reference too (a demo piece
+			     like Lacrymosa has none of the Backend flags set, yet clearly
+			     offers a player). -->
+			{@const availability = pieceAvailability(track.has_music, track.has_pdf, track.youtube_url, bundled)}
+			{@const availableHasPlayer = availability.hasPlayer}
+			{@const availableHasReference = availability.hasReference}
+			{@const availableHasPdf = availability.hasPdf}
 		<section class="card track-card">
 			<div class="track-card-row">
 			<div class="track-info">

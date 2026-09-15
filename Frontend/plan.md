@@ -117,6 +117,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F40 | Carpool direction: grouped legs instead of an exclusive toggle | ⚠️ Built 2026-09-14, superseded same day by F41: dropped the "On the way there/back" toggle from `CarpoolBoard.svelte`; new `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides flat vs. "Getting there"/"Getting home" grouping per card (Drivers/Riders independently); reworded direction `<select>` options and added the two group-heading i18n strings (`en.json`/`es.json`). `check` 0 errors, `build` clean, vitest 194 green (was 189; +5 new). Human feedback after using it: the auto-collapsing split read as inconsistent; wanted an explicit toggle back. |
 | F41 | Carpool direction: bring the toggle back, extend it to the map | ✅ Built 2026-09-14: reverted F40's per-card grouping in `CarpoolBoard.svelte` back to F37's explicit "On the way there"/"On the way home" toggle (`directionFilter`, `postMatchesDirection`), placed above the map so `drivers`/`riders` are filtered before `CarpoolMap` reads them too, fixing the gap F37 never covered (F40 accidentally fixed it as a side effect, F41 makes it deliberate). Reused `carpool_leg_there`/`carpool_leg_back` as the tab labels ("On the way there"/"On the way home") instead of F40's group-heading text; removed `carpoolPostsNeedDirectionGrouping` (`carpool.ts`), its 5 tests, the `directionGroupedPosts` snippet, and `.carpool-leg-heading`. `check` 0 errors, `build` clean, vitest 189 green (was 194; -5 from the removed grouping tests). Same-day follow-up (human's request): `directionFilter` now defaults to `'back'`, not `'there'` — the ride-home leg is the one people actually open the board to check. |
 | F42 | Piece list cards: show what's available (interactive player / recording / PDF) | ✅ Built 2026-09-14: member track card and guest join-page card each show a present-only "what's available" line (player/reference/PDF, `·`-separated), derived from the Backend flags plus the bundled-registry fallback so demo pieces show correctly; reworded `groups_track_has_music` to "Interactive player" for the present-only phrasing, admin's ✓/– badge row untouched. |
+| F43 | Sort member/guest piece lists by resource count, most populated first | ✅ Built 2026-09-14: extracted F42's per-piece player/reference/PDF availability into a shared `$lib/pieces/availability.ts` (`pieceAvailability`, `resourceCount`), used by both files' F42 display line and new F43 stable descending sort. Admin's list stays server order, unchanged. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2402,6 +2403,62 @@ player"), so no key fork was needed. Admin's `.track-contents` badge row
 untouched. `check` 0 errors, `build` clean, vitest 189 green (unchanged,
 no new tests per this milestone's own acceptance criteria: markup-only,
 same as F37).
+
+### F43 — Sort member/guest piece lists by resource count, most populated first
+
+Human's request 2026-09-14, right after F42: a member/guest browsing the
+piece list should see the most-resourced pieces (player + recording + PDF,
+i.e. the ones they can actually do the most with) first, not whatever
+order the Backend happens to return.
+
+Scope: the member (non-admin) Tracks tab and the guest join-page piece
+list only. Admin's management list keeps its existing order deliberately,
+since admin already sees full detail via the ✓/– badge row, and re-sorting
+a list an admin is actively editing (upload a PDF, track jumps position)
+would be disruptive rather than helpful.
+
+F42 already computed per-piece availability (`availableHasPlayer`/
+`availableHasReference`/`availableHasPdf` in `TracksTab.svelte`, the
+mirrored derivation in `join/[code]/+page.svelte`) accounting for both the
+Backend flags and the bundled-registry fallback. F43 reuses that, extracted
+somewhere shared enough that both files' sort and per-card render read off
+one function rather than drifting.
+
+Acceptance criteria:
+- [x] Member Tracks tab (`mode !== 'admin'`) lists pieces most-resourced
+  first (count of player+reference+PDF available, descending).
+- [x] Guest join-page piece list, same ordering rule.
+- [x] Ties keep a stable, sensible order (whatever the list's existing
+  order was among equally-resourced pieces, not re-shuffled).
+- [x] Admin's Tracks tab list order is unchanged.
+- [x] The count/availability logic has one shared home (a pure function),
+  not divergent copies between the sort and the F42 display line, and
+  ideally not divergent between the member and guest files either if that
+  can be done without forcing an awkward shared import between a route
+  file and a tab component.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green (add a
+  unit test for the sort/count helper if it lands somewhere testable).
+
+**Built 2026-09-14:** extracted F42's inline `availableHasPlayer`/
+`availableHasReference`/`availableHasPdf` derivation into a new
+`$lib/pieces/availability.ts` (`pieceAvailability(hasMusic, hasPdf,
+youtubeUrl, bundled)` returning a `PieceResourceFlags` object, plus
+`resourceCount(flags)`), shared by both `TracksTab.svelte` and
+`join/[code]/+page.svelte` for their F42 display line (unchanged
+rendering, just sourced from the shared function now) and their new F43
+sort. `TracksTab.svelte`'s `visibleTracks` (member branch only) now does
+`[...filtered].sort((a, b) => trackResourceCount(b) -
+trackResourceCount(a))` on a copied array, `trackResourceCount` computing
+each track's `bundled` piece the same way the existing filter/
+`practiceHref` logic already does; `join/[code]/+page.svelte`'s
+`visiblePieces` gets the same treatment via a `guestPieceResourceCount`
+helper over `GuestPiece`. No secondary sort key: JS's stable `.sort()`
+keeps ties in their pre-sort relative order on its own. Admin's
+`data.tracks` branch untouched (still unsorted, unfiltered). Added
+`availability.test.ts` covering `pieceAvailability` (Backend flags,
+bundled-only fallback, either-is-enough) and `resourceCount` (all-three
+vs. two-of-three ranking, stable-sort tie preservation). `check` 0 errors,
+`build` clean, vitest 195 green (was 189; +6 new).
 
 ## Backlog
 
