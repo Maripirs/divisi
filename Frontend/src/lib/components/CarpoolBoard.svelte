@@ -73,11 +73,13 @@
 	 * component falls back to today's list-only layout whenever Maps isn't
 	 * usable or there's simply nothing to put a pin on.
 	 *
-	 * B32/F37: `directionFilter` defaults to `'there'` — the driver/rider
-	 * lists only ever show one of the two toggle states at a time, and
-	 * "there" reads naturally as the first leg of a trip. A round-trip post
-	 * matches either state (`postMatchesDirection`, `$lib/utils/carpool.ts`),
-	 * so it's never actually hidden by this toggle.
+	 * B32/F37: the driver/rider lists only ever show one of the two toggle
+	 * states at a time. A round-trip post matches either state
+	 * (`postMatchesDirection`, `$lib/utils/carpool.ts`), so it's never
+	 * actually hidden by this toggle. `directionFilter` defaulted to
+	 * `'there'` under F37 ("there" reads naturally as the first leg); human
+	 * feedback 2026-09-14 flipped the default to `'back'` instead, since the
+	 * ride-home leg is the one people actually open the board to check.
 	 *
 	 * F40 briefly replaced this exclusive toggle with per-card auto-grouping
 	 * (a flat list when every post was round trip, "Getting there"/"Getting
@@ -133,7 +135,7 @@
 	// pins respect the toggle too (F37 never did this; F40 accidentally did,
 	// as a side effect of its own since-reverted filtering, so F41 makes it
 	// deliberate).
-	let directionFilter = $state<CarpoolDirectionFilter>('there');
+	let directionFilter = $state<CarpoolDirectionFilter>('back');
 	let drivers = $derived(
 		posts.filter((p) => p.kind === 'driver' && postMatchesDirection(p.direction, directionFilter))
 	);
