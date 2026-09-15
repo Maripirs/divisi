@@ -124,11 +124,8 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 - Weekly note structured sections/items (deferred pending evidence admins
   want structure over prose; a JSONB `structured` column is the cheap
   first step if so).
-- Markdown links (`[text](url)`) in the frontend weekly-note renderer.
 - Decide diff/patch vs. full-reupload semantics for a group "modification."
 - Group invite flow (email invite vs. join code) — not designed yet.
-- Object-storage orphans: `delete_piece` leaves `obj/…` files in the
-  bucket; needs a sweep-by-prefix or delete-on-piece-delete.
 - Set `AWS_*` Object Storage env vars on Render (`save_file` already
   supports it) and re-upload the 6 modification-version PDFs lost to old
   disk wipes before that swap landed.
@@ -136,9 +133,6 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   reminders; swap requests + admin-approval-required signups; whether
   roles/schedules should be reusable templates across groups — all
   explicitly deferred, all need a real job runner or a design pass first.
-- No `pytest` coverage yet for `PUT /groups/{id}/description`,
-  `PUT /groups/{id}/members/{user_id}/role`, or
-  `DELETE /responsibilities/schedules/{id}`/`.../roles/{id}`.
 - Pick a transactional email provider (Resend/Postmark) so password-reset
   links work for real, in place of the current server-log-only send. Now a
   shared dependency for a second thing (see next item), which raises its
@@ -161,10 +155,6 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   `scripts/prune_anonymous_participants.py`.
 - Track "last opened piece" server-side for a real Home "Continue
   practice" card (currently fixture/bundled-demo-only).
-- Admin default tempo doesn't yet ride along on the guest join page's
-  practice link (`GuestPieceOut` has no `default_tempo_bpm`).
-- Admin's Assignments/Tracks tabs have no edit/delete UI for tracks yet
-  (homework delete exists; tracks doesn't).
 - `/groups/new`'s form only asks for a name — no description or
   default-sections checklist field exists yet on `GroupCreate`.
 - Preserve fully independent polyphonic notation in player-generated
@@ -197,4 +187,15 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   `origin/main` — so the only genuinely open work left is a manual frontend
   redeploy, a batch of human real-browser/touchscreen passes, a handful of
   backlog-tracked decisions, and the parked OMR/editor branch.
+- 2026-09-14: Backend test coverage for `PUT /groups/{id}/description`,
+  `PUT /groups/{id}/members/{user_id}/role` (last-admin-demote guard,
+  promote/demote, 404 on a non-member), and `DELETE
+  /responsibilities/roles/{id}` (role removal, cascading signup cleanup,
+  admin-only). Added `delete_file` to `app/storage/files.py` and wired it
+  into `delete_piece` so a deleted piece's local-disk/object-storage
+  files are actually reclaimed instead of left as orphans. Weekly-note
+  markdown renderer now supports `[text](url)` links (http/https/mailto
+  only; other schemes render as plain text). Guest join page's practice
+  link now carries the admin-set default tempo (`GuestPieceOut.
+  default_tempo_bpm`), matching the member Tracks tab.
 
