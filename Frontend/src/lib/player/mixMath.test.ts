@@ -124,10 +124,10 @@ describe('presetBalances', () => {
 		expect(out.alto).toBe(0);
 		expect(out.soprano).toBe(0.5);
 	});
-	it('mostlyMe boosts focus to 1 and drops the rest to 0.15', () => {
+	it('mostlyMe boosts focus to 1 and drops the rest to 0', () => {
 		const out = presetBalances(flatParts, 'mostlyMe', 'alto', null);
 		expect(out.alto).toBe(1);
-		expect(out.soprano).toBe(0.15);
+		expect(out.soprano).toBe(0);
 	});
 });
 

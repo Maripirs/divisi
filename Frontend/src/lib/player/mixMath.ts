@@ -110,12 +110,11 @@ export function sameVisualStates(
 // which labels it "Even") — so "Everyone" leaves every bucket there,
 // "Minus Me" just cuts the non-focus buckets to silence rather than
 // boosting anything above normal. "Mostly Me" is the first preset that
-// actually deviates from that: focus part boosted to full (1),
-// everyone else turned down low but still audible (0.15) -- singing
-// along with a quiet backing track, per the human's own description
-// of it. ("My Part" — focus-only, everyone else silenced — used to be
-// a preset here too; removed per the human's call, true solo is still
-// reachable via the Custom sliders if someone wants it.)
+// actually deviates from that: focus part boosted +50 from even to full
+// (1), everyone else dropped -50 from even to silent (0). ("My Part" —
+// focus-only, everyone else silenced — used to be a preset here too;
+// removed per the human's call, true solo is still reachable via the
+// Custom sliders if someone wants it.)
 export function presetBalances(
 	parts: Parts,
 	mode: Exclude<MixMode, 'custom'>,
@@ -127,7 +126,7 @@ export function presetBalances(
 			let value: number;
 			if (mode === 'everyone') value = 0.5;
 			else if (mode === 'minusMe') value = isFocusPart(part, focusPart, subPart) ? 0 : 0.5;
-			else value = isFocusPart(part, focusPart, subPart) ? 1 : 0.15; // mostlyMe
+			else value = isFocusPart(part, focusPart, subPart) ? 1 : 0; // mostlyMe
 			return [part.id, value];
 		})
 	) as Record<MixPart, number>;
