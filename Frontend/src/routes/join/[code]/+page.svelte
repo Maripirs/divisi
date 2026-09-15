@@ -531,11 +531,31 @@
 						     identical fix for the real bug this closed. -->
 						{@const bundled = piece.hasMusic || piece.hasPdf ? undefined : getPieceByTitle(piece.title)}
 						{@const practiceId = bundled ? bundled.id : piece.pieceId}
+						<!-- F42: same has-music/has-pdf/youtube-url vocabulary as the
+						     member Tracks tab's admin badge row, counting the bundled
+						     fixture's own player/PDF/reference too so a demo piece
+						     (no Backend flags set) still shows what it offers. -->
+						{@const availableHasPlayer = piece.hasMusic || !!bundled?.load}
+						{@const availableHasReference = !!piece.youtubeUrl || !!bundled?.youtubeUrl}
+						{@const availableHasPdf = piece.hasPdf || !!bundled?.pdfUrl}
 						<section class="card track-card">
 							<div class="track-card-row">
 								<div class="track-info">
 									<p class="card-title">{piece.title}</p>
 									<p class="card-meta">{m.join_shared({ date: formatEventDate(piece.distributedAt) })}</p>
+									{#if availableHasPlayer || availableHasReference || availableHasPdf}
+										<!-- Present-only "what's available" line, same
+										     compact format as the member card's. -->
+										<p class="card-meta">
+											{[
+												availableHasPlayer ? m.groups_track_has_music() : null,
+												availableHasReference ? m.groups_track_has_reference() : null,
+												availableHasPdf ? m.groups_track_has_pdf() : null
+											]
+												.filter(Boolean)
+												.join(' · ')}
+										</p>
+									{/if}
 								</div>
 								<a
 									class="piece-action piece-action--primary"

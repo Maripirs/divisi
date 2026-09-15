@@ -116,6 +116,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F39 | Guest About/Info tab (frontend for Backend B33) | ✅ Built 2026-09-14: `about` joined `joinTabs.ts`'s `GuestBuiltinTabKey`, gated on a new `aboutVisible` flag (unlike the member side's unconditional `about`); `$lib/api/guest.ts` gained `listGuestAbout`/`GuestAbout` plus `about_visible` on `getGuestTabs`'s (currently-unused) response type, threaded through `guestJoin.ts`'s fan-out the same optional-page way as weekly notes/carpool. `join/[code]/+page.svelte` renders a read-only About section (description + `formatRehearsalSchedule`, reused from `../groups/[id]/rehearsalSchedule`) with no editors/leave-group/join-link controls — reused existing `groups_about_tab_title`/`groups_rehearsals`/`groups_no_description` keys, no new ones needed. `check` 0 errors, `build` clean, vitest 189 green. |
 | F40 | Carpool direction: grouped legs instead of an exclusive toggle | ⚠️ Built 2026-09-14, superseded same day by F41: dropped the "On the way there/back" toggle from `CarpoolBoard.svelte`; new `carpoolPostsNeedDirectionGrouping` (`carpool.ts`) decides flat vs. "Getting there"/"Getting home" grouping per card (Drivers/Riders independently); reworded direction `<select>` options and added the two group-heading i18n strings (`en.json`/`es.json`). `check` 0 errors, `build` clean, vitest 194 green (was 189; +5 new). Human feedback after using it: the auto-collapsing split read as inconsistent; wanted an explicit toggle back. |
 | F41 | Carpool direction: bring the toggle back, extend it to the map | ✅ Built 2026-09-14: reverted F40's per-card grouping in `CarpoolBoard.svelte` back to F37's explicit "On the way there"/"On the way home" toggle (`directionFilter`, `postMatchesDirection`), placed above the map so `drivers`/`riders` are filtered before `CarpoolMap` reads them too, fixing the gap F37 never covered (F40 accidentally fixed it as a side effect, F41 makes it deliberate). Reused `carpool_leg_there`/`carpool_leg_back` as the tab labels ("On the way there"/"On the way home") instead of F40's group-heading text; removed `carpoolPostsNeedDirectionGrouping` (`carpool.ts`), its 5 tests, the `directionGroupedPosts` snippet, and `.carpool-leg-heading`. `check` 0 errors, `build` clean, vitest 189 green (was 194; -5 from the removed grouping tests). Same-day follow-up (human's request): `directionFilter` now defaults to `'back'`, not `'there'` — the ride-home leg is the one people actually open the board to check. |
+| F42 | Piece list cards: show what's available (interactive player / recording / PDF) | ✅ Built 2026-09-14: member track card and guest join-page card each show a present-only "what's available" line (player/reference/PDF, `·`-separated), derived from the Backend flags plus the bundled-registry fallback so demo pieces show correctly; reworded `groups_track_has_music` to "Interactive player" for the present-only phrasing, admin's ✓/– badge row untouched. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2339,6 +2340,68 @@ wording ("On the way there" / "On the way home"; Spanish "De ida" / "De
 vuelta a casa"). F40's reworded post-form `<select>` options were left
 untouched. `check` 0 errors, `build` clean, vitest 189 green (was 194; -5
 from the removed grouping tests).
+
+### F42 — Piece list cards: show what's available (interactive player / recording / PDF)
+
+Human's request 2026-09-14: on a group's track list, a member or guest
+should be able to tell what a piece actually offers (interactive player,
+reference recording, PDF score) without opening it. Today only the
+admin-mode Tracks tab shows this, as a ✓/– badge row
+(`TracksTab.svelte`'s `.track-contents`); the member (non-admin) card and
+the guest join-page card show nothing but the title.
+
+The presence signals already exist and are already the exact vocabulary
+the piece detail page (`piece/[id]/+page.svelte`) uses to decide what to
+render: `has_music`/`hasMusic` → interactive player, `has_pdf`/`hasPdf` →
+PDF pane, `youtube_url`/`youtubeUrl` (non-null) → reference recording. No
+backend or schema change needed.
+
+One nuance: both the member Tracks tab and the guest join page fall back
+to a small bundled/local piece registry (`$lib/pieces/registry.ts`,
+`getPieceByTitle`) for the two demo pieces that ship with the app, which
+can offer a player/PDF without the Backend flags being true at all
+(`TracksTab.svelte`'s existing `bundled`/`practiceHref` logic already
+handles this for the visibility filter and the play button). The new
+indicator must derive availability the same way, not read `has_music`/
+`has_pdf` raw, or the bundled pieces will show as offering nothing.
+
+Acceptance criteria:
+- [x] Member (non-admin) track card shows a compact "what's available"
+  indicator (interactive player / reference recording / PDF), present-only
+  (no need to call out what's missing the way the admin ✓/– badge does).
+- [x] Guest join-page piece card shows the same indicator.
+- [x] Availability accounts for both the Backend-reported flags and the
+  bundled-registry fallback, matching the existing `practiceHref`/
+  visibility-filter logic exactly (a bundled demo piece shows correctly).
+- [x] Reuses existing i18n keys (`groups_track_has_music`/
+  `groups_track_has_pdf`/`groups_track_has_reference`) unless the wording
+  genuinely doesn't fit a member/guest audience, in which case adjust
+  those strings (both `en.json`/`es.json`) rather than fork new ones.
+- [x] Admin mode's existing ✓/– badge row is untouched.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green.
+
+**Built 2026-09-14:** added three `@const`s alongside the existing
+`bundled`/`practiceHref` computation in both `TracksTab.svelte` (member
+branch) and `join/[code]/+page.svelte` (guest card) — `availableHasPlayer`/
+`availableHasReference`/`availableHasPdf` — each `||`-ing the Backend flag
+(`has_music`/`youtube_url`/`has_pdf`, or the guest `GuestPiece`'s camelCase
+equivalents) with the matching field on the bundled fallback `Piece`
+(`load`/`youtubeUrl`/`pdfUrl`), so a demo piece with none of the Backend
+flags set still shows correctly. Rendered as one present-only `<p
+class="card-meta">` line, items joined with " · " (the same separator
+`ResponsibilityDateCard`/`HomeworkCard`/`CarpoolBoard` already use for
+compact meta lines elsewhere), fixed order player/reference/PDF, nothing
+rendered when nothing is available. Reused
+`groups_track_has_pdf`/`groups_track_has_reference` as-is; reworded
+`groups_track_has_music` from "Music file" to "Interactive player" (`en.json`)
+/ "Reproductor interactivo" (`es.json`, matching `piece_view_player`'s
+existing "Reproductor") since "Music file" read like a filename in a
+present-only list, not "there's a player here" — checked it still reads
+fine in the admin ✓/– row too ("✓ Interactive player" / "– Interactive
+player"), so no key fork was needed. Admin's `.track-contents` badge row
+untouched. `check` 0 errors, `build` clean, vitest 189 green (unchanged,
+no new tests per this milestone's own acceptance criteria: markup-only,
+same as F37).
 
 ## Backlog
 

@@ -90,6 +90,13 @@
 			: track.has_music || track.has_pdf
 				? lh(`/piece/${track.piece_id}${tempoQuery}`)
 				: null}
+			<!-- F42: same has_music/has_pdf/youtube_url vocabulary as the
+			     admin ✓/– badge row below, but counting the bundled fixture's
+			     own player/PDF/reference too (a demo piece like Lacrymosa has
+			     none of the Backend flags set, yet clearly offers a player). -->
+			{@const availableHasPlayer = track.has_music || !!bundled?.load}
+			{@const availableHasReference = !!track.youtube_url || !!bundled?.youtubeUrl}
+			{@const availableHasPdf = track.has_pdf || !!bundled?.pdfUrl}
 		<section class="card track-card">
 			<div class="track-card-row">
 			<div class="track-info">
@@ -271,6 +278,23 @@
 						>
 							{m.groups_edit_details()}
 						</button>
+					{:else if availableHasPlayer || availableHasReference || availableHasPdf}
+						<!-- F42: member card gets a compact present-only line
+						     (no "–" call-outs the way the admin badge row above
+						     has) so a member can tell what a piece offers without
+						     opening it. Renders nothing when nothing is available
+						     yet, which the `visibleTracks` filter above already
+						     mostly prevents except for a bundled piece with just
+						     a player and no PDF/reference. -->
+						<p class="card-meta">
+							{[
+								availableHasPlayer ? m.groups_track_has_music() : null,
+								availableHasReference ? m.groups_track_has_reference() : null,
+								availableHasPdf ? m.groups_track_has_pdf() : null
+							]
+								.filter(Boolean)
+								.join(' · ')}
+						</p>
 					{/if}
 				{/if}
 				{#if !practiceHref}

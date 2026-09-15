@@ -346,7 +346,7 @@
 	"groups_practice_not_wired_up": "Practice isn't wired up for this track yet (see Frontend/plan.md's backlog).",
 	"groups_edit_details": "Edit details",
 	"groups_upload_name_required": "Name is required",
-	"groups_track_has_music": "Music file",
+	"groups_track_has_music": "Interactive player",
 	"groups_track_has_pdf": "PDF",
 	"groups_track_has_reference": "Reference recording",
 	"groups_edit_attachments": "Attachments",
