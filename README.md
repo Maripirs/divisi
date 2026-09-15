@@ -4,10 +4,11 @@ Practice tooling for choirs: play a SATB score as synchronized audio + engraved
 notation, follow your own voice part, mark up the sheet music, and share
 practice tracks with a group via a join link (no login needed to listen).
 
-**This is primarily a web project.** A native iOS app was the original form of
-Divisi; it is paused/backlogged as of 2026-08-27. The pure-algorithm parts of
-its Swift code (`DivisiKit/`) live on as the reference the web ports were
-derived from — see `Frontend/plan.md`'s "iOS app" section for that history.
+**This is a web project.** A native iOS app was the original form of Divisi,
+paused/backlogged as of 2026-08-27 and removed from this tree on 2026-09-14
+(its Swift code was the reference the web ports were derived from); see
+`Frontend/plan.md`'s "iOS app" section for that history, and the
+`pre-cleanup-audit-20260914` tag if the source itself is ever needed again.
 
 ## Structure
 
@@ -21,10 +22,9 @@ derived from — see `Frontend/plan.md`'s "iOS app" section for that history.
   MIDI→audio/MusicXML rendering pipeline. Deployed on Render at
   **https://divisi.onrender.com**. An OMR (scanned-PDF → MusicXML) pipeline is
   scaffolded but backlogged. See `Backend/README.md` and `Backend/plan.md`.
-- `Fixtures/` — synthetic SATB MIDI test fixtures shared by both apps
-  (`generate.py`, mido). `Backend/fixtures/` is a committed copy baked into the
-  backend image.
-- `DivisiKit/`, `App/`, `Divisi.xcodeproj`, `project.yml` — the paused iOS app.
+- `Fixtures/` — synthetic SATB MIDI test fixtures shared by the Frontend and
+  Backend (`generate.py`, mido). `Backend/fixtures/` is a committed copy baked
+  into the backend image.
 
 ## Working in this repo
 
