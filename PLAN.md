@@ -56,7 +56,7 @@ Frontend code for all of these is built, committed to `main`, and
 `check`/`build`-clean. What's missing is a manual frontend redeploy and/or a
 real browser/touchscreen/device pass — not further Claude-side building.
 
-- [ ] **Frontend redeploy.** Run `PUBLIC_API_BASE_URL=https://divisi.onrender.com npm run build && npx wrangler deploy` from `Frontend/` to ship everything built so far to `https://divisi.maripi.net`. Confirm the live site afterward.
+- [x] **Frontend redeploy.** Shipped 2026-09-15 (see Log). Still needs a live-site confirm pass.
 - [ ] **Real backend-hosted piece playback**: member and guest, including password-protected groups — sounds/looks right end to end.
 - [ ] **PDF markup**: pen/stamp/eraser/undo, the annotation-mode on/off toggle, and the "My mix" vs. reference-recording audio-source picker — real touchscreen/browser confirm.
 - [ ] **Piece Notes panel**: director + personal notes on both the player and the Rehearsal Tracks card, as admin and as plain member.
@@ -173,6 +173,13 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: "Mostly Me" mix preset now drops non-focus parts to silence
+  (0) instead of a quiet 0.15, matching a +50/-50 delta from the 0.5 Even
+  baseline (focus was already at the +50 cap). Deployed the frontend
+  (`npm run build && npx wrangler deploy`, picking up `.env.production`'s
+  real backend URL) to `https://divisi.maripi.net` — clears the
+  long-standing "Frontend redeploy" item below; everything built over the
+  last several days is now live, not just committed.
 - 2026-09-14: Replaced `Backend/plan.md`, `Frontend/plan.md`, and
   `OMR_EDITOR_PLAN.md` with this `PLAN.md`, tracking current state and
   backlog going forward (the old files' full history was archived locally,
