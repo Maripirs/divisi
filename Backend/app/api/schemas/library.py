@@ -174,6 +174,20 @@ class GuestGroupOut(BaseModel):
     admin_preview_available: bool = False
 
 
+class GuestAboutOut(BaseModel):
+    """B33: a guest-facing subset of `GroupOut` (`groups.py`) for the
+    Info/About page, whose content (a free-text description plus a regular
+    weekly rehearsal slot) carries no privacy/per-user-storage bits, so it
+    reuses `GroupOut`'s own field names/types rather than inventing new
+    ones. Deliberately excludes `id`/`join_code`/`role`/`has_guest_password`
+    — nothing here beyond what an admin already writes for every viewer to
+    read."""
+
+    description: str | None = None
+    rehearsal_weekday: int | None = None
+    rehearsal_time: str | None = None
+
+
 class AdminPreviewOut(BaseModel):
     """B20: the read-only "preview Admin" session. `group_id` (unlike the
     plain `Token` other flows return) is here so the Frontend can navigate
@@ -255,12 +269,16 @@ class GuestTabsOut(BaseModel):
     B31: `custom_pages` is gone along with the generic `GroupCustomPage`
     system it listed — carpool (its only template) is now a built-in
     `GroupPage`, so `carpool_visible` joins the other three booleans here
-    instead."""
+    instead.
+
+    B33: `about_visible` joins the rest the same way, once a guest route
+    for the Info/About page existed to gate."""
 
     homework_visible: bool
     weekly_notes_visible: bool
     responsibilities_visible: bool
     carpool_visible: bool
+    about_visible: bool
     # The header on a guest's tab route needs the group's own name, same as
     # every other guest tab already shows there. `group` is already loaded
     # in `get_guest_tabs` to run its own visibility checks, so this is a

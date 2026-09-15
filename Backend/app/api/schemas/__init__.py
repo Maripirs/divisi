@@ -54,6 +54,7 @@ from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
     DistributionOut,
+    GuestAboutOut,
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupInfoOut,
@@ -141,6 +142,7 @@ __all__ = [
     "GroupPageSettingUpdate",
     "GroupPageSettingsUpdate",
     "GroupRehearsalScheduleUpdate",
+    "GuestAboutOut",
     "GuestAuthIn",
     "GuestAuthOut",
     "GuestGroupInfoOut",

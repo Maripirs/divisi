@@ -396,6 +396,8 @@ def test_guest_tabs_reports_visibility_including_carpool(client):
     assert body["weekly_notes_visible"] is False
     assert body["responsibilities_visible"] is False
     assert body["carpool_visible"] is True
+    # about defaults to members-only audience (B12) same as the others.
+    assert body["about_visible"] is False
 
 
 def test_guest_tabs_unknown_join_code_404s(client):

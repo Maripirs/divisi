@@ -303,6 +303,83 @@ def test_guest_weekly_notes_hidden_by_default(client):
     assert response.status_code == 404
 
 
+def test_guest_can_see_about_no_auth(client):
+    admin_headers = _register_and_login(client, "gab-admin@example.com")
+    group = client.post("/groups", json={"name": "Choir GAB"}, headers=admin_headers).json()
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "about", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+    client.put(
+        "/groups/" + group["id"] + "/description",
+        json={"description": "A friendly community choir."},
+        headers=admin_headers,
+    )
+    client.put(
+        "/groups/" + group["id"] + "/rehearsal-schedule",
+        json={"rehearsal_weekday": 2, "rehearsal_time": "19:00"},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/about")
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "description": "A friendly community choir.",
+        "rehearsal_weekday": 2,
+        "rehearsal_time": "19:00",
+    }
+
+
+def test_guest_about_unknown_join_code_404s(client):
+    response = client.get("/guest/NOTAREAL/about")
+    assert response.status_code == 404
+
+
+def test_guest_about_hidden_by_default(client):
+    admin_headers = _register_and_login(client, "gab-admin2@example.com")
+    group = client.post("/groups", json={"name": "Choir GAB2"}, headers=admin_headers).json()
+    client.put(
+        "/groups/" + group["id"] + "/description",
+        json={"description": "Members only, for now."},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/about")
+    assert response.status_code == 404
+
+
+def test_guest_about_404s_when_audience_is_members(client):
+    admin_headers = _register_and_login(client, "gab-admin3@example.com")
+    group = client.post("/groups", json={"name": "Choir GAB3"}, headers=admin_headers).json()
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "about", "enabled": True, "audience": "members"}]},
+        headers=admin_headers,
+    )
+
+    response = client.get(f"/guest/{group['join_code']}/about")
+    assert response.status_code == 404
+
+
+def test_guest_tabs_reports_about_visibility(client):
+    admin_headers = _register_and_login(client, "gab-admin4@example.com")
+    group = client.post("/groups", json={"name": "Choir GAB4"}, headers=admin_headers).json()
+
+    hidden = client.get(f"/guest/{group['join_code']}/tabs").json()
+    assert hidden["about_visible"] is False
+
+    client.put(
+        "/groups/" + group["id"] + "/page-settings",
+        json={"pages": [{"page": "about", "enabled": True, "audience": "everyone"}]},
+        headers=admin_headers,
+    )
+
+    visible = client.get(f"/guest/{group['join_code']}/tabs").json()
+    assert visible["about_visible"] is True
+
+
 def test_guest_join_code_alone_opens_a_password_protected_group(client):
     # The join code is now the guest credential on its own: holding it is
     # treated as equivalent to having entered the group's guest password,

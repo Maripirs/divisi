@@ -27,6 +27,7 @@ from app.api.schemas import (
     AdminPreviewOut,
     CarpoolEventOut,
     CarpoolPostOut,
+    GuestAboutOut,
     GuestAuthIn,
     GuestAuthOut,
     GuestGroupInfoOut,
@@ -385,6 +386,27 @@ def list_guest_weekly_notes(
     )
 
 
+@router.get("/{join_code}/about", response_model=GuestAboutOut)
+def get_guest_about(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> GuestAboutOut:
+    """B33: read-only, same no-auth stance as `list_guest_homework`/
+    `list_guest_weekly_notes` above — a group's free-text description and
+    its regular-rehearsal schedule carry neither privacy nor per-user
+    storage, so guest parity extends here same as those two. Gated by the
+    `about` page settings, members-only audience by default (B12). No
+    write route: the admin editors for description/rehearsal schedule stay
+    member/admin-only, same restraint as the `tracks` guest route."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    require_guest_page_access(group.id, GroupPage.about, db)
+    return GuestAboutOut(
+        description=group.description,
+        rehearsal_weekday=group.rehearsal_weekday,
+        rehearsal_time=group.rehearsal_time,
+    )
+
+
 @router.get("/{join_code}/tabs", response_model=GuestTabsOut)
 def get_guest_tabs(
     join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
@@ -419,6 +441,7 @@ def get_guest_tabs(
         weekly_notes_visible=_visible(GroupPage.weekly_notes),
         responsibilities_visible=_visible(GroupPage.responsibilities),
         carpool_visible=_visible(GroupPage.carpool),
+        about_visible=_visible(GroupPage.about),
         group_name=group.name,
     )
 

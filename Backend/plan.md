@@ -125,7 +125,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B29 | Carpool Map: destination/origin coordinates + admin map_enabled toggle | ✅ Built 2026-09-12, migration `9d09d03dff42`; pytest 372 green |
 | B31 | Promote Carpool to a built-in tab, drop the generic Custom Pages system | ✅ Built 2026-09-14, migration `a5f3d8c1e6b4`; pytest 374 green |
 | B32 | Carpool direction: there / back / round trip | ✅ Built 2026-09-14, migration `b7e2f4a9c3d8`; pytest 374 green |
-| B33 | Guest access to the About/Info page, honoring its existing `audience` setting | ⏳ Planned |
+| B33 | Guest access to the About/Info page, honoring its existing `audience` setting | ✅ Built 2026-09-14, no migration; pytest 379 green |
 
 ### B1 — Backend scaffold [x]
 
@@ -1708,7 +1708,7 @@ every pre-existing row on its own, no Python-loop backfill needed.
   and `serialize_post` passes it straight through to `CarpoolPostOut`,
   same pattern every other post field already follows.
 
-### B33 — Guest access to the About/Info page, honoring its existing `audience` setting [ ]
+### B33 — Guest access to the About/Info page, honoring its existing `audience` setting [x]
 
 `GroupPage.about` has been in `GroupPageSettings`/`DEFAULT_AUDIENCE` since B12,
 and Settings' Page Visibility UI has always let an admin set its audience to
@@ -1725,23 +1725,30 @@ guest-unreachable; its content is exactly the kind of thing guest parity
 should NOT extend to.
 
 Acceptance criteria:
-- [ ] A guest route (mirroring `homework`/`weekly_notes`'s shape in
+- [x] A guest route (mirroring `homework`/`weekly_notes`'s shape in
   `app/api/routes/guest.py`) returns the group's `description`,
   `rehearsal_weekday`, `rehearsal_time`, gated by
   `require_guest_page_access(group_id, GroupPage.about, db)` exactly like
   every other guest-readable built-in.
-- [ ] `GuestTabsOut` gains `about_visible: bool`, computed the same way as
+- [x] `GuestTabsOut` gains `about_visible: bool`, computed the same way as
   `homework_visible`/`weekly_notes_visible`/`carpool_visible` in
   `get_guest_tabs`'s `_visible()` closure.
-- [ ] No write access: About has no guest-writable fields today (the admin
+- [x] No write access: About has no guest-writable fields today (the admin
   editors for description/rehearsal schedule stay member/admin-only), so
   this is read-only, same restraint as `tracks`' guest route.
-- [ ] Existing member-facing `about`/settings behavior is unchanged; this
+- [x] Existing member-facing `about`/settings behavior is unchanged; this
   only adds a new unauthenticated read path.
-- [ ] Tests cover: guest 404 when `about` is disabled or `audience=members`
+- [x] Tests cover: guest 404 when `about` is disabled or `audience=members`
   (matching every other guest-gate test's shape), guest 200 with the right
   fields when `audience=everyone`, `about_visible` correctness in
   `get_guest_tabs`.
+
+**Deviations from the plan:** none of substance. New response schema is
+`GuestAboutOut` (`app/api/schemas/library.py`, alongside the other
+`Guest*Out` subset schemas like `GuestGroupOut`/`GuestPieceOut`), a trimmed
+view of `GroupOut` (`groups.py`) with the same field names/types, since no
+existing schema already exposed just those three fields to an
+unauthenticated caller.
 
 ## Backlog
 
@@ -1777,6 +1784,7 @@ Acceptance criteria:
 
 *Condensed 2026-08-29, again 2026-09-02 (entries tightened to 1-3 sentences, superseded runs collapsed to markers). See each milestone's own section above for full acceptance-criteria/task detail; this is a chronological breadcrumb, not a re-narration.*
 
+- 2026-09-14: Built B33 (guest access to the About/Info page). `GET /guest/{join_code}/about` (`app/api/routes/guest.py`) returns a new `GuestAboutOut` (`app/api/schemas/library.py`: `description`/`rehearsal_weekday`/`rehearsal_time`, a trimmed `GroupOut`), gated by `require_guest_page_access(group_id, GroupPage.about, db)` same as every other guest built-in; `GuestTabsOut` gained `about_visible`. Read-only, no write route, no migration (no new DB fields, `about`'s `audience` setting has existed since B12). `pytest` 379 green (was 374; +5 new: 200-with-fields, 404-disabled, 404-audience=members, and `about_visible` both ways in `/tabs`).
 - 2026-09-14: Built B31 (promote Carpool to a built-in `GroupPage`, drop the generic Custom Pages system) and B32 (carpool post `direction`: there/back/round_trip). `GroupCustomPage`/`GroupCustomPageTemplate`/`GroupCustomPageStatus`, `app/services/custom_pages.py`, and `app/api/routes/custom_pages.py` are gone; `CarpoolEvent.page_id` became `group_id`, backfilled per group by a winner-picking rule (`app.services.pages.resolve_carpool_page_settings_from_custom_pages`) over each group's old `carpool_board` pages. Carpool routes are now flat (`/groups/{id}/carpool/events`, no more `/pages/{page_id}/`); `GuestTabsOut` moved to `app/api/schemas/library.py` with `carpool_visible` replacing `custom_pages`. `CarpoolPost.direction` defaults/backfills to `round_trip`; an optional `direction` query param on both the member and guest post-list routes filters to that direction plus `round_trip`. `pytest` 374 green (was 388: -22 from deleting `tests/test_custom_pages.py` outright, +8 net in the `tests/test_carpool.py` rewrite after retiring/renaming the old custom-pages-shaped tests and adding new B31/B32 coverage). Both migrations (`a5f3d8c1e6b4`, `b7e2f4a9c3d8`) verified live against the local docker-compose Postgres with fixture rows in each `group_custom_pages` status, including an upgrade -> downgrade -> upgrade cycle (surfaced and fixed a re-seeding idempotency bug on that path). Not pushed/deployed.
 
 - 2026-09-12: Built B26 (carpool: a standing, non-dated board by default, dated events stay for exceptions). `CarpoolEvent.starts_at`/`destination_label` went nullable, plus a new `is_standing` boolean (migration `a1c9e6f2b7d4`, chained off B25's `48a30562ab06`); no `CarpoolPost` change. `app/services/carpool.py` (new): `get_or_create_standing_event` bootstraps the one page-scoped standing row (title `"Ongoing carpool"`, `starts_at`/`destination_label` both `None`) lazily on first listing rather than admin-created, and `list_events_ordered` wraps it plus dated-by-`starts_at`-ascending ordering so `list_events` (`carpool.py`) and the guest events route (`guest.py`) share one call. `update_event` rejects (400) `status=archived` and any `starts_at` patch on a standing event; lock/unlock and title/destination edits still work. Two existing B24/B25 listing-count tests needed a one-line filter (`is_standing == False`) since the standing event now rides along in every listing, by design; no other B24/B25 test changed. `pytest` 343 green (was 334; +9 new). Migration verified up/down/up against the local docker-compose Postgres, never prod. Not pushed/deployed.
