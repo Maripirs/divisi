@@ -125,6 +125,7 @@ OMR job tracking (not a full queue yet), docker-compose for local dev.
 | B29 | Carpool Map: destination/origin coordinates + admin map_enabled toggle | ✅ Built 2026-09-12, migration `9d09d03dff42`; pytest 372 green |
 | B31 | Promote Carpool to a built-in tab, drop the generic Custom Pages system | ✅ Built 2026-09-14, migration `a5f3d8c1e6b4`; pytest 374 green |
 | B32 | Carpool direction: there / back / round trip | ✅ Built 2026-09-14, migration `b7e2f4a9c3d8`; pytest 374 green |
+| B33 | Guest access to the About/Info page, honoring its existing `audience` setting | ⏳ Planned |
 
 ### B1 — Backend scaffold [x]
 
@@ -1706,6 +1707,41 @@ every pre-existing row on its own, no Python-loop backfill needed.
   through the same `model_fields_set` block as `leave_time_text`/`notes`,
   and `serialize_post` passes it straight through to `CarpoolPostOut`,
   same pattern every other post field already follows.
+
+### B33 — Guest access to the About/Info page, honoring its existing `audience` setting [ ]
+
+`GroupPage.about` has been in `GroupPageSettings`/`DEFAULT_AUDIENCE` since B12,
+and Settings' Page Visibility UI has always let an admin set its audience to
+`everyone`, same as every other built-in page. But no guest route or guest
+tab entry for `about` was ever actually built (`homework`/`weekly_notes`/
+`responsibilities`/`carpool` all got one over B12-B31; `about` and `members`
+did not), so that setting is silently a no-op today: a group configured for
+guest-visible About still shows nothing to a logged-out join-link visitor.
+Per product decision 2026-09-14: build the real guest page for `about`
+(guest parity principle: strip only privacy/per-user-storage bits, and
+About's content, a group's description plus its regular-rehearsal schedule,
+carries neither). `members` (the roster) is out of scope here and stays
+guest-unreachable; its content is exactly the kind of thing guest parity
+should NOT extend to.
+
+Acceptance criteria:
+- [ ] A guest route (mirroring `homework`/`weekly_notes`'s shape in
+  `app/api/routes/guest.py`) returns the group's `description`,
+  `rehearsal_weekday`, `rehearsal_time`, gated by
+  `require_guest_page_access(group_id, GroupPage.about, db)` exactly like
+  every other guest-readable built-in.
+- [ ] `GuestTabsOut` gains `about_visible: bool`, computed the same way as
+  `homework_visible`/`weekly_notes_visible`/`carpool_visible` in
+  `get_guest_tabs`'s `_visible()` closure.
+- [ ] No write access: About has no guest-writable fields today (the admin
+  editors for description/rehearsal schedule stay member/admin-only), so
+  this is read-only, same restraint as `tracks`' guest route.
+- [ ] Existing member-facing `about`/settings behavior is unchanged; this
+  only adds a new unauthenticated read path.
+- [ ] Tests cover: guest 404 when `about` is disabled or `audience=members`
+  (matching every other guest-gate test's shape), guest 200 with the right
+  fields when `audience=everyone`, `about_visible` correctness in
+  `get_guest_tabs`.
 
 ## Backlog
 
