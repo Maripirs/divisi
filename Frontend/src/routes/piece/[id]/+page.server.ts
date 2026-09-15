@@ -35,7 +35,7 @@ export const load: PageServerLoad = async ({ params, locals, url, fetch, cookies
 	if (!locals.token) {
 		const code = url.searchParams.get('code');
 		if (!code) {
-			// A bundled demo/SFCC piece needs no login at all — unchanged.
+			// A bundled demo piece needs no login at all, unchanged.
 			if (getPiece(params.id)) return { id: params.id };
 
 			// A real Backend piece with no `?code=` yet: resolve which group

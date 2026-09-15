@@ -15,13 +15,13 @@ export interface PieceSummary {
 	title: string;
 	composer: string;
 	/** Optional: a real Backend piece can have a PDF, a music file, or both
-	 * (see `$lib/pieces/remotePiece.ts`) — the bundled demo/SFCC pieces
-	 * always have one, so this stays required-in-practice for those. */
+	 * (see `$lib/pieces/remotePiece.ts`); the bundled demo pieces always
+	 * have one, so this stays required-in-practice for those. */
 	pdfUrl?: string;
-	/** Real Backend pieces only (`group`); bundled fixtures stay `demo`/
-	 * `sfcc`. Widened rather than replaced so every existing bundled-piece
-	 * check (`collection === 'demo'`) keeps working unchanged. */
-	collection: 'demo' | 'sfcc' | 'group';
+	/** Real Backend pieces only (`group`); bundled fixtures stay `demo`.
+	 * Widened rather than replaced so every existing bundled-piece check
+	 * (`collection === 'demo'`) keeps working unchanged. */
+	collection: 'demo' | 'group';
 	/** YouTube reference-audio link, shown in its own always-visible area
 	 * regardless of which of music-file/PDF exist — see `+page.svelte`. */
 	youtubeUrl?: string;

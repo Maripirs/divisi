@@ -27,15 +27,12 @@ and the Backend's `app/rendering/` port. `play.sh` auditions them via
 
 Real score exports used as demo/bundled repertoire:
 
-- `The_Challenge_of_Thor_Elgar.*` (mid / musicxml / pdf) — the
-  worked example of the no-auth direct-URL path.
-- `SFCC/`: only `Coleridge-Taylor_Proserpine_A4.*` and
-  `The_Challenge_of_Thor_Elgar.*` remain bundled here; the rest of the
-  San Francisco City Chorus repertoire (Der Abend, Les djinns, Eglamore,
-  The Fay's Song) moved to being real Backend `Piece` records gated by
-  group membership instead (see `Frontend/src/lib/pieces/registry.ts`).
-  Coleridge-Taylor stays for its OMR-testing history; Challenge of Thor
-  stays as the direct-URL worked example above.
+- `SFCC/`: only `Coleridge-Taylor_Proserpine_A4.*` remains bundled here;
+  the rest of the San Francisco City Chorus repertoire (Der Abend, Les
+  djinns, Eglamore, The Fay's Song) moved to being real Backend `Piece`
+  records gated by group membership instead (see
+  `Frontend/src/lib/pieces/registry.ts`). Coleridge-Taylor stays for its
+  OMR-testing history.
 
 Lacrymosa's demo files (`.pdf`, `.musicxml`) live under
 `Frontend/static/fixtures/demo/` instead, not here; the bundled `.mid` and

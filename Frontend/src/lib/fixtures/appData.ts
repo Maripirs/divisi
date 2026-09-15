@@ -53,7 +53,7 @@ export const CURRENT_USER = {
 };
 
 export const GROUPS: Group[] = [
-	{ id: 'sfcc', name: 'SFCC Chamber Choir', pieceIds: ['lacrymosa', 'challenge-of-thor', 'der-abend', 'proserpine'] },
+	{ id: 'sfcc', name: 'SFCC Chamber Choir', pieceIds: ['lacrymosa', 'der-abend', 'proserpine'] },
 	{ id: 'community-chorus', name: 'Community Chorus', pieceIds: [] }
 ];
 
@@ -67,16 +67,6 @@ export const HOMEWORK: Homework[] = [
 		dueLabel: 'Due Friday',
 		dueDate: 'Friday, Aug 28',
 		instructions: 'Focus on entrances after rests.'
-	},
-	{
-		id: 'thor-full',
-		groupId: 'sfcc',
-		pieceId: 'challenge-of-thor',
-		title: 'The Challenge of Thor',
-		range: 'Full piece',
-		dueLabel: 'Due next week',
-		dueDate: 'Next week',
-		instructions: 'Review text and rhythm.'
 	},
 	{
 		id: 'der-abend-full',
@@ -121,18 +111,11 @@ export const RECENT_ANNOTATIONS: Annotation[] = [
 		measure: 24,
 		note: 'Watch entrance after bass.',
 		visibility: 'private'
-	},
-	{
-		id: 'a2',
-		pieceTitle: 'The Challenge of Thor',
-		measure: 12,
-		note: 'Check vowel here.',
-		visibility: 'private'
 	}
 ];
 
 export const CONTINUE_PRACTICE: ContinuePractice = {
-	pieceId: 'challenge-of-thor',
+	pieceId: 'lacrymosa',
 	voiceView: 'Alto + Accomp',
 	lastOpened: '20 min ago'
 };

@@ -18,18 +18,17 @@ async function loadMusicXml(url: string, tempoOverrideBPM?: number) {
 	return tempoOverrideBPM === undefined ? parsed : { ...parsed, tempoBPM: tempoOverrideBPM };
 }
 
-/** Static, frontend-only piece list — publicly served with no auth at all
- * (these files sit under `static/`, so anyone can fetch them directly by
- * URL regardless of what routing does). Deliberately kept to just two
- * examples for that reason: Lacrymosa (public-domain demo content) and
- * Challenge of Thor (kept as a working example of this direct-URL path,
- * at the human's request). Every other piece a group actually rehearses
- * — including the rest of what used to live here (Der Abend, Proserpine,
- * Les djinns, Eglamore, The Fay's Song) — is a real Backend `Piece`
- * instead, gated by group membership or a join code the same way user
- * uploads are (see `$lib/pieces/remotePiece.ts`); adding a piece here is
- * exactly the "not safe nor scalable" pattern this list should stay
- * small enough to avoid repeating. */
+/** Static, frontend-only piece list (publicly served with no auth at all:
+ * these files sit under `static/`, so anyone can fetch them directly by
+ * URL regardless of what routing does). Deliberately kept to just one
+ * example for that reason: Lacrymosa (public-domain demo content). Every
+ * other piece a group actually rehearses, including the rest of what used
+ * to live here (Der Abend, Proserpine, Les djinns, Eglamore, The Fay's
+ * Song, The Challenge of Thor), is a real Backend `Piece` instead, gated
+ * by group membership or a join code the same way user uploads are (see
+ * `$lib/pieces/remotePiece.ts`); adding a piece here is exactly the "not
+ * safe nor scalable" pattern this list should stay small enough to avoid
+ * repeating. */
 export const PIECES: Piece[] = [
 	{
 		id: 'lacrymosa',
@@ -41,19 +40,6 @@ export const PIECES: Piece[] = [
 		// it, unused) — the MIDI export dropped this piece's lyrics, while the
 		// MusicXML export (from the same MuseScore project) kept them.
 		load: () => loadMusicXml('/fixtures/demo/Mozart_Lacrymosa_from_Requiem_SATB_with_piano.musicxml')
-	},
-	{
-		id: 'challenge-of-thor',
-		title: 'The Challenge of Thor',
-		composer: 'Elgar',
-		collection: 'sfcc',
-		pdfUrl: '/fixtures/SFCC/The_Challenge_of_Thor_Elgar.pdf',
-		// This piece's MIDI crams all parts + accompaniment onto one track
-		// across 12 channels with no track names — the MIDI voice-part
-		// heuristic can't disambiguate that (see Frontend/plan.md's log) —
-		// so it's sourced from its MusicXML export instead, which has one
-		// `<part>` per staff.
-		load: () => loadMusicXml('/fixtures/SFCC/The_Challenge_of_Thor_Elgar.musicxml', 104)
 	}
 ];
 
@@ -62,7 +48,6 @@ export const PIECES: Piece[] = [
 export const DEMO_PIECES = PIECES.filter(
 	(piece) => piece.collection === 'demo' && piece.id !== 'lacrymosa'
 );
-export const SFCC_PIECES = PIECES.filter((piece) => piece.collection === 'sfcc');
 
 export function getPiece(id: string): Piece | undefined {
 	return PIECES.find((p) => p.id === id);
