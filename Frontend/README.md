@@ -11,9 +11,9 @@ audio source, Spanish localization (`/es`), and app-wide error handling.
 
 The player still runs standalone against a bundled fixture MIDI file with no
 login (see `static/fixtures/`); everything else talks to the `Backend/` service.
-See the root `PLAN.md` for current status (through F43; most recent work
-awaits a manual redeploy and a real in-browser sign-off — the recurring
-blocker, not a code gap) and `PLAN_HISTORY.md` for per-milestone detail.
+See the root `PLAN.md` for current status; most recent work awaits a
+manual redeploy and a real in-browser sign-off — the recurring blocker, not
+a code gap.
 
 ## Requirements
 

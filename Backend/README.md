@@ -1,8 +1,7 @@
 # Divisi Backend
 
 FastAPI service backing the Divisi web app. See the root `PLAN.md` for
-current status and `PLAN_HISTORY.md` for the full milestone breakdown. What
-it does:
+current status. What it does:
 
 1. **Accounts + groups** — individual and group (e.g. choir) accounts, groups
    distributing reviewed piece versions to members, homework, responsibilities,
@@ -11,17 +10,14 @@ it does:
 2. **Annotations + markup** — private per-user score annotations with optional
    peer sharing; personal freehand PDF pen/stamp marks.
 3. **Guest access** — a group's `join_code` resolves (no login) to its
-   distributed pieces and enabled pages, via `/guest/*` (see `PLAN_HISTORY.md`
-   B6).
+   distributed pieces and enabled pages, via `/guest/*`.
 4. **Rendering** — a `PieceVersion`'s MIDI into per-voice-part audio stems (via
-   FluidSynth) plus multi-part MusicXML, cached per version (see
-   `PLAN_HISTORY.md` B7). The current frontend actually synthesizes
-   client-side and does not wire this up (see `PLAN_HISTORY.md` F5), but the
-   pipeline and manifest endpoint exist.
+   FluidSynth) plus multi-part MusicXML, cached per version. The current
+   frontend actually synthesizes client-side and does not wire this up, but
+   the pipeline and manifest endpoint exist.
 5. **OMR** — scanned-PDF → MusicXML/MIDI via Audiveris (primary) or oemer
    (single-page fallback). Verified end-to-end on macOS against a real 4-part
-   choral scan — see "OMR engines" below for the local install recipe, and
-   `PLAN_HISTORY.md`'s OMR section (E1, formerly B8) for the full write-up
+   choral scan — see "OMR engines" below for the local install recipe
    (Audiveris correctly recovers per-part structure and lyrics; oemer
    flattens parts and has no lyrics, confirming it's a last-resort fallback
    only). The full OMR pipeline + in-app editor is currently parked on the
@@ -74,7 +70,7 @@ pip install onnxruntime opencv-python-headless matplotlib pillow scipy \
 pip install --no-deps oemer
 ```
 Two known bugs in oemer 0.1.8 itself (unmaintained since ~2022), both
-reproduced and worked around locally during B8 testing — no upstream fix
+reproduced and worked around locally during OMR-pipeline testing — no upstream fix
 available, so these need re-patching in `site-packages/oemer/` after any
 fresh install until oemer cuts a new release:
 - `inference.py` hardcodes `CoreMLExecutionProvider` on macOS, which fails
@@ -168,8 +164,8 @@ cost from the stored hash on verify). Production uses the default 12; see
 gets its own in-memory SQLite engine (see `tests/conftest.py`), so this is
 safe. Pass `-p no:xdist` to run serially when debugging.
 
-Tests that shell out to the `fluidsynth` binary (the B7 render pipeline)
-are marked `@pytest.mark.integration`. Run everything by default, or
+Tests that shell out to the `fluidsynth` binary (the audio-rendering
+pipeline) are marked `@pytest.mark.integration`. Run everything by default, or
 `.venv/bin/python -m pytest -m "not integration"` on a host without
 `fluidsynth`.
 

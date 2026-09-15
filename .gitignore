@@ -1,5 +1,6 @@
 .DS_Store
 *.xcuserstate
+PLAN_HISTORY.md
 xcuserdata/
 DerivedData/
 .build/
