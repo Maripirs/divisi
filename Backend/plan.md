@@ -883,8 +883,8 @@ a real session.
 
 No new table, no migration: which group (if any) offers this is a single
 `Settings.demo_join_code` env var, empty by default (feature off
-everywhere). Sets on Render only after `DEMO_SETUP.md`'s Step 3 (the demo
-group's join code is hand-set); see that doc's note under Step 3.
+everywhere). Set on Render only once the demo group's join code is
+hand-set.
 
 **Acceptance criteria:**
 - [x] `Settings.demo_join_code` unset (default): `GET
@@ -926,7 +926,7 @@ group's join code is hand-set); see that doc's note under Step 3.
 
 **Tasks — Human:**
 - [ ] Set `DEMO_JOIN_CODE=DEMOSATB` on Render once the demo group's join
-  code is set (`DEMO_SETUP.md` Step 3), then restart the service.
+  code is set, then restart the service.
 
 ### B21 — Drop PIN save, add group-scoped guest name matching [x]
 

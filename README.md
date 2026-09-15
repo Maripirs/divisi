@@ -29,5 +29,4 @@ derived from — see `Frontend/plan.md`'s "iOS app" section for that history.
 ## Working in this repo
 
 Each app has its own README with setup/run instructions and its own `plan.md`
-tracking milestones and backlog. `CLEANUP.md` is a scratch doc for an in-flight
-de-duplication pass across the frontend and backend.
+tracking milestones and backlog.

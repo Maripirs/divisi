@@ -1264,8 +1264,8 @@ walkthrough, bundled since both touch the guest join page's chrome:
 
 **Tasks — Human:**
 - [ ] Once satisfied, set `DEMO_JOIN_CODE` on Render (see
-  `Backend/plan.md`'s B20 and `DEMO_SETUP.md`'s Step 3 note) and do a
-  real-browser pass against the live demo.
+  `Backend/plan.md`'s B20) and do a real-browser pass against the live
+  demo.
 
 ### F25 Drop "Save across devices" PIN form, add "is this you?" name-match reconnect (frontend for Backend B21) [x]
 

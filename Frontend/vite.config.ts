@@ -81,8 +81,8 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// Deploy target settled: Cloudflare Workers/Pages (Sites project in
-			// Frontend/.openai/hosting.json). See Frontend/plan.md's Log.
+			// Deploy target settled: Cloudflare Workers/Pages. See
+			// Frontend/plan.md's Log.
 			adapter: adapter()
 		})
 	]
