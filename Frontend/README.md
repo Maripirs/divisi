@@ -11,8 +11,9 @@ audio source, Spanish localization (`/es`), and app-wide error handling.
 
 The player still runs standalone against a bundled fixture MIDI file with no
 login (see `static/fixtures/`); everything else talks to the `Backend/` service.
-See `plan.md` for per-milestone status (F1–F13 built; several await a real
-in-browser sign-off — the recurring blocker, not a code gap).
+See the root `PLAN.md` for current status (through F43; most recent work
+awaits a manual redeploy and a real in-browser sign-off — the recurring
+blocker, not a code gap) and `PLAN_HISTORY.md` for per-milestone detail.
 
 ## Requirements
 
@@ -113,11 +114,11 @@ again on a fresh account.
   view, PDF view, annotations, and markup together
 - `src/lib/i18n.ts`, `messages/{en,es}.json` — Paraglide localization
 
-## Known gaps (tracked in `plan.md`)
+## Known gaps (tracked in the root `PLAN.md`)
 
-- Several milestones (F2–F5, F8, F11–F13) are built and `check`/`build`-clean
-  but still need a real in-browser sign-off — most recent work was done on a
-  machine with no browser available
+- Most recent work is built and `check`/`build`-clean but still needs a
+  manual redeploy and a real in-browser/touchscreen sign-off — see
+  `PLAN.md`'s "Awaiting human verification" section
 - `groups/[id]/+page.svelte` is 1,000+ lines covering every tab; a per-tab
   component split is in the backlog
 - Independent overlapping rhythms on one staff render as chords, not multiple

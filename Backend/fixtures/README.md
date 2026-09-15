@@ -3,7 +3,7 @@
 Near-copy of the repo-root `Fixtures/` directory, committed here so it is baked
 into the backend Docker image — `resolve_source_path` serves any `file_path`
 starting with `fixtures/` from here, giving bundled/demo pieces a durable home
-despite Render's ephemeral disk (see `../plan.md` B11).
+despite Render's ephemeral disk (see `../../PLAN_HISTORY.md` B11).
 
 Contents:
 

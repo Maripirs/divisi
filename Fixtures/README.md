@@ -2,7 +2,7 @@
 
 Shared test/demo assets for both apps. `Backend/fixtures/` is a near-copy of
 this directory baked into the backend Docker image so `resolve_source_path` can
-serve bundled pieces without a persistent disk (see `Backend/plan.md` B11);
+serve bundled pieces without a persistent disk (see `PLAN_HISTORY.md` B11);
 this copy carries the `soundfont/` used by `play.sh`.
 
 ## Synthetic MIDI (for the parsers)

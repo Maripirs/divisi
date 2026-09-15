@@ -1,7 +1,8 @@
 # Divisi Backend
 
-FastAPI service backing the Divisi web app. See `plan.md` for the full
-milestone breakdown. What it does:
+FastAPI service backing the Divisi web app. See the root `PLAN.md` for
+current status and `PLAN_HISTORY.md` for the full milestone breakdown. What
+it does:
 
 1. **Accounts + groups** — individual and group (e.g. choir) accounts, groups
    distributing reviewed piece versions to members, homework, responsibilities,
@@ -10,17 +11,21 @@ milestone breakdown. What it does:
 2. **Annotations + markup** — private per-user score annotations with optional
    peer sharing; personal freehand PDF pen/stamp marks.
 3. **Guest access** — a group's `join_code` resolves (no login) to its
-   distributed pieces and enabled pages, via `/guest/*` (see `plan.md` B6).
+   distributed pieces and enabled pages, via `/guest/*` (see `PLAN_HISTORY.md`
+   B6).
 4. **Rendering** — a `PieceVersion`'s MIDI into per-voice-part audio stems (via
-   FluidSynth) plus multi-part MusicXML, cached per version (see `plan.md` B7).
-   The current frontend actually synthesizes client-side and does not wire this
-   up (see `Frontend/plan.md` F5), but the pipeline and manifest endpoint exist.
+   FluidSynth) plus multi-part MusicXML, cached per version (see
+   `PLAN_HISTORY.md` B7). The current frontend actually synthesizes
+   client-side and does not wire this up (see `PLAN_HISTORY.md` F5), but the
+   pipeline and manifest endpoint exist.
 5. **OMR** — scanned-PDF → MusicXML/MIDI via Audiveris (primary) or oemer
    (single-page fallback). Verified end-to-end on macOS against a real 4-part
    choral scan — see "OMR engines" below for the local install recipe, and
-   `plan.md` B8 for the full write-up (Audiveris correctly recovers per-part
-   structure and lyrics; oemer flattens parts and has no lyrics, confirming
-   it's a last-resort fallback only).
+   `PLAN_HISTORY.md`'s OMR section (E1, formerly B8) for the full write-up
+   (Audiveris correctly recovers per-part structure and lyrics; oemer
+   flattens parts and has no lyrics, confirming it's a last-resort fallback
+   only). The full OMR pipeline + in-app editor is currently parked on the
+   `omr-editor` branch — see the root `PLAN.md`.
 
 Uploaded files go to **Neon Object Storage** (S3-compatible, `uploads` bucket)
 when the `AWS_*` env vars are set, and fall back to local disk otherwise; the
@@ -121,7 +126,7 @@ matching file in the checked-out code. If production is stamped at a
 revision whose file exists only on an unmerged branch, `main`'s deploy
 aborts with `Can't locate revision identified by '<id>'`, `uvicorn` never
 starts, and Render crash-loops the container — the whole backend goes
-down (this happened 2026-08-31, see `plan.md` Log).
+down (this happened 2026-08-31, see `PLAN_HISTORY.md`'s Backend Log).
 
 Rules:
 - Do local schema work against a local / disposable DB, never the
