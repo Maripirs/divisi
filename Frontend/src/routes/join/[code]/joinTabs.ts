@@ -10,8 +10,18 @@ import { m } from '$lib/paraglide/messages';
  * Backend dropped entirely. There is no more per-group "which custom pages
  * exist" question to answer, so unlike every version of this file before
  * F36, a tab entry is always exactly one of these five — no separate
- * slug-addressed branch. */
-export type GuestBuiltinTabKey = 'tracks' | 'homework' | 'weeklyNotes' | 'responsibilities' | 'carpool';
+ * slug-addressed branch.
+ *
+ * B33/F39: `about` joined too, gated on `aboutVisible` like every other
+ * guest tab (unlike the member side's own `about`, which is unconditional —
+ * a guest sees it only when the admin opted the page into `everyone`). */
+export type GuestBuiltinTabKey =
+	| 'tracks'
+	| 'homework'
+	| 'weeklyNotes'
+	| 'responsibilities'
+	| 'carpool'
+	| 'about';
 
 export interface GuestTabEntry {
 	label: string;
@@ -25,6 +35,7 @@ export interface GuestTabData {
 	weeklyNotesVisible: boolean;
 	responsibilitiesVisible: boolean;
 	carpoolVisible: boolean;
+	aboutVisible: boolean;
 }
 
 /** F31/B31: the guest counterpart to `groupTabs.ts`'s `computeGroupTabs` —
@@ -36,7 +47,8 @@ export function computeGuestTabs(data: GuestTabData): GuestTabEntry[] {
 		{ key: 'homework', visible: data.homeworkVisible, label: m.homework_tab_title() },
 		{ key: 'weeklyNotes', visible: data.weeklyNotesVisible, label: m.weekly_notes_tab_title() },
 		{ key: 'responsibilities', visible: data.responsibilitiesVisible, label: m.responsibilities_tab_title() },
-		{ key: 'carpool', visible: data.carpoolVisible, label: m.carpool_tab_title() }
+		{ key: 'carpool', visible: data.carpoolVisible, label: m.carpool_tab_title() },
+		{ key: 'about', visible: data.aboutVisible, label: m.groups_info() }
 	];
 
 	return builtins.filter((b) => b.visible).map(({ key, label }) => ({ key, label }));

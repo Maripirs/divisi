@@ -1,12 +1,14 @@
 import {
 	GuestApiError,
 	JoinCodeNotFoundError,
+	listGuestAbout,
 	listGuestCarpoolEvents,
 	listGuestCarpoolPosts,
 	listGuestHomework,
 	listGuestResponsibilityDates,
 	listGuestWeeklyNotes,
 	resolveJoinCode,
+	type GuestAbout,
 	type GuestCarpoolEvent,
 	type GuestCarpoolPost,
 	type GuestGroup,
@@ -52,6 +54,11 @@ export type GuestJoinResult =
 			carpoolEvents: GuestCarpoolEvent[];
 			carpoolSelectedEventId: string | null;
 			carpoolPosts: GuestCarpoolPost[];
+			// B33/F39: same optional-page shape as the others — Info/About's
+			// guest content (description + regular-rehearsal schedule), only
+			// fetched at all once `aboutVisible` says the group opted in.
+			aboutVisible: boolean;
+			about: GuestAbout | null;
 	  };
 
 /** Runs every guest fetch and resolves (never rejects) to a `GuestJoinResult`
@@ -137,6 +144,17 @@ export async function loadGuestJoin(
 			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
 		}
 
+		// B33/F39: same optional-page shape as the others. A 404 here means
+		// this group hasn't opted `about` into guest visibility.
+		let about: GuestAbout | null = null;
+		let aboutVisible = false;
+		try {
+			about = await listGuestAbout(code, { token, fetchFn: fetch });
+			aboutVisible = true;
+		} catch (err) {
+			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
+		}
+
 		return {
 			error: null,
 			group,
@@ -149,7 +167,9 @@ export async function loadGuestJoin(
 			carpoolVisible,
 			carpoolEvents,
 			carpoolSelectedEventId,
-			carpoolPosts
+			carpoolPosts,
+			aboutVisible,
+			about
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };

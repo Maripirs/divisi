@@ -27,6 +27,7 @@
 	} from '$lib/utils/responsibilitySignupOwnership';
 	import { clearDemoPreviewGuest, setDemoPreviewGuest } from '$lib/demoPreview';
 	import { computeGuestTabs, type GuestBuiltinTabKey } from './joinTabs';
+	import { formatRehearsalSchedule } from '../../groups/[id]/rehearsalSchedule';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -307,7 +308,7 @@
 				</section>
 			{/if}
 
-			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.carpoolVisible}
+			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.carpoolVisible || result.aboutVisible}
 				<!-- F31/B31: same shared-tab-list shape the member side uses
 				     (`groupTabs.ts`'s `computeGroupTabs`) — every entry is a
 				     plain `<button>` now that carpool dropped its own
@@ -495,6 +496,22 @@
 					form={null}
 					guest={{ code: data.code }}
 				/>
+			{:else if tab === 'about' && result.aboutVisible && result.about}
+				<!-- B33/F39: read-only guest counterpart to the member Info/About
+				     tab (`groups/[id]/tabs/AboutTab.svelte`'s own non-admin
+				     branch) — same two pieces of content, none of the editors,
+				     no "Leave group"/join-link controls (a guest is already past
+				     the join link, and has nothing to "leave"). -->
+				<section class="card">
+					<p class="card-eyebrow">{m.groups_about_tab_title()}</p>
+					<p class="card-meta body">{result.about.description || m.groups_no_description()}</p>
+					{#if result.about.rehearsalWeekday !== null && result.about.rehearsalTime !== null}
+						<div class="list-row">
+							<span>{m.groups_rehearsals()}</span>
+							<span class="dim">{formatRehearsalSchedule(result.about.rehearsalWeekday, result.about.rehearsalTime)}</span>
+						</div>
+					{/if}
+				</section>
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees
 				     pieces that actually have a practice file wired up (no dead

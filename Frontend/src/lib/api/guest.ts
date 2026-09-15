@@ -106,6 +106,19 @@ export interface GuestPieceRehearsalNote {
 	createdAt: string;
 }
 
+/** Mirrors the Backend's `GuestAboutOut` (B33), as seen via the guest
+ * `/guest/{code}/about` route — a group's free-text description plus its
+ * regular weekly rehearsal slot, the same two fields `GroupOut` carries for
+ * a member, minus everything privacy/per-user-storage-shaped (`id`,
+ * `join_code`, `role`, `has_guest_password`). Only returned at all when the
+ * group's admin has enabled the `about` page for guests, same B12
+ * mechanism as homework/weekly_notes/responsibilities/carpool above. */
+export interface GuestAbout {
+	description: string | null;
+	rehearsalWeekday: number | null;
+	rehearsalTime: string | null;
+}
+
 export class JoinCodeNotFoundError extends Error {
 	constructor(code: string) {
 		super(`No group found for join code "${code}"`);
@@ -196,6 +209,12 @@ interface GuestPieceRehearsalNoteResponse {
 	id: string;
 	body: string;
 	created_at: string;
+}
+
+interface GuestAboutResponse {
+	description: string | null;
+	rehearsal_weekday: number | null;
+	rehearsal_time: string | null;
 }
 
 interface GuestRequestOptions {
@@ -379,6 +398,24 @@ export async function listGuestPieceRehearsalNotes(
 	return body.map((n) => ({ id: n.id, body: n.body, createdAt: n.created_at }));
 }
 
+/** A group's Info/About content (B33), guest-visible only when its admin has
+ * enabled the `about` page for guests (B12's per-page settings). Same "only
+ * call after `resolveJoinCode` confirmed the code/password" convention as
+ * `listGuestHomework` — a 404 here means "this group doesn't expose About
+ * to guests", not a real error. Read-only: there's no guest write path,
+ * same restraint as `tracks`. */
+export async function listGuestAbout(code: string, { password, token, fetchFn = fetch }: GuestRequestOptions = {}): Promise<GuestAbout> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/about`, { password, token }), fetchFn);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestAboutResponse = await res.json();
+	return {
+		description: body.description,
+		rehearsalWeekday: body.rehearsal_weekday,
+		rehearsalTime: body.rehearsal_time
+	};
+}
+
 /** B31: `/join/[code]`'s own load calls the individual list endpoints
  * directly (it needs their real data, not just whether they're visible), so
  * this is unused there; kept for any future caller that only needs the
@@ -390,6 +427,7 @@ export interface GuestTabs {
 	weeklyNotesVisible: boolean;
 	responsibilitiesVisible: boolean;
 	carpoolVisible: boolean;
+	aboutVisible: boolean;
 	/** The group's own name, for a guest tab's `AppHeader` (same field
 	 * `GuestGroup.groupName` carries on the join landing page). */
 	groupName: string;
@@ -400,6 +438,7 @@ interface GuestTabsResponse {
 	weekly_notes_visible: boolean;
 	responsibilities_visible: boolean;
 	carpool_visible: boolean;
+	about_visible: boolean;
 	group_name: string;
 }
 
@@ -416,6 +455,7 @@ export async function getGuestTabs(
 		weeklyNotesVisible: body.weekly_notes_visible,
 		responsibilitiesVisible: body.responsibilities_visible,
 		carpoolVisible: body.carpool_visible,
+		aboutVisible: body.about_visible,
 		groupName: body.group_name
 	};
 }

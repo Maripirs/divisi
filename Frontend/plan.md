@@ -113,7 +113,7 @@ supported? Should roles/responsibility templates be reusable across groups?
 | F36 | Carpool as a built-in tab, drop generic Custom Pages (frontend for Backend B31) | ✅ Built 2026-09-14: carpool promoted to a plain sixth built-in tab (`groupTabs.ts`/`joinTabs.ts`); the generic Custom Pages system (`pages/[slug]` routes on both `groups/[id]` and `join/[code]`, `actions/customPages.ts`, `CustomPageView.svelte`, `AboutTab.svelte`'s custom-page section) deleted; new `tabs/CarpoolTab.svelte` (member/admin) renders the unchanged `CarpoolBoard.svelte`, and the guest join page now renders it too straight off `guestJoin.ts`'s resolved carpool data, no more slug route. Settings' Page Visibility card gets a plain `carpool` row like every other built-in page. `check` 0 errors, `build` clean, vitest 188 green. |
 | F37 | Carpool direction: there / back / round trip (frontend for Backend B32) | ✅ Built 2026-09-14: post create/edit forms (member + guest, `CarpoolBoard.svelte`) gained a There/Back/Round trip `<select>`, defaulting to Round trip, wired into `actions/carpool.ts` and the `/join/[code]/carpool/...` guest proxy routes; the "On the way there/back" viewing toggle (built alongside F35, `postMatchesDirection`) was already filtering by it. `check` 0 errors, `build` clean, vitest 188 green. |
 | F38 | Group tab strip: single row, scrolls sideways on mobile | ✅ Built 2026-09-14: new `.tab-strip` modifier in `shell.css` (`flex-wrap: nowrap`, `overflow-x: auto`, `flex-shrink: 0` per tab) applied alongside `.tabs` on just the member (`groups/[id]/+page.svelte`) and guest (`join/[code]/+page.svelte`) main nav strips; `.tabs`' own base rule (and its other users — the carpool direction toggle, the login tab switcher) untouched. `check` 0 errors, `build` clean, vitest 188 green. |
-| F39 | Guest About/Info tab (frontend for Backend B33) | ⏳ Planned |
+| F39 | Guest About/Info tab (frontend for Backend B33) | ✅ Built 2026-09-14: `about` joined `joinTabs.ts`'s `GuestBuiltinTabKey`, gated on a new `aboutVisible` flag (unlike the member side's unconditional `about`); `$lib/api/guest.ts` gained `listGuestAbout`/`GuestAbout` plus `about_visible` on `getGuestTabs`'s (currently-unused) response type, threaded through `guestJoin.ts`'s fan-out the same optional-page way as weekly notes/carpool. `join/[code]/+page.svelte` renders a read-only About section (description + `formatRehearsalSchedule`, reused from `../groups/[id]/rehearsalSchedule`) with no editors/leave-group/join-link controls — reused existing `groups_about_tab_title`/`groups_rehearsals`/`groups_no_description` keys, no new ones needed. `check` 0 errors, `build` clean, vitest 189 green. |
 
 ### F1 — Standalone playback + notation prototype [x]
 
@@ -2178,7 +2178,7 @@ Deviations from the plan:
   order. Not verified in a real browser/touch device yet — a human should
   confirm the horizontal scroll feels right on an actual phone.
 
-### F39 — Guest About/Info tab (frontend for Backend B33) [ ]
+### F39 — Guest About/Info tab (frontend for Backend B33) [x]
 
 Starts once Backend B33 lands. `about` was never a guest-reachable tab at
 all (`joinTabs.ts`'s `GuestBuiltinTabKey` has no `about` member); add one,
@@ -2188,19 +2188,32 @@ admin/member-only control (description editor, rehearsal editor, leave
 group, page-visibility settings, join-link copy).
 
 Acceptance criteria:
-- [ ] `joinTabs.ts`: `GuestBuiltinTabKey` gains `'about'`; `GuestTabData`
+- [x] `joinTabs.ts`: `GuestBuiltinTabKey` gains `'about'`; `GuestTabData`
   gains `aboutVisible: boolean` (from the Backend's new
   `GuestTabsOut.about_visible`); `computeGuestTabs` includes it in the
   fixed guest tab order, gated on that flag same as every other guest tab.
-- [ ] A new read-only guest About view (component or inline branch in
+- [x] A new read-only guest About view (component or inline branch in
   `join/[code]/+page.svelte`, whichever matches how the other guest tab
   content is rendered there) shows description + rehearsal schedule, no
   edit controls, no join-link/leave-group actions (guest is already past
   the join link, and has nothing to "leave").
-- [ ] `data/+server.ts` / `guestJoin.ts` (or wherever guest tab content is
+- [x] `data/+server.ts` / `guestJoin.ts` (or wherever guest tab content is
   fetched) pulls the new guest About data from B33's guest route.
-- [ ] `joinTabs.test.ts` covers the new tab's visibility gating.
-- [ ] `npm run check` 0 errors, `npm run build` clean, vitest green.
+- [x] `joinTabs.test.ts` covers the new tab's visibility gating.
+- [x] `npm run check` 0 errors, `npm run build` clean, vitest green.
+
+**Deviations from the plan:** the plan guessed the guest-facing TS types
+would live in `$lib/server/backendTypes.ts` — that file turns out to be
+member-route-only (no `Guest*` types at all); the real home, matching
+every other guest DTO (`GuestHomework`, `GuestWeeklyNote`, etc.), is
+`$lib/api/guest.ts`, so `GuestAbout`/`listGuestAbout` landed there instead.
+Also kept `about_visible` on `getGuestTabs`'s response type in sync with
+the Backend even though that function has no live caller today (`/join/
+[code]` fetches each guest page's content directly instead, same as
+homework/weekly_notes/carpool) — matches the existing dead-but-kept
+convention documented on `GuestTabs` itself. No new i18n keys: the member
+`groups_about_tab_title`/`groups_rehearsals`/`groups_no_description`
+strings already say exactly the right thing for a guest.
 
 ## Backlog
 
