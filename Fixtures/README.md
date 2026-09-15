@@ -27,11 +27,17 @@ and the Backend's `app/rendering/` port. `play.sh` auditions them via
 
 Real score exports used as demo/bundled repertoire:
 
-- `Mozart_Lacrymosa_from_Requiem_SATB_with_piano.mid` / `.mxl` — kept public
-  (not owned by any real group).
 - `The_Challenge_of_Thor_Elgar.*` (mid / musicxml / pdf) — the
   worked example of the no-auth direct-URL path.
-- `SFCC/` — San Francisco City Chorus repertoire (Brahms, Coleridge-Taylor,
-  Fauré, Gardiner, Massenet, …). Access-gated: the Frontend removed these from
-  its public `static/` dir in F10; the backend keeps this copy to serve them
-  only to members/valid guests.
+- `SFCC/`: only `Coleridge-Taylor_Proserpine_A4.*` and
+  `The_Challenge_of_Thor_Elgar.*` remain bundled here; the rest of the
+  San Francisco City Chorus repertoire (Der Abend, Les djinns, Eglamore,
+  The Fay's Song) moved to being real Backend `Piece` records gated by
+  group membership instead (see `Frontend/src/lib/pieces/registry.ts`).
+  Coleridge-Taylor stays for its OMR-testing history; Challenge of Thor
+  stays as the direct-URL worked example above.
+
+Lacrymosa's demo files (`.pdf`, `.musicxml`) live under
+`Frontend/static/fixtures/demo/` instead, not here; the bundled `.mid` and
+`.mxl` that used to sit alongside them were unused (the Frontend loads the
+MusicXML) and have been removed.
