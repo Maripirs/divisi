@@ -13,11 +13,11 @@ Contents:
 - Lacrymosa's demo files live under `Frontend/static/fixtures/demo/`
   instead, not here; the bundled `.mid` and `.mxl` that used to sit
   alongside them were unused and have been removed.
-- `SFCC/`: only `Coleridge-Taylor_Proserpine_A4.*` remains bundled here.
-  The rest of the San Francisco City Chorus repertoire (Der Abend, Les
-  djinns, Eglamore, The Fay's Song) moved to being real Backend `Piece`
-  records gated by group membership instead (see
-  `Frontend/src/lib/pieces/registry.ts`). Coleridge-Taylor stays for its
-  OMR-testing history.
+- No `SFCC/` repertoire is bundled here anymore. The San Francisco City
+  Chorus pieces (Der Abend, Proserpine, Les djinns, Eglamore, The Fay's
+  Song, Challenge of Thor) moved to being real Backend `Piece` records
+  gated by group membership instead (see
+  `Frontend/src/lib/pieces/registry.ts`); Coleridge-Taylor's copy, kept
+  around only for its OMR-testing history, has since been removed too.
 
 Keep in sync with the root `Fixtures/` when adding bundled pieces.

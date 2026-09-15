@@ -373,10 +373,11 @@ boundary so an admin fixes the seams there instead of in MuseScore.
       non-paged job 404s the report route).
 
 **Tasks — Human:**
-- [ ] With Audiveris installed, run a real multi-page choral scan from
-      `fixtures/SFCC/` through the paged path (upload via `POST /omr/jobs`, or call
-      `run_omr_paged` directly) and confirm the `pages/`, `segments/`,
-      `paged-report.json` layout and a sane `needs_review` + `boundary_measure`s.
+- [ ] With Audiveris installed, run a real multi-page choral scan (`fixtures/SFCC/`
+      no longer has one bundled — supply any multi-page scan) through the paged
+      path (upload via `POST /omr/jobs`, or call `run_omr_paged` directly) and
+      confirm the `pages/`, `segments/`, `paged-report.json` layout and a sane
+      `needs_review` + `boundary_measure`s.
 - [ ] Get migration `d2f8a6c4e1b9` onto production by **merging this branch to
       `main`** (the Render deploy then runs it). Do NOT `alembic upgrade` it from
       a local checkout against the prod `.env` — see the 2026-08-31 Log entry for

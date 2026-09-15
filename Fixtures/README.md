@@ -2,9 +2,8 @@
 
 Shared test/demo assets for both apps. `Backend/fixtures/` is a near-copy of
 this directory baked into the backend Docker image so `resolve_source_path` can
-serve bundled pieces without a persistent disk (see `Backend/plan.md` B11); it
-additionally carries `SFCC/` (see below), while this copy carries the
-`soundfont/` used by `play.sh`.
+serve bundled pieces without a persistent disk (see `Backend/plan.md` B11);
+this copy carries the `soundfont/` used by `play.sh`.
 
 ## Synthetic MIDI (for the parsers)
 
@@ -27,12 +26,10 @@ and the Backend's `app/rendering/` port. `play.sh` auditions them via
 
 Real score exports used as demo/bundled repertoire:
 
-- `SFCC/`: only `Coleridge-Taylor_Proserpine_A4.*` remains bundled here;
-  the rest of the San Francisco City Chorus repertoire (Der Abend, Les
-  djinns, Eglamore, The Fay's Song) moved to being real Backend `Piece`
-  records gated by group membership instead (see
-  `Frontend/src/lib/pieces/registry.ts`). Coleridge-Taylor stays for its
-  OMR-testing history.
+No `SFCC/` repertoire is bundled here anymore — the San Francisco City
+Chorus pieces (Der Abend, Proserpine, Les djinns, Eglamore, The Fay's Song,
+Challenge of Thor) moved to being real Backend `Piece` records gated by
+group membership instead (see `Frontend/src/lib/pieces/registry.ts`).
 
 Lacrymosa's demo files (`.pdf`, `.musicxml`) live under
 `Frontend/static/fixtures/demo/` instead, not here; the bundled `.mid` and
