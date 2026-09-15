@@ -5,7 +5,7 @@
 	import EditableCard from '$lib/components/EditableCard.svelte';
 	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import CoverageMeter from '$lib/components/CoverageMeter.svelte';
-	import { coverageTotals } from '$lib/components/groupCards';
+	import { coverageTotals, partitionDatesByUpcoming } from '$lib/components/groupCards';
 	import {
 		datetimeLocalToIso,
 		formatDateTime,
@@ -47,22 +47,21 @@
 	// a deleted/selected-away id falls back to the first.
 	//
 	// `data.responsibilities` from the backend holds every date the group
-	// ever created (admins need signup/coverage history), oldest-first. We
-	// split it at "now": `upcomingDates` stays oldest-first (soonest next),
-	// `pastDates` is reversed so the most recent past date leads.
-	const isUpcoming = (d: { date: string }) => new Date(d.date).getTime() >= Date.now();
+	// ever created (admins need signup/coverage history), oldest-first.
+	// `partitionDatesByUpcoming` (shared with the guest join page, see
+	// `groupCards.ts`) splits it at "now": `upcomingDates` stays
+	// oldest-first (soonest next), `pastDates` is reversed so the most
+	// recent past date leads.
 	// Plain helper mirroring the partition below, for the one-shot `$state`
 	// seed (a `$state` initialiser can't read a `$derived`).
 	function seedSelectedDateId(): string | null {
-		const dates = data.responsibilities;
-		const firstUpcoming = dates.find(isUpcoming);
-		if (firstUpcoming) return firstUpcoming.id;
-		const past = dates.filter((d) => !isUpcoming(d));
-		return past[past.length - 1]?.id ?? null;
+		const { upcoming, past } = partitionDatesByUpcoming(data.responsibilities);
+		return upcoming[0]?.id ?? past[0]?.id ?? null;
 	}
 	let selectedDateId = $state<string | null>(seedSelectedDateId());
-	let upcomingDates = $derived(data.responsibilities.filter(isUpcoming));
-	let pastDates = $derived(data.responsibilities.filter((d) => !isUpcoming(d)).reverse());
+	let responsibilityDates = $derived(partitionDatesByUpcoming(data.responsibilities));
+	let upcomingDates = $derived(responsibilityDates.upcoming);
+	let pastDates = $derived(responsibilityDates.past);
 	let selectedDate = $derived(
 		data.responsibilities.find((d) => d.id === selectedDateId) ??
 			upcomingDates[0] ??

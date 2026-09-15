@@ -75,6 +75,26 @@ export interface ResponsibilityCoverageTotals {
 	status: ResponsibilityDateStatus;
 }
 
+/** True when a date-bearing item's ISO date/time is at or after "now". */
+export function isUpcomingDate(date: string): boolean {
+	return new Date(date).getTime() >= Date.now();
+}
+
+/** Splits a list of date-bearing items (already sorted oldest-first, the
+ * order the Backend returns responsibility dates in) into `upcoming` (kept
+ * oldest-first, so the soonest leads) and `past` (reversed, so the most
+ * recent past date leads) around "now". Shared by the member
+ * Responsibilities tab's upcoming/past split and the guest join page's
+ * equivalent, so the "upcoming means >= now" rule and the past-list
+ * reversal only live in one place. */
+export function partitionDatesByUpcoming<T extends { date: string }>(
+	items: readonly T[]
+): { upcoming: T[]; past: T[] } {
+	const upcoming = items.filter((item) => isUpcomingDate(item.date));
+	const past = items.filter((item) => !isUpcomingDate(item.date)).reverse();
+	return { upcoming, past };
+}
+
 export function coverageTotals(
 	roles: readonly Pick<ResponsibilityRole, 'neededCount' | 'activeCount'>[]
 ): ResponsibilityCoverageTotals {

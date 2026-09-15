@@ -35,7 +35,7 @@
 	import { lh } from '$lib/i18n';
 	import { formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
-	import type { ResponsibilityRole } from '$lib/components/groupCards';
+	import { partitionDatesByUpcoming, type ResponsibilityRole } from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
 
@@ -355,7 +355,16 @@
 				{#if result.responsibilities.length === 0}
 					<p class="empty">{m.join_no_responsibilities()}</p>
 				{:else}
-					{#each result.responsibilities as d (d.id)}
+					<!-- Upcoming-first split, same shared helper the member
+					     Responsibilities tab uses (`groupCards.ts`'s
+					     `partitionDatesByUpcoming`), but unlike that tab's
+					     single-select chip strip, a guest gets every upcoming
+					     date's full roster at once (nothing to click through to
+					     find out if a date still needs people). Past dates
+					     collapse under the same disclosure pattern. -->
+					{@const { upcoming: upcomingResponsibilities, past: pastResponsibilities } =
+						partitionDatesByUpcoming(result.responsibilities)}
+					{#snippet responsibilityDate(d: (typeof result.responsibilities)[number])}
 						{#snippet signupControl(role: ResponsibilityRole)}
 							{@const key = roleKey(d.id, role.roleId)}
 							<!-- F34: "am I already signed up for this role" is derived
@@ -483,7 +492,33 @@
 							}}
 							roleExtra={signupControl}
 						/>
-					{/each}
+					{/snippet}
+
+					<p class="card-eyebrow">{m.responsibilities_upcoming_heading()}</p>
+					{#if upcomingResponsibilities.length === 0}
+						<p class="card-meta">{m.responsibilities_no_upcoming()}</p>
+					{:else}
+						{#each upcomingResponsibilities as d (d.id)}
+							{@render responsibilityDate(d)}
+						{/each}
+					{/if}
+
+					{#if pastResponsibilities.length > 0}
+						<!-- History collapsed below upcoming, same pattern as the
+						     member Responsibilities tab's `.past-dates` (styled
+						     locally in this file's own `<style>` block, not shared:
+						     see `ResponsibilitiesTab.svelte`'s copy for the
+						     canonical version and `HomeworkTab.svelte`'s
+						     `.past-homework` for the same precedent). -->
+						<details class="past-dates">
+							<summary>
+								{m.responsibilities_past_heading({ count: pastResponsibilities.length })}
+							</summary>
+							{#each pastResponsibilities as d (d.id)}
+								{@render responsibilityDate(d)}
+							{/each}
+						</details>
+					{/if}
 				{/if}
 			{:else if tab === 'carpool' && result.carpoolVisible}
 				<!-- B31/F36: carpool as a plain guest tab, same `CarpoolBoard`
@@ -648,6 +683,24 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
+	}
+
+	/* Past-dates disclosure, same treatment as ResponsibilitiesTab's
+	   `.past-dates` (muted text-link summary) plus `HomeworkTab.svelte`'s
+	   `.past-homework`. This one also stacks full `ResponsibilityDateCard`s
+	   rather than chips, so it needs its own gap where those relied on the
+	   `.date-strip`/`.shell` flex gap around them. */
+	.past-dates {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.past-dates summary {
+		cursor: pointer;
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		padding: 0.35rem 0;
 	}
 
 	/* F23: the per-role local-only signup control, sitting under a role's

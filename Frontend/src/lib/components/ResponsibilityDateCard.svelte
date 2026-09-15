@@ -48,7 +48,7 @@
 	{#if editing && edit}
 		{@render edit()}
 	{:else}
-		<p class="card-eyebrow">
+		<p class="rdc-date">
 			{formatDateTime(item.date)}{#if item.canceled} · {m.responsibilities_canceled()}{:else if item.locked} · {m.responsibilities_locked()}{/if}
 		</p>
 		{#if item.notes}
@@ -78,6 +78,18 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+	}
+
+	/* The date used to borrow the global `.card-eyebrow` (shell.css): tiny,
+	   uppercase, muted. Fine for a generic label, but this line is the
+	   card's headline, and small uppercase text reads poorly at the larger
+	   OS text sizes this app's older user base tends to run at. `rem` sizing
+	   (not `px`) keeps it scaling with that setting. */
+	.rdc-date {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 700;
+		color: var(--text);
 	}
 
 	.schedule-group-heading {

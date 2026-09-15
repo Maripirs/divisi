@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coverageTotals } from './groupCards';
+import { coverageTotals, partitionDatesByUpcoming } from './groupCards';
 
 /** `coverageTotals` rolls a responsibility date's per-role signup counts
  * into the one status the upcoming-date strip and the selected-date badge
@@ -68,5 +68,37 @@ describe('coverageTotals', () => {
 		];
 		const t = coverageTotals(scheduleGroups.flatMap((g) => g.roles));
 		expect(t).toMatchObject({ active: 3, needed: 5, openSlots: 2, status: 'underfilled' });
+	});
+});
+
+/** `partitionDatesByUpcoming` is the shared upcoming/past split used by both
+ * the member Responsibilities tab and the guest join page. Dates fixed well
+ * outside "now" so the assertions never depend on when the suite runs. */
+describe('partitionDatesByUpcoming', () => {
+	const past1 = { id: 'p1', date: '2000-01-01T00:00:00Z' };
+	const past2 = { id: 'p2', date: '2000-06-01T00:00:00Z' };
+	const future1 = { id: 'f1', date: '2999-01-01T00:00:00Z' };
+	const future2 = { id: 'f2', date: '2999-06-01T00:00:00Z' };
+
+	it('puts every date in upcoming, soonest-first, when all are in the future', () => {
+		const { upcoming, past } = partitionDatesByUpcoming([future2, future1]);
+		expect(upcoming).toEqual([future2, future1]);
+		expect(past).toEqual([]);
+	});
+
+	it('puts every date in past, most-recent-first, when all are in the past', () => {
+		const { upcoming, past } = partitionDatesByUpcoming([past1, past2]);
+		expect(upcoming).toEqual([]);
+		expect(past).toEqual([past2, past1]);
+	});
+
+	it('splits a mixed, oldest-first list into soonest-first upcoming and most-recent-first past', () => {
+		const { upcoming, past } = partitionDatesByUpcoming([past1, past2, future1, future2]);
+		expect(upcoming).toEqual([future1, future2]);
+		expect(past).toEqual([past2, past1]);
+	});
+
+	it('returns two empty lists for an empty input', () => {
+		expect(partitionDatesByUpcoming([])).toEqual({ upcoming: [], past: [] });
 	});
 });
