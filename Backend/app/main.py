@@ -6,6 +6,7 @@ from app.api.routes import (
     annotations,
     auth,
     carpool,
+    group_resources,
     groups,
     guest,
     homework,
@@ -65,6 +66,7 @@ app.include_router(homework.router)
 app.include_router(responsibilities.router)
 app.include_router(weekly_notes.router)
 app.include_router(carpool.router)
+app.include_router(group_resources.router)
 
 
 @app.get("/health")

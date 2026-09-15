@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { enhance } from '$app/forms';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import EditableCard from '$lib/components/EditableCard.svelte';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
 	import type { GroupPage, PageAudience } from '$lib/server/backendTypes';
@@ -63,6 +64,16 @@
 	let removePassword = $state(false);
 	let savingGuestSettings = $state(false);
 	let savingPageSettings = $state(false);
+
+	// Backlog: Resources section — a stable link list, same click-to-reveal
+	// add form + `EditableCard` inline-edit pattern as Weekly Notes. One
+	// level flatter than that tab (no separate schedule concept), so it
+	// lives right on the About tab instead of getting its own.
+	let creatingGroupResource = $state(false);
+	let editingGroupResourceId = $state<string | null>(null);
+	let groupResourceLabelDraft = $state('');
+	let groupResourceUrlDraft = $state('');
+	let savingGroupResourceEdit = $state(false);
 
 	const PAGE_LABELS: Record<GroupPage, () => string> = {
 		homework: m.homework_tab_title,
@@ -216,6 +227,89 @@
 		{/if}
 	</section>
 
+	{#if data.groupResourcesEnabled}
+		<section class="card">
+			<p class="card-eyebrow">{m.groups_resources()}</p>
+			<p class="card-note">{m.groups_resources_note()}</p>
+
+			{#if data.groupResources.length === 0 && !creatingGroupResource}
+				<p class="card-note">{m.groups_resources_none()}</p>
+			{/if}
+
+			{#each data.groupResources as r (r.id)}
+				{#if editingGroupResourceId === r.id}
+					<EditableCard
+						saveAction="?/updateGroupResource"
+						deleteAction="?/deleteGroupResource"
+						idName="resourceId"
+						idValue={r.id}
+						bind:saving={savingGroupResourceEdit}
+						error={form?.form === 'editGroupResource' && form?.error}
+						deleteLabel={m.groups_resources_delete()}
+						deleteConfirmLabel={m.groups_resources_delete_confirm()}
+						onCancel={() => (editingGroupResourceId = null)}
+					>
+						{#snippet fields()}
+							<label class="field">
+								<span>{m.groups_resources_label_field()}</span>
+								<input name="label" bind:value={groupResourceLabelDraft} required />
+							</label>
+							<label class="field">
+								<span>{m.groups_resources_url_field()}</span>
+								<input type="url" name="url" bind:value={groupResourceUrlDraft} required />
+							</label>
+						{/snippet}
+					</EditableCard>
+				{:else}
+					<div class="list-row">
+						<a class="text-link" href={r.url} target="_blank" rel="noopener noreferrer">{r.label}</a>
+						<button
+							type="button"
+							class="text-link"
+							onclick={() => {
+								groupResourceLabelDraft = r.label;
+								groupResourceUrlDraft = r.url;
+								editingGroupResourceId = r.id;
+							}}
+						>
+							{m.drawer_edit()}
+						</button>
+					</div>
+				{/if}
+			{/each}
+
+			{#if creatingGroupResource}
+				<form
+					method="POST"
+					action="?/createGroupResource"
+					use:enhance={withSubmitting((v) => (creatingGroupResource = v), () => (creatingGroupResource = false))}
+				>
+					<label class="field">
+						<span>{m.groups_resources_label_field()}</span>
+						<input name="label" placeholder={m.groups_resources_label_placeholder()} required />
+					</label>
+					<label class="field">
+						<span>{m.groups_resources_url_field()}</span>
+						<input type="url" name="url" placeholder="https://…" required />
+					</label>
+					{#if form?.form === 'createGroupResource' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
+					<div class="btn-row">
+						<button type="button" class="btn btn-outline" onclick={() => (creatingGroupResource = false)}>
+							{m.action_cancel()}
+						</button>
+						<button class="btn btn-primary" type="submit">{m.groups_resources_add()}</button>
+					</div>
+				</form>
+			{:else}
+				<button type="button" class="text-link" onclick={() => (creatingGroupResource = true)}>
+					{m.groups_resources_add()}
+				</button>
+			{/if}
+		</section>
+	{/if}
+
 	<section class="card">
 		<p class="card-eyebrow">{m.groups_guest_access()}</p>
 		<p class="card-note">
@@ -320,6 +414,15 @@
 				<span>{m.groups_rehearsals()}</span>
 				<span class="dim">{formatRehearsalSchedule(data.group.rehearsal_weekday, data.group.rehearsal_time)}</span>
 			</div>
+		{/if}
+
+		{#if data.groupResourcesEnabled && data.groupResources.length > 0}
+			<p class="card-eyebrow">{m.groups_resources()}</p>
+			{#each data.groupResources as r (r.id)}
+				<div class="list-row">
+					<a class="text-link" href={r.url} target="_blank" rel="noopener noreferrer">{r.label}</a>
+				</div>
+			{/each}
 		{/if}
 
 		<p class="card-meta">

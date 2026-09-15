@@ -10,6 +10,7 @@ import { homeworkActions } from './actions/homework';
 import { weeklyNoteActions } from './actions/weeklyNotes';
 import { responsibilityActions } from './actions/responsibilities';
 import { carpoolActions } from './actions/carpool';
+import { groupResourceActions } from './actions/groupResources';
 
 // F31/B31: the group/role lookup, the five built-in pages' lists (+ their
 // enabled flags, carpool's events among them), and the admin-only real
@@ -118,5 +119,6 @@ export const actions: Actions = {
 	...homeworkActions,
 	...weeklyNoteActions,
 	...responsibilityActions,
-	...carpoolActions
+	...carpoolActions,
+	...groupResourceActions
 };

@@ -50,6 +50,7 @@ from app.api.schemas.carpool import (
     CarpoolSeatClaimCreate,
     CarpoolSeatClaimOut,
 )
+from app.api.schemas.group_resources import GroupResourceCreate, GroupResourceOut, GroupResourceUpdate
 from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
@@ -142,6 +143,9 @@ __all__ = [
     "GroupPageSettingUpdate",
     "GroupPageSettingsUpdate",
     "GroupRehearsalScheduleUpdate",
+    "GroupResourceCreate",
+    "GroupResourceOut",
+    "GroupResourceUpdate",
     "GuestAboutOut",
     "GuestAuthIn",
     "GuestAuthOut",

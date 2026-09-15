@@ -556,6 +556,14 @@
 							<span class="dim">{formatRehearsalSchedule(result.about.rehearsalWeekday, result.about.rehearsalTime)}</span>
 						</div>
 					{/if}
+					{#if result.groupResources.length > 0}
+						<p class="card-eyebrow">{m.groups_resources()}</p>
+						{#each result.groupResources as r (r.id)}
+							<div class="list-row">
+								<a class="text-link" href={r.url} target="_blank" rel="noopener noreferrer">{r.label}</a>
+							</div>
+						{/each}
+					{/if}
 				</section>
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees

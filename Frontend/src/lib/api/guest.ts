@@ -123,6 +123,18 @@ export interface GuestAbout {
 	rehearsalTime: string | null;
 }
 
+/** Backlog: mirrors the Backend's `GroupResourceOut`, as seen via the guest
+ * `/guest/{code}/resources` route — a group's stable link list, gated the
+ * same as `GuestAbout` above (the `about` page's own settings, not a page
+ * of its own; see the Backend `GroupResource` model docstring). No
+ * `created_by` here: unlike `GuestWeeklyNote`, a guest has no use for a
+ * bare creator id on a plain link list. */
+export interface GuestGroupResource {
+	id: string;
+	label: string;
+	url: string;
+}
+
 export class JoinCodeNotFoundError extends Error {
 	constructor(code: string) {
 		super(`No group found for join code "${code}"`);
@@ -220,6 +232,12 @@ interface GuestAboutResponse {
 	description: string | null;
 	rehearsal_weekday: number | null;
 	rehearsal_time: string | null;
+}
+
+interface GuestGroupResourceResponse {
+	id: string;
+	label: string;
+	url: string;
 }
 
 interface GuestRequestOptions {
@@ -420,6 +438,22 @@ export async function listGuestAbout(code: string, { password, token, fetchFn = 
 		rehearsalWeekday: body.rehearsal_weekday,
 		rehearsalTime: body.rehearsal_time
 	};
+}
+
+/** Backlog: a group's stable link list, guest-visible under the same
+ * `about` page gate as `listGuestAbout` above. Same "only call after
+ * `resolveJoinCode` confirmed the code/password" convention as every other
+ * guest list here — a 404 means "this group doesn't expose About (and so
+ * Resources) to guests", not a real error. */
+export async function listGuestGroupResources(
+	code: string,
+	{ password, token, fetchFn = fetch }: GuestRequestOptions = {}
+): Promise<GuestGroupResource[]> {
+	const res = await guestFetch(guestUrl(`/guest/${encodeURIComponent(code)}/resources`, { password, token }), fetchFn);
+	if (!res.ok) throw new GuestApiError(res.status, m.errors_request_failed({ status: res.status }));
+
+	const body: GuestGroupResourceResponse[] = await res.json();
+	return body.map((r) => ({ id: r.id, label: r.label, url: r.url }));
 }
 
 /** Visibility booleans for a join page's optional built-in tabs. The join

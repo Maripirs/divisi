@@ -140,6 +140,20 @@ export interface WeeklyNoteOut {
 	created_at: string;
 }
 
+/** Backlog: a group's stable link list (rehearsal playlist, member portal,
+ * shared drive folder, a standing join link, ...) — a small reference list,
+ * not a dated feed like `WeeklyNoteOut` above. Read access rides along with
+ * the group's `about` page gate rather than a page setting of its own (see
+ * the Backend's `GroupResource` model docstring). */
+export interface GroupResourceOut {
+	id: string;
+	group_id: string;
+	label: string;
+	url: string;
+	created_by: string | null;
+	created_at: string;
+}
+
 export type CarpoolEventStatus = 'open' | 'locked' | 'archived';
 
 /** B24/F28: one dated carpool occurrence on the group's built-in carpool

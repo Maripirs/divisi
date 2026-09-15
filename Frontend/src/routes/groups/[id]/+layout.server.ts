@@ -10,6 +10,7 @@ import type {
 	GroupMemberOut,
 	GroupOut,
 	GroupPageSettingOut,
+	GroupResourceOut,
 	HomeworkOut,
 	ResponsibilityDateOut,
 	WeeklyNoteOut
@@ -144,6 +145,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 					weeklyNotesEnabled: false,
 					carpoolEvents: [],
 					carpoolEnabled: false,
+					groupResources: [],
+					groupResourcesEnabled: false,
 					pageSettings: []
 				};
 			}
@@ -160,37 +163,50 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 	const isAdmin = group.role === 'admin';
 
 	try {
-		const [homeworkResult, membersResult, responsibilitiesResult, weeklyNotesResult, carpoolEventsResult, pageSettings] =
-			await Promise.all([
-				fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
-				fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
-				fetchPageOrDisabled(
-					backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
-					[]
-				),
-				fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
-				fetchPageOrDisabled(
-					backendJson<CarpoolEventOut[]>(locals.token, `/groups/${group.id}/carpool/events`, undefined, fetch),
-					[]
-				),
-				// The one authoritative source for a built-in page's real
-				// `enabled` setting: unlike the four `fetchPageOrDisabled`
-				// fetches above, an admin's own request to these page routes
-				// never 403s (the Backend's `require_member_page_access`
-				// always lets an admin through), so `homeworkEnabled` etc.
-				// stay `true` for an admin even when a page is actually
-				// disabled. That's fine for the admin's *real* view, but it
-				// means `groupTabs.ts`'s member-mode preview (an admin using
-				// the in-app "view as member" toggle, still the same
-				// request) can't tell a truly-enabled page from an
-				// admin-bypassed one without this. `GET .../page-settings`
-				// itself 403s for a non-admin, so only fetched here; a
-				// non-admin doesn't need it; their own `*Enabled` flags
-				// above are already accurate for them.
-				isAdmin
-					? backendJson<GroupPageSettingOut[]>(locals.token, `/groups/${group.id}/page-settings`, undefined, fetch)
-					: Promise.resolve<GroupPageSettingOut[]>([])
-			]);
+		const [
+			homeworkResult,
+			membersResult,
+			responsibilitiesResult,
+			weeklyNotesResult,
+			carpoolEventsResult,
+			groupResourcesResult,
+			pageSettings
+		] = await Promise.all([
+			fetchPageOrDisabled(backendJson<HomeworkOut[]>(locals.token, `/groups/${group.id}/homework`, undefined, fetch), []),
+			fetchPageOrDisabled(backendJson<GroupMemberOut[]>(locals.token, `/groups/${group.id}/members`, undefined, fetch), []),
+			fetchPageOrDisabled(
+				backendJson<ResponsibilityDateOut[]>(locals.token, `/groups/${group.id}/responsibilities/dates`, undefined, fetch),
+				[]
+			),
+			fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
+			fetchPageOrDisabled(
+				backendJson<CarpoolEventOut[]>(locals.token, `/groups/${group.id}/carpool/events`, undefined, fetch),
+				[]
+			),
+			// Backlog: gated on the `about` page's own settings, not a page of
+			// its own — see the Backend `GroupResource` model docstring.
+			fetchPageOrDisabled(
+				backendJson<GroupResourceOut[]>(locals.token, `/groups/${group.id}/resources`, undefined, fetch),
+				[]
+			),
+			// The one authoritative source for a built-in page's real
+			// `enabled` setting: unlike the four `fetchPageOrDisabled`
+			// fetches above, an admin's own request to these page routes
+			// never 403s (the Backend's `require_member_page_access`
+			// always lets an admin through), so `homeworkEnabled` etc.
+			// stay `true` for an admin even when a page is actually
+			// disabled. That's fine for the admin's *real* view, but it
+			// means `groupTabs.ts`'s member-mode preview (an admin using
+			// the in-app "view as member" toggle, still the same
+			// request) can't tell a truly-enabled page from an
+			// admin-bypassed one without this. `GET .../page-settings`
+			// itself 403s for a non-admin, so only fetched here; a
+			// non-admin doesn't need it; their own `*Enabled` flags
+			// above are already accurate for them.
+			isAdmin
+				? backendJson<GroupPageSettingOut[]>(locals.token, `/groups/${group.id}/page-settings`, undefined, fetch)
+				: Promise.resolve<GroupPageSettingOut[]>([])
+		]);
 
 		return {
 			// Re-returned (not just checked above): the root layout's own
@@ -219,6 +235,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			weeklyNotesEnabled: weeklyNotesResult.enabled,
 			carpoolEvents: carpoolEventsResult.data,
 			carpoolEnabled: carpoolEventsResult.enabled,
+			groupResources: groupResourcesResult.data,
+			groupResourcesEnabled: groupResourcesResult.enabled,
 			pageSettings
 		};
 	} catch (err) {

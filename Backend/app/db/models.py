@@ -470,6 +470,33 @@ class PieceRehearsalNote(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class GroupResource(Base):
+    """A group admin's stable link list (rehearsal playlist, member portal,
+    shared drive folder, a standing join link, ...) — a small reference
+    table, not a feed: unlike `WeeklyNote`, there's no dated "week of"
+    concept here, just a durable label+url pair members can come back to.
+    Read access rides along with the group's existing `about` page gate
+    (`GroupPageSettings`) rather than a new `GroupPage` value of its own,
+    the same reuse `PieceRehearsalNote`'s list route already makes against
+    `weekly_notes` — one more toggleable page wasn't worth a migration plus
+    admin-UI surface for what's meant to live on the Info/About tab anyway.
+    Ordered by `created_at` (oldest first) on read, same as
+    `PieceRehearsalNote`: a stable reference list a member scans top to
+    bottom, not a bulletin feed read newest-first."""
+
+    __tablename__ = "group_resources"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    # Nullable so deleting the creator's account can null this out rather
+    # than deleting the resource out from under the rest of the group, same
+    # convention as `WeeklyNote.created_by`.
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ResponsibilitySchedule(Base):
     """B13: a named, reusable set of roles (e.g. "Sunday cantors") that
     individual one-off dates get added to. Scoped down hard from the

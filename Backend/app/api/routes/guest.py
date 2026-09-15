@@ -27,6 +27,7 @@ from app.api.schemas import (
     AdminPreviewOut,
     CarpoolEventOut,
     CarpoolPostOut,
+    GroupResourceOut,
     GuestAboutOut,
     GuestAuthIn,
     GuestAuthOut,
@@ -59,6 +60,7 @@ from app.db.models import (
     Group,
     GroupMembership,
     GroupPage,
+    GroupResource,
     GroupRole,
     Homework,
     Piece,
@@ -405,6 +407,26 @@ def get_guest_about(
         description=group.description,
         rehearsal_weekday=group.rehearsal_weekday,
         rehearsal_time=group.rehearsal_time,
+    )
+
+
+@router.get("/{join_code}/resources", response_model=list[GroupResourceOut])
+def list_guest_group_resources(
+    join_code: str, password: str | None = None, token: str | None = None, db: Session = Depends(get_db)
+) -> list[GroupResource]:
+    """Backlog: a group's stable link list, guest-visible under the same
+    `about` page gate as `get_guest_about` above (see `GroupResource`'s own
+    docstring on why it rides along with `about` rather than a page of its
+    own). Reuses `GroupResourceOut` as-is, same "bare id, never a name"
+    stance `list_guest_weekly_notes` already takes on `created_by`."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    require_guest_page_access(group.id, GroupPage.about, db)
+    return (
+        db.query(GroupResource)
+        .filter(GroupResource.group_id == group.id)
+        .order_by(GroupResource.created_at.asc())
+        .all()
     )
 
 

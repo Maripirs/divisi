@@ -5,6 +5,7 @@ import {
 	listGuestAbout,
 	listGuestCarpoolEvents,
 	listGuestCarpoolPosts,
+	listGuestGroupResources,
 	listGuestHomework,
 	listGuestResponsibilityDates,
 	listGuestWeeklyNotes,
@@ -13,6 +14,7 @@ import {
 	type GuestCarpoolEvent,
 	type GuestCarpoolPost,
 	type GuestGroup,
+	type GuestGroupResource,
 	type GuestHomework,
 	type GuestResponsibilityDate,
 	type GuestWeeklyNote
@@ -96,6 +98,11 @@ export type GuestJoinResult =
 			// fetched at all once `aboutVisible` says the group opted in.
 			aboutVisible: boolean;
 			about: GuestAbout | null;
+			// Backlog: rides along with the same `aboutVisible` gate above (see
+			// the Backend `GroupResource` model docstring on why resources share
+			// the `about` page's settings rather than one of its own) — always
+			// `[]` when `aboutVisible` is `false`.
+			groupResources: GuestGroupResource[];
 	  };
 
 /** Runs every guest fetch and resolves (never rejects) to a `GuestJoinResult`
@@ -122,15 +129,19 @@ export async function loadGuestJoin(
 	try {
 		const group = await resolveJoinCode(code, { token, fetchFn: fetch });
 		const tabs = await getGuestTabs(code, { token, fetchFn: fetch });
-		const [homeworkResult, responsibilitiesResult, weeklyNotesResult, carpoolResult, aboutResult] = await Promise.all([
-			loadVisible(tabs.homeworkVisible, [] as GuestHomework[], () => listGuestHomework(code, { token, fetchFn: fetch })),
-			loadVisible(tabs.responsibilitiesVisible, [] as GuestResponsibilityDate[], () =>
-				listGuestResponsibilityDates(code, { token, fetchFn: fetch })
-			),
-			loadVisible(tabs.weeklyNotesVisible, [] as GuestWeeklyNote[], () => listGuestWeeklyNotes(code, { token, fetchFn: fetch })),
-			loadVisibleCarpool(tabs.carpoolVisible, code, token, fetch, requestedEventId),
-			loadVisible(tabs.aboutVisible, null as GuestAbout | null, () => listGuestAbout(code, { token, fetchFn: fetch }))
-		]);
+		const [homeworkResult, responsibilitiesResult, weeklyNotesResult, carpoolResult, aboutResult, groupResourcesResult] =
+			await Promise.all([
+				loadVisible(tabs.homeworkVisible, [] as GuestHomework[], () => listGuestHomework(code, { token, fetchFn: fetch })),
+				loadVisible(tabs.responsibilitiesVisible, [] as GuestResponsibilityDate[], () =>
+					listGuestResponsibilityDates(code, { token, fetchFn: fetch })
+				),
+				loadVisible(tabs.weeklyNotesVisible, [] as GuestWeeklyNote[], () => listGuestWeeklyNotes(code, { token, fetchFn: fetch })),
+				loadVisibleCarpool(tabs.carpoolVisible, code, token, fetch, requestedEventId),
+				loadVisible(tabs.aboutVisible, null as GuestAbout | null, () => listGuestAbout(code, { token, fetchFn: fetch })),
+				loadVisible(tabs.aboutVisible, [] as GuestGroupResource[], () =>
+					listGuestGroupResources(code, { token, fetchFn: fetch })
+				)
+			]);
 
 		return {
 			error: null,
@@ -146,7 +157,8 @@ export async function loadGuestJoin(
 			carpoolSelectedEventId: carpoolResult.selectedEventId,
 			carpoolPosts: carpoolResult.posts,
 			aboutVisible: aboutResult.visible,
-			about: aboutResult.data
+			about: aboutResult.data,
+			groupResources: groupResourcesResult.data
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };
