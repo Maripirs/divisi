@@ -3,13 +3,23 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { env } from '$env/dynamic/public';
-	import EditableCard from './EditableCard.svelte';
-	import ConfirmButton from './ConfirmButton.svelte';
+	import CarpoolDirectionTabs from './CarpoolDirectionTabs.svelte';
+	import CarpoolEventCreateForm from './CarpoolEventCreateForm.svelte';
+	import CarpoolEventEditForm from './CarpoolEventEditForm.svelte';
+	import CarpoolEventStrip from './CarpoolEventStrip.svelte';
+	import CarpoolEventSummary from './CarpoolEventSummary.svelte';
+	import CarpoolDriverClaimActions from './CarpoolDriverClaimActions.svelte';
+	import CarpoolGuestNamePrompt from './CarpoolGuestNamePrompt.svelte';
 	import CarpoolMap from './CarpoolMap.svelte';
-	import { datetimeLocalToIso, formatDateTime, toDatetimeLocalValue } from '$lib/utils/dates';
+	import CarpoolOriginHiddenFields from './CarpoolOriginHiddenFields.svelte';
+	import CarpoolPostActions from './CarpoolPostActions.svelte';
+	import CarpoolPostDetails from './CarpoolPostDetails.svelte';
+	import CarpoolPostEditForm from './CarpoolPostEditForm.svelte';
+	import CarpoolRiderInterestActions from './CarpoolRiderInterestActions.svelte';
+	import CarpoolSaveRequiredNotice from './CarpoolSaveRequiredNotice.svelte';
+	import { formatDateTime } from '$lib/utils/dates';
 	import {
 		driverOfferError,
-		formatContactPhone,
 		postMatchesDirection,
 		riderRequestError,
 		type CarpoolDirectionFilter
@@ -28,7 +38,6 @@
 	import { loadGoogleMaps, type GoogleMapsHandle } from '$lib/utils/googleMaps';
 	import { googlePlacesAutocomplete, type PlaceSelection } from '$lib/actions/googlePlaces';
 	import { m } from '$lib/paraglide/messages';
-	import { lh } from '$lib/i18n';
 	import type {
 		CarpoolEventOut,
 		CarpoolPostDirection,
@@ -188,22 +197,6 @@
 	let guestOfferExact = $state(false);
 	let guestRequestPlace = $state<PlaceSelection | null>(null);
 	let guestRequestExact = $state(false);
-	let newEventPlace = $state<PlaceSelection | null>(null);
-	let editEventPlace = $state<PlaceSelection | null>(null);
-
-	// The admin edit-event destination field is a controlled `bind:value`
-	// input (`editDestinationDraft`), unlike the create form's plain
-	// uncontrolled one: Places Autocomplete sets the input's DOM value
-	// directly on selection, which doesn't fire a real `input` event (see
-	// `googlePlaces.ts`'s doc comment on why `oninput` never fires for a
-	// selection), so the bound state needs that mirrored back by hand here
-	// or Svelte's own reactivity would stomp the widget's chosen text back
-	// to whatever `editDestinationDraft` still held.
-	function onSelectEditDestination(p: PlaceSelection) {
-		editEventPlace = p;
-		editDestinationDraft = p.label;
-	}
-
 	/** F33/B27: this viewer's own active claim on a driver post, if any —
 	 * a member compares `user_id` (same as post ownership), a guest checks
 	 * `carpoolOwnership.ts`'s claim-id tracking instead, for the same
@@ -220,41 +213,12 @@
 		return p.interests.find((i) => (isGuest ? isOwnedCarpoolInterest(i.id) : i.user_id === userId));
 	}
 
-	const STATUS_LABELS: Record<CarpoolEventOut['status'], () => string> = {
-		open: m.carpool_status_open,
-		locked: m.carpool_status_locked,
-		archived: m.carpool_status_archived
-	};
-
-	function startsAtToIso(formData: FormData) {
-		const raw = String(formData.get('startsAt') ?? '');
-		if (raw) formData.set('startsAt', datetimeLocalToIso(raw));
-	}
-
 	// Admin: create-event form, click-to-reveal like the rest of the group
 	// page's create flows.
+	// svelte-ignore state_referenced_locally
 	let showNewEvent = $state(events.length === 0);
-	let creatingEvent = $state(false);
 
-	// Admin: event edit panel.
-	let editingEvent = $state(false);
-	let editTitleDraft = $state('');
-	let editStartsAtDraft = $state('');
-	let editDestinationDraft = $state('');
-	let savingEventEdit = $state(false);
-	function startEditEvent(ev: CarpoolEventOut) {
-		editTitleDraft = ev.title;
-		// B26: the standing event has neither field, so there's nothing to
-		// prefill; its edit panel omits the "when" input entirely (see the
-		// markup below) so this draft never actually gets submitted for it.
-		editStartsAtDraft = ev.starts_at ? toDatetimeLocalValue(ev.starts_at) : '';
-		editDestinationDraft = ev.destination_label ?? '';
-		// F35: no place re-picked yet this edit, so the patch leaves whatever
-		// destination coordinates are already stored untouched (see
-		// `destinationCoordinatesPayload`'s call site in `updateCarpoolEvent`).
-		editEventPlace = null;
-		editingEvent = true;
-	}
+	let editingEventId = $state<string | null>(null);
 
 	/** B26/F32: the standing event has no `starts_at`, so its chip/detail
 	 * label reads as "Ongoing" instead of formatting a `null` date. Only the
@@ -275,30 +239,6 @@
 
 	// Owner's own post: inline edit (content only; status is admin-only).
 	let editingPostId = $state<string | null>(null);
-	let editOriginDraft = $state('');
-	// B32/F37: There / Back / Round trip, editable the same as any other
-	// post field — shared by both the member (`EditableCard`) and guest
-	// (fetch-based) edit form variants, same as every other draft below.
-	let editDirectionDraft = $state<CarpoolPostDirection>('round_trip');
-	let editSeatsDraft = $state<number | undefined>(undefined);
-	let editLeaveDraft = $state('');
-	let editNotesDraft = $state('');
-	// B30: shared by both the member (`EditableCard`) and guest (fetch-based)
-	// edit form variants below, same as every other draft in this block.
-	let editContactPhoneDraft = $state('');
-	let savingPostEdit = $state(false);
-	function startEditPost(p: CarpoolPostOut) {
-		editOriginDraft = p.origin_label;
-		editDirectionDraft = p.direction;
-		editSeatsDraft = p.seats_total ?? undefined;
-		editLeaveDraft = p.leave_time_text ?? '';
-		editNotesDraft = p.notes ?? '';
-		// B30: prefilled from `p.contact_phone` when it's visible to this
-		// viewer at all — always true here, since only the post's own owner
-		// (or an admin, who never sees this inline-edit form) reaches this.
-		editContactPhoneDraft = p.contact_phone ?? '';
-		editingPostId = p.id;
-	}
 
 	// --- F29 guest write path -------------------------------------------
 	// Everything below only runs when `guest` is set. A guest has no
@@ -338,8 +278,6 @@
 	let guestRequestDirection = $state<CarpoolPostDirection>('round_trip');
 	let guestRequestNotes = $state('');
 	let guestRequestContactPhone = $state('');
-
-	let guestEditError = $state('');
 
 	function startOfferRide() {
 		guestCreateError = '';
@@ -491,63 +429,6 @@
 			}
 		);
 		submittingRequest = false;
-	}
-
-	async function submitGuestPostEdit(p: CarpoolPostOut) {
-		if (!guest) return;
-		guestEditError = '';
-		savingPostEdit = true;
-		try {
-			const res = await fetch(`/join/${guest.code}/carpool/posts/${p.id}`, {
-				method: 'PATCH',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					originLabel: editOriginDraft,
-					direction: editDirectionDraft,
-					seatsTotal: p.kind === 'driver' ? (editSeatsDraft ?? null) : undefined,
-					leaveTimeText: editLeaveDraft || null,
-					notes: editNotesDraft || null,
-					contactPhone: editContactPhoneDraft || null,
-					localId: ensureLocalId()
-				})
-			});
-			const result = (await res.json()) as GuestWriteResult;
-			if (result.ok) {
-				editingPostId = null;
-				await invalidateAll();
-			} else if (result.error === 'conflict') {
-				guestEditError = result.message || m.carpool_guest_action_failed();
-			} else {
-				guestEditError = m.carpool_guest_action_failed();
-			}
-		} catch {
-			guestEditError = m.carpool_guest_action_failed();
-		} finally {
-			savingPostEdit = false;
-		}
-	}
-
-	async function deleteGuestPost(p: CarpoolPostOut) {
-		if (!guest) return;
-		guestEditError = '';
-		savingPostEdit = true;
-		try {
-			const res = await fetch(
-				`/join/${guest.code}/carpool/posts/${p.id}?localId=${encodeURIComponent(ensureLocalId())}`,
-				{ method: 'DELETE' }
-			);
-			const result = (await res.json()) as GuestWriteResult;
-			if (result.ok) {
-				editingPostId = null;
-				await invalidateAll();
-			} else {
-				guestEditError = m.carpool_guest_action_failed();
-			}
-		} catch {
-			guestEditError = m.carpool_guest_action_failed();
-		} finally {
-			savingPostEdit = false;
-		}
 	}
 
 	// --- F33 guest claim/release path -----------------------------------
@@ -738,348 +619,59 @@
 	{@const isOwner = isGuest ? isOwnedCarpoolPost(p.id) : p.user_id === userId}
 	<div class="carpool-post">
 		{#if editingPostId === p.id}
-			{#if isGuest}
-				<!-- F29: no form action to `use:enhance` against (see this
-				     component's doc comment), so this is a plain fetch-backed
-				     form instead of `EditableCard` — same fields, same Save/
-				     Cancel/Delete row, laid out by hand. -->
-				<form
-					onsubmit={(e) => {
-						e.preventDefault();
-						void submitGuestPostEdit(p);
-					}}
-				>
-					<label class="field">
-						<span>{m.carpool_origin_field()}</span>
-						<input bind:value={editOriginDraft} required />
-					</label>
-					<label class="field">
-						<span>{m.carpool_direction_field()}</span>
-						<select bind:value={editDirectionDraft}>
-							<option value="round_trip">{m.carpool_direction_round_trip()}</option>
-							<option value="there">{m.carpool_direction_there()}</option>
-							<option value="back">{m.carpool_direction_back()}</option>
-						</select>
-					</label>
-					{#if p.kind === 'driver'}
-						<label class="field">
-							<span>{m.carpool_seats_field()}</span>
-							<input type="number" min="1" bind:value={editSeatsDraft} required />
-						</label>
-						<label class="field">
-							<span>{m.carpool_leave_time_field()}</span>
-							<input bind:value={editLeaveDraft} placeholder={m.groups_optional()} />
-						</label>
-					{/if}
-					<label class="field">
-						<span>{m.carpool_notes_field()}</span>
-						<input bind:value={editNotesDraft} placeholder={m.groups_optional()} />
-					</label>
-					<label class="field">
-						<span>{m.carpool_contact_phone_field()}</span>
-						<input type="tel" bind:value={editContactPhoneDraft} placeholder={m.groups_optional()} />
-					</label>
-					{#if guestEditError}
-						<p class="error">{guestEditError}</p>
-					{/if}
-					<div class="btn-row">
-						<button type="submit" class="btn btn-outline" disabled={savingPostEdit}>
-							{savingPostEdit ? m.reset_password_saving() : m.action_save()}
-						</button>
-						<button
-							type="button"
-							class="text-link"
-							onclick={() => (editingPostId = null)}
-							disabled={savingPostEdit}
-						>
-							{m.action_cancel()}
-						</button>
-						<ConfirmButton>
-							{#snippet trigger(start)}
-								<button
-									type="button"
-									class="text-link text-link--danger"
-									onclick={start}
-									disabled={savingPostEdit}
-								>
-									{m.carpool_delete_post()}
-								</button>
-							{/snippet}
-							{#snippet confirm(cancel)}
-								<p class="card-note">{m.carpool_delete_post_confirm()}</p>
-								<div class="btn-row">
-									<button type="button" class="btn btn-outline" onclick={cancel}>{m.action_cancel()}</button>
-									<button
-										type="button"
-										class="btn btn-danger"
-										disabled={savingPostEdit}
-										onclick={() => void deleteGuestPost(p)}
-									>
-										{m.carpool_delete_post()}
-									</button>
-								</div>
-							{/snippet}
-						</ConfirmButton>
-					</div>
-				</form>
-			{:else}
-				<EditableCard
-					saveAction="?/updateCarpoolPost"
-					deleteAction="?/deleteCarpoolPost"
-					idName="postId"
-					idValue={p.id}
-					bind:saving={savingPostEdit}
-					error={form?.form === 'editPost' && form?.error}
-					deleteLabel={m.carpool_delete_post()}
-					deleteConfirmLabel={m.carpool_delete_post_confirm()}
-					onCancel={() => (editingPostId = null)}
-				>
-					{#snippet fields()}
-						<label class="field">
-							<span>{m.carpool_origin_field()}</span>
-							<input name="originLabel" bind:value={editOriginDraft} required />
-						</label>
-						<label class="field">
-							<span>{m.carpool_direction_field()}</span>
-							<select name="direction" bind:value={editDirectionDraft}>
-								<option value="round_trip">{m.carpool_direction_round_trip()}</option>
-								<option value="there">{m.carpool_direction_there()}</option>
-								<option value="back">{m.carpool_direction_back()}</option>
-							</select>
-						</label>
-						{#if p.kind === 'driver'}
-							<label class="field">
-								<span>{m.carpool_seats_field()}</span>
-								<input name="seatsTotal" type="number" min="1" bind:value={editSeatsDraft} required />
-							</label>
-							<label class="field">
-								<span>{m.carpool_leave_time_field()}</span>
-								<input name="leaveTimeText" bind:value={editLeaveDraft} placeholder={m.groups_optional()} />
-							</label>
-						{/if}
-						<label class="field">
-							<span>{m.carpool_notes_field()}</span>
-							<input name="notes" bind:value={editNotesDraft} placeholder={m.groups_optional()} />
-						</label>
-						<label class="field">
-							<span>{m.carpool_contact_phone_field()}</span>
-							<input
-								name="contactPhone"
-								type="tel"
-								bind:value={editContactPhoneDraft}
-								placeholder={m.groups_optional()}
-							/>
-						</label>
-					{/snippet}
-				</EditableCard>
-			{/if}
+			<CarpoolPostEditForm
+				post={p}
+				{isGuest}
+				guestCode={guest?.code ?? null}
+				{form}
+				onDone={() => (editingPostId = null)}
+			/>
 		{:else}
 			{@const myClaim = p.kind === 'driver' ? myClaimFor(p) : undefined}
 			{@const myInterest = p.kind === 'rider' ? myInterestFor(p) : undefined}
-			<div class="carpool-post-main">
-				<p class="card-title">
-					{p.display_name}
-					{#if p.status === 'hidden'}<span class="dim">· {m.carpool_hidden_badge()}</span>{/if}
-				</p>
-				<p class="card-meta">{m.carpool_origin_label({ origin: p.origin_label })}</p>
-				{#if p.kind === 'driver'}
-					{#if p.leave_time_text}
-						<p class="card-meta">{m.carpool_leaving_at({ time: p.leave_time_text })}</p>
-					{/if}
-					<!-- Per-seat breakdown instead of an aggregate "X/Y left" count:
-					     `p.claims` is oldest-first (first-come-first-served, see
-					     `active_claims_for`'s own doc comment on the Backend), which
-					     is exactly seat-fill order, so seat `i` is `p.claims[i]` when
-					     it exists, empty otherwise. Same "posted content is visible
-					     to whoever can see the board" stance `card-meta` claimant
-					     names already took — no ownership check gates this. -->
-					<div class="carpool-seats">
-						{#each Array.from({ length: p.seats_total ?? 0 }) as _, i (i)}
-							{#if p.claims[i]}
-								<p class="carpool-seat carpool-seat--occupied">
-									{m.carpool_seat_occupied({ number: i + 1, name: p.claims[i].display_name })}
-								</p>
-							{:else}
-								<p class="carpool-seat carpool-seat--empty">{m.carpool_seat_empty({ number: i + 1 })}</p>
-							{/if}
-						{/each}
-					</div>
-				{:else if p.interests.length > 0}
-					<!-- B30: interested drivers' names, same "posted content is
-					     visible to whoever can see the board" stance as `claims`
-					     above — only the phone number itself is gated, not who's
-					     interested. -->
-					<p class="card-meta carpool-post-status">
-						{m.carpool_interested_by({ names: p.interests.map((i) => i.display_name).join(', ') })}
-					</p>
-				{/if}
-				{#if p.notes}<p class="card-note">{p.notes}</p>{/if}
-				{#if p.contact_phone}
-					<!-- B30: already visibility-gated by the Backend
-					     (`serialize_post`) — this just renders whatever it got,
-					     exactly like `origin_label`/`notes` above, no client-side
-					     ownership/claim check needed here. `formatContactPhone`
-					     is cosmetic only (the stored value is whatever the poster
-					     actually typed, see its own doc comment). A real `tel:`
-					     link, not another `card-meta` line: revealed contact info
-					     is the one fact on this card someone's actually going to
-					     act on (tap to call), so it gets its own accent-colored
-					     weight instead of blending into the gray description
-					     lines above it. -->
-					<a class="carpool-contact-link" href={`tel:${p.contact_phone.replace(/[^\d+]/g, '')}`}>
-						{m.carpool_contact_phone_label({ phone: formatContactPhone(p.contact_phone) })}
-					</a>
-				{/if}
-			</div>
-			<div class="btn-row">
-				{#if isOwner}
-					<button type="button" class="text-link" onclick={() => startEditPost(p)}>{m.drawer_edit()}</button>
-				{:else if isAdmin}
-					<form method="POST" action="?/moderateCarpoolPost" use:enhance>
-						<input type="hidden" name="postId" value={p.id} />
-						<input type="hidden" name="status" value={p.status === 'hidden' ? 'open' : 'hidden'} />
-						<button type="submit" class="text-link">
-							{p.status === 'hidden' ? m.carpool_unhide_post() : m.carpool_hide_post()}
-						</button>
-					</form>
-					<ConfirmButton>
-						{#snippet trigger(start)}
-							<button type="button" class="text-link text-link--danger" onclick={start}>{m.carpool_delete_post()}</button>
-						{/snippet}
-						{#snippet confirm(cancel)}
-							<p class="card-note">{m.carpool_delete_post_confirm()}</p>
-							<div class="btn-row">
-								<button type="button" class="btn btn-outline" onclick={cancel}>{m.action_cancel()}</button>
-								<form method="POST" action="?/deleteCarpoolPost" use:enhance>
-									<input type="hidden" name="postId" value={p.id} />
-									<button type="submit" class="btn btn-danger">{m.carpool_delete_post()}</button>
-								</form>
-							</div>
-						{/snippet}
-					</ConfirmButton>
-				{/if}
-			</div>
-			{#if isOwner && form?.form === 'editPost' && form?.error}
-				<p class="error">{form.error}</p>
-			{/if}
+			<CarpoolPostDetails post={p} />
+			<CarpoolPostActions post={p} {isOwner} {isAdmin} {form} onEdit={(post) => (editingPostId = post.id)} />
 			{#if p.kind === 'driver'}
-				<!-- F33/B27: first-come-first-served claim/release. `canPost`
-				     (same admin-bypasses-lock gate the offer/request forms use)
-				     only governs a *new* claim — the Backend never blocks a
-				     release on a locked/archived event, so that button ignores
-				     it. A full post with no claim from this viewer renders
-				     nothing here at all, just the seat count/claimant list above.
-				     `!isOwner` guards the "Claim seat" button specifically: a
-				     driver can't claim a seat on their own post (the Backend
-				     rejects it with 400 too, see `create_claim`'s own doc
-				     comment), so this just keeps the button from ever offering
-				     an action that would fail. -->
-				<div class="btn-row">
-					{#if myClaim}
-						{#if isGuest}
-							<button
-								type="button"
-								class="btn btn-outline"
-								disabled={claimActionBusyId === myClaim.id}
-								onclick={() => releaseGuestClaim(p.id, myClaim.id)}
-							>
-								{claimActionBusyId === myClaim.id ? m.carpool_releasing() : m.carpool_release_seat()}
-							</button>
-						{:else}
-							<form method="POST" action="?/releaseSeat" use:enhance>
-								<input type="hidden" name="claimId" value={myClaim.id} />
-								<button type="submit" class="btn btn-outline">{m.carpool_release_seat()}</button>
-							</form>
-						{/if}
-					{:else if !isOwner && canPost && isGuest && guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
-						{@render guestNamePrompt(m.carpool_claim_seat())}
-					{:else if !isOwner && canPost && (p.seats_available ?? 0) > 0}
-						{#if isGuest}
-							<button
-								type="button"
-								class="btn btn-outline"
-								disabled={claimActionBusyId === p.id}
-								onclick={() => startClaimSeat(p.id)}
-							>
-								{claimActionBusyId === p.id ? m.carpool_claiming() : m.carpool_claim_seat()}
-							</button>
-						{:else}
-							<form method="POST" action="?/claimSeat" use:enhance>
-								<input type="hidden" name="driverPostId" value={p.id} />
-								<button type="submit" class="btn btn-outline">{m.carpool_claim_seat()}</button>
-							</form>
-						{/if}
-					{/if}
-				</div>
-				{#if isGuest}
-					{#if claimActionErrorFor === p.id && claimActionSaveRequired}
-						{@render guestSaveRequiredNotice()}
-					{:else if claimActionErrorFor === p.id && claimActionError}
-						<p class="error">{claimActionError}</p>
-					{/if}
-				{:else if form?.form === `claimSeat:${p.id}` && form?.error}
-					<p class="error">{form.error}</p>
-				{:else if myClaim && form?.form === `releaseSeat:${myClaim.id}` && form?.error}
-					<p class="error">{form.error}</p>
-				{/if}
+				<CarpoolDriverClaimActions
+					post={p}
+					{isOwner}
+					{canPost}
+					{isGuest}
+					{myClaim}
+					guestNamePromptActive={guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
+					{guestNameDraft}
+					{claimActionBusyId}
+					{claimActionErrorFor}
+					{claimActionSaveRequired}
+					{claimActionError}
+					{form}
+					onGuestNameInput={(value) => (guestNameDraft = value)}
+					onGuestNameCancel={() => (guestNamePromptFor = null)}
+					onGuestNameConfirm={confirmGuestName}
+					onStartClaim={startClaimSeat}
+					onReleaseGuestClaim={releaseGuestClaim}
+				/>
 			{/if}
 			{#if p.kind === 'rider'}
-				<!-- B30: the rider-post mirror of the driver claim/release block
-				     above. No capacity check here at all (a rider's request isn't
-				     seat-limited the way a driver's post is), just a single
-				     "you already expressed interest" state per viewer. `!isOwner`
-				     guards the "I'm interested" button specifically: a rider can't
-				     express interest in their own post (the Backend rejects it
-				     with 400 too, see `create_interest`'s own doc comment), same
-				     reasoning as the driver self-claim guard above. -->
-				<div class="btn-row">
-					{#if myInterest}
-						{#if isGuest}
-							<button
-								type="button"
-								class="btn btn-outline"
-								disabled={interestActionBusyId === myInterest.id}
-								onclick={() => releaseGuestInterest(p.id, myInterest.id)}
-							>
-								{interestActionBusyId === myInterest.id ? m.carpool_releasing() : m.carpool_withdraw_interest()}
-							</button>
-						{:else}
-							<form method="POST" action="?/releaseInterest" use:enhance>
-								<input type="hidden" name="interestId" value={myInterest.id} />
-								<button type="submit" class="btn btn-outline">{m.carpool_withdraw_interest()}</button>
-							</form>
-						{/if}
-					{:else if !isOwner && canPost && isGuest && guestNamePromptFor === 'interest' && guestInterestTargetPostId === p.id}
-						{@render guestNamePrompt(m.carpool_im_interested())}
-					{:else if !isOwner && canPost}
-						{#if isGuest}
-							<button
-								type="button"
-								class="btn btn-outline"
-								disabled={interestActionBusyId === p.id}
-								onclick={() => startExpressInterest(p.id)}
-							>
-								{interestActionBusyId === p.id ? m.carpool_expressing_interest() : m.carpool_im_interested()}
-							</button>
-						{:else}
-							<form method="POST" action="?/expressInterest" use:enhance>
-								<input type="hidden" name="riderPostId" value={p.id} />
-								<button type="submit" class="btn btn-outline">{m.carpool_im_interested()}</button>
-							</form>
-						{/if}
-					{/if}
-				</div>
-				{#if isGuest}
-					{#if interestActionErrorFor === p.id && interestActionSaveRequired}
-						{@render guestSaveRequiredNotice()}
-					{:else if interestActionErrorFor === p.id && interestActionError}
-						<p class="error">{interestActionError}</p>
-					{/if}
-				{:else if form?.form === `expressInterest:${p.id}` && form?.error}
-					<p class="error">{form.error}</p>
-				{:else if myInterest && form?.form === `releaseInterest:${myInterest.id}` && form?.error}
-					<p class="error">{form.error}</p>
-				{/if}
+				<CarpoolRiderInterestActions
+					post={p}
+					{isOwner}
+					{canPost}
+					{isGuest}
+					{myInterest}
+					guestNamePromptActive={guestNamePromptFor === 'interest' && guestInterestTargetPostId === p.id}
+					{guestNameDraft}
+					{interestActionBusyId}
+					{interestActionErrorFor}
+					{interestActionSaveRequired}
+					{interestActionError}
+					{form}
+					onGuestNameInput={(value) => (guestNameDraft = value)}
+					onGuestNameCancel={() => (guestNamePromptFor = null)}
+					onGuestNameConfirm={confirmGuestName}
+					onStartInterest={startExpressInterest}
+					onReleaseGuestInterest={releaseGuestInterest}
+				/>
 			{/if}
 		{/if}
 	</div>
@@ -1095,172 +687,27 @@
 </div>
 
 {#if isAdmin && showNewEvent}
-	<section class="card">
-		<p class="card-eyebrow">{m.carpool_add_one_time_event()}</p>
-		<form
-			method="POST"
-			action="?/createCarpoolEvent"
-			use:enhance={({ formData }) => {
-				startsAtToIso(formData);
-				creatingEvent = true;
-				return async ({ result, update }) => {
-					creatingEvent = false;
-					if (result.type === 'success') {
-						showNewEvent = false;
-						newEventPlace = null;
-					}
-					await update();
-				};
-			}}
-		>
-			<label class="field">
-				<span>{m.carpool_event_title_field()}</span>
-				<input name="title" required />
-			</label>
-			<label class="field">
-				<span>{m.carpool_event_when_field()}</span>
-				<input type="datetime-local" name="startsAt" required />
-			</label>
-			<label class="field">
-				<span>{m.carpool_event_destination_field()}</span>
-				<input
-					name="destinationLabel"
-					required
-					oninput={() => (newEventPlace = null)}
-					use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: (p) => (newEventPlace = p) }}
-				/>
-			</label>
-			{@render destinationHiddenFields(newEventPlace)}
-			{#if form?.form === 'createEvent' && form?.error}
-				<p class="error">{form.error}</p>
-			{/if}
-			<button class="btn btn-primary btn-block" type="submit" disabled={creatingEvent}>
-				{creatingEvent ? m.carpool_creating_event() : m.carpool_create_event()}
-			</button>
-		</form>
-	</section>
+	<CarpoolEventCreateForm {mapsConfig} {form} onCreated={() => (showNewEvent = false)} />
 {/if}
 
 {#if events.length === 0}
 	<p class="empty">{isAdmin ? m.carpool_no_events_admin() : m.carpool_no_events_member()}</p>
 {:else}
 	{#if events.length > 1}
-		<div class="carpool-event-strip" role="group" aria-label={m.carpool_events_heading()}>
-			{#each events as ev (ev.id)}
-				<a
-					class="carpool-event-chip"
-					aria-current={ev.id === selectedEventId}
-					href="?event={ev.id}"
-				>
-					<span class="carpool-event-chip__title">{ev.title}</span>
-					<span class="carpool-event-chip__sub">{eventTimeLabel(ev)}</span>
-				</a>
-			{/each}
-		</div>
+		<CarpoolEventStrip {events} {selectedEventId} {eventTimeLabel} />
 	{/if}
 
 	{#if selectedEvent}
 		{@const ev = selectedEvent}
 		<section class="card">
-			{#if isAdmin && editingEvent}
-				<EditableCard
-					saveAction="?/updateCarpoolEvent"
-					idName="eventId"
-					idValue={ev.id}
-					bind:saving={savingEventEdit}
-					error={form?.form === 'editEvent' && form?.error}
-					beforeSubmit={startsAtToIso}
-					onCancel={() => (editingEvent = false)}
-				>
-					{#snippet fields()}
-						<label class="field">
-							<span>{m.carpool_event_title_field()}</span>
-							<input name="title" bind:value={editTitleDraft} required />
-						</label>
-						{#if !ev.is_standing}
-							<!-- B26: the Backend 400s on any starts_at patch to the
-							     standing event, so this input isn't rendered at all
-							     for it (an unchanged value would still be "set"). -->
-							<label class="field">
-								<span>{m.carpool_event_when_field()}</span>
-								<input type="datetime-local" name="startsAt" bind:value={editStartsAtDraft} required />
-							</label>
-						{/if}
-						<label class="field">
-							<span>{m.carpool_event_destination_field()}</span>
-							<!-- Autocomplete sets the input's DOM value directly, which
-							     doesn't fire a real `input` event (see `googlePlaces.ts`'s
-							     own doc comment on why `oninput` below never fires for a
-							     selection). A controlled `bind:value` input like this one
-							     needs that mirrored back into the bound state by hand
-							     (`onSelectDestination` below), or Svelte's own reactivity
-							     would stomp the widget's chosen text back to whatever
-							     `editDestinationDraft` still held. -->
-							<input
-								name="destinationLabel"
-								bind:value={editDestinationDraft}
-								required
-								oninput={() => (editEventPlace = null)}
-								use:googlePlacesAutocomplete={{ config: mapsConfig, onSelect: onSelectEditDestination }}
-							/>
-						</label>
-						{@render destinationHiddenFields(editEventPlace)}
-					{/snippet}
-				</EditableCard>
+			{#if isAdmin && editingEventId === ev.id}
+				<CarpoolEventEditForm event={ev} {mapsConfig} {form} onCancel={() => (editingEventId = null)} />
 			{:else}
-				<div class="list-row">
-					<span class="card-title">{ev.title}</span>
-					<span class="dim">{STATUS_LABELS[ev.status]()}</span>
-				</div>
-				<p class="card-meta">{eventTimeLabel(ev)}{#if ev.destination_label} · {ev.destination_label}{/if}</p>
-				{#if isAdmin}
-					<div class="btn-row">
-						<button type="button" class="btn btn-outline" onclick={() => startEditEvent(ev)}>{m.drawer_edit()}</button>
-						{#if ev.status !== 'archived'}
-							<form method="POST" action="?/updateCarpoolEvent" use:enhance>
-								<input type="hidden" name="eventId" value={ev.id} />
-								<input type="hidden" name="status" value={ev.status === 'locked' ? 'open' : 'locked'} />
-								<button type="submit" class="btn btn-outline">
-									{ev.status === 'locked' ? m.carpool_unlock_event() : m.carpool_lock_event()}
-								</button>
-							</form>
-							{#if !ev.is_standing}
-								<!-- B26: the Backend rejects archiving the standing
-								     event outright, so this button never renders for
-								     it in the first place. -->
-								<form method="POST" action="?/updateCarpoolEvent" use:enhance>
-									<input type="hidden" name="eventId" value={ev.id} />
-									<input type="hidden" name="status" value="archived" />
-									<button type="submit" class="btn btn-outline">{m.carpool_archive_event()}</button>
-								</form>
-							{/if}
-						{/if}
-					</div>
-					{#if form?.form === 'editEvent' && form?.error}
-						<p class="error">{form.error}</p>
-					{/if}
-				{:else if ev.status !== 'open'}
-					<p class="card-note">
-						{ev.status === 'locked' ? m.carpool_event_locked_notice() : m.carpool_event_archived_notice()}
-					</p>
-				{/if}
+				<CarpoolEventSummary event={ev} {isAdmin} {form} {eventTimeLabel} onEdit={(event) => (editingEventId = event.id)} />
 			{/if}
 		</section>
 
-		<!-- F41: same tab-strip look as the group's own built-in tabs
-		     (`.tabs`/`.tab`, `shell.css`), reused here for the direction
-		     toggle rather than a bespoke widget. Sits above the map (not just
-		     the lists, F37's original placement) since `drivers`/`riders` are
-		     filtered before either one reads them, so the toggle now visibly
-		     governs both. -->
-		<div class="tabs" role="tablist" aria-label={m.carpool_direction_field()}>
-			<button type="button" class="tab" class:active={directionFilter === 'there'} onclick={() => (directionFilter = 'there')}>
-				{m.carpool_leg_there()}
-			</button>
-			<button type="button" class="tab" class:active={directionFilter === 'back'} onclick={() => (directionFilter = 'back')}>
-				{m.carpool_leg_back()}
-			</button>
-		</div>
+		<CarpoolDirectionTabs value={directionFilter} onChange={(value) => (directionFilter = value)} />
 
 		<!-- F35: one stacked view, map above the list, whenever `mapsAvailable`
 		     (the loader actually confirmed Maps/Places usable), no separate
@@ -1288,7 +735,13 @@
 		{/each}
 			{#if canPost}
 				{#if isGuest && guestNamePromptFor === 'offer'}
-					{@render guestNamePrompt(m.carpool_offer_ride())}
+					<CarpoolGuestNamePrompt
+						value={guestNameDraft}
+						confirmLabel={m.carpool_offer_ride()}
+						onInput={(value) => (guestNameDraft = value)}
+						onCancel={() => (guestNamePromptFor = null)}
+						onConfirm={confirmGuestName}
+					/>
 				{:else if offeringRide}
 					{#if isGuest}
 						<form
@@ -1347,7 +800,7 @@
 								<p class="error">{guestCreateError}</p>
 							{/if}
 							{#if guestSaveRequired}
-								{@render guestSaveRequiredNotice()}
+								<CarpoolSaveRequiredNotice />
 							{/if}
 							<div class="btn-row">
 								<button type="submit" class="btn btn-primary" disabled={submittingOffer}>
@@ -1389,7 +842,7 @@
 									<span>{m.carpool_share_exact_location()}</span>
 								</label>
 							{/if}
-							{@render originHiddenFields(offerPlace, offerExact)}
+							<CarpoolOriginHiddenFields place={offerPlace} exact={offerExact} />
 							<label class="field">
 								<span>{m.carpool_direction_field()}</span>
 								<select name="direction">
@@ -1446,7 +899,13 @@
 			{/each}
 			{#if canPost}
 				{#if isGuest && guestNamePromptFor === 'request'}
-					{@render guestNamePrompt(m.carpool_request_ride())}
+					<CarpoolGuestNamePrompt
+						value={guestNameDraft}
+						confirmLabel={m.carpool_request_ride()}
+						onInput={(value) => (guestNameDraft = value)}
+						onCancel={() => (guestNamePromptFor = null)}
+						onConfirm={confirmGuestName}
+					/>
 				{:else if requestingRide}
 					{#if isGuest}
 						<form
@@ -1497,7 +956,7 @@
 								<p class="error">{guestCreateError}</p>
 							{/if}
 							{#if guestSaveRequired}
-								{@render guestSaveRequiredNotice()}
+								<CarpoolSaveRequiredNotice />
 							{/if}
 							<div class="btn-row">
 								<button type="submit" class="btn btn-primary" disabled={submittingRequest}>
@@ -1539,7 +998,7 @@
 									<span>{m.carpool_share_exact_location()}</span>
 								</label>
 							{/if}
-							{@render originHiddenFields(requestPlace, requestExact)}
+							<CarpoolOriginHiddenFields place={requestPlace} exact={requestExact} />
 							<label class="field">
 								<span>{m.carpool_direction_field()}</span>
 								<select name="direction">
@@ -1580,65 +1039,6 @@
 		</section>
 {/snippet}
 
-{#snippet guestNamePrompt(confirmLabel: string)}
-	<form
-		class="signup-name-form"
-		onsubmit={(e) => {
-			e.preventDefault();
-			confirmGuestName();
-		}}
-	>
-		<label class="field">
-			<span>{m.responsibilities_name_prompt()}</span>
-			<input bind:value={guestNameDraft} required autocomplete="name" />
-		</label>
-		<div class="btn-row">
-			<button type="button" class="text-link" onclick={() => (guestNamePromptFor = null)}>
-				{m.join_not_now()}
-			</button>
-			<button type="submit" class="btn btn-primary" disabled={guestNameDraft.trim().length === 0}>
-				{confirmLabel}
-			</button>
-		</div>
-	</form>
-{/snippet}
-
-{#snippet guestSaveRequiredNotice()}
-	<p class="signup-save-required">
-		{m.carpool_save_required()}
-		<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
-	</p>
-{/snippet}
-
-<!-- F35: the member offer/request forms' hidden coordinate fields, shared
-     between the two so a real `<form>` submit's `FormData` carries them
-     without repeating the same four inputs at both call sites. Nothing
-     renders at all when `place` is `null` (Places unavailable, or the
-     member never picked a place), so a plain free-text submission sends
-     none of these, exactly as it did before this milestone; see
-     `originCoordinatesPayload` (`$lib/utils/carpool.ts`) on the receiving
-     end in `actions/carpool.ts`. -->
-{#snippet originHiddenFields(place: PlaceSelection | null, exact: boolean)}
-	{#if place}
-		<input type="hidden" name="originLatitude" value={place.latitude} />
-		<input type="hidden" name="originLongitude" value={place.longitude} />
-		{#if place.placeId}<input type="hidden" name="originPlaceId" value={place.placeId} />{/if}
-		<input type="hidden" name="originPrecision" value={exact ? 'exact' : 'approximate'} />
-	{/if}
-{/snippet}
-
-<!-- Same idea as `originHiddenFields` above, for the admin event create/edit
-     forms' destination pin. No `precision` field here at all: a venue pin
-     is never privacy-rounded (see `destinationCoordinatesPayload`'s own
-     doc comment), so there's nothing to pick between exact/approximate. -->
-{#snippet destinationHiddenFields(place: PlaceSelection | null)}
-	{#if place}
-		<input type="hidden" name="destinationLatitude" value={place.latitude} />
-		<input type="hidden" name="destinationLongitude" value={place.longitude} />
-		{#if place.placeId}<input type="hidden" name="destinationPlaceId" value={place.placeId} />{/if}
-	{/if}
-{/snippet}
-
 <style>
 	.carpool-head {
 		display: flex;
@@ -1646,45 +1046,6 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
-	}
-
-	/* Same horizontal-scroll strip shape as Responsibilities' date chips:
-	   stays one row tall however many events a group has. */
-	.carpool-event-strip {
-		display: flex;
-		gap: 0.5rem;
-		overflow-x: auto;
-		-webkit-overflow-scrolling: touch;
-	}
-
-	.carpool-event-chip {
-		flex: 0 0 9rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		padding: 0.55rem 0.65rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background: var(--surface-2);
-		color: inherit;
-		text-decoration: none;
-	}
-
-	.carpool-event-chip[aria-current='true'] {
-		border-color: var(--accent);
-		box-shadow: inset 0 0 0 1px var(--accent);
-		background: color-mix(in srgb, var(--accent) 14%, var(--surface));
-	}
-
-	.carpool-event-chip__title {
-		font-size: 0.8125rem;
-		font-weight: 700;
-		color: var(--text);
-	}
-
-	.carpool-event-chip__sub {
-		font-size: 0.75rem;
-		color: var(--text-muted);
 	}
 
 	.carpool-post {
@@ -1700,99 +1061,4 @@
 		padding-top: 0;
 	}
 
-	.carpool-post-main {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
-
-	/* Interested-by is a status fact (something happened on this post), not
-	   a plain description line like origin above it, so it gets the post's
-	   own text color and a little weight instead of reading as one more
-	   line of the same muted gray. A driver post's own equivalent (who's
-	   claimed a seat) is folded into the per-seat list below instead of a
-	   separate line like this one, see `.carpool-seats`. */
-	.carpool-post-status {
-		color: var(--text);
-		font-weight: 600;
-	}
-
-	/* Per-seat breakdown replacing the old aggregate "X/Y seats left" line:
-	   one row per seat, occupied (the post's own text color/weight, same
-	   "a status fact" reasoning as `.carpool-post-status`) or empty (muted,
-	   an outline dot rather than a filled one). */
-	.carpool-seats {
-		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-	}
-
-	.carpool-seat {
-		margin: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.45rem;
-		font-size: 0.8125rem;
-	}
-
-	.carpool-seat::before {
-		content: '';
-		flex: 0 0 auto;
-		width: 0.5rem;
-		height: 0.5rem;
-		border-radius: 50%;
-	}
-
-	.carpool-seat--occupied {
-		color: var(--text);
-		font-weight: 600;
-	}
-
-	.carpool-seat--occupied::before {
-		background: var(--accent);
-	}
-
-	.carpool-seat--empty {
-		color: var(--text-muted);
-	}
-
-	.carpool-seat--empty::before {
-		background: transparent;
-		border: 1px solid var(--border);
-	}
-
-	/* B30: the one line on a post someone's actually going to act on (tap to
-	   call), so it reads as an accent-colored link rather than another gray
-	   `card-meta` line lost in the stack above it. */
-	.carpool-contact-link {
-		align-self: flex-start;
-		color: var(--accent);
-		font-weight: 600;
-		font-size: 0.8125rem;
-		text-decoration: none;
-	}
-
-	.carpool-contact-link:hover,
-	.carpool-contact-link:focus-visible {
-		text-decoration: underline;
-	}
-
-	/* F29 guest write path — same shapes as the join page's own responsibility
-	   self-signup prompt (`routes/join/[code]/+page.svelte`), duplicated here
-	   rather than shared since Svelte scopes `<style>` per component. */
-	.signup-name-form {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.signup-save-required {
-		margin: 0;
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		flex-wrap: wrap;
-	}
 </style>

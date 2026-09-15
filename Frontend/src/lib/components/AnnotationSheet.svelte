@@ -42,7 +42,9 @@
 		onUnshare?: (userId: string) => void;
 	} = $props();
 
+	// svelte-ignore state_referenced_locally
 	let draft = $state(content);
+	// svelte-ignore state_referenced_locally
 	let editing = $state(mode === 'create');
 	let shareEmail = $state('');
 	let confirmingDelete = $state(false);

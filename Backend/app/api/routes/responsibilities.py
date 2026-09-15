@@ -36,7 +36,6 @@ from app.api.schemas import (
 )
 from app.db.models import (
     GroupPage,
-    GroupRole,
     ResponsibilityDate,
     ResponsibilityDateSchedule,
     ResponsibilityRole,
@@ -45,31 +44,23 @@ from app.db.models import (
     User,
 )
 from app.db.session import get_db
+from app.services.actors import (
+    authorize_page_write_actor,
+    is_group_admin,
+    resolve_existing_actor,
+    resolve_or_mint_actor,
+)
 from app.services.common import get_or_404
 from app.services.groups import get_group_or_404, group_role, require_admin, require_member
-from app.services.pages import (
-    require_guest_page_access,
-    require_member_page_access,
-    require_saved_identity,
-)
+from app.services.pages import require_member_page_access
 from app.services.participants import (
-    ensure_guest_membership,
     find_guest_matches,
     merge_participant,
-    mint_anonymous_participant,
-    resolve_participant,
     set_participant_cookie,
 )
 from app.services.responsibilities import role_coverage, signup_display_name
 
 router = APIRouter(tags=["responsibilities"])
-
-
-def _is_admin(group_id: str, user: User, db: Session) -> bool:
-    """Non-raising variant of `require_admin` — a couple of read routes here
-    tailor their response to whether the caller is an admin rather than
-    gating on it."""
-    return group_role(group_id, user.id, db) == GroupRole.admin
 
 
 def _get_schedule_or_404(schedule_id: str, db: Session) -> ResponsibilitySchedule:
@@ -616,7 +607,7 @@ def create_signup(
         current_user = maybe_user
         require_member(group_id, current_user, db)
         require_member_page_access(group_id, GroupPage.responsibilities, current_user.id, db)
-        is_admin = _is_admin(group_id, current_user, db)
+        is_admin = is_group_admin(group_id, current_user, db)
 
         if guest_name is not None:
             # Admin-only: a volunteer with no Divisi account at all — see
@@ -664,10 +655,13 @@ def create_signup(
 
     # Self-signup: a real member, an existing anonymous participant, or a
     # brand-new one minted right here.
-    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
-    minted = actor is None
-    if minted:
-        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+    actor = resolve_or_mint_actor(
+        db,
+        maybe_user,
+        maybe_participant,
+        payload.local_id,
+        payload.display_name,
+    )
 
     if actor.is_anonymous and payload.claim_user_id:
         # B21 "is this you?" confirm: re-validate the claim server-side
@@ -690,18 +684,7 @@ def create_signup(
             merge_participant(db, source=actor, target=target)
         actor = target
 
-    if actor.is_anonymous:
-        # A local-only client is effectively a guest: the page must be
-        # `audience = everyone` for it to act at all, and `min_identity`
-        # may still require a saved account first.
-        require_guest_page_access(group_id, GroupPage.responsibilities, db)
-        require_saved_identity(group_id, GroupPage.responsibilities, db)
-        ensure_guest_membership(db, group_id, actor)
-        is_admin = False
-    else:
-        require_member(group_id, actor, db)
-        require_member_page_access(group_id, GroupPage.responsibilities, actor.id, db)
-        is_admin = _is_admin(group_id, actor, db)
+    is_admin = authorize_page_write_actor(group_id, GroupPage.responsibilities, actor, db)
 
     if not is_admin and (date.locked or date.canceled):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This date is locked or canceled")
@@ -721,28 +704,6 @@ def create_signup(
     return _signup_out(signup, actor)
 
 
-def _resolve_actor(
-    local_id: str | None,
-    maybe_user: User | None,
-    maybe_participant: User | None,
-    db: Session,
-) -> User:
-    """Bearer member or cookie/`local_id`-resolved anonymous participant, for
-    `delete_signup` below where there's no create-time minting (an actor must
-    already exist to own a signup). 401 when neither resolves, same "not even
-    a guest yet" shape `create_signup`'s admin-assignment branch uses for a
-    missing bearer token. Kept local rather than shared with `carpool.py`'s
-    identical helper: see B28's plan.md note."""
-    actor = maybe_user or resolve_participant(db, maybe_participant, local_id)
-    if actor is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return actor
-
-
 @router.delete("/responsibilities/signups/{signup_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_signup(
     signup_id: str,
@@ -758,8 +719,8 @@ def delete_signup(
     signup = _get_signup_or_404(signup_id, db)
     date = _get_date_or_404(signup.date_id, db)
     group_id = _group_id_for_date(date, db)
-    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
-    is_admin = _is_admin(group_id, actor, db)
+    actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = is_group_admin(group_id, actor, db)
     if signup.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only remove your own signup")
     if not is_admin and date.locked:

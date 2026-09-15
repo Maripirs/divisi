@@ -95,7 +95,9 @@
 	}
 	// Bound to the Add-date form's role-set checkboxes so "Duplicate next
 	// week" and the quick-add panel can preselect them.
-	let addDateScheduleIds = $state<string[]>(data.schedules[0] ? [data.schedules[0].id] : []);
+	// svelte-ignore state_referenced_locally
+	const initialAddDateScheduleIds = data.schedules[0] ? [data.schedules[0].id] : [];
+	let addDateScheduleIds = $state<string[]>(initialAddDateScheduleIds);
 	// Quick-add "Next rehearsal" panel: the concrete next occurrence of the
 	// group's weekly rehearsal slot, as a `datetime-local` value. Filled by
 	// an effect so it's computed client-side only — every other

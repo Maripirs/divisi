@@ -63,32 +63,30 @@ from app.db.models import (
     CarpoolSeatClaim,
     CarpoolSeatClaimStatus,
     GroupPage,
-    GroupRole,
     User,
 )
 from app.db.session import get_db
+from app.services.actors import (
+    authorize_page_write_actor,
+    is_group_admin,
+    resolve_existing_actor,
+    resolve_or_mint_actor,
+    resolve_page_write_actor,
+)
 from app.services.carpool import (
     active_claims_for,
     active_interests_for,
     list_events_ordered,
     resolve_origin_coordinates,
     serialize_post,
+    serialize_posts,
 )
 from app.services.common import get_or_404
-from app.services.groups import get_group_or_404, group_role, require_admin, require_member
-from app.services.pages import require_member_page_access, require_guest_page_access, require_saved_identity
-from app.services.participants import (
-    ensure_guest_membership,
-    mint_anonymous_participant,
-    resolve_participant,
-    set_participant_cookie,
-)
+from app.services.groups import get_group_or_404, require_admin, require_member
+from app.services.pages import require_member_page_access
+from app.services.participants import set_participant_cookie
 
 router = APIRouter(tags=["carpool"])
-
-
-def _is_admin(group_id: str, user: User, db: Session) -> bool:
-    return group_role(group_id, user.id, db) == GroupRole.admin
 
 
 def _get_event_or_404(event_id: str, db: Session) -> CarpoolEvent:
@@ -216,27 +214,6 @@ def update_event(
     return event
 
 
-def _resolve_actor(
-    local_id: str | None,
-    maybe_user: User | None,
-    maybe_participant: User | None,
-    db: Session,
-) -> User:
-    """Bearer member or cookie/`local_id`-resolved anonymous participant,
-    for the edit/delete routes below where there's no create-time minting
-    (an actor must already exist to own a post). 401 when neither
-    resolves, same "not even a guest yet" shape `create_signup`'s
-    admin-assignment branch uses for a missing bearer token."""
-    actor = maybe_user or resolve_participant(db, maybe_participant, local_id)
-    if actor is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return actor
-
-
 @router.post(
     "/carpool/events/{event_id}/posts",
     response_model=CarpoolPostOut,
@@ -261,19 +238,17 @@ def create_post(
     fresh `divisi_participant` cookie for a minted/resolved anonymous actor."""
     event = _get_event_or_404(event_id, db)
 
-    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
-    if actor is None:
-        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
-
-    if actor.is_anonymous:
-        require_guest_page_access(event.group_id, GroupPage.carpool, db)
-        require_saved_identity(event.group_id, GroupPage.carpool, db)
-        ensure_guest_membership(db, event.group_id, actor)
-        is_admin = False
-    else:
-        require_member(event.group_id, actor, db)
-        require_member_page_access(event.group_id, GroupPage.carpool, actor.id, db)
-        is_admin = _is_admin(event.group_id, actor, db)
+    actor_ctx = resolve_page_write_actor(
+        event.group_id,
+        GroupPage.carpool,
+        db,
+        maybe_user,
+        maybe_participant,
+        payload.local_id,
+        payload.display_name,
+    )
+    actor = actor_ctx.user
+    is_admin = actor_ctx.is_admin
 
     if not is_admin and event.status != CarpoolEventStatus.open:
         raise HTTPException(
@@ -320,7 +295,7 @@ def list_posts(
     event = _get_event_or_404(event_id, db)
     require_member(event.group_id, current_user, db)
     require_member_page_access(event.group_id, GroupPage.carpool, current_user.id, db)
-    is_admin = _is_admin(event.group_id, current_user, db)
+    is_admin = is_group_admin(event.group_id, current_user, db)
     query = db.query(CarpoolPost).filter(CarpoolPost.event_id == event_id)
     if not is_admin:
         # Hidden/cancelled posts are moderated-out or withdrawn: a regular
@@ -332,7 +307,7 @@ def list_posts(
     if direction is not None:
         query = query.filter(CarpoolPost.direction.in_([direction, CarpoolPostDirection.round_trip]))
     posts = query.order_by(CarpoolPost.created_at.asc()).all()
-    return [serialize_post(post, db, viewer_user_id=current_user.id, viewer_is_admin=is_admin) for post in posts]
+    return serialize_posts(posts, db, viewer_user_id=current_user.id, viewer_is_admin=is_admin)
 
 
 @router.patch("/carpool/posts/{post_id}", response_model=CarpoolPostOut)
@@ -359,8 +334,8 @@ def update_post(
     is rejected (400) rather than silently going negative on read."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
-    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
-    is_admin = _is_admin(event.group_id, actor, db)
+    actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = is_group_admin(event.group_id, actor, db)
     if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only edit your own post")
     fields = payload.model_fields_set
@@ -436,8 +411,8 @@ def delete_post(
     too, same as admin edit. B25: actor resolution matches `update_post`."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
-    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
-    is_admin = _is_admin(event.group_id, actor, db)
+    actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = is_group_admin(event.group_id, actor, db)
     if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only delete your own post")
     db.delete(post)
@@ -478,24 +453,19 @@ def create_claim(
         )
     event = _event_for_post(post, db)
 
-    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
-    if actor is None:
-        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+    actor = resolve_or_mint_actor(
+        db,
+        maybe_user,
+        maybe_participant,
+        payload.local_id,
+        payload.display_name,
+    )
 
     if actor.id == post.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="You can't claim a seat on your own post"
         )
-
-    if actor.is_anonymous:
-        require_guest_page_access(event.group_id, GroupPage.carpool, db)
-        require_saved_identity(event.group_id, GroupPage.carpool, db)
-        ensure_guest_membership(db, event.group_id, actor)
-        is_admin = False
-    else:
-        require_member(event.group_id, actor, db)
-        require_member_page_access(event.group_id, GroupPage.carpool, actor.id, db)
-        is_admin = _is_admin(event.group_id, actor, db)
+    is_admin = authorize_page_write_actor(event.group_id, GroupPage.carpool, actor, db)
 
     if not is_admin and event.status != CarpoolEventStatus.open:
         raise HTTPException(
@@ -535,8 +505,8 @@ def release_claim(
     claim = _get_claim_or_404(claim_id, db)
     post = _get_post_or_404(claim.driver_post_id, db)
     event = _event_for_post(post, db)
-    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
-    is_admin = _is_admin(event.group_id, actor, db)
+    actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = is_group_admin(event.group_id, actor, db)
     if actor.id != claim.user_id and actor.id != post.user_id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only release your own claim")
     claim.status = CarpoolSeatClaimStatus.removed
@@ -578,25 +548,20 @@ def create_interest(
         )
     event = _event_for_post(post, db)
 
-    actor = maybe_user or resolve_participant(db, maybe_participant, payload.local_id)
-    if actor is None:
-        actor = mint_anonymous_participant(db, payload.display_name or "", payload.local_id)
+    actor = resolve_or_mint_actor(
+        db,
+        maybe_user,
+        maybe_participant,
+        payload.local_id,
+        payload.display_name,
+    )
 
     if actor.id == post.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="You can't express interest in your own post",
         )
-
-    if actor.is_anonymous:
-        require_guest_page_access(event.group_id, GroupPage.carpool, db)
-        require_saved_identity(event.group_id, GroupPage.carpool, db)
-        ensure_guest_membership(db, event.group_id, actor)
-        is_admin = False
-    else:
-        require_member(event.group_id, actor, db)
-        require_member_page_access(event.group_id, GroupPage.carpool, actor.id, db)
-        is_admin = _is_admin(event.group_id, actor, db)
+    is_admin = authorize_page_write_actor(event.group_id, GroupPage.carpool, actor, db)
 
     if not is_admin and event.status != CarpoolEventStatus.open:
         raise HTTPException(
@@ -634,8 +599,8 @@ def release_interest(
     interest = _get_interest_or_404(interest_id, db)
     post = _get_post_or_404(interest.rider_post_id, db)
     event = _event_for_post(post, db)
-    actor = _resolve_actor(local_id, maybe_user, maybe_participant, db)
-    is_admin = _is_admin(event.group_id, actor, db)
+    actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
+    is_admin = is_group_admin(event.group_id, actor, db)
     if actor.id != interest.user_id and actor.id != post.user_id and not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Can only release your own interest"

@@ -20,16 +20,20 @@
 
 	// Info/About tab: the admin's description editor.
 	let editingDescription = $state(false);
-	let descriptionDraft = $state(data.group.description ?? '');
+	// svelte-ignore state_referenced_locally
+	const initialDescription = data.group.description ?? '';
+	let descriptionDraft = $state(initialDescription);
 	let savingDescription = $state(false);
 	// Info/About tab: the admin's "Regular rehearsals" editor — a weekly
 	// day+time (e.g. "Wednesdays at 7:00 PM") the Responsibilities tab's
 	// "Next rehearsal" button anchors new dates to.
 	let editingRehearsal = $state(false);
-	let rehearsalWeekdayDraft = $state(
-		data.group.rehearsal_weekday !== null ? String(data.group.rehearsal_weekday) : ''
-	);
-	let rehearsalTimeDraft = $state(data.group.rehearsal_time ?? '');
+	// svelte-ignore state_referenced_locally
+	const initialRehearsalWeekday = data.group.rehearsal_weekday !== null ? String(data.group.rehearsal_weekday) : '';
+	// svelte-ignore state_referenced_locally
+	const initialRehearsalTime = data.group.rehearsal_time ?? '';
+	let rehearsalWeekdayDraft = $state(initialRehearsalWeekday);
+	let rehearsalTimeDraft = $state(initialRehearsalTime);
 	let savingRehearsal = $state(false);
 	// Info/About tab: "Leave group" in-flight flag (the click-to-confirm
 	// toggle itself lives in its `ConfirmButton`).

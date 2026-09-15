@@ -74,7 +74,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.rendering.pipeline import RenderError, is_midi_file, render_file_path, render_manifest
-from app.services.carpool import list_events_ordered, serialize_post
+from app.services.carpool import list_events_ordered, serialize_posts
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
 from app.services.responsibilities import role_coverage, signup_display_name
@@ -512,9 +512,7 @@ def list_guest_carpool_posts(
         query = query.filter(CarpoolPost.direction.in_([direction, CarpoolPostDirection.round_trip]))
     posts = query.order_by(CarpoolPost.created_at.asc()).all()
     viewer_user_id = maybe_participant.id if maybe_participant else None
-    return [
-        serialize_post(post, db, viewer_user_id=viewer_user_id, viewer_is_admin=False) for post in posts
-    ]
+    return serialize_posts(posts, db, viewer_user_id=viewer_user_id, viewer_is_admin=False)
 
 
 @router.get("/{join_code}/responsibilities/dates", response_model=list[ResponsibilityGuestDateOut])

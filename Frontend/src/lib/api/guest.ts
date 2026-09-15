@@ -416,12 +416,9 @@ export async function listGuestAbout(code: string, { password, token, fetchFn = 
 	};
 }
 
-/** B31: `/join/[code]`'s own load calls the individual list endpoints
- * directly (it needs their real data, not just whether they're visible), so
- * this is unused there; kept for any future caller that only needs the
- * visibility booleans, same reasoning `getGuestTabs` documented before the
- * generic custom-page system (and this type's `customPages` field) was
- * dropped. */
+/** Visibility booleans for a join page's optional built-in tabs. The join
+ * landing page uses this first, then fetches only the visible pages' real
+ * data; other callers can also use it when they only need the tab strip. */
 export interface GuestTabs {
 	homeworkVisible: boolean;
 	weeklyNotesVisible: boolean;

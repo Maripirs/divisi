@@ -129,6 +129,42 @@ def seats_available_for(post: CarpoolPost, db: Session) -> int | None:
     return post.seats_total - len(active_claims_for(post.id, db))
 
 
+def _group_claims_by_post_id(driver_post_ids: list[str], db: Session) -> dict[str, list[CarpoolSeatClaim]]:
+    if not driver_post_ids:
+        return {}
+    claims = (
+        db.query(CarpoolSeatClaim)
+        .filter(
+            CarpoolSeatClaim.driver_post_id.in_(driver_post_ids),
+            CarpoolSeatClaim.status == CarpoolSeatClaimStatus.active,
+        )
+        .order_by(CarpoolSeatClaim.created_at.asc())
+        .all()
+    )
+    grouped: dict[str, list[CarpoolSeatClaim]] = {post_id: [] for post_id in driver_post_ids}
+    for claim in claims:
+        grouped.setdefault(claim.driver_post_id, []).append(claim)
+    return grouped
+
+
+def _group_interests_by_post_id(rider_post_ids: list[str], db: Session) -> dict[str, list[CarpoolRiderInterest]]:
+    if not rider_post_ids:
+        return {}
+    interests = (
+        db.query(CarpoolRiderInterest)
+        .filter(
+            CarpoolRiderInterest.rider_post_id.in_(rider_post_ids),
+            CarpoolRiderInterest.status == CarpoolRiderInterestStatus.active,
+        )
+        .order_by(CarpoolRiderInterest.created_at.asc())
+        .all()
+    )
+    grouped: dict[str, list[CarpoolRiderInterest]] = {post_id: [] for post_id in rider_post_ids}
+    for interest in interests:
+        grouped.setdefault(interest.rider_post_id, []).append(interest)
+    return grouped
+
+
 def resolve_origin_coordinates(
     latitude: float | None,
     longitude: float | None,
@@ -200,6 +236,47 @@ def serialize_post(
     every real call site should pass the actual caller."""
     claims = active_claims_for(post.id, db) if post.kind == CarpoolPostKind.driver else []
     interests = active_interests_for(post.id, db) if post.kind == CarpoolPostKind.rider else []
+    return _serialize_post_with_related(post, claims, interests, viewer_user_id, viewer_is_admin)
+
+
+def serialize_posts(
+    posts: list[CarpoolPost],
+    db: Session,
+    viewer_user_id: str | None = None,
+    viewer_is_admin: bool = False,
+) -> list[CarpoolPostOut]:
+    """Batch `serialize_post` for list routes.
+
+    The single-post serializer stays convenient for create/update responses,
+    while list endpoints avoid one claims/interests query per row and the
+    second driver-claim query that `seats_available_for` would otherwise do.
+    """
+    driver_post_ids = [post.id for post in posts if post.kind == CarpoolPostKind.driver]
+    rider_post_ids = [post.id for post in posts if post.kind == CarpoolPostKind.rider]
+    claims_by_post = _group_claims_by_post_id(driver_post_ids, db)
+    interests_by_post = _group_interests_by_post_id(rider_post_ids, db)
+    return [
+        _serialize_post_with_related(
+            post,
+            claims_by_post.get(post.id, []),
+            interests_by_post.get(post.id, []),
+            viewer_user_id,
+            viewer_is_admin,
+        )
+        for post in posts
+    ]
+
+
+def _serialize_post_with_related(
+    post: CarpoolPost,
+    claims: list[CarpoolSeatClaim],
+    interests: list[CarpoolRiderInterest],
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+) -> CarpoolPostOut:
+    seats_available = None
+    if post.kind == CarpoolPostKind.driver and post.seats_total is not None:
+        seats_available = post.seats_total - len(claims)
     return CarpoolPostOut(
         id=post.id,
         event_id=post.event_id,
@@ -214,7 +291,7 @@ def serialize_post(
         origin_place_id=post.origin_place_id,
         origin_precision=post.origin_precision,
         seats_total=post.seats_total,
-        seats_available=seats_available_for(post, db),
+        seats_available=seats_available,
         leave_time_text=post.leave_time_text,
         notes=post.notes,
         contact_phone=_contact_phone_visible_to(post, viewer_user_id, viewer_is_admin, claims, interests),

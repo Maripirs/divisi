@@ -1,6 +1,7 @@
 import {
 	GuestApiError,
 	JoinCodeNotFoundError,
+	getGuestTabs,
 	listGuestAbout,
 	listGuestCarpoolEvents,
 	listGuestCarpoolPosts,
@@ -17,6 +18,42 @@ import {
 	type GuestWeeklyNote
 } from '$lib/api/guest';
 import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
+
+async function loadVisible<T>(visible: boolean, fallback: T, load: () => Promise<T>): Promise<{ visible: boolean; data: T }> {
+	if (!visible) return { visible: false, data: fallback };
+	try {
+		return { visible: true, data: await load() };
+	} catch (err) {
+		if (err instanceof GuestApiError && err.status === 404) return { visible: false, data: fallback };
+		throw err;
+	}
+}
+
+async function loadVisibleCarpool(
+	visible: boolean,
+	code: string,
+	token: string | undefined,
+	fetch: typeof globalThis.fetch,
+	requestedEventId: string | null
+): Promise<{
+	visible: boolean;
+	events: GuestCarpoolEvent[];
+	selectedEventId: string | null;
+	posts: GuestCarpoolPost[];
+}> {
+	if (!visible) return { visible: false, events: [], selectedEventId: null, posts: [] };
+	try {
+		const events = await listGuestCarpoolEvents(code, { token, fetchFn: fetch });
+		const selectedEventId = selectDefaultCarpoolEventId(events, requestedEventId);
+		const posts = selectedEventId ? await listGuestCarpoolPosts(code, selectedEventId, { token, fetchFn: fetch }) : [];
+		return { visible: true, events, selectedEventId, posts };
+	} catch (err) {
+		if (err instanceof GuestApiError && err.status === 404) {
+			return { visible: false, events: [], selectedEventId: null, posts: [] };
+		}
+		throw err;
+	}
+}
 
 /** The resolved shape of the streamed guest promise. A discriminated union
  * on `error` so `./$types` infers `data.result` as a single consistent
@@ -84,92 +121,32 @@ export async function loadGuestJoin(
 ): Promise<GuestJoinResult> {
 	try {
 		const group = await resolveJoinCode(code, { token, fetchFn: fetch });
-		// `homeworkVisible` distinguishes "this group opted out (or the
-		// admin never turned it on)" from "opted in, just nothing due yet" (
-		// both resolve `listGuestHomework` to an empty array), so the flag is
-		// tracked separately rather than inferred from the array's length.
-		let homework: GuestHomework[] = [];
-		let homeworkVisible = false;
-		try {
-			homework = await listGuestHomework(code, { token, fetchFn: fetch });
-			homeworkVisible = true;
-		} catch (err) {
-			// Token was already accepted above (or this group needs none),
-			// so only a 404 (homework not exposed to guests for this group)
-			// is expected here. Anything else is a real error.
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-
-		// B13: same optional-page shape as homework above. A 404 here means
-		// this group hasn't opted `responsibilities` into guest visibility.
-		let responsibilities: GuestResponsibilityDate[] = [];
-		let responsibilitiesVisible = false;
-		try {
-			responsibilities = await listGuestResponsibilityDates(code, { token, fetchFn: fetch });
-			responsibilitiesVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-
-		// Same optional-page shape again. A 404 here means this group hasn't
-		// opted `weekly_notes` into guest visibility (members-only default).
-		let weeklyNotes: GuestWeeklyNote[] = [];
-		let weeklyNotesVisible = false;
-		try {
-			weeklyNotes = await listGuestWeeklyNotes(code, { token, fetchFn: fetch });
-			weeklyNotesVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-
-		// B31/F36: same optional-page shape as the three lists above, now that
-		// carpool is a built-in `GroupPage` rather than a `GroupCustomPage`. A
-		// 404 here means this group hasn't opted `carpool` into guest
-		// visibility. When it has, also resolve the selected event's posts the
-		// same way the member/admin main page does (`selectDefaultCarpoolEventId`,
-		// standing event over "first by `starts_at`"), since there's no more
-		// separate `pages/[slug]` route to fetch those lazily on its own.
-		let carpoolEvents: GuestCarpoolEvent[] = [];
-		let carpoolVisible = false;
-		let carpoolSelectedEventId: string | null = null;
-		let carpoolPosts: GuestCarpoolPost[] = [];
-		try {
-			carpoolEvents = await listGuestCarpoolEvents(code, { token, fetchFn: fetch });
-			carpoolVisible = true;
-			carpoolSelectedEventId = selectDefaultCarpoolEventId(carpoolEvents, requestedEventId);
-			if (carpoolSelectedEventId) {
-				carpoolPosts = await listGuestCarpoolPosts(code, carpoolSelectedEventId, { token, fetchFn: fetch });
-			}
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
-
-		// B33/F39: same optional-page shape as the others. A 404 here means
-		// this group hasn't opted `about` into guest visibility.
-		let about: GuestAbout | null = null;
-		let aboutVisible = false;
-		try {
-			about = await listGuestAbout(code, { token, fetchFn: fetch });
-			aboutVisible = true;
-		} catch (err) {
-			if (!(err instanceof GuestApiError && err.status === 404)) throw err;
-		}
+		const tabs = await getGuestTabs(code, { token, fetchFn: fetch });
+		const [homeworkResult, responsibilitiesResult, weeklyNotesResult, carpoolResult, aboutResult] = await Promise.all([
+			loadVisible(tabs.homeworkVisible, [] as GuestHomework[], () => listGuestHomework(code, { token, fetchFn: fetch })),
+			loadVisible(tabs.responsibilitiesVisible, [] as GuestResponsibilityDate[], () =>
+				listGuestResponsibilityDates(code, { token, fetchFn: fetch })
+			),
+			loadVisible(tabs.weeklyNotesVisible, [] as GuestWeeklyNote[], () => listGuestWeeklyNotes(code, { token, fetchFn: fetch })),
+			loadVisibleCarpool(tabs.carpoolVisible, code, token, fetch, requestedEventId),
+			loadVisible(tabs.aboutVisible, null as GuestAbout | null, () => listGuestAbout(code, { token, fetchFn: fetch }))
+		]);
 
 		return {
 			error: null,
 			group,
-			homework,
-			homeworkVisible,
-			responsibilities,
-			responsibilitiesVisible,
-			weeklyNotes,
-			weeklyNotesVisible,
-			carpoolVisible,
-			carpoolEvents,
-			carpoolSelectedEventId,
-			carpoolPosts,
-			aboutVisible,
-			about
+			homework: homeworkResult.data,
+			homeworkVisible: homeworkResult.visible,
+			responsibilities: responsibilitiesResult.data,
+			responsibilitiesVisible: responsibilitiesResult.visible,
+			weeklyNotes: weeklyNotesResult.data,
+			weeklyNotesVisible: weeklyNotesResult.visible,
+			carpoolVisible: carpoolResult.visible,
+			carpoolEvents: carpoolResult.events,
+			carpoolSelectedEventId: carpoolResult.selectedEventId,
+			carpoolPosts: carpoolResult.posts,
+			aboutVisible: aboutResult.visible,
+			about: aboutResult.data
 		};
 	} catch (err) {
 		if (err instanceof JoinCodeNotFoundError) return { error: 'not-found' };

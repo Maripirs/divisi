@@ -10,9 +10,9 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	let mode = $state<'login' | 'register'>(
-		form?.mode ?? (page.url.searchParams.get('mode') === 'register' ? 'register' : 'login')
-	);
+	// svelte-ignore state_referenced_locally
+	const initialMode = form?.mode ?? (page.url.searchParams.get('mode') === 'register' ? 'register' : 'login');
+	let mode = $state<'login' | 'register'>(initialMode);
 	let submitting = $state(false);
 	let password = $state('');
 	let confirmPassword = $state('');
