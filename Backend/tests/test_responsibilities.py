@@ -466,6 +466,59 @@ def test_delete_only_role_set_removes_the_date(client):
     assert listing == []
 
 
+def test_admin_can_delete_role(client):
+    admin_headers = _register_and_login(client, "role-del-admin1@example.com")
+    group_id = _make_group(client, admin_headers)
+    schedule = _make_schedule(
+        client, admin_headers, group_id, roles=[{"name": "Cantor", "needed_count": 1}, {"name": "Lector", "needed_count": 1}]
+    )
+    role_to_delete = next(r for r in schedule["roles"] if r["name"] == "Lector")
+
+    deleted = client.delete("/responsibilities/roles/" + role_to_delete["id"], headers=admin_headers)
+    assert deleted.status_code == 204
+
+    updated = client.get("/groups/" + group_id + "/responsibilities/schedules", headers=admin_headers).json()
+    assert [r["name"] for r in updated[0]["roles"]] == ["Cantor"]
+
+
+def test_deleting_role_also_deletes_its_signups(client):
+    admin_headers = _register_and_login(client, "role-del-admin2@example.com")
+    member_headers = _register_and_login(client, "role-del-member2@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "role-del-member2@example.com")
+    schedule = _make_schedule(
+        client, admin_headers, group_id, roles=[{"name": "Cantor", "needed_count": 1}, {"name": "Lector", "needed_count": 1}]
+    )
+    cantor_role = next(r for r in schedule["roles"] if r["name"] == "Cantor")
+    lector_role = next(r for r in schedule["roles"] if r["name"] == "Lector")
+    date = _make_date(client, admin_headers, schedule)
+    client.post(
+        "/responsibilities/dates/" + date["id"] + "/signups",
+        json={"role_id": lector_role["id"]},
+        headers=member_headers,
+    )
+
+    assert client.delete("/responsibilities/roles/" + lector_role["id"], headers=admin_headers).status_code == 204
+
+    listing = client.get("/groups/" + group_id + "/responsibilities/dates", headers=admin_headers).json()
+    roles = listing[0]["schedules"][0]["roles"]
+    assert [r["role_name"] for r in roles] == ["Cantor"]
+    # deleting the role deleted its signups too, not just the role row.
+    assert roles[0]["role_id"] == cantor_role["id"]
+
+
+def test_non_admin_cannot_delete_role(client):
+    admin_headers = _register_and_login(client, "role-del-admin3@example.com")
+    member_headers = _register_and_login(client, "role-del-member3@example.com")
+    group_id = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group_id, "role-del-member3@example.com")
+    schedule = _make_schedule(client, admin_headers, group_id)
+    role_id = schedule["roles"][0]["id"]
+
+    forbidden = client.delete("/responsibilities/roles/" + role_id, headers=member_headers)
+    assert forbidden.status_code == 403
+
+
 def test_signup_with_role_from_unattached_role_set_404s(client):
     admin_headers = _register_and_login(client, "resp-un1@example.com")
     member_headers = _register_and_login(client, "resp-un1m@example.com")

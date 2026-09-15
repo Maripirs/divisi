@@ -313,3 +313,130 @@ def test_rehearsal_schedule_non_admin_forbidden(client):
         headers=member_headers,
     )
     assert res.status_code == 403
+
+
+def test_admin_can_update_description(client):
+    admin_headers = _register_and_login(client, "desc-admin1@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    updated = client.put(
+        "/groups/" + group_id + "/description",
+        json={"description": "A community choir for all voices."},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "A community choir for all voices."
+
+    replaced = client.put(
+        "/groups/" + group_id + "/description",
+        json={"description": "Rehearsals every Wednesday."},
+        headers=admin_headers,
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["description"] == "Rehearsals every Wednesday."
+
+
+def test_non_admin_cannot_update_description(client):
+    admin_headers = _register_and_login(client, "desc-admin2@example.com")
+    member_headers = _register_and_login(client, "desc-member2@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "desc-member2@example.com"}, headers=admin_headers)
+
+    forbidden = client.put(
+        "/groups/" + group_id + "/description",
+        json={"description": "Hacked description"},
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_admin_can_promote_and_demote_member_role(client):
+    admin_headers = _register_and_login(client, "role-admin1@example.com")
+    _register_and_login(client, "role-member1@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "role-member1@example.com"}, headers=admin_headers)
+    members = client.get("/groups/" + group_id + "/members", headers=admin_headers).json()
+    member_id = next(m["user_id"] for m in members if m["email"] == "role-member1@example.com")
+
+    promoted = client.put(
+        "/groups/" + group_id + "/members/" + member_id + "/role",
+        json={"role": "admin"},
+        headers=admin_headers,
+    )
+    assert promoted.status_code == 200
+    assert promoted.json()["role"] == "admin"
+
+    demoted = client.put(
+        "/groups/" + group_id + "/members/" + member_id + "/role",
+        json={"role": "member"},
+        headers=admin_headers,
+    )
+    assert demoted.status_code == 200
+    assert demoted.json()["role"] == "member"
+
+
+def test_non_admin_cannot_update_member_role(client):
+    admin_headers = _register_and_login(client, "role-admin2@example.com")
+    member_headers = _register_and_login(client, "role-member2@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "role-member2@example.com"}, headers=admin_headers)
+    members = client.get("/groups/" + group_id + "/members", headers=admin_headers).json()
+    admin_user_id = next(m["user_id"] for m in members if m["email"] == "role-admin2@example.com")
+
+    forbidden = client.put(
+        "/groups/" + group_id + "/members/" + admin_user_id + "/role",
+        json={"role": "member"},
+        headers=member_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_cannot_demote_last_admin(client):
+    admin_headers = _register_and_login(client, "role-admin3@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    members = client.get("/groups/" + group_id + "/members", headers=admin_headers).json()
+    admin_user_id = members[0]["user_id"]
+
+    blocked = client.put(
+        "/groups/" + group_id + "/members/" + admin_user_id + "/role",
+        json={"role": "member"},
+        headers=admin_headers,
+    )
+    assert blocked.status_code == 409
+
+
+def test_demoting_one_of_several_admins_is_allowed(client):
+    admin_headers = _register_and_login(client, "role-admin4@example.com")
+    _register_and_login(client, "role-member4@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+    client.post("/groups/" + group_id + "/members", json={"email": "role-member4@example.com"}, headers=admin_headers)
+    members = client.get("/groups/" + group_id + "/members", headers=admin_headers).json()
+    member_id = next(m["user_id"] for m in members if m["email"] == "role-member4@example.com")
+    admin_user_id = next(m["user_id"] for m in members if m["email"] == "role-admin4@example.com")
+
+    client.put(
+        "/groups/" + group_id + "/members/" + member_id + "/role",
+        json={"role": "admin"},
+        headers=admin_headers,
+    )
+
+    # Two admins now, so demoting one of them is fine.
+    demoted = client.put(
+        "/groups/" + group_id + "/members/" + admin_user_id + "/role",
+        json={"role": "member"},
+        headers=admin_headers,
+    )
+    assert demoted.status_code == 200
+    assert demoted.json()["role"] == "member"
+
+
+def test_update_role_for_non_member_404s(client):
+    admin_headers = _register_and_login(client, "role-admin5@example.com")
+    group_id = client.post("/groups", json={"name": "G"}, headers=admin_headers).json()["id"]
+
+    missing = client.put(
+        "/groups/" + group_id + "/members/not-a-member/role",
+        json={"role": "admin"},
+        headers=admin_headers,
+    )
+    assert missing.status_code == 404
