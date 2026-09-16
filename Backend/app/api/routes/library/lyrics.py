@@ -2,14 +2,21 @@
 
 Pulls sung lyrics off a piece's current version's PDF text layer and
 injects them into its MusicXML as `<lyric>` elements, then lands the
-result as a new `PieceVersion` -- immediately published (submit ->
-approve -> distribute in one step via `publish_version`), same
-"admin clicks a button, gets an improved version" convention the Tracks
-tab's `uploadTrack`/`updatePieceDetails` already follow. Unlike the OMR
-pipeline (a full transcription redo, hence its own draft-and-review
-step), this only ever *adds* lyric annotations on top of already-approved
-note/rhythm data -- it never touches pitches, durations, or measures --
-so it doesn't carry the same risk that draft review guards against.
+result as a new `draft` `PieceVersion` -- the piece's working-draft slot
+(`app.services.pieces.working_draft`), same one the (parked) OMR pipeline
+uses for its own "Generate music from PDF" drafts. Left unpublished on
+purpose: a run of real production use (see PLAN.md, 2026-09-16) showed
+lyric classification is unreliable enough -- partial coverage, occasional
+misalignment -- that it needs a human to actually look at it next to the
+source PDF before it goes live, not a same-click auto-publish. The
+Frontend's review page (`piece/[id]/review-lyrics`) renders this draft's
+PDF and score side by side and calls the existing publish/reject routes
+once an admin has looked.
+
+Only one working draft is kept per piece (same rule
+`_import_draft_version` in `app/jobs/omr_jobs.py` already follows for
+OMR): a new generate-lyrics run first rejects whatever unpublished draft
+is already sitting there rather than leaving it orphaned.
 
 Runs synchronously in the request: no job queue. A real job queue for
 heavier work is tracked separately in PLAN.md's backlog.
@@ -35,6 +42,7 @@ client-side (`Frontend/src/lib/pieces/remotePiece.ts`).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -44,13 +52,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.schemas import PieceVersionOut
 from app.db import session as db_session
-from app.db.models import Piece, User, VersionSource
+from app.db.models import Piece, User, VersionSource, VersionStatus
 from app.db.session import get_db
 from app.lyrics.extract import NoTextLayerError, extract_word_tokens
 from app.lyrics.groq_client import LyricExtractionError, classify_lyric_tokens
 from app.lyrics.inject import count_singable_onsets, inject_lyrics
 from app.services.common import get_or_404
-from app.services.pieces import add_version, live_version, publish_version
+from app.services.pieces import add_version, live_version, working_draft
 from app.storage.files import resolve_existing_source_path, save_file
 
 from ._common import _get_piece_or_404, _require_review_authority
@@ -162,8 +170,19 @@ def generate_lyrics(
     try:
         piece = get_or_404(db, Piece, piece_id, "Piece not found")
         user = get_or_404(db, User, created_by, "User not found")
+
+        # One working-draft slot per piece (see this module's own doc
+        # comment) -- a rerun replaces whatever unreviewed draft is
+        # already sitting there rather than leaving it orphaned.
+        stale = working_draft(piece.id, db)
+        if stale is not None:
+            stale.status = VersionStatus.rejected
+            stale.reviewed_by = user.id
+            stale.reviewed_at = datetime.now(timezone.utc)
+            db.flush()
+
         stem = Path(version_file_name).stem if version_file_name else piece.title
-        new_version = add_version(
+        return add_version(
             piece=piece,
             created_by=user.id,
             file_path=new_file_path,
@@ -173,6 +192,5 @@ def generate_lyrics(
             source=VersionSource.modification,
             db=db,
         )
-        return publish_version(new_version, user, db)
     finally:
         db.close()

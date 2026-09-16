@@ -295,4 +295,24 @@ export interface LibraryEntryOut {
 	 * the storage-relative paths those booleans are computed from. */
 	music_file_name: string | null;
 	pdf_file_name: string | null;
+	/** Id of this piece's open working draft (a `status: draft`,
+	 * `source: modification` `PieceVersion`), if any -- currently only
+	 * ever produced by "Generate lyrics from PDF"
+	 * (`app/api/routes/library/lyrics.py`), left unpublished for an admin
+	 * to review at `piece/[id]/review-lyrics` before it goes live. Null
+	 * when nothing's pending. See `working_draft`/
+	 * `pending_generated_version_id` in `Backend/app/services/pieces.py`. */
+	pending_generated_version_id: string | null;
+}
+
+/** One `PieceVersion`, as returned by version-lifecycle routes
+ * (`POST .../generate-lyrics`, `.../submit`, `.../approve`, `.../reject`,
+ * `.../publish`) -- see `Backend/app/api/schemas/library.py`'s
+ * `PieceVersionOut`. Narrow: only the fields this app's frontend
+ * actually reads. */
+export interface PieceVersionOut {
+	id: string;
+	piece_id: string;
+	status: VersionStatus;
+	source: VersionSource;
 }

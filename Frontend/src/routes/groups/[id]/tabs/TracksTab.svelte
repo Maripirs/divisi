@@ -213,8 +213,12 @@
 					     rather than 400ing on click. Its own `<form>` (can't nest
 					     inside the edit form above) — this doesn't touch any of that
 					     form's fields, it only reads the track's existing PDF/music
-					     file server-side and republishes an improved version. -->
-					{#if track.has_music && track.has_pdf}
+					     file server-side and lands the result as an unpublished draft
+					     (see `Backend/app/api/routes/library/lyrics.py`'s own doc
+					     comment) rather than a live version directly -- hidden here
+					     once a draft is already pending, below, since only one can be
+					     open at a time. -->
+					{#if track.has_music && track.has_pdf && !track.pending_generated_version_id}
 						<form
 							method="POST"
 							action="?/generateLyrics"
@@ -230,6 +234,21 @@
 								</button>
 							</div>
 						</form>
+					{/if}
+
+					<!-- A generated lyrics draft is waiting for an admin to look at
+					     it next to the source PDF before it goes live -- see the
+					     review page's own doc comment
+					     (`piece/[id]/review-lyrics/+page.server.ts`) for why this
+					     isn't just auto-published like every other admin action on
+					     this tab. -->
+					{#if track.pending_generated_version_id}
+						<div class="btn-row">
+							<p class="card-eyebrow">{m.groups_generate_lyrics_ready()}</p>
+							<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/review-lyrics`)}>
+								{m.groups_review_lyrics()}
+							</a>
+						</div>
 					{/if}
 
 					<!-- Delete-the-whole-track: a minimal trash icon pinned to the

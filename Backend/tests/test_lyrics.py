@@ -959,23 +959,91 @@ def _stub_classify(monkeypatch, voices):
     monkeypatch.setattr(lyrics_route, "classify_lyric_tokens", lambda tokens, onset_counts=None: voices)
 
 
-def test_generate_lyrics_happy_path_creates_a_published_version(client, monkeypatch):
-    headers = _register_and_login(client, "lyricsowner@example.com")
-    piece_id, _version_id = _upload_musicxml_piece(client, headers)
+def _make_group(client, admin_headers, name="Choir"):
+    return client.post("/groups", json={"name": name}, headers=admin_headers).json()["id"]
+
+
+def _upload_and_distribute_group_piece(client, admin_headers, group_id, title="Ave Maria"):
+    """A distributed group piece, same submit->approve->distribute chain
+    the Frontend's `uploadTrack` action follows (see
+    `Frontend/src/routes/groups/[id]/actions/tracks.ts`)."""
+    upload = client.post(
+        "/library/pieces",
+        data={"title": title, "owner_type": "group", "group_id": group_id},
+        files={
+            "file": ("piece.musicxml", io.BytesIO(_MUSICXML.encode()), "application/xml"),
+            "pdf_file": ("piece.pdf", io.BytesIO(_pdf_bytes_with_lyrics()), "application/pdf"),
+        },
+        headers=admin_headers,
+    )
+    assert upload.status_code == 201
+    body = upload.json()
+    piece_id, version_id = body["piece"]["id"], body["version"]["id"]
+    assert client.post(f"/library/versions/{version_id}/submit", headers=admin_headers).status_code == 200
+    assert client.post(f"/library/versions/{version_id}/approve", headers=admin_headers).status_code == 200
+    assert (
+        client.post(
+            f"/library/pieces/{piece_id}/versions/{version_id}/distribute", headers=admin_headers
+        ).status_code
+        == 201
+    )
+    return piece_id, version_id
+
+
+def test_generate_lyrics_happy_path_creates_an_unpublished_draft(client, monkeypatch):
+    admin = _register_and_login(client, "lyricsowner@example.com")
+    group_id = _make_group(client, admin)
+    piece_id, live_version_id = _upload_and_distribute_group_piece(client, admin, group_id)
     _stub_classify(monkeypatch, [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}])
 
-    res = client.post(f"/library/pieces/{piece_id}/generate-lyrics", headers=headers)
+    res = client.post(f"/library/pieces/{piece_id}/generate-lyrics", headers=admin)
     assert res.status_code == 201
     body = res.json()
     assert body["source"] == "modification"
-    # Auto-published: this only ever adds lyric annotations on top of
-    # already-approved note/rhythm data (see the route's own doc comment).
-    assert body["status"] == "approved"
+    # Left as a draft, not auto-published: real production use (see
+    # PLAN.md, 2026-09-16) showed lyric classification is unreliable
+    # enough that an admin needs to review it against the source PDF
+    # first (the Frontend's review page) rather than it going live on
+    # the same click.
+    assert body["status"] == "draft"
+    assert body["id"] != live_version_id
 
-    file_res = client.get(f"/library/versions/{body['id']}/file", headers=headers)
+    file_res = client.get(f"/library/versions/{body['id']}/file", headers=admin)
     assert file_res.status_code == 200
     assert b"<lyric" in file_res.content
     assert b"Ah" in file_res.content
+
+    # The live (distributed) version is untouched -- a group piece's
+    # current version is whatever's most recently *distributed*
+    # (`live_version`), and the new draft has no Distribution row yet.
+    entries = client.get("/library/pieces", headers=admin).json()
+    entry = next(e for e in entries if e["piece_id"] == piece_id)
+    assert entry["version_id"] == live_version_id
+    assert entry["pending_generated_version_id"] == body["id"]
+
+
+def test_generate_lyrics_rerun_rejects_the_stale_draft(client, monkeypatch, db_session):
+    """A second click before the first draft was reviewed replaces it --
+    same "one working-draft slot per piece" rule the OMR pipeline follows
+    (`_import_draft_version` in `app/jobs/omr_jobs.py`) -- rather than
+    leaving the old one orphaned and unreachable."""
+    from app.db.models import PieceVersion
+
+    headers = _register_and_login(client, "lyricsrerun@example.com")
+    piece_id, _original_version_id = _upload_musicxml_piece(client, headers)
+    _stub_classify(monkeypatch, [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}])
+
+    first = client.post(f"/library/pieces/{piece_id}/generate-lyrics", headers=headers).json()
+    second = client.post(f"/library/pieces/{piece_id}/generate-lyrics", headers=headers).json()
+    assert first["id"] != second["id"]
+    assert second["status"] == "draft"
+
+    stale = db_session.query(PieceVersion).filter(PieceVersion.id == first["id"]).one()
+    assert stale.status.value == "rejected"
+
+    entries = client.get("/library/pieces", headers=headers).json()
+    entry = next(e for e in entries if e["piece_id"] == piece_id)
+    assert entry["pending_generated_version_id"] == second["id"]
 
 
 def test_generate_lyrics_requires_review_authority(client, monkeypatch):
