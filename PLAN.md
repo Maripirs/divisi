@@ -164,6 +164,19 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: Fixed a live prod bug (SFCC tester report): "The Challenge of
+  Thor" 404'd on load ("Malformed MusicXML... '<' not found"). Root cause:
+  `af05222` (2026-09-14) deleted `Backend/fixtures/SFCC/` believing it was
+  only the dead frontend bundled-demo copy, but a real Backend `Piece`
+  (group-owned, SFCC) was still distributed with `file_path` pointing at
+  that exact now-gone fixture path. Recovered the file's bytes from git
+  history (last commit before the deletion) and re-uploaded them through
+  the real service layer (`save_file` to object storage, `add_version` +
+  `publish_version`, as the group admin) rather than patching `file_path`
+  via raw SQL — same code path the upload UI uses. New version
+  `9fdcb139...` is live, round-trip verified readable from object storage.
+  The two older approved versions still point at the dead fixture path but
+  are no longer distributed, so nothing serves them; left alone.
 - 2026-09-15: Chord-based divisi split for the mixer, resolving the
   backlog item's open design call. New `splitChordalDivisi` in
   `notation/voicePartAssignment.ts`: groups a plain (unsplit) SATB voice's
