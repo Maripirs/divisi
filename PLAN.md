@@ -157,6 +157,12 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: Frontend redeployed (`npm run build && npx wrangler deploy`)
+  to `https://divisi.maripi.net`, picking up the admin-triggered lyric
+  generation button and the divisi visual-merge fix below, plus everything
+  else committed to `main` since the last redeploy. Live-site smoke check
+  (200/303 on `/`) passed; a real touchscreen/browser confirm pass is still
+  open, same as every other item in "Awaiting human verification".
 - 2026-09-15: Fixed a display bug in the chord-based divisi auto-split
   shipped earlier today: `splitChordalDivisi` correctly split a chordal
   divisi voice into `${base}-1`/`${base}-2` desks for the mixer, but that
