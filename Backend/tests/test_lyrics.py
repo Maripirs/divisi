@@ -414,7 +414,7 @@ def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkey
     assert len(nvidia_calls) == 1
     assert nvidia_calls[0]["model"] == get_settings().nvidia_lyrics_model
     assert nvidia_calls[0]["chat_template_kwargs"] == {"thinking": False}
-    assert nvidia_calls[0]["max_tokens"] == 8000
+    assert nvidia_calls[0]["max_tokens"] == 16000
 
 
 def test_classify_lyric_tokens_combines_every_remaining_chunk_into_one_nvidia_call(monkeypatch):

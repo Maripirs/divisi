@@ -62,11 +62,15 @@ _TIMEOUT_SECONDS = 60.0
 # NVIDIA's own per-request latency runs far higher than Groq's -- measured
 # ~94s for a single *chunk*-sized request (one that fit Groq's much
 # tighter per-minute budget easily), against Groq's typical few seconds.
-# Long enough to cover the single whole-remainder call this module makes
-# (see `_classify_remainder_via_nvidia`): a WHOLE 15-page piece in one
-# request measured ~170s end to end. 240s leaves real margin above that
-# while still fitting inside the Frontend's own timeout for this action.
-_NVIDIA_TIMEOUT_SECONDS = 240.0
+# Sized to cover the single whole-remainder call this module makes (see
+# `_classify_remainder_via_nvidia`) at its current `max_tokens: 16000` --
+# an earlier, smaller 8000-token budget's generation measured ~170s for a
+# whole 15-page piece (~47 completion tokens/sec), so 16000 tokens'
+# worth of real generation time alone could approach 340s before any
+# request/queueing overhead. 400s leaves real margin above that estimate;
+# the Frontend's own timeout for this action is sized to stay above this
+# plus the Groq retry that precedes it (see `tracks.ts`).
+_NVIDIA_TIMEOUT_SECONDS = 400.0
 
 # Chunk size, in rendered characters of page text, per Groq call. This
 # account's real free-tier cap is 8000 tokens/minute *total* (prompt +
@@ -455,10 +459,17 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
         # Big enough for a WHOLE piece's worth of syllables in one
         # response, since this is used for the whole-remainder fallback
         # call (see `_classify_remainder_via_nvidia`), not a single small
-        # chunk -- confirmed live against a real 15-page piece: completed
-        # with `finish_reason: stop` (not truncated) using this exact
-        # budget.
-        "max_tokens": 8000,
+        # chunk. Raised from an initial 8000 after hitting real truncation
+        # on a real 15-page piece (4 voices x ~250 syllables each, each a
+        # `{"text": ..., "syllabic": ...}` JSON object -- roughly 12k+
+        # tokens just for the syllable arrays, before structural
+        # overhead): the onset-count budget block in the prompt makes the
+        # model count and name things more literally/verbosely (same
+        # effect already hit and fixed for Groq's own max_tokens), so an
+        # 8000 budget that was enough for an earlier, simpler prompt
+        # wasn't enough for this one. 16000 leaves real margin above the
+        # ~12k-token estimate.
+        "max_tokens": 16000,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(tokens, remaining)},
