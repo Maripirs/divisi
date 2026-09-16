@@ -35,7 +35,7 @@ from app.db.models import User, VersionSource
 from app.db.session import get_db
 from app.lyrics.extract import NoTextLayerError, extract_word_tokens
 from app.lyrics.groq_client import LyricExtractionError, classify_lyric_tokens
-from app.lyrics.inject import inject_lyrics
+from app.lyrics.inject import count_singable_onsets, inject_lyrics
 from app.services.pieces import add_version, live_version, publish_version
 from app.storage.files import resolve_existing_source_path, save_file
 
@@ -101,8 +101,16 @@ def generate_lyrics(
     except NoTextLayerError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    # Ground truth from the score itself, computed before Groq ever sees
+    # anything: exactly how many sung notes each voice has. Passed through
+    # as a running per-voice budget in the classification prompt, and
+    # logged if the final counts still look off -- see
+    # `classify_lyric_tokens`'s own doc comment for why this exists (a
+    # real, observed classification-drift failure, not a hypothetical).
+    onset_counts = count_singable_onsets(score)
+
     try:
-        voices = classify_lyric_tokens(tokens)
+        voices = classify_lyric_tokens(tokens, onset_counts)
     except LyricExtractionError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

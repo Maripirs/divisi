@@ -77,6 +77,26 @@ def _is_singable_onset(el: GeneralNote) -> bool:
     return True
 
 
+def count_singable_onsets(score: stream.Score) -> dict[str, int]:
+    """How many sung note onsets each matched voice actually has (see
+    `_is_singable_onset`) -- ground truth straight from the MusicXML,
+    computed *before* asking Groq to classify anything. Lets the caller
+    hand Groq a target count per voice instead of an unconstrained-length
+    list to fill in (see `app.lyrics.groq_client.classify_lyric_tokens`'s
+    `onset_counts` parameter), and lets the caller sanity-check the
+    returned syllable counts against reality afterward. Found this needed
+    for real: with no ground truth to check against, one voice's
+    classification silently drifting by even one token (an extra or
+    missing syllable) shifted every lyric after it for the rest of that
+    voice, permanently -- confirmed on a real piece where Alto ended up
+    singing words that belonged many syllables later in its own part."""
+    parts_by_voice = _match_parts_to_voices(score)
+    return {
+        voice: sum(1 for el in part.flatten().notesAndRests if _is_singable_onset(el))
+        for voice, part in parts_by_voice.items()
+    }
+
+
 def inject_lyrics(score: stream.Score, voices: list[dict]) -> int:
     """Mutates `score` in place, adding a `Lyric` to each matched voice
     part's note onsets in sequence. `voices` is

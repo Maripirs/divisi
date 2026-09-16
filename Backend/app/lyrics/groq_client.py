@@ -51,12 +51,20 @@ _TIMEOUT_SECONDS = 60.0
 # together with the lyric text that follows them.
 _MAX_CHARS_PER_CHUNK = 4000
 
-# Fallback pause between chunks when a response carries no usable
+# Fallback pause used in two cases: a response carries no usable
 # `x-ratelimit-reset-tokens` header to pace off of (see
-# `_seconds_until_reset`). Real pacing is adaptive, not this constant --
-# this only covers the (expected to be rare) case where Groq's response
-# didn't include the header at all.
-_FALLBACK_SECONDS_BETWEEN_CHUNKS = 15.0
+# `_seconds_until_reset`), or a chunk failed outright (a malformed
+# response, a non-200) before any header could be read at all -- the
+# retry-after-failure path in `classify_lyric_tokens` always uses this
+# fixed value rather than an adaptive one, since there's no successful
+# response to read a real reset time from. Raised from 15.0 after hitting
+# this for real: a chunk failed with malformed JSON right after a
+# preceding chunk had used most of the account's budget, the 15s retry
+# pause wasn't enough for the budget to refill, and the retry itself got
+# 429'd, losing that chunk's page entirely. 35s comfortably covers a full
+# chunk's worth of refill (~133 tokens/sec, so ~4650 tokens by then) even
+# from a nearly-exhausted budget, while staying under the hard cap below.
+_FALLBACK_SECONDS_BETWEEN_CHUNKS = 35.0
 # Never wait longer than this for one chunk's turn, even if the header
 # reports the full per-minute window is exhausted -- an admin waiting on
 # a synchronous button click needs an upper bound on total wait, and the
@@ -112,15 +120,13 @@ class LyricExtractionError(Exception):
 
 _SYSTEM_PROMPT = "\n".join(
     [
-        "You extract SUNG LYRICS from the raw word tokens of a choral sheet-music PDF's text layer.",
-        "You are given a JSON list of word tokens in reading order, each with its text and page number.",
+        "You extract SUNG LYRICS from the raw text layer of a choral sheet-music PDF.",
+        "You are given the text as one line per row on the page, in reading order, with a marker "
+        "between pages.",
         "IGNORE anything that is not a sung syllable: dynamics (p, pp, f, mf, cresc., ...), tempo "
-        'markings (e.g. "Moderato", "q = c.104"), the voice/instrument labels themselves (SOPRANO, '
-        "ALTO, TENOR, BASS, S., A., T., B., Pno., Piano), copyright/publisher text, page numbers, and "
-        "titles/composer bylines.",
-        "USE voice labels (SOPRANO/ALTO/TENOR/BASS, or their abbreviations S./A./T./B.) as ANCHORS: the "
-        "lyric text that follows one of these labels, up to the next voice label or a clear break, "
-        "belongs to that voice.",
+        'markings (e.g. "Moderato", "q = c.104"), copyright/publisher text, page numbers, and '
+        "titles/composer bylines. A piano/accompaniment line has already been dropped entirely, since it "
+        "has no lyrics -- you won't see it.",
         'PRESERVE hyphenated syllable splits exactly as they appear (e.g. "Thun-" "der-" "er!" is three '
         "syllables of one word): classify each syllable's `syllabic` as \"single\" (a whole word, no "
         'split), "begin" (first syllable of a split word), "middle" (an inner syllable), or "end" (last '
@@ -130,46 +136,154 @@ _SYSTEM_PROMPT = "\n".join(
         '[{"text": string, "syllabic": "single"|"begin"|"middle"|"end"}]}]}',
         "One entry per voice found, syllables listed in reading order within that voice. If a token "
         "can't be confidently assigned to a voice, leave it out rather than guessing.",
+        "Each line of text is already prefixed with which voice it belongs to, in square brackets "
+        '(e.g. "[soprano] I am the God Thor,"), worked out from the PDF\'s actual page geometry before '
+        "you ever saw it -- TRUST this prefix completely, do not re-derive or second-guess which voice a "
+        "line belongs to from its wording or position in the text. A line prefixed \"[unknown voice]\" "
+        "had no nearby label to go on; use your best judgment for those only, and it's fine to leave "
+        "them out if you can't tell. Voice labels themselves (SOPRANO, ALTO, TENOR, BASS, S., A., T., "
+        "B.) have already been stripped out of the text and used only to produce these prefixes -- "
+        "you will not see them as separate tokens to classify.",
+        "The user message may include a 'remaining sung-note budget' section: the EXACT number of "
+        "sung notes each voice still has left in the piece, counted directly from the actual score, "
+        "not a guess. This is ground truth, not a suggestion. Use it to sanity-check your own count as "
+        "you work: if a voice's budget is small, that voice is nearly done (perhaps this is its last "
+        "page with lyrics) and you should return few or no syllables for it; if you find yourself about "
+        "to return notably more syllables for a voice than its stated budget, you have almost certainly "
+        "misread a line or double-counted a token, so stop, recount, and cut it back to fit. Getting the "
+        "COUNT right per voice matters more than getting every last word -- a short list of correct "
+        "words that stays within budget is far better than a long list that drifts out of alignment.",
     ]
 )
 
 
+_VOICE_LABEL_WORDS = {
+    "soprano": "soprano",
+    "sop": "soprano",
+    "alto": "alto",
+    "alt": "alto",
+    "tenor": "tenor",
+    "ten": "tenor",
+    "bass": "bass",
+    "bs": "bass",
+    "piano": "piano",
+    "pno": "piano",
+    "pf": "piano",
+}
+# Single-letter abbreviations (S./A./T./B.) REQUIRE the trailing period to
+# count as a label -- without it, "A" or "I" is indistinguishable from a
+# genuine one-letter lyric word ("a", "I" are both real English words that
+# show up constantly in real lyrics).
+_SINGLE_LETTER_LABELS = {"s.": "soprano", "a.": "alto", "t.": "tenor", "b.": "bass"}
+
+
+def _label_voice(text: str) -> str | None:
+    """Recognizes a token as a voice/instrument label (SOPRANO, Alto, S.,
+    Pno., ...) rather than lyric content, so it can be used as a
+    geometric anchor and then discarded. Returns `"piano"` for the
+    accompaniment label (also an anchor, but never lyric content), or
+    `None` for anything else."""
+    cleaned = text.strip().lower()
+    if cleaned in _SINGLE_LETTER_LABELS:
+        return _SINGLE_LETTER_LABELS[cleaned]
+    return _VOICE_LABEL_WORDS.get(cleaned.rstrip("."))
+
+
+def _nearest_label_voice(y0: float, labels: list[tuple[float, str]]) -> str | None:
+    """Which label a line at `y0` sits closest to, by vertical distance
+    alone (no x0: within one system, voices stack vertically, and
+    reading-order left-to-right within a line is already preserved by the
+    caller's block/line grouping, so y-distance is the only axis that
+    matters here)."""
+    if not labels:
+        return None
+    return min(labels, key=lambda lv: abs(lv[0] - y0))[1]
+
+
 def _render_pages_as_text(tokens: list[PdfWordToken]) -> str:
     """Re-join word tokens into lines using PyMuPDF's own block/line
-    grouping, with a page marker between pages. A verbose one-JSON-object-
-    per-word encoding (the original shape here) inflates a real multi-page
-    choral score by roughly 10x in tokens over plain text (measured on a
-    real 15-page piece: ~188k JSON characters vs. ~17.5k plain-text
-    characters for the same words), which blew straight through Groq's
-    account-wide 8000-tokens-per-minute cap on a single request. Plain
-    text grouped into lines is both far cheaper and, if anything, easier
-    for the model to read as an actual page of sheet music."""
-    lines: dict[tuple[int, int, int], list[str]] = {}
+    grouping, each line prefixed with the voice it belongs to, worked out
+    from real page geometry (a `SOPRANO`/`S.` label's own y-position vs.
+    every other line's y-position) rather than left to the model to guess
+    from reading order.
+
+    Built this way after the plain-reading-order version (no voice
+    prefixes) proved unreliable on a real piece: its raw PDF text extracts
+    with every voice's label bunched into one column block *before* any
+    lyric text at all (`SOPRANO`, `ALTO`, `TENOR`, `BASS`, `Piano`, THEN
+    "I am the God Thor..."), not interleaved with each voice's own row --
+    so "the text between one label and the next belongs to that voice"
+    (this function's original approach) is simply false for how this kind
+    of PDF extracts. The model, given an ambiguous blob of the same
+    homophonic text repeated once per voice with no way to tell the
+    copies apart, sometimes returned nothing at all and sometimes fell
+    into a degenerate repetition loop. The raw y-coordinates PyMuPDF
+    already gives every token do preserve which row a line visually sits
+    in relative to its own label, even though reading order doesn't --
+    confirmed directly against a real page's token coordinates before
+    building this. A verbose one-JSON-object-per-word encoding (this
+    function's original shape) also inflates a real multi-page choral
+    score by roughly 10x in tokens over plain text (measured on a real
+    15-page piece: ~188k JSON characters vs. ~17.5k plain-text characters
+    for the same words), which blew straight through Groq's account-wide
+    8000-tokens-per-minute cap on a single request -- another reason
+    plain, pre-labeled text beats handing the model raw tokens to sort out
+    itself."""
+    by_page: dict[int, list[PdfWordToken]] = {}
     for t in tokens:
-        # Cheap, free (no LLM tokens spent) noise filter: a token with no
-        # letters at all is never a sung syllable in this dataset -- it's
-        # a measure number, a page number, a repeat-bar glyph, a bare
-        # melisma dash, or (on some exports) a run of music-font glyphs
-        # PyMuPDF's text layer misreads as characters like "™". A real
-        # hyphenated syllable (e.g. "Thun-") always keeps its hyphen
-        # attached to a real letter, so it survives this filter fine.
-        if not any(c.isalpha() for c in t.text):
-            continue
-        lines.setdefault((t.page, t.block_no, t.line_no), []).append(t.text)
+        by_page.setdefault(t.page, []).append(t)
 
     rendered: list[str] = []
-    current_page: int | None = None
-    for (page, _block_no, _line_no), words in lines.items():
-        if page != current_page:
-            rendered.append(f"--- page {page + 1} ---")
-            current_page = page
-        rendered.append(" ".join(words))
+    for page in sorted(by_page):
+        rendered.append(f"--- page {page + 1} ---")
+        page_tokens = by_page[page]
+        labels = [(t.y0, _label_voice(t.text)) for t in page_tokens if _label_voice(t.text)]
+
+        lines: dict[tuple[int, int], list[str]] = {}
+        line_y: dict[tuple[int, int], float] = {}
+        for t in page_tokens:
+            if _label_voice(t.text):
+                continue  # a label is an anchor, never content, on any page
+            # Cheap, free (no LLM tokens spent) noise filter: a token with
+            # no letters at all is never a sung syllable in this dataset
+            # -- it's a measure number, a page number, a repeat-bar glyph,
+            # a bare melisma dash, or (on some exports) a run of
+            # music-font glyphs PyMuPDF's text layer misreads as
+            # characters like "™". A real hyphenated syllable (e.g.
+            # "Thun-") always keeps its hyphen attached to a real letter,
+            # so it survives this filter fine.
+            if not any(c.isalpha() for c in t.text):
+                continue
+            key = (t.block_no, t.line_no)
+            lines.setdefault(key, []).append(t.text)
+            line_y.setdefault(key, t.y0)
+
+        for key, words in lines.items():
+            if not labels:
+                # No label at all on this page to anchor against -- same
+                # limitation the old undifferentiated rendering always
+                # had; nothing geometric to do about it here.
+                rendered.append(" ".join(words))
+                continue
+            voice = _nearest_label_voice(line_y[key], labels)
+            if voice == "piano":
+                continue  # accompaniment has no lyrics; drop rather than send as noise
+            prefix = f"[{voice}] " if voice else "[unknown voice] "
+            rendered.append(prefix + " ".join(words))
     return "\n".join(rendered)
 
 
-def _build_user_prompt(tokens: list[PdfWordToken]) -> str:
+def _build_user_prompt(tokens: list[PdfWordToken], remaining: dict[str, int] | None = None) -> str:
+    budget_block = ""
+    if remaining:
+        lines = "\n".join(f"- {voice}: {count} sung notes remaining" for voice, count in remaining.items())
+        budget_block = (
+            "Remaining sung-note budget per voice for the rest of the piece (ground truth from the "
+            f"score, see the system instructions on how to use this):\n{lines}\n\n"
+        )
     return (
-        "Text extracted from a PDF's text layer, one line per row of text, in reading order, "
+        budget_block
+        + "Text extracted from a PDF's text layer, one line per row of text, in reading order, "
         "with a marker between pages:\n"
         + _render_pages_as_text(tokens)
         + "\n\nReturn ONLY the JSON object described in the instructions."
@@ -242,13 +356,17 @@ def _call_groq(body: dict) -> httpx.Response:
     )
 
 
-def _classify_chunk(tokens: list[PdfWordToken]) -> tuple[list[dict], float]:
+def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None = None) -> tuple[list[dict], float]:
     """One Groq call over a single chunk's tokens (already sized to fit
-    the account's rate limit by the caller). Returns a
-    `([{"voice": str | None, "syllables": [...]}], wait_seconds)` pair --
-    the voices found in just this chunk (`[]` if nothing usable, e.g. an
-    instrumental page, not itself an error), and how long the caller
-    should wait before firing the next chunk (see `_seconds_until_reset`)."""
+    the account's rate limit by the caller). `remaining`, when given, is
+    each voice's true remaining sung-note count for the rest of the piece
+    (see `app.lyrics.inject.count_singable_onsets`), included in the
+    prompt as a ground-truth sanity check against classification drift.
+    Returns a `([{"voice": str | None, "syllables": [...]}], wait_seconds)`
+    pair -- the voices found in just this chunk (`[]` if nothing usable,
+    e.g. an instrumental page, not itself an error), and how long the
+    caller should wait before firing the next chunk (see
+    `_seconds_until_reset`)."""
     settings = get_settings()
     body = {
         "model": settings.groq_lyrics_model,
@@ -265,14 +383,21 @@ def _classify_chunk(tokens: list[PdfWordToken]) -> tuple[list[dict], float]:
         # constrained a task, and matters doubly here since reasoning
         # tokens count against the account's tokens-per-minute cap too.
         "reasoning_effort": "low",
-        # Kept modest so the reserved completion budget doesn't eat into
-        # the account's tokens-per-minute cap (that limit covers prompt +
-        # completion together) -- the actual sung-syllable output for even
-        # a full chunk is a small fraction of its input text.
-        "max_tokens": 2000,
+        # Raised from 2000 after the onset-count budget was added: telling
+        # Groq the true per-voice target made it count more carefully and
+        # literally, which produces *more* completion tokens per chunk
+        # (naming every voice explicitly, being thorough about syllable
+        # boundaries) -- hit real truncation at 2000 for real
+        # (`finish_reason: length` on 2 of 6 chunks for one piece, forcing
+        # a retry that sometimes echoed a repeated stretch of text rather
+        # than genuinely new content, undercounting badly: 112 of a true
+        # 247 for one voice). 3500 plus the now-small reasoning-effort-low
+        # completion and a ~2500-token chunk prompt still stays well under
+        # the account's 8000-tokens-per-minute cap.
+        "max_tokens": 3500,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(tokens)},
+            {"role": "user", "content": _build_user_prompt(tokens, remaining)},
         ],
     }
 
@@ -315,7 +440,7 @@ def _classify_chunk(tokens: list[PdfWordToken]) -> tuple[list[dict], float]:
     return voices_out, wait_seconds
 
 
-def classify_lyric_tokens(tokens: list[PdfWordToken]) -> list[dict]:
+def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, int] | None = None) -> list[dict]:
     """Send the PDF's raw word tokens to Groq, chunked by whole pages to
     stay under the account's tokens-per-minute cap, and return
     `[{"voice": str | None, "syllables": [{"text": str, "syllabic": str}]}]`,
@@ -324,12 +449,23 @@ def classify_lyric_tokens(tokens: list[PdfWordToken]) -> list[dict]:
     fails after that is skipped (its page just contributes no lyrics)
     rather than losing the whole piece over one bad response. Raises
     `LyricExtractionError` only for a missing API key, or if literally
-    every chunk failed and there's nothing to return at all."""
+    every chunk failed and there's nothing to return at all.
+
+    `onset_counts`, when given (see `app.lyrics.inject.count_singable_onsets`
+    -- ground truth from the actual score, computed before this call),
+    seeds a running "remaining budget" per voice that's passed into each
+    chunk's prompt and decremented as syllables come back, so Groq has a
+    real target to check its own counting against instead of generating
+    an unconstrained-length list per voice. Built for real after a
+    positional-only alignment (no cross-check at all) let one voice's
+    classification silently drift out of sync with its notes for the rest
+    of a piece -- the failure mode this budget is meant to catch early."""
     settings = get_settings()
     if not settings.groq_api_key:
         raise LyricExtractionError("Lyric generation is not configured (no Groq API key set)")
 
     chunks = _chunk_tokens_by_page(tokens)
+    remaining = dict(onset_counts) if onset_counts else {}
     merged: dict[str | None, list[dict]] = {}
     for i, chunk in enumerate(chunks):
         # A long piece means many sequential calls (one per chunk), each
@@ -342,21 +478,38 @@ def classify_lyric_tokens(tokens: list[PdfWordToken]) -> list[dict]:
         # over one bad response -- same "show what we can" philosophy the
         # rest of this feature already follows for partial results.
         try:
-            voices, wait_seconds = _classify_chunk(chunk)
+            voices, wait_seconds = _classify_chunk(chunk, remaining)
         except LyricExtractionError:
             logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
             time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
             try:
-                voices, wait_seconds = _classify_chunk(chunk)
+                voices, wait_seconds = _classify_chunk(chunk, remaining)
             except LyricExtractionError:
                 logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
                 voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])
+            voice = entry["voice"]
+            if voice in remaining:
+                remaining[voice] = max(0, remaining[voice] - len(entry["syllables"]))
         if i < len(chunks) - 1:
             time.sleep(wait_seconds)
 
     voices_out = [{"voice": voice, "syllables": syllables} for voice, syllables in merged.items()]
     if not voices_out:
         raise LyricExtractionError("Groq returned no usable lyric syllables")
+
+    if onset_counts:
+        for entry in voices_out:
+            voice, got = entry["voice"], len(entry["syllables"])
+            target = onset_counts.get(voice)
+            if target is not None and abs(got - target) > max(3, round(target * 0.1)):
+                logger.warning(
+                    "Lyric count for %s looks off: got %d syllables, score has %d sung notes "
+                    "-- likely classification drift, worth a manual check",
+                    voice,
+                    got,
+                    target,
+                )
+
     return voices_out

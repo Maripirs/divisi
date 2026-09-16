@@ -177,6 +177,30 @@ def test_inject_lyrics_serializes_to_musicxml_lyric_elements(tmp_path):
     assert "<text>Ky</text>" in xml
 
 
+def test_count_singable_onsets_matches_true_onset_counts_per_voice():
+    from app.lyrics.inject import count_singable_onsets
+
+    score = _soprano_score_with_tie_and_rest()
+    # 3 real onsets: C4, D4(tie start+stop counts once), E4 -- the rest doesn't count.
+    assert count_singable_onsets(score) == {"soprano": 3}
+
+
+def test_count_singable_onsets_uses_the_same_positional_fallback_as_injection():
+    from app.lyrics.inject import count_singable_onsets
+
+    score = stream.Score()
+    for name in ["Part 1", "Part 2", "Part 3", "Part 4"]:
+        part = stream.Part()
+        part.partName = name
+        measure = stream.Measure(number=1)
+        measure.append([note.Note("C4", quarterLength=1), note.Note("D4", quarterLength=1)])
+        part.append(measure)
+        score.append(part)
+
+    counts = count_singable_onsets(score)
+    assert counts == {"soprano": 2, "alto": 2, "tenor": 2, "bass": 2}
+
+
 @pytest.mark.parametrize(
     "part_name,expected_voice",
     [
@@ -369,6 +393,123 @@ def test_parse_groq_duration(value, expected):
         assert result == expected
 
 
+# --- groq_client.py: geometric voice-labeling (the real drift fix) ---------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("SOPRANO", "soprano"),
+        ("Soprano", "soprano"),
+        ("Sop.", "soprano"),
+        ("ALTO", "alto"),
+        ("Tenor", "tenor"),
+        ("BASS", "bass"),
+        ("Piano", "piano"),
+        ("Pno.", "piano"),
+        ("S.", "soprano"),
+        ("A.", "alto"),
+        ("T.", "tenor"),
+        ("B.", "bass"),
+        # Single letters WITHOUT a period must NOT be treated as labels --
+        # "A" and "I" are both real, common lyric words on their own.
+        ("A", None),
+        ("I", None),
+        ("a", None),
+        ("War", None),
+        ("Thor,", None),
+    ],
+)
+def test_label_voice_recognizes_labels_but_not_bare_one_letter_words(text, expected):
+    from app.lyrics.groq_client import _label_voice
+
+    assert _label_voice(text) == expected
+
+
+def test_render_pages_as_text_buckets_lines_by_nearest_label_not_reading_order():
+    """The actual bug this geometry fix targets: a real PDF's voice labels
+    all cluster together in one column block, before any lyric text at
+    all (SOPRANO, ALTO, TENOR, BASS, THEN "I am the God Thor..." for
+    every voice back to back) -- so "the text after a label belongs to
+    that label" is false. Only the labels' own y-position, matched
+    against each line's y-position, tells the voices apart."""
+    from app.lyrics.groq_client import _render_pages_as_text
+
+    def tok(text, y0, block, line=0):
+        return PdfWordToken(text=text, x0=0, y0=y0, x1=1, y1=y0 + 10, page=0, block_no=block, line_no=line)
+
+    tokens = [
+        # Labels bunched together first, exactly like the real PDF.
+        tok("SOPRANO", 140, block=0),
+        tok("ALTO", 188, block=1),
+        tok("TENOR", 235, block=2),
+        tok("BASS", 282, block=3),
+        # Each voice's own lyric line, at that voice's own y-band, in a
+        # DIFFERENT order than the labels above it (so a text-order-based
+        # heuristic would get this wrong on purpose).
+        tok("Thun-", 283, block=4),  # bass-height text
+        tok("der!", 283, block=4),
+        tok("War", 141, block=5),  # soprano-height text
+        tok("God,", 141, block=5),
+        tok("Here", 236, block=6),  # tenor-height text
+        tok("Gos-", 189, block=7),  # alto-height text
+        tok("pel", 189, block=7),
+    ]
+    rendered = _render_pages_as_text(tokens)
+    assert "[soprano] War God," in rendered
+    assert "[alto] Gos- pel" in rendered
+    assert "[tenor] Here" in rendered
+    assert "[bass] Thun- der!" in rendered
+    # Labels are anchors only, never sent as content.
+    assert "SOPRANO" not in rendered
+    assert "ALTO" not in rendered
+
+
+def test_render_pages_as_text_drops_piano_lines():
+    from app.lyrics.groq_client import _render_pages_as_text
+
+    def tok(text, y0, block):
+        return PdfWordToken(text=text, x0=0, y0=y0, x1=1, y1=y0 + 10, page=0, block_no=block, line_no=0)
+
+    tokens = [
+        tok("SOPRANO", 140, block=0),
+        tok("Piano", 400, block=1),
+        tok("War", 141, block=2),
+        tok("chord", 401, block=3),  # would bucket nearest "Piano", must be dropped
+    ]
+    rendered = _render_pages_as_text(tokens)
+    assert "[soprano] War" in rendered
+    assert "chord" not in rendered
+    assert "piano" not in rendered.lower().replace("--- page 1 ---", "")
+
+
+def test_render_pages_as_text_falls_back_to_unlabeled_when_no_labels_on_page():
+    from app.lyrics.groq_client import _render_pages_as_text
+
+    tokens = [
+        PdfWordToken(text="War", x0=0, y0=100, x1=1, y1=110, page=0, block_no=0, line_no=0),
+        PdfWordToken(text="God,", x0=0, y0=100, x1=1, y1=110, page=0, block_no=0, line_no=0),
+    ]
+    rendered = _render_pages_as_text(tokens)
+    assert "War God," in rendered
+    assert "[" not in rendered.replace("--- page 1 ---", "")
+
+
+def test_render_pages_as_text_includes_page_markers():
+    from app.lyrics.groq_client import _render_pages_as_text
+
+    tokens = [
+        PdfWordToken(text="SOPRANO", x0=0, y0=140, x1=1, y1=150, page=0, block_no=0, line_no=0),
+        PdfWordToken(text="War", x0=0, y0=141, x1=1, y1=151, page=0, block_no=1, line_no=0),
+        PdfWordToken(text="SOPRANO", x0=0, y0=140, x1=1, y1=150, page=1, block_no=0, line_no=0),
+        PdfWordToken(text="God,", x0=0, y0=141, x1=1, y1=151, page=1, block_no=1, line_no=0),
+    ]
+    rendered = _render_pages_as_text(tokens)
+    assert "--- page 1 ---" in rendered
+    assert "--- page 2 ---" in rendered
+    assert rendered.index("--- page 1 ---") < rendered.index("[soprano] War") < rendered.index("--- page 2 ---")
+
+
 def test_chunk_tokens_by_page_keeps_whole_pages_together_under_the_char_budget(monkeypatch):
     from app.lyrics import groq_client
 
@@ -421,6 +562,97 @@ def test_classify_lyric_tokens_merges_voices_across_chunks_in_page_order(monkeyp
     assert voices == [
         {"voice": "soprano", "syllables": [{"text": "Ky-", "syllabic": "begin"}, {"text": "e.", "syllabic": "end"}]}
     ]
+
+
+def test_build_user_prompt_includes_remaining_budget_when_given():
+    from app.lyrics.groq_client import _build_user_prompt
+
+    with_budget = _build_user_prompt(_tokens(), {"soprano": 12, "alto": 10})
+    assert "soprano: 12 sung notes remaining" in with_budget
+    assert "alto: 10 sung notes remaining" in with_budget
+
+    without_budget = _build_user_prompt(_tokens())
+    assert "remaining" not in without_budget.lower()
+
+
+def test_classify_lyric_tokens_passes_a_decrementing_running_budget_to_each_chunk(monkeypatch):
+    """Regression coverage for the actual failure this was built to catch:
+    a positional-only alignment with no ground truth let one voice's
+    classification silently drift out of sync with its notes for the rest
+    of a piece. Each chunk should see the REMAINING budget after prior
+    chunks' syllables are subtracted, not the original total every time."""
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    monkeypatch.setattr(groq_client, "_MAX_CHARS_PER_CHUNK", 1)  # force one page per chunk
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
+
+    tokens = [
+        PdfWordToken(text="Ky-", x0=0, y0=0, x1=1, y1=1, page=0),
+        PdfWordToken(text="ri-", x0=0, y0=0, x1=1, y1=1, page=1),
+    ]
+    seen_bodies: list[dict] = []
+
+    def _fake_call(body):
+        seen_bodies.append(body)
+        page = len(seen_bodies)
+        text = "Ky-" if page == 1 else "ri-"
+        payload = {"voices": [{"voice": "soprano", "syllables": [{"text": text, "syllabic": "begin"}]}]}
+        return _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": json.dumps(payload)}}]},
+            headers={"x-ratelimit-reset-tokens": "1ms"},
+        )
+
+    monkeypatch.setattr(groq_client, "_call_groq", _fake_call)
+
+    classify_lyric_tokens(tokens, onset_counts={"soprano": 5})
+
+    assert len(seen_bodies) == 2
+    assert "soprano: 5 sung notes remaining" in seen_bodies[0]["messages"][1]["content"]
+    # After the first chunk returned 1 syllable, the second chunk should see 5 - 1 = 4 remaining.
+    assert "soprano: 4 sung notes remaining" in seen_bodies[1]["messages"][1]["content"]
+
+
+def test_classify_lyric_tokens_logs_a_warning_when_the_final_count_drifts_from_the_target(monkeypatch, caplog):
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    content = json.dumps(
+        {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
+    )
+    monkeypatch.setattr(
+        groq_client,
+        "_call_groq",
+        lambda body: _FakeResponse(200, {"choices": [{"message": {"content": content}}]}),
+    )
+
+    with caplog.at_level("WARNING", logger="divisi.lyrics"):
+        classify_lyric_tokens(_tokens(), onset_counts={"soprano": 50})
+
+    assert any("looks off" in r.message for r in caplog.records)
+
+
+def test_classify_lyric_tokens_does_not_warn_when_the_final_count_is_close_enough(monkeypatch, caplog):
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    content = json.dumps(
+        {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
+    )
+    monkeypatch.setattr(
+        groq_client,
+        "_call_groq",
+        lambda body: _FakeResponse(200, {"choices": [{"message": {"content": content}}]}),
+    )
+
+    with caplog.at_level("WARNING", logger="divisi.lyrics"):
+        classify_lyric_tokens(_tokens(), onset_counts={"soprano": 1})
+
+    assert not any("looks off" in r.message for r in caplog.records)
 
 
 @pytest.mark.integration
@@ -489,7 +721,7 @@ def _upload_musicxml_piece(client, headers, title="Ave Maria"):
 def _stub_classify(monkeypatch, voices):
     from app.api.routes.library import lyrics as lyrics_route
 
-    monkeypatch.setattr(lyrics_route, "classify_lyric_tokens", lambda tokens: voices)
+    monkeypatch.setattr(lyrics_route, "classify_lyric_tokens", lambda tokens, onset_counts=None: voices)
 
 
 def test_generate_lyrics_happy_path_creates_a_published_version(client, monkeypatch):
@@ -603,7 +835,7 @@ def test_generate_lyrics_502s_when_groq_call_fails(client, monkeypatch):
     headers = _register_and_login(client, "lyricsgroqfail@example.com")
     piece_id, _ = _upload_musicxml_piece(client, headers)
 
-    def _raise(_tokens):
+    def _raise(_tokens, _onset_counts=None):
         raise LyricExtractionError("upstream exploded")
 
     monkeypatch.setattr(lyrics_route, "classify_lyric_tokens", _raise)
