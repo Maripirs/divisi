@@ -70,6 +70,7 @@ real browser/touchscreen/device pass — not further Claude-side building.
 - [ ] **Carpool board UI + guest posting**: manual browser pass once deployed.
 - [ ] **Carpool Map**: needs a real Google Maps API key configured (human/account step) plus a real-browser pass; currently no-ops safely to the list-only board with no key set.
 - [ ] **Rendering-pipeline audio quality**: human hasn't listened to a rendered stem set to confirm the GM soundfont's quality. Low priority — the current player synthesizes client-side and never wires up the server-rendered stems at all; that pipeline is dormant, not on any critical path.
+- [ ] **Lyric generation on "The Challenge of Thor"**: live version currently has partial lyrics (first ~2 pages only, S/A/T/B got 49/53/46/45 of 247/238/276/277 true sung notes) after last night's NVIDIA-fallback debugging (see Log, 2026-09-16). Needs a real look at the player to confirm the partial lyrics that ARE there are actually correctly placed, plus a decision on whether to re-run generation once Groq's daily quota resets (should get much further than NVIDIA did) rather than continuing to lean on NVIDIA for this piece.
 
 ## OMR pipeline + in-app notation editor (parked)
 
@@ -157,6 +158,52 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-16: First real-world exercise of the NVIDIA lyric-generation
+  fallback (shipped 2026-09-15 as a per-chunk design, `d141b1f`), triggered
+  live on "The Challenge of Thor" once Groq's separate per-day cap (200,000
+  tokens/day) actually ran out mid-piece. Two follow-up fixes shipped
+  overnight based on what production logs showed, one of which needed a
+  same-night revert:
+  - `622b57b`: NVIDIA was silently dropping most chunks it "failed" —
+    mostly schema drift (`{"soprano": {"syllables": [...]}}` instead of
+    the requested `{"voices": [...]}` wrapper, content itself usually
+    fine), plus one real truncation and two real `ReadTimeout`s at the old
+    180s ceiling. Added `_normalize_alternate_voice_shape` to recover the
+    drifted shape instead of discarding it, raised `max_tokens` 4500→5500
+    and `_NVIDIA_TIMEOUT_SECONDS` 180→220, and (mistakenly, see next)
+    added `frequency_penalty: 0.4` against a repetition-loop response also
+    seen in that run.
+  - `a7e4ff0`: re-tested against the real piece once deployed and the
+    frequency penalty made things categorically worse — 10/10 NVIDIA
+    attempts across the remaining 5 chunks came back with corrupted JSON
+    syntax (missing quotes, dropped keys), versus the prior run's mix of
+    successes and recoverable failures. A frequency penalty fights the
+    structural repetition JSON output requires ("text", "syllabic",
+    commas, braces, over and over), so it was reverted the same night with
+    a comment explaining why, before it could cause more harm than the
+    rare loop it was meant to fix.
+  - Also caught and left unfixed for now: `POST
+    /library/pieces/{id}/generate-lyrics` always regenerates from the
+    current *live* version (`live_version(piece, db)`), not the original
+    pre-lyrics upload — so clicking it again after a partial/bad run
+    layers a new attempt on top of the old one rather than starting clean.
+    `inject_lyrics` itself doesn't stack duplicate lyric lines (it clears
+    each note right before overwriting it), but any note a run's syllable
+    list doesn't reach keeps whatever an earlier, possibly worse run left
+    there — a real inconsistency, not just a cosmetic one. Worth fixing
+    (regenerate from the version's own pre-lyrics source, or at minimum
+    clear all existing lyrics up front) before this button gets used
+    routinely.
+  - Net state as of this entry: "The Challenge of Thor" has partial,
+    front-of-piece-only lyrics live (49/53/46/45 syllables per S/A/T/B
+    against true targets of 247/238/276/277 sung notes) — restored to this
+    (the better of two incomplete results produced overnight) after a
+    same-night regeneration attempt under the now-reverted penalty made it
+    worse (33/33/33/33). NVIDIA's reliability for this specific
+    long-structured-JSON task is still not solid even after both fixes;
+    Groq itself has been reliable throughout and should recover once its
+    daily quota resets. Not yet re-verified in a real browser — added to
+    "Awaiting human verification" below.
 - 2026-09-15: Frontend redeployed (`npm run build && npx wrangler deploy`)
   to `https://divisi.maripi.net`, picking up the admin-triggered lyric
   generation button and the divisi visual-merge fix below, plus everything
