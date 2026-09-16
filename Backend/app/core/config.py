@@ -125,10 +125,14 @@ class Settings(BaseSettings):
     # configured" error rather than silently no-op'ing; the real key lives
     # on Render only (added directly via the Render API), never checked in.
     groq_api_key: str = ""
-    # llama-3.3-70b-versatile is the model this shape (Groq + prose-only
-    # JSON extraction, no response_format param) was proven against in a
-    # sibling project, `~/projects/walkcode/server/llm.js`.
-    groq_lyrics_model: str = "llama-3.3-70b-versatile"
+    # The prose-only JSON extraction shape (no response_format param) was
+    # proven against llama-3.3-70b-versatile in a sibling project,
+    # `~/projects/walkcode/server/llm.js`, but that model has since been
+    # retired from Groq's lineup (confirmed via GET /v1/models against the
+    # real key on 2026-09-15: a live call to it 404s with "model_not_found").
+    # openai/gpt-oss-120b is a current model on the same key that returns
+    # clean single-JSON-object content (verified with a live smoke call).
+    groq_lyrics_model: str = "openai/gpt-oss-120b"
 
     # B20: the one group (if any) that offers a public, read-only "preview
     # Admin" mode from its guest join page — the seeded public demo choir
