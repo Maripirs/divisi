@@ -1,3 +1,4 @@
+import { mergeSplitDesksForDisplay } from '../notation/voicePartAssignment.ts';
 import type {
 	MIDILyricEvent,
 	MIDINote,
@@ -101,16 +102,25 @@ export function convertVisualParts(
 	visualStates: Record<MixPart, VisualState>,
 	mutedNoteColor = MUTED_NOTE_COLOR
 ): ConvertResult {
-	const unitMs = msPerUnit(parsed.tempoBPM);
-	const unitsPerMeasure = unitsPerMeasureFor(parsed.timeSignature);
-	const useFlats = parsed.keySignatureFifths < 0;
-	const visibleParts = parsed.parts.filter((part) => visualStates[part.id] !== 'off');
+	// Score display only ever wants one staff per base voice — a chordal
+	// divisi that `splitChordalDivisi` auto-split purely for independent
+	// mixer control gets collapsed back to one combined part here, without
+	// touching `parsed`/`visualStates` themselves (the mixer keeps reading
+	// the split desks). See `mergeSplitDesksForDisplay`'s doc comment.
+	const merged = mergeSplitDesksForDisplay(parsed.parts, parsed.notes, parsed.lyrics, visualStates);
+	const displayParsed: ParsedMIDI = { ...parsed, parts: merged.parts, notes: merged.notes, lyrics: merged.lyrics };
+	const displayVisualStates = merged.visualStates;
+
+	const unitMs = msPerUnit(displayParsed.tempoBPM);
+	const unitsPerMeasure = unitsPerMeasureFor(displayParsed.timeSignature);
+	const useFlats = displayParsed.keySignatureFifths < 0;
+	const visibleParts = displayParsed.parts.filter((part) => displayVisualStates[part.id] !== 'off');
 
 	if (visibleParts.length === 0) throw new Error('No visible voice parts selected.');
 
 	const measureUnitSpansByPart = new Map<MixPart, MeasurePiece[][]>();
 	for (const part of visibleParts) {
-		const notes = notesForPart(parsed, part, unitMs);
+		const notes = notesForPart(displayParsed, part, unitMs);
 		measureUnitSpansByPart.set(part.id, measuresFor(notes, unitMs, unitsPerMeasure));
 	}
 
@@ -124,8 +134,8 @@ export function convertVisualParts(
 	}
 
 	const parts = visibleParts.map((part, index) => {
-		const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, part.base);
-		const color = visualStates[part.id] === 'muted' ? mutedNoteColor : undefined;
+		const attributes = attributesXML(displayParsed.timeSignature, displayParsed.keySignatureFifths, part.base);
+		const color = displayVisualStates[part.id] === 'muted' ? mutedNoteColor : undefined;
 		const body = bodyXML(measureUnitSpansByPart.get(part.id)!, useFlats, attributes, color);
 		return { id: `P${index + 1}`, name: part.label, body };
 	});

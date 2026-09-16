@@ -41,7 +41,8 @@ branch, not on `main`.
   map, claims, direction, guest posting, contact-phone/rider-interest),
   tab-strip/navigation cleanups, piece-list availability + sort,
   chord-based divisi auto-split (pitch-rank-per-onset, unison onsets on
-  both desks), and a Tracks tab "Generate lyrics from PDF" admin button.
+  both desks; audio/mixer-only, does not add a staff to the score), and a
+  Tracks tab "Generate lyrics from PDF" admin button.
 - **iOS app**: paused 2026-08-27, code removed from `main` 2026-09-14 (see
   the `pre-cleanup-audit-20260914` tag to recover it). Portability
   constraint (keep pure-algorithm logic free of platform types) stands if
@@ -156,6 +157,32 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: Fixed a display bug in the chord-based divisi auto-split
+  shipped earlier today: `splitChordalDivisi` correctly split a chordal
+  divisi voice into `${base}-1`/`${base}-2` desks for the mixer, but that
+  same split object fed the score renderer too, so the notation also came
+  out as two staff rows (confirmed on "The Challenge of Thor": "Soprano 1"
+  and "Soprano 2" each showing one note of what used to be a single
+  2-note chord). The split should only ever affect audio/mixer routing,
+  never the printed score. Added `mergeSplitDesksForDisplay` in
+  `notation/voicePartAssignment.ts`, the literal inverse of
+  `splitChordalDivisi`: collapses an auto-split base voice's two desks
+  back into one combined part before `musicXmlConverter.ts`'s
+  `convertVisualParts` builds staves, reconstructing the original 2-note
+  chord at a real divisi onset and deduping the duplicated note/lyric back
+  to one at a unison onset. Only pairs `splitChordalDivisi` itself
+  produced are merged — marked with a new `autoSplit` flag on
+  `VoicePartInfo` — so a file that names its own real two-staff divisi
+  split (e.g. actual "Soprano 1"/"Soprano 2" tracks/parts) still renders
+  as two staves, untouched. Mixer-facing `parsed.parts`/`notes`/`lyrics`
+  are never mutated; `convertVisualParts` builds a fresh transformed copy
+  for display only. New tests in `voicePartAssignment.test.ts` (split
+  reversed to one chord, unison duplicate deduped to one note, lyric
+  dedup, file-named split left alone, no-mutation check, full visual-state
+  merge-rule table) and a new `musicXmlConverter.test.ts` (one staff per
+  base voice for an auto-split piece, file-named splits still get two
+  staves, no mutation of the mixer's inputs). Full suite green (232
+  tests), `npm run check` clean.
 - 2026-09-15: Shipped the "Lyrics in the player" backlog item: an
   admin-triggered "Generate lyrics from PDF" button (Tracks tab edit
   panel, shown once a track has both a music file and a PDF) that reads

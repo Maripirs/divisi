@@ -42,6 +42,15 @@ export interface VoicePartInfo {
 	base: MixBase;
 	subIndex?: number;
 	label: string;
+	/** True only for a desk `splitChordalDivisi` created by detecting a real
+	 * chordal onset within an unnamed voice part, never set for a desk the
+	 * source file named itself (e.g. real "Soprano 1"/"Soprano 2" tracks or
+	 * parts, resolved by `assignVoiceParts`). Both shapes produce an
+	 * identical `${base}-1`/`${base}-2` pair otherwise, so this is what lets
+	 * `mergeSplitDesksForDisplay` (`notation/voicePartAssignment.ts`) tell
+	 * "audio-only auto-split, merge back for display" apart from "the file
+	 * wrote two real staves on purpose, leave them alone". */
+	autoSplit?: true;
 }
 
 /** How the score view presents the four voice parts relative to whichever

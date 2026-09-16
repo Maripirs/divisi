@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { MIDILyricEvent, MIDINote, VoicePartInfo } from '../midi/types.ts';
-import { splitChordalDivisi } from './voicePartAssignment.ts';
+import type { MIDILyricEvent, MIDINote, MixPart, VisualState, VoicePartInfo } from '../midi/types.ts';
+import { mergeSplitDesksForDisplay, splitChordalDivisi } from './voicePartAssignment.ts';
 
 // Base parts list shape every test starts from: plain SATB + accompaniment,
 // the same unsplit shape `assignVoiceParts` produces for a file that names
@@ -37,8 +37,8 @@ describe('splitChordalDivisi', () => {
 		]);
 		const soprano1 = result.parts.find((p) => p.id === 'soprano-1')!;
 		const soprano2 = result.parts.find((p) => p.id === 'soprano-2')!;
-		expect(soprano1).toEqual({ id: 'soprano-1', base: 'soprano', subIndex: 1, label: 'Soprano 1' });
-		expect(soprano2).toEqual({ id: 'soprano-2', base: 'soprano', subIndex: 2, label: 'Soprano 2' });
+		expect(soprano1).toEqual({ id: 'soprano-1', base: 'soprano', subIndex: 1, label: 'Soprano 1', autoSplit: true });
+		expect(soprano2).toEqual({ id: 'soprano-2', base: 'soprano', subIndex: 2, label: 'Soprano 2', autoSplit: true });
 
 		const desk1Notes = result.notes.filter((n) => n.partId === 'soprano-1').map((n) => n.pitch);
 		const desk2Notes = result.notes.filter((n) => n.partId === 'soprano-2').map((n) => n.pitch);
@@ -111,5 +111,129 @@ describe('splitChordalDivisi', () => {
 
 		expect(result.parts).toEqual(alreadySplitParts);
 		expect(result.notes).toEqual(notes);
+	});
+});
+
+describe('mergeSplitDesksForDisplay', () => {
+	function activeStates(parts: VoicePartInfo[]): Record<MixPart, VisualState> {
+		return Object.fromEntries(parts.map((p) => [p.id, 'active' as VisualState]));
+	}
+
+	it('reverses a clean 2-note-onset split back into one chord on the base id', () => {
+		const notes: MIDINote[] = [
+			note(67, 0, 'soprano'), // G4
+			note(60, 0, 'soprano'), // C4
+			note(69, 500, 'soprano'), // A4
+			note(62, 500, 'soprano') // D4
+		];
+		const split = splitChordalDivisi(flatParts, notes, []);
+		const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, activeStates(split.parts));
+
+		expect(result.parts.map((p) => p.id)).toEqual(['soprano', 'alto', 'tenor', 'bass', 'accompaniment']);
+		expect(result.parts.find((p) => p.id === 'soprano')).toEqual({
+			id: 'soprano',
+			base: 'soprano',
+			subIndex: undefined,
+			label: 'Soprano'
+		});
+
+		const sopranoNotes = result.notes.filter((n) => n.partId === 'soprano');
+		expect(sopranoNotes.map((n) => n.pitch).sort((a, b) => a - b)).toEqual([60, 62, 67, 69]);
+		expect(result.notes.some((n) => n.partId === 'soprano-1' || n.partId === 'soprano-2')).toBe(false);
+	});
+
+	it('reverses a unison-duplicated onset into one note, not two', () => {
+		const notes: MIDINote[] = [
+			note(67, 0, 'alto'), // 2-note onset
+			note(60, 0, 'alto'),
+			note(64, 500, 'alto') // 1-note (unison) onset, duplicated onto both desks by the split
+		];
+		const split = splitChordalDivisi(flatParts, notes, []);
+		const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, activeStates(split.parts));
+
+		const altoNotes = result.notes.filter((n) => n.partId === 'alto');
+		expect(altoNotes.filter((n) => n.startMs === 500)).toHaveLength(1);
+		expect(altoNotes.filter((n) => n.startMs === 500)[0].pitch).toBe(64);
+		expect(altoNotes).toHaveLength(3); // 2 notes from the chord onset + 1 deduped unison note
+	});
+
+	it('dedupes a lyric duplicated onto both desks back to one', () => {
+		const notes: MIDINote[] = [note(67, 0, 'soprano'), note(60, 0, 'soprano')];
+		const lyrics: MIDILyricEvent[] = [{ text: 'Glo-', timeMs: 0, partId: 'soprano' }];
+		const split = splitChordalDivisi(flatParts, notes, lyrics);
+		const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, activeStates(split.parts));
+
+		expect(result.lyrics).toEqual([{ text: 'Glo-', timeMs: 0, partId: 'soprano' }]);
+	});
+
+	it('is a no-op when there is no split pair to merge', () => {
+		const notes: MIDINote[] = [note(60, 0, 'tenor')];
+		const result = mergeSplitDesksForDisplay(flatParts, notes, [], activeStates(flatParts));
+
+		expect(result.parts).toEqual(flatParts);
+		expect(result.notes).toEqual(notes);
+	});
+
+	it('leaves a file-named divisi split alone (not produced by splitChordalDivisi)', () => {
+		// Same "Soprano 1"/"Soprano 2" shape a real two-staff source file
+		// produces via `assignVoiceParts` -- no `autoSplit` flag, since the
+		// file named this split itself rather than `splitChordalDivisi`
+		// inventing it for mixer purposes only.
+		const namedSplitParts: VoicePartInfo[] = [
+			{ id: 'soprano-1', base: 'soprano', subIndex: 1, label: 'Soprano 1' },
+			{ id: 'soprano-2', base: 'soprano', subIndex: 2, label: 'Soprano 2' },
+			{ id: 'alto', base: 'alto', label: 'Alto' },
+			{ id: 'tenor', base: 'tenor', label: 'Tenor' },
+			{ id: 'bass', base: 'bass', label: 'Bass' },
+			{ id: 'accompaniment', base: 'accompaniment', label: 'Accompaniment' }
+		];
+		const notes: MIDINote[] = [note(67, 0, 'soprano-1'), note(60, 0, 'soprano-2')];
+		const result = mergeSplitDesksForDisplay(namedSplitParts, notes, [], activeStates(namedSplitParts));
+
+		expect(result.parts).toEqual(namedSplitParts);
+		expect(result.notes).toEqual(notes);
+	});
+
+	it('does not mutate its inputs', () => {
+		const notes: MIDINote[] = [note(67, 0, 'soprano'), note(60, 0, 'soprano')];
+		const split = splitChordalDivisi(flatParts, notes, []);
+		const partsBefore = JSON.parse(JSON.stringify(split.parts));
+		const notesBefore = JSON.parse(JSON.stringify(split.notes));
+		const lyricsBefore = JSON.parse(JSON.stringify(split.lyrics));
+		const statesBefore = activeStates(split.parts);
+		const statesBeforeCopy = { ...statesBefore };
+
+		mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, statesBefore);
+
+		expect(split.parts).toEqual(partsBefore);
+		expect(split.notes).toEqual(notesBefore);
+		expect(split.lyrics).toEqual(lyricsBefore);
+		expect(statesBefore).toEqual(statesBeforeCopy);
+	});
+
+	describe('visual state merge rule', () => {
+		const cases: [VisualState, VisualState, VisualState][] = [
+			['off', 'off', 'off'],
+			['muted', 'muted', 'muted'],
+			['active', 'active', 'active'],
+			['active', 'muted', 'active'],
+			['muted', 'active', 'active'],
+			['off', 'active', 'active'],
+			['active', 'off', 'active'],
+			['off', 'muted', 'active'],
+			['muted', 'off', 'active']
+		];
+
+		it.each(cases)('desk1=%s, desk2=%s -> %s', (desk1State, desk2State, expected) => {
+			const notes: MIDINote[] = [note(67, 0, 'soprano'), note(60, 0, 'soprano')];
+			const split = splitChordalDivisi(flatParts, notes, []);
+			const states = activeStates(split.parts);
+			states['soprano-1'] = desk1State;
+			states['soprano-2'] = desk2State;
+
+			const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, states);
+
+			expect(result.visualStates['soprano']).toBe(expected);
+		});
 	});
 });

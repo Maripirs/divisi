@@ -1,4 +1,12 @@
-import { VOICE_PARTS, type MIDILyricEvent, type MIDINote, type VoicePart, type VoicePartInfo } from '../midi/types.ts';
+import {
+	VOICE_PARTS,
+	type MIDILyricEvent,
+	type MIDINote,
+	type MixPart,
+	type VisualState,
+	type VoicePart,
+	type VoicePartInfo
+} from '../midi/types.ts';
 
 /**
  * Maps a track/part's name and note pitches to a voice part — and, when the
@@ -266,8 +274,8 @@ export function splitChordalDivisi(
 			}
 		}
 
-		const desk1Info: VoicePartInfo = { id: desk1Id, base, subIndex: 1, label: `${capitalize(base)} 1` };
-		const desk2Info: VoicePartInfo = { id: desk2Id, base, subIndex: 2, label: `${capitalize(base)} 2` };
+		const desk1Info: VoicePartInfo = { id: desk1Id, base, subIndex: 1, label: `${capitalize(base)} 1`, autoSplit: true };
+		const desk2Info: VoicePartInfo = { id: desk2Id, base, subIndex: 2, label: `${capitalize(base)} 2`, autoSplit: true };
 		outParts = [...outParts.slice(0, partIndex), desk1Info, desk2Info, ...outParts.slice(partIndex + 1)];
 
 		outNotes = [
@@ -286,4 +294,136 @@ export function splitChordalDivisi(
 	}
 
 	return { parts: outParts, notes: outNotes, lyrics: outLyrics };
+}
+
+/** Dedupes a note list, keyed by part + onset + pitch, keeping the first of
+ * any exact repeat. Used by `mergeSplitDesksForDisplay` to collapse a
+ * unison-onset note that `splitChordalDivisi` cloned onto both desks back
+ * down to the single note it started as -- two genuinely different pitches
+ * at the same onset (a real 2-note chord) have different keys, so they're
+ * never touched by this. */
+function dedupeNotes(notes: MIDINote[]): MIDINote[] {
+	const seen = new Set<string>();
+	const result: MIDINote[] = [];
+	for (const note of notes) {
+		const key = `${note.partId}:${note.startMs}:${note.pitch}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		result.push(note);
+	}
+	return result;
+}
+
+/** Same idea as `dedupeNotes` but for lyrics, which have no pitch to key on
+ * -- text + onset is the only thing distinguishing a real repeated lyric
+ * from a duplicate `splitChordalDivisi` produced. */
+function dedupeLyrics(lyrics: MIDILyricEvent[]): MIDILyricEvent[] {
+	const seen = new Set<string>();
+	const result: MIDILyricEvent[] = [];
+	for (const lyric of lyrics) {
+		const key = `${lyric.partId}:${lyric.timeMs}:${lyric.text}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		result.push(lyric);
+	}
+	return result;
+}
+
+/** Merging rule for one pair of desks' visual states -- see the doc comment
+ * below for why "favor showing it plainly" is the right default here. */
+function mergeVisualState(a: VisualState, b: VisualState): VisualState {
+	if (a === 'off' && b === 'off') return 'off';
+	if (a === 'muted' && b === 'muted') return 'muted';
+	return 'active';
+}
+
+export interface MergedForDisplay {
+	parts: VoicePartInfo[];
+	notes: MIDINote[];
+	lyrics: MIDILyricEvent[];
+	visualStates: Record<MixPart, VisualState>;
+}
+
+/**
+ * The inverse of `splitChordalDivisi` above, for the *score* only: collapses
+ * an auto-split base voice's two desks (`${base}-1`/`${base}-2`) back into
+ * one combined `${base}` entry, so a chordal divisi that exists purely to
+ * give the mixer independent volume/mute/solo control over two voices does
+ * not also turn one printed staff into two. The mixer keeps reading the
+ * split desks exactly as `splitChordalDivisi` left them -- this function
+ * never touches its inputs, it builds and returns a fresh transformed copy
+ * for the score-rendering path to consume instead.
+ *
+ * Only pairs `splitChordalDivisi` itself produced are eligible -- both
+ * `VoicePartInfo` entries must carry `autoSplit` (see that field's doc
+ * comment on `VoicePartInfo`). A divisi the *file* named itself (real
+ * "Soprano 1"/"Soprano 2" tracks/parts, resolved by `assignVoiceParts`
+ * above) produces an identically-shaped `${base}-1`/`${base}-2` pair but is
+ * a genuine two-staff engraving choice the source material made on purpose
+ * -- left as two staves, not merged.
+ *
+ * Reversing note-by-note mirrors the split in reverse:
+ * - A genuine 2-note onset (different pitches, one per desk) retags both
+ *   notes to the base id at the same onset -- the existing same-partId/
+ *   same-onset chord grouping in `musicXmlConverter.ts` already renders
+ *   that as one 2-pitch chord on one staff, no changes needed there.
+ * - A 1-note (unison) onset was *duplicated* onto both desks by the split,
+ *   not divided, so retagging both copies produces two identical notes at
+ *   one onset under one partId -- `dedupeNotes` above collapses that back
+ *   down to the single original note.
+ * Lyrics get the same duplicate-then-dedupe treatment (`dedupeLyrics`),
+ * keyed by text + onset rather than pitch, since `splitChordalDivisi`
+ * duplicates a base voice's lyric event onto both desks unconditionally
+ * (every onset, not just unison ones -- see its own doc comment).
+ *
+ * The two desks' visual states can differ if a user manually soloed/muted
+ * just one desk in the mixer. `mergeVisualState` favors showing the merged
+ * staff plainly over inventing partial-chord coloring (out of scope here):
+ * both `'off'` -> `'off'`, both `'muted'` -> `'muted'`, anything else
+ * (including one desk `'active'`) -> `'active'`. In the common case both
+ * desks already share one state (see `convertAllParts`'s doc comment: "every
+ * desk of a split voice highlights together"), so this rule rarely has to
+ * arbitrate a real conflict.
+ */
+export function mergeSplitDesksForDisplay(
+	parts: VoicePartInfo[],
+	notes: MIDINote[],
+	lyrics: MIDILyricEvent[],
+	visualStates: Record<MixPart, VisualState>
+): MergedForDisplay {
+	let outParts = parts;
+	let outNotes = notes;
+	let outLyrics = lyrics;
+	const outVisualStates = { ...visualStates };
+
+	for (const base of VOICE_PARTS) {
+		const desk1Id = `${base}-1`;
+		const desk2Id = `${base}-2`;
+		const desk1Info = outParts.find((p) => p.id === desk1Id);
+		const desk2Info = outParts.find((p) => p.id === desk2Id);
+		if (!desk1Info?.autoSplit || !desk2Info?.autoSplit) continue; // no auto-split pair here: leave it be
+
+		const mergedInfo: VoicePartInfo = { id: base, base, subIndex: undefined, label: capitalize(base) };
+		let inserted = false;
+		outParts = outParts.flatMap((part) => {
+			if (part.id !== desk1Id && part.id !== desk2Id) return [part];
+			if (inserted) return [];
+			inserted = true;
+			return [mergedInfo];
+		});
+
+		outNotes = outNotes.map((n) => (n.partId === desk1Id || n.partId === desk2Id ? { ...n, partId: base } : n));
+		outLyrics = outLyrics.map((l) => (l.partId === desk1Id || l.partId === desk2Id ? { ...l, partId: base } : l));
+
+		outVisualStates[base] = mergeVisualState(outVisualStates[desk1Id], outVisualStates[desk2Id]);
+		delete outVisualStates[desk1Id];
+		delete outVisualStates[desk2Id];
+	}
+
+	return {
+		parts: outParts,
+		notes: dedupeNotes(outNotes),
+		lyrics: dedupeLyrics(outLyrics),
+		visualStates: outVisualStates
+	};
 }
