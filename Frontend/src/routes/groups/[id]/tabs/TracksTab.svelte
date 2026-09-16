@@ -54,6 +54,11 @@
 	// only take effect on Save), deleting a track is its own explicit
 	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
+	// Tracks tab edit panel (admin only): "Generate lyrics from PDF" — its
+	// own click, own loading state, separate from the Save button above
+	// (it doesn't touch the title/composer/tempo/file fields at all, it
+	// only reads the track's existing PDF and music file server-side).
+	let generatingLyrics = $state(false);
 
 	// Admin sees every distributed track, including ones with no practice
 	// file wired up yet (so they know what still needs fixing) — a member
@@ -202,6 +207,30 @@
 							</button>
 						</div>
 					</form>
+
+					<!-- "Generate lyrics from PDF": needs both files already on this
+					     track's live version, so it's hidden until both are present
+					     rather than 400ing on click. Its own `<form>` (can't nest
+					     inside the edit form above) — this doesn't touch any of that
+					     form's fields, it only reads the track's existing PDF/music
+					     file server-side and republishes an improved version. -->
+					{#if track.has_music && track.has_pdf}
+						<form
+							method="POST"
+							action="?/generateLyrics"
+							use:enhance={withSubmitting((v) => (generatingLyrics = v))}
+						>
+							<input type="hidden" name="pieceId" value={track.piece_id} />
+							{#if form?.form === 'generateLyrics' && form?.error}
+								<p class="error">{form.error}</p>
+							{/if}
+							<div class="btn-row">
+								<button type="submit" class="btn btn-outline" disabled={generatingLyrics}>
+									{generatingLyrics ? m.groups_uploading() : m.groups_generate_lyrics_button()}
+								</button>
+							</div>
+						</form>
+					{/if}
 
 					<!-- Delete-the-whole-track: a minimal trash icon pinned to the
 					     card's top-right corner rather than a button sitting next to

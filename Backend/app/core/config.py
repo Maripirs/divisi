@@ -118,6 +118,18 @@ class Settings(BaseSettings):
     apple_client_id: str = ""
     apple_client_secret: str = ""
 
+    # Lyric generation (admin-triggered "Generate lyrics from PDF" button,
+    # Backend/app/lyrics/): Groq's OpenAI-compatible chat-completions
+    # endpoint classifies a PDF's raw text-layer word tokens into per-voice
+    # sung syllables. Empty key -> the feature fails with a clear "not
+    # configured" error rather than silently no-op'ing; the real key lives
+    # on Render only (added directly via the Render API), never checked in.
+    groq_api_key: str = ""
+    # llama-3.3-70b-versatile is the model this shape (Groq + prose-only
+    # JSON extraction, no response_format param) was proven against in a
+    # sibling project, `~/projects/walkcode/server/llm.js`.
+    groq_lyrics_model: str = "llama-3.3-70b-versatile"
+
     # B20: the one group (if any) that offers a public, read-only "preview
     # Admin" mode from its guest join page — the seeded public demo choir
     # (see Backend/scripts/seed_demo.py, Backend/DEMO_SETUP.md), never a

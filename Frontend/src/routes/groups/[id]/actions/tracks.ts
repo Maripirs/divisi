@@ -99,6 +99,27 @@ export const trackActions = {
 		});
 	},
 
+	// Admin-only: generates sung-lyric data from the track's PDF text
+	// layer and injects it into its music file's MusicXML, immediately
+	// publishing the result as the track's new live version — same
+	// submit -> approve -> distribute-in-one-step shape as the Backend's
+	// other "admin clicks a button, gets an improved version" actions
+	// above, since this only ever adds `<lyric>` elements on top of
+	// already-approved note/rhythm data (see the Backend route's own doc
+	// comment, `app/api/routes/library/lyrics.py`). MusicXML-sourced
+	// pieces with a real PDF text layer only; the Backend 400s with a
+	// specific message otherwise (MIDI-sourced, no PDF, scanned PDF, ...)
+	// which surfaces here exactly like any other `form?.error`.
+	generateLyrics: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const pieceId = String(form.get('pieceId') ?? '');
+		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'generateLyrics' });
+
+		return runAction('generateLyrics', () =>
+			backendFetch(locals.token, `/library/pieces/${pieceId}/generate-lyrics`, { method: 'POST' }, fetch)
+		);
+	},
+
 	// Admin-only, `DELETE /library/pieces/{id}` — the whole track, not just
 	// one of its files (that's the `remove_file`/`remove_pdf_file` flags on
 	// `updatePieceDetails` above). Every version, distribution, annotation,

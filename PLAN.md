@@ -28,8 +28,10 @@ branch, not on `main`.
   security (password reset, Google OAuth), piece/group PDF markup + cue
   points, progressive/anonymous-participant accounts, demo "Preview Admin",
   a Carpool tab (events, posts, seat claims, standing board, direction, map,
-  guest read+write), guest About/Info access, and a guest local-display-name
-  edit synced server-side.
+  guest read+write), guest About/Info access, a guest local-display-name
+  edit synced server-side, and admin-triggered lyric generation from a
+  piece's PDF (Groq-classified, sequentially injected as MusicXML
+  `<lyric>` elements).
 - **Frontend**: standalone player prototype, guest join flow, full app-shell
   UI wired to the real backend, real piece uploads, group page settings,
   Responsibilities, Weekly Notes, Spanish localization, app-wide error
@@ -39,7 +41,7 @@ branch, not on `main`.
   map, claims, direction, guest posting, contact-phone/rider-interest),
   tab-strip/navigation cleanups, piece-list availability + sort,
   chord-based divisi auto-split (pitch-rank-per-onset, unison onsets on
-  both desks).
+  both desks), and a Tracks tab "Generate lyrics from PDF" admin button.
 - **iOS app**: paused 2026-08-27, code removed from `main` 2026-09-14 (see
   the `pre-cleanup-audit-20260914` tag to recover it). Portability
   constraint (keep pure-algorithm logic free of platform types) stands if
@@ -93,16 +95,6 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Backlog
 
-- Lyrics in the player: sung text isn't captured anywhere today. Leaning
-  toward a lighter text-only OCR pass on the PDF (just lyric lines) rather
-  than routing through the full Audiveris transcription pipeline —
-  complements the piece's existing (already-correct) music data instead of
-  regenerating a new OMR version that risks disturbing it. Still needs (1)
-  a concrete OCR approach (Tesseract directly on lyric-line crops? reuse
-  Audiveris's lyric-OCR step in isolation?) and (2) a sync mechanism to the
-  playback clock (per-line, per-measure, or per-syllable onset — and
-  whether that sync is auto-derived or hand-placed, maybe reusing the
-  existing PDF cue-point anchors). Raised 2026-09-14, not yet scoped.
 - Real job queue (Celery/RQ) if background-task OMR processing, or
   Responsibilities recurrence/reminders, or the anonymous-participant
   sweep, ever need real scheduling instead of a manual command.
@@ -164,6 +156,44 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-15: Shipped the "Lyrics in the player" backlog item: an
+  admin-triggered "Generate lyrics from PDF" button (Tracks tab edit
+  panel, shown once a track has both a music file and a PDF) that reads
+  the piece's PDF text layer, classifies it into per-voice sung syllables
+  via Groq (`llama-3.3-70b-versatile`, OpenAI-compatible endpoint, JSON
+  requested in prose per the proven `~/projects/walkcode/server/llm.js`
+  shape rather than `response_format`), and sequentially injects them as
+  MusicXML `<lyric>` elements onto each voice part's note onsets (Nth
+  cleaned syllable -> Nth sung onset, skipping rests/tie-continuations —
+  the same positional-alignment principle `musicXmlConverter.ts`'s
+  `attachLyrics` already uses for MIDI lyric events). Scope decisions:
+  MusicXML/`.mxl`-sourced pieces only (MIDI-sourced pieces 400 with a
+  clear message — no OMR/note-data regeneration involved at all); no OCR
+  fallback for a scanned PDF with no real text layer (also a clean 400);
+  synchronous in the request, no job queue (Groq calls are fast, files
+  are small; a real job queue stays backlogged below for heavier work).
+  The new `PieceVersion` is immediately published (submit -> approve ->
+  distribute in one step via the existing `publish_version` helper)
+  rather than left as a review draft: unlike the OMR pipeline (a full
+  transcription redo `publish_version`'s draft step exists to guard),
+  this only ever adds lyric annotations on top of already-approved
+  note/rhythm data, and there's no frontend affordance today to review a
+  parked draft anyway (the OMR editor that would do that is deleted from
+  `main`, see below) — so draft-only would have been a dead end no admin
+  could reach. New code: `Backend/app/lyrics/` (`extract.py` PyMuPDF word
+  tokens + scanned-PDF detection, `groq_client.py` the Groq call + prompt
+  + defensive JSON extraction, `inject.py` the sequencing/injection logic
+  via music21), `Backend/app/api/routes/library/lyrics.py`
+  (`POST /library/pieces/{id}/generate-lyrics`, admin-only), two new
+  `Settings` fields (`groq_api_key`, `groq_lyrics_model`), and
+  `Backend/tests/test_lyrics.py` (33 tests: sequencing/tie/rest-skipping
+  unit tests against a synthetic music21 score, PDF extraction against
+  real generated PDFs, Groq response parsing against a monkeypatched
+  `_call_groq`, full route wiring, plus one `integration`-marked
+  real-network test skipped without a real `GROQ_API_KEY`). Full Backend
+  suite: 440 passed, 1 skipped. Frontend: `generateLyrics` action in
+  `Frontend/src/routes/groups/[id]/actions/tracks.ts` and a button in
+  `TracksTab.svelte`'s edit panel, `npm run check` clean.
 - 2026-09-15: Fixed a live prod bug (SFCC tester report): "The Challenge of
   Thor" 404'd on load ("Malformed MusicXML... '<' not found"). Root cause:
   `af05222` (2026-09-14) deleted `Backend/fixtures/SFCC/` believing it was
