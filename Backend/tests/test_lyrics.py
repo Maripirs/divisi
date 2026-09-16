@@ -301,6 +301,7 @@ def test_classify_lyric_tokens_raises_on_non_200(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
     monkeypatch.setattr(groq_client, "_call_groq", lambda body: _FakeResponse(500, text="boom"))
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)  # a persistent failure retries once
     with pytest.raises(LyricExtractionError):
         classify_lyric_tokens(_tokens())
 
@@ -315,8 +316,28 @@ def test_classify_lyric_tokens_raises_on_unparseable_content(monkeypatch):
         "_call_groq",
         lambda body: _FakeResponse(200, {"choices": [{"message": {"content": "not json at all"}}]}),
     )
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)  # a persistent failure retries once
     with pytest.raises(LyricExtractionError):
         classify_lyric_tokens(_tokens())
+
+
+def test_classify_lyric_tokens_retries_once_then_succeeds_on_a_flaky_chunk(monkeypatch):
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
+    good_content = json.dumps(
+        {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
+    )
+    responses = [
+        _FakeResponse(200, {"choices": [{"message": {"content": "not json at all"}}]}),
+        _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]}),
+    ]
+    monkeypatch.setattr(groq_client, "_call_groq", lambda body: responses.pop(0))
+
+    voices = classify_lyric_tokens(_tokens())
+    assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
 
 
 def test_classify_lyric_tokens_raises_when_no_api_key_configured(monkeypatch):

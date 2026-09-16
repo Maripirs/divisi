@@ -320,9 +320,11 @@ def classify_lyric_tokens(tokens: list[PdfWordToken]) -> list[dict]:
     stay under the account's tokens-per-minute cap, and return
     `[{"voice": str | None, "syllables": [{"text": str, "syllabic": str}]}]`,
     syllables in reading order per voice (concatenated across chunks in
-    page order). Raises `LyricExtractionError` on any failure -- missing
-    API key, network error, non-200, or a response that doesn't parse
-    into this shape."""
+    page order). Each chunk gets one retry on failure; a chunk that still
+    fails after that is skipped (its page just contributes no lyrics)
+    rather than losing the whole piece over one bad response. Raises
+    `LyricExtractionError` only for a missing API key, or if literally
+    every chunk failed and there's nothing to return at all."""
     settings = get_settings()
     if not settings.groq_api_key:
         raise LyricExtractionError("Lyric generation is not configured (no Groq API key set)")
@@ -330,7 +332,25 @@ def classify_lyric_tokens(tokens: list[PdfWordToken]) -> list[dict]:
     chunks = _chunk_tokens_by_page(tokens)
     merged: dict[str | None, list[dict]] = {}
     for i, chunk in enumerate(chunks):
-        voices, wait_seconds = _classify_chunk(chunk)
+        # A long piece means many sequential calls (one per chunk), each
+        # with some nonzero chance of a flaky response (a truncated or
+        # malformed JSON body, a transient network error) -- hit this for
+        # real on a 6-chunk piece where one chunk's response just wasn't
+        # parseable. One retry recovers from that without adding much
+        # total wait; if a chunk still fails after its retry, skip just
+        # that chunk (log it) rather than losing the whole piece's lyrics
+        # over one bad response -- same "show what we can" philosophy the
+        # rest of this feature already follows for partial results.
+        try:
+            voices, wait_seconds = _classify_chunk(chunk)
+        except LyricExtractionError:
+            logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+            time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+            try:
+                voices, wait_seconds = _classify_chunk(chunk)
+            except LyricExtractionError:
+                logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
+                voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])
         if i < len(chunks) - 1:
