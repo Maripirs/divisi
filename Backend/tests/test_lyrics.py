@@ -109,6 +109,57 @@ def test_inject_lyrics_ignores_unmatched_voice_and_unrecognized_part_name():
         assert el.lyrics == []
 
 
+def test_inject_lyrics_falls_back_to_positional_satb_when_no_part_has_a_recognizable_name():
+    """Hit this for real on a piece whose MusicXML came from an OMR tool
+    that only wrote generic `<part-name>Part 1</part-name>`..`Part 4`
+    metadata -- the real SOPRANO/ALTO/TENOR/BASS labels lived only as
+    printed page text, never in the part names music21 sees."""
+    score = stream.Score()
+    for i, name in enumerate(["Part 1", "Part 2", "Part 3", "Part 4"]):
+        part = stream.Part()
+        part.partName = name
+        measure = stream.Measure(number=1)
+        measure.append(note.Note("C4", quarterLength=1))
+        part.append(measure)
+        score.append(part)
+
+    written = inject_lyrics(
+        score,
+        [
+            {"voice": "soprano", "syllables": [{"text": "So", "syllabic": "single"}]},
+            {"voice": "bass", "syllables": [{"text": "Ba", "syllabic": "single"}]},
+        ],
+    )
+    assert written == 2
+    part1, part2, part3, part4 = score.parts
+    assert [ly.text for n in part1.flatten().notes for ly in n.lyrics] == ["So"]
+    assert list(part2.flatten().notes)[0].lyrics == []
+    assert list(part3.flatten().notes)[0].lyrics == []
+    assert [ly.text for n in part4.flatten().notes for ly in n.lyrics] == ["Ba"]
+
+
+def test_inject_lyrics_does_not_use_positional_fallback_when_any_part_is_named():
+    """The fallback only engages when NOT ONE part has a recognizable
+    name -- a piece that names even one part correctly (here, only the
+    third part is "Tenor") must not have its other, genuinely-unnamed
+    parts silently reassigned by position."""
+    score = stream.Score()
+    for name in ["Part 1", "Part 2", "Tenor", "Part 4"]:
+        part = stream.Part()
+        part.partName = name
+        measure = stream.Measure(number=1)
+        measure.append(note.Note("C4", quarterLength=1))
+        part.append(measure)
+        score.append(part)
+
+    written = inject_lyrics(
+        score, [{"voice": "soprano", "syllables": [{"text": "So", "syllabic": "single"}]}]
+    )
+    # "soprano" was never a recognized part name here (only "tenor" was),
+    # so it stays unmatched rather than falling back to "Part 1" by position.
+    assert written == 0
+
+
 def test_inject_lyrics_serializes_to_musicxml_lyric_elements(tmp_path):
     score = stream.Score()
     part = stream.Part()

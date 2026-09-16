@@ -116,7 +116,23 @@ export const trackActions = {
 		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'generateLyrics' });
 
 		return runAction('generateLyrics', () =>
-			backendFetch(locals.token, `/library/pieces/${pieceId}/generate-lyrics`, { method: 'POST' }, fetch)
+			backendFetch(
+				locals.token,
+				`/library/pieces/${pieceId}/generate-lyrics`,
+				{
+					method: 'POST',
+					// `backendFetch`'s default 20s timeout (right for every other
+					// call in this file) is far too short here: the Backend
+					// paces its Groq calls per page against the account's real
+					// free-tier rate limit, which measured ~130s end to end for
+					// a 15-page piece and scales with page count. Hit the
+					// default timeout for real testing this against a real
+					// multi-page piece ("Couldn't reach the server" even though
+					// the Backend was still working) before adding this.
+					signal: AbortSignal.timeout(5 * 60 * 1000)
+				},
+				fetch
+			)
 		);
 	},
 

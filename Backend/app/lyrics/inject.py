@@ -41,14 +41,26 @@ def _match_parts_to_voices(score: stream.Score) -> dict[str, stream.Part]:
     """One music21 `Part` per recognized voice name, first match wins in
     top-to-bottom part order. A divisi pair like "Soprano 1"/"Soprano 2"
     both normalize to "soprano" -- only the first gets lyrics, an
-    acknowledged limitation (see this feature's own report)."""
+    acknowledged limitation (see this feature's own report).
+
+    Falls back to positional SATB order (first four parts, top to bottom)
+    when NOT ONE part carries a recognizable voice name -- hit this for
+    real on a piece whose MusicXML came from an OMR tool that only wrote
+    generic `<part-name>Part 1</part-name>` .. `Part N` metadata, with the
+    real SOPRANO/ALTO/TENOR/BASS labels living only as printed page text,
+    never as part metadata at all. Standard choral engraving order is
+    top-to-bottom SATB, so this is a safe default when there's truly no
+    name to go on. Only engages when matching finds nothing at all, so it
+    never overrides a piece that names even one part correctly."""
     matched: dict[str, stream.Part] = {}
     for part in score.parts:
         part_id = part.id if isinstance(part.id, str) else None
         voice = _normalize_voice(part.partName) or _normalize_voice(part_id)
         if voice and voice not in matched:
             matched[voice] = part
-    return matched
+    if matched:
+        return matched
+    return dict(zip(_CANONICAL_VOICES, score.parts))
 
 
 def _is_singable_onset(el: GeneralNote) -> bool:
