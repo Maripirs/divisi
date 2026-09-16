@@ -80,11 +80,23 @@
 </main>
 
 <style>
+	/* Overrides `shell.css`'s global `.shell` (max-width: 640px, sized for
+	   every other page's single-column mobile-first content) -- scoped to
+	   just the `<main>` this component renders, so no other page is
+	   affected. A side-by-side PDF/score comparison needs real width to be
+	   useful; capping it to a phone-sized column left most of a desktop
+	   viewport empty for no reason. */
+	.shell {
+		max-width: min(1600px, 96vw);
+		padding-left: 1.1rem;
+		padding-right: 1.1rem;
+	}
+
 	.review-page {
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
-		padding: 0.75rem 1rem 1rem;
+		padding: 0.75rem 0 1rem;
 		min-height: 0;
 		flex: 1;
 	}
@@ -165,8 +177,8 @@
 
 	.pane {
 		position: relative;
-		height: 65vh;
-		min-height: 22rem;
+		height: 70vh;
+		min-height: 24rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		overflow: hidden;
