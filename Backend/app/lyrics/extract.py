@@ -27,6 +27,13 @@ class PdfWordToken:
     x1: float
     y1: float
     page: int  # 0-based page index
+    # PyMuPDF's own block/line grouping (see `page.get_text("words")`'s
+    # return shape below) -- lets a caller re-join words into the same
+    # visual line without re-deriving it from y-coordinates. Defaulted so
+    # existing call sites/tests that only care about `text`/`page` don't
+    # need updating.
+    block_no: int = 0
+    line_no: int = 0
 
 
 # Below this many total non-whitespace characters across the *whole*
@@ -53,11 +60,20 @@ def extract_word_tokens(pdf_path: str) -> list[PdfWordToken]:
     with pymupdf.open(pdf_path) as doc:
         for page_index, page in enumerate(doc):
             total_chars += len(page.get_text().strip())
-            for x0, y0, x1, y1, word, *_rest in page.get_text("words"):
+            for x0, y0, x1, y1, word, block_no, line_no, _word_no in page.get_text("words"):
                 word = word.strip()
                 if word:
                     tokens.append(
-                        PdfWordToken(text=word, x0=x0, y0=y0, x1=x1, y1=y1, page=page_index)
+                        PdfWordToken(
+                            text=word,
+                            x0=x0,
+                            y0=y0,
+                            x1=x1,
+                            y1=y1,
+                            page=page_index,
+                            block_no=block_no,
+                            line_no=line_no,
+                        )
                     )
 
     if total_chars < _MIN_TOTAL_CHARS:

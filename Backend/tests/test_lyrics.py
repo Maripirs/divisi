@@ -190,10 +190,11 @@ def test_extract_word_tokens_raises_on_a_blank_scanned_looking_pdf(tmp_path):
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict | None = None, text: str = ""):
+    def __init__(self, status_code: int, payload: dict | None = None, text: str = "", headers: dict | None = None):
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -273,6 +274,81 @@ def test_classify_lyric_tokens_raises_when_no_api_key_configured(monkeypatch):
     monkeypatch.setattr(get_settings(), "groq_api_key", "")
     with pytest.raises(LyricExtractionError):
         classify_lyric_tokens(_tokens())
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("31.365s", pytest.approx(31.365)),
+        ("1m26.4s", pytest.approx(86.4)),
+        ("615ms", pytest.approx(0.615)),
+        ("2m0s", pytest.approx(120.0)),
+        ("", None),
+        ("garbage", None),
+    ],
+)
+def test_parse_groq_duration(value, expected):
+    from app.lyrics.groq_client import _parse_groq_duration
+
+    result = _parse_groq_duration(value)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == expected
+
+
+def test_chunk_tokens_by_page_keeps_whole_pages_together_under_the_char_budget(monkeypatch):
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(groq_client, "_MAX_CHARS_PER_CHUNK", 4000)
+    # Three pages of ~1500 rendered chars each (300 five-char "word "
+    # tokens): the first two fit in one 4000-char chunk (3000 total), the
+    # third would push it to 4500, so it starts a new chunk on its own.
+    tokens = [
+        PdfWordToken(text="word", x0=0, y0=0, x1=1, y1=1, page=page, block_no=0, line_no=i)
+        for page in range(3)
+        for i in range(300)
+    ]
+    chunks = groq_client._chunk_tokens_by_page(tokens)
+    assert len(chunks) == 2
+    assert {t.page for t in chunks[0]} == {0, 1}
+    assert {t.page for t in chunks[1]} == {2}
+
+
+def test_classify_lyric_tokens_merges_voices_across_chunks_in_page_order(monkeypatch):
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    monkeypatch.setattr(groq_client, "_MAX_CHARS_PER_CHUNK", 1)  # force one page per chunk
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
+
+    tokens = [
+        PdfWordToken(text="Ky-", x0=0, y0=0, x1=1, y1=1, page=0),
+        PdfWordToken(text="ri-", x0=0, y0=0, x1=1, y1=1, page=1),
+    ]
+    responses = [
+        _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": json.dumps(
+                {"voices": [{"voice": "soprano", "syllables": [{"text": "Ky-", "syllabic": "begin"}]}]}
+            )}}]},
+            headers={"x-ratelimit-reset-tokens": "1ms"},
+        ),
+        _FakeResponse(
+            200,
+            {"choices": [{"message": {"content": json.dumps(
+                {"voices": [{"voice": "soprano", "syllables": [{"text": "e.", "syllabic": "end"}]}]}
+            )}}]},
+            headers={"x-ratelimit-reset-tokens": "1ms"},
+        ),
+    ]
+    monkeypatch.setattr(groq_client, "_call_groq", lambda body: responses.pop(0))
+
+    voices = classify_lyric_tokens(tokens)
+    assert voices == [
+        {"voice": "soprano", "syllables": [{"text": "Ky-", "syllabic": "begin"}, {"text": "e.", "syllabic": "end"}]}
+    ]
 
 
 @pytest.mark.integration
