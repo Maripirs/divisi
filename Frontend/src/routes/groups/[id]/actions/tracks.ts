@@ -129,20 +129,29 @@ export const trackActions = {
 					// default timeout for real testing this against a real
 					// multi-page piece ("Couldn't reach the server" even though
 					// the Backend was still working) before adding this.
-					// Widened from 5 to 12 minutes once the Backend grew an
-					// NVIDIA fallback for when Groq's rate limit (or daily
-					// quota) blocks it: once Groq's confirmed down (a ~35s
-					// retry cost paid once, not per chunk), every
-					// remaining chunk goes to NVIDIA individually, and its
-					// per-request latency is meaningfully higher than
-					// Groq's (per-chunk `_NVIDIA_TIMEOUT_SECONDS` of 180s
-					// in groq_client.py). A 6-chunk piece needing NVIDIA
-					// for everything realistically lands around 9-10
-					// minutes total; 12 leaves margin above that without
-					// chasing the absolute worst case (every chunk hitting
-					// its own timeout ceiling), which this project's other
-					// timeouts don't fully guard against either.
-					signal: AbortSignal.timeout(12 * 60 * 1000)
+					// Widened from 5 to 12 to 15 minutes as the Backend's
+					// NVIDIA fallback (for when Groq's rate limit or daily
+					// quota blocks it) grew its own per-chunk timeout: once
+					// Groq's confirmed down (a ~35s retry cost paid once,
+					// not per chunk), every remaining chunk goes to NVIDIA
+					// individually, each up to `_NVIDIA_TIMEOUT_SECONDS`
+					// (groq_client.py, 220s as of 2026-09-16, raised from
+					// 180 after two real ReadTimeouts in production) plus
+					// one retry. A 6-chunk piece needing NVIDIA for
+					// everything realistically lands around 10-12 minutes
+					// total; 15 leaves margin above that without chasing
+					// the absolute worst case (every chunk hitting its own
+					// timeout ceiling twice), which this project's other
+					// timeouts don't fully guard against either. Even this
+					// is not a full fix -- a request this long is
+					// fundamentally a poor fit for a synchronous
+					// browser-initiated HTTP call (Cloudflare Workers/Pages
+					// impose their own wall-clock limits this can't see or
+					// extend); a background-job-with-polling redesign is
+					// the real fix if NVIDIA-fallback runs keep being
+					// common, tracked as a follow-up rather than solved
+					// here.
+					signal: AbortSignal.timeout(15 * 60 * 1000)
 				},
 				fetch
 			)

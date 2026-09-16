@@ -414,7 +414,79 @@ def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkey
     assert len(nvidia_calls) == 1
     assert nvidia_calls[0]["model"] == get_settings().nvidia_lyrics_model
     assert nvidia_calls[0]["chat_template_kwargs"] == {"thinking": False}
-    assert nvidia_calls[0]["max_tokens"] == 4500
+    assert nvidia_calls[0]["max_tokens"] == 5500
+    assert nvidia_calls[0]["frequency_penalty"] == 0.4
+
+
+# --- _normalize_alternate_voice_shape: recovering NVIDIA's schema drift ----
+# Observed live in production (2026-09-16, first real per-chunk NVIDIA run):
+# despite the system prompt spelling out the exact `{"voices": [...]}`
+# shape, nemotron sometimes drops the wrapper and returns one top-level key
+# per voice instead. This was the single biggest source of lost chunks in
+# that run -- the content itself was almost always correct, just shaped
+# wrong, and got discarded entirely before this fix.
+
+
+def test_normalize_alternate_voice_shape_recovers_bare_voice_keys():
+    from app.lyrics.groq_client import _normalize_alternate_voice_shape
+
+    # The simplest drift seen live: no "voice" field inside at all.
+    parsed = {"soprano": {"syllables": [{"text": "Ah", "syllabic": "single"}]}}
+    assert _normalize_alternate_voice_shape(parsed) == [
+        {"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}
+    ]
+
+
+def test_normalize_alternate_voice_shape_recovers_multiple_voices_with_redundant_voice_field():
+    from app.lyrics.groq_client import _normalize_alternate_voice_shape
+
+    # The other drift shape seen live: a redundant (and here, intentionally
+    # mismatched) "voice" field inside each entry -- the top-level key wins.
+    parsed = {
+        "soprano": {"voice": "alto", "syllables": [{"text": "Gos", "syllabic": "single"}]},
+        "alto": {"voice": "alto", "syllables": [{"text": "Gos", "syllabic": "single"}]},
+    }
+    result = _normalize_alternate_voice_shape(parsed)
+    assert {(e["voice"], e["syllables"][0]["text"]) for e in result} == {
+        ("soprano", "Gos"),
+        ("alto", "Gos"),
+    }
+
+
+def test_normalize_alternate_voice_shape_rejects_anything_not_all_valid_voice_keys():
+    from app.lyrics.groq_client import _normalize_alternate_voice_shape
+
+    # A single non-voice top-level key (the correctly-shaped "voices"
+    # response, or genuinely unrecognizable content) must NOT be guessed at
+    # -- falls through to the normal unparseable-response error path.
+    assert _normalize_alternate_voice_shape({"voices": []}) is None
+    assert _normalize_alternate_voice_shape({"soprano": ["not", "a", "dict"]}) is None
+    assert _normalize_alternate_voice_shape({"soprano": {"syllables": [{}]}, "notavoice": {"syllables": []}}) is None
+    assert _normalize_alternate_voice_shape({}) is None
+
+
+def test_classify_chunk_nvidia_recovers_a_schema_drifted_response(monkeypatch):
+    """End-to-end through the real NVIDIA call path: a response shaped like
+    the live production drift (`{"soprano": {...}}` instead of `{"voices":
+    [...]}`) is recovered rather than thrown away and retried."""
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "nvidia_api_key", "test-nvidia-key")
+    drifted_content = json.dumps(
+        {"soprano": {"syllables": [{"text": "Ah", "syllabic": "single"}]}}
+    )
+    calls = []
+
+    def _fake_nvidia(body):
+        calls.append(body)
+        return _FakeResponse(200, {"choices": [{"message": {"content": drifted_content}}]})
+
+    monkeypatch.setattr(groq_client, "_call_nvidia", _fake_nvidia)
+
+    voices = groq_client._classify_chunk_nvidia(_tokens(), None)
+    assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
+    assert len(calls) == 1  # recovered on the first attempt, no retry needed
 
 
 def test_classify_lyric_tokens_sends_every_chunk_after_the_failure_to_nvidia(monkeypatch):

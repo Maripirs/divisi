@@ -72,10 +72,12 @@ _NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 _TIMEOUT_SECONDS = 60.0
 # NVIDIA's measured generation rate is ~37-47 completion tokens/sec
 # (derived from two real requests: ~94s for 3500 truncated tokens, ~170s
-# for 8000 completed ones). At this module's per-chunk `max_tokens: 4500`
-# (see `_nvidia_body`), worst-case generation alone is ~120s; 180s leaves
-# real margin above that for request/queueing overhead.
-_NVIDIA_TIMEOUT_SECONDS = 180.0
+# for 8000 completed ones). At this module's per-chunk `max_tokens: 5500`
+# (see `_nvidia_body`), worst-case generation alone is ~150s; 220s leaves
+# real margin above that for request/queueing overhead. Raised from 180
+# after the first real per-chunk production run (2026-09-16) hit two
+# genuine `httpx.ReadTimeout`s at the old ceiling.
+_NVIDIA_TIMEOUT_SECONDS = 220.0
 # Pause after a chunk served by NVIDIA, in place of Groq's adaptive
 # `_seconds_until_reset` (NVIDIA's endpoint returns no rate-limit headers
 # at all to pace off of -- confirmed empirically).
@@ -368,6 +370,36 @@ def _chunk_tokens_by_page(tokens: list[PdfWordToken]) -> list[list[PdfWordToken]
     return chunks
 
 
+def _normalize_alternate_voice_shape(parsed: dict) -> list[dict] | None:
+    """Recover a `{"voices": [...]}` list from a schema-drifted NVIDIA
+    response. Observed live in production (2026-09-16, first real run of
+    the per-chunk NVIDIA fallback): despite the system prompt spelling out
+    the exact `{"voices": [{"voice": ..., "syllables": [...]}]}` shape,
+    nemotron sometimes instead returns one top-level key per voice, e.g.
+    `{"soprano": {"syllables": [...]}}` or `{"soprano": {"voice":
+    "soprano", "syllables": [...]}, "alto": {...}}` -- the wrapper
+    dropped, each voice's dict promoted to a top-level key. This was the
+    single biggest source of lost chunks in that run (5 of ~9 failures):
+    the content was almost always genuinely correct, just shaped wrong,
+    and got thrown away entirely rather than recovered.
+
+    Only recognizes this specific drift: EVERY top-level key must be a
+    valid voice name whose value is a dict with a "syllables" list --
+    anything else (including the real degenerate-repetition garbage also
+    seen in that run, e.g. a wall of "ellsellsells...") falls through to
+    the normal unparseable-response error path rather than guessing."""
+    if not parsed:
+        return None
+    entries: list[dict] = []
+    for key, value in parsed.items():
+        if not isinstance(key, str) or key.lower() not in VALID_VOICES:
+            return None
+        if not isinstance(value, dict) or not isinstance(value.get("syllables"), list):
+            return None
+        entries.append({"voice": key.lower(), "syllables": value["syllables"]})
+    return entries or None
+
+
 def _extract_json(text: str) -> dict | None:
     """Pull the first balanced `{...}` object out of a model response that
     may wrap JSON in prose or code fences, then parse it. Returns None if
@@ -469,6 +501,16 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
         # live: with it, a real chunk's response started with `{"voices":`
         # immediately, no preamble at all.
         "chat_template_kwargs": {"thinking": False},
+        # A mild penalty against the model repeating the same tokens
+        # rather than genuinely continuing -- added after the first real
+        # per-chunk production run (2026-09-16) hit a degenerate
+        # repetition loop on one chunk (content devolved into a wall of
+        # "ellsellsellsells..." until it wasn't valid JSON at all, wasting
+        # that chunk's whole token budget on nothing). Standard
+        # OpenAI-compatible param name; 0.4 is a light touch, enough to
+        # break a loop without discouraging real repeated words a lyric
+        # legitimately has (e.g. "Thor, Thor, hear me").
+        "frequency_penalty": 0.4,
         # Per-chunk, same page-sized scope as Groq's own `_groq_body`
         # (see that function's comment for the "why 3500" reasoning this
         # mirrors) -- NOT sized for a whole piece (tried that: a single
@@ -476,10 +518,12 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
         # tokens for a real 15-page piece's full syllable count, hit real
         # truncation, and the module docstring covers why per-chunk beat
         # that approach on both truncation risk and partial-success
-        # behavior for about the same total wall-clock cost). A little
-        # higher than Groq's 3500 since NVIDIA's reasoning-suppressed
-        # output ran slightly more verbose in testing.
-        "max_tokens": 4500,
+        # behavior for about the same total wall-clock cost). Raised from
+        # 4500 to 5500 after the first real per-chunk production run
+        # (2026-09-16) hit real truncation mid-generation at 4500 despite
+        # this already being higher than Groq's own 3500 for the same
+        # onset-budget-aware prompt.
+        "max_tokens": 5500,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(tokens, remaining)},
@@ -508,6 +552,10 @@ def _call_and_parse(
     data = response.json()
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
     parsed = _extract_json(content)
+    if parsed is not None and "voices" not in parsed:
+        normalized = _normalize_alternate_voice_shape(parsed)
+        if normalized is not None:
+            parsed = {"voices": normalized}
     if parsed is None or "voices" not in parsed:
         logger.warning("%s lyric response wasn't parseable JSON: %r", provider_name, content[:500])
         raise LyricExtractionError(f"{provider_name} response wasn't valid JSON in the expected shape")
