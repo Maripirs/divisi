@@ -375,10 +375,10 @@ def test_classify_lyric_tokens_raises_when_no_api_key_configured(monkeypatch):
 
 # --- groq_client.py: NVIDIA fallback (Groq's per-minute AND per-day caps) --
 #
-# NVIDIA is deliberately NOT a per-chunk fallback (see
-# `_classify_remainder_via_nvidia`'s doc comment): the first chunk Groq
-# fails twice on triggers ONE NVIDIA call covering that chunk plus every
-# chunk after it, not a repeated per-chunk fallback.
+# Per chunk, same as Groq (see the module docstring for why the earlier
+# whole-remainder design was replaced with this): once Groq fails twice on
+# one chunk, it's assumed down for the rest of the run and every chunk from
+# there on goes to NVIDIA individually.
 
 
 def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkeypatch):
@@ -386,7 +386,7 @@ def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkey
     (no reset-time header, unlike the per-minute one) got exhausted for
     real during a day of testing this feature -- every Groq attempt fails
     identically, so the one retry doesn't help, but NVIDIA (a separate
-    account/quota) picks up the whole remainder in one call."""
+    account/quota) picks up this chunk."""
     from app.core.config import get_settings
     from app.lyrics import groq_client
 
@@ -414,13 +414,13 @@ def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkey
     assert len(nvidia_calls) == 1
     assert nvidia_calls[0]["model"] == get_settings().nvidia_lyrics_model
     assert nvidia_calls[0]["chat_template_kwargs"] == {"thinking": False}
-    assert nvidia_calls[0]["max_tokens"] == 16000
+    assert nvidia_calls[0]["max_tokens"] == 4500
 
 
-def test_classify_lyric_tokens_combines_every_remaining_chunk_into_one_nvidia_call(monkeypatch):
-    """Three chunks; Groq fails on the first. All three (not just the
-    first) should land in the single NVIDIA call, since NVIDIA's high
-    per-request latency makes a per-chunk fallback impractical."""
+def test_classify_lyric_tokens_sends_every_chunk_after_the_failure_to_nvidia(monkeypatch):
+    """Three chunks; Groq fails on the first. The second and third should
+    go straight to NVIDIA too, without Groq being retried on them (the
+    sticky "Groq is down" flag)."""
     from app.core.config import get_settings
     from app.lyrics import groq_client
 
@@ -428,7 +428,12 @@ def test_classify_lyric_tokens_combines_every_remaining_chunk_into_one_nvidia_ca
     monkeypatch.setattr(get_settings(), "nvidia_api_key", "test-nvidia-key")
     monkeypatch.setattr(groq_client, "_MAX_CHARS_PER_CHUNK", 1)  # force one page per chunk
     monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
-    monkeypatch.setattr(groq_client, "_call_groq", lambda body: _FakeResponse(429, text="rate limited"))
+    groq_calls = []
+    monkeypatch.setattr(
+        groq_client,
+        "_call_groq",
+        lambda body: (groq_calls.append(body), _FakeResponse(429, text="rate limited"))[1],
+    )
     good_content = json.dumps(
         {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
     )
@@ -447,11 +452,13 @@ def test_classify_lyric_tokens_combines_every_remaining_chunk_into_one_nvidia_ca
     ]
     classify_lyric_tokens(tokens)
 
-    assert len(nvidia_calls) == 1
-    sent_prompt = nvidia_calls[0]["messages"][1]["content"]
-    assert "Ky-" in sent_prompt
-    assert "ri-" in sent_prompt
-    assert "e" in sent_prompt
+    # Groq attempted twice (initial + one retry), only for the first chunk.
+    assert len(groq_calls) == 2
+    # NVIDIA served all three chunks, each with just its own page's tokens.
+    assert len(nvidia_calls) == 3
+    assert "Ky-" in nvidia_calls[0]["messages"][1]["content"]
+    assert "ri-" in nvidia_calls[1]["messages"][1]["content"]
+    assert "e" in nvidia_calls[2]["messages"][1]["content"]
 
 
 def test_classify_lyric_tokens_does_not_fall_back_when_no_nvidia_key_configured(monkeypatch):
@@ -473,7 +480,19 @@ def test_classify_lyric_tokens_does_not_fall_back_when_no_nvidia_key_configured(
     assert nvidia_calls == []
 
 
-def test_classify_remainder_via_nvidia_calls_nvidia_directly(monkeypatch):
+def test_classify_chunk_nvidia_retries_once_then_gives_up_on_that_chunk_only(monkeypatch):
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "nvidia_api_key", "test-nvidia-key")
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(groq_client, "_call_nvidia", lambda body: _FakeResponse(500, text="boom"))
+
+    voices = groq_client._classify_chunk_nvidia(_tokens(), None)
+    assert voices == []
+
+
+def test_classify_chunk_nvidia_calls_nvidia_directly(monkeypatch):
     from app.core.config import get_settings
     from app.lyrics import groq_client
 
@@ -487,15 +506,15 @@ def test_classify_remainder_via_nvidia_calls_nvidia_directly(monkeypatch):
         lambda body: _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]}),
     )
 
-    voices = groq_client._classify_remainder_via_nvidia(_tokens(), None)
+    voices = groq_client._classify_chunk_nvidia(_tokens(), None)
     assert voices == [{"voice": "alto", "syllables": [{"text": "Oh", "syllabic": "single"}]}]
 
 
 def test_classify_lyric_tokens_works_with_only_an_nvidia_key_configured(monkeypatch):
     """An empty groq_api_key shouldn't hard-block the whole feature if
     NVIDIA alone is configured -- Groq just fails fast (an auth error,
-    twice, same as any other Groq failure) and the whole-remainder
-    fallback picks it up."""
+    twice, same as any other Groq failure) and the per-chunk fallback
+    picks it up."""
     from app.core.config import get_settings
     from app.lyrics import groq_client
 

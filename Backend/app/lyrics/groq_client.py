@@ -30,16 +30,27 @@ models narrate their whole chain-of-thought directly in `content` with
 no separate field to skip past) once Groq is confirmed unusable and an
 NVIDIA key is configured -- a completely separate account/quota, so a
 Groq outage or exhausted daily cap doesn't stall the whole feature.
-Deliberately NOT a per-chunk fallback the way Groq's own calls are:
-measured NVIDIA's per-request latency at ~94s for a single Groq-sized
-chunk (2-3 pages), against Groq's typical few seconds, so repeating a
-fallback per remaining chunk would take many minutes for a real piece.
-Instead, the first chunk Groq fails on triggers ONE NVIDIA call covering
-that chunk plus every chunk after it (see
-`_classify_remainder_via_nvidia`) -- NVIDIA has already proven capable of
-an entire 15-page piece in one request (~170s). NVIDIA's endpoint also
-exposes no rate-limit headers at all (confirmed empirically), so there's
-no adaptive pacing to do for it the way there is for Groq.
+
+Per chunk, same as Groq, not one call for the whole remainder -- tried
+combining every remaining chunk into a single request first, reasoning
+that NVIDIA's per-request latency looked too high for a per-chunk
+fallback to be practical (~94s for one Groq-sized chunk). Two real
+measurements (~94s for 3500 truncated completion tokens, ~170s for 8000
+completed ones) turned out consistent with latency being driven almost
+entirely by how many tokens get *generated*, not a fixed per-request
+cost -- so the "one big request" approach doesn't save meaningful time
+over the total generation work either shape has to do, while making
+truncation far more likely (a whole piece's total syllable count is much
+harder to budget for than one page's) and turning any single failure
+into a total loss instead of one lost page. Per-chunk keeps the same
+per-page partial-success behavior Groq already has, at comparable total
+wall-clock cost. Once Groq fails twice on one chunk, it's assumed down
+for the rest of the run (an exhausted daily cap fails identically on
+every subsequent call, so retrying Groq on every later chunk would just
+waste each chunk's retry-and-sleep cycle for nothing) and every
+following chunk goes straight to NVIDIA. NVIDIA's endpoint exposes no
+rate-limit headers at all (confirmed empirically), so chunks it serves
+are paced with a short fixed pause instead of Groq's adaptive one.
 """
 
 from __future__ import annotations
@@ -59,18 +70,21 @@ logger = logging.getLogger("divisi.lyrics")
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 _NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 _TIMEOUT_SECONDS = 60.0
-# NVIDIA's own per-request latency runs far higher than Groq's -- measured
-# ~94s for a single *chunk*-sized request (one that fit Groq's much
-# tighter per-minute budget easily), against Groq's typical few seconds.
-# Sized to cover the single whole-remainder call this module makes (see
-# `_classify_remainder_via_nvidia`) at its current `max_tokens: 16000` --
-# an earlier, smaller 8000-token budget's generation measured ~170s for a
-# whole 15-page piece (~47 completion tokens/sec), so 16000 tokens'
-# worth of real generation time alone could approach 340s before any
-# request/queueing overhead. 400s leaves real margin above that estimate;
-# the Frontend's own timeout for this action is sized to stay above this
-# plus the Groq retry that precedes it (see `tracks.ts`).
-_NVIDIA_TIMEOUT_SECONDS = 400.0
+# NVIDIA's measured generation rate is ~37-47 completion tokens/sec
+# (derived from two real requests: ~94s for 3500 truncated tokens, ~170s
+# for 8000 completed ones). At this module's per-chunk `max_tokens: 4500`
+# (see `_nvidia_body`), worst-case generation alone is ~120s; 180s leaves
+# real margin above that for request/queueing overhead.
+_NVIDIA_TIMEOUT_SECONDS = 180.0
+# Pause after a chunk served by NVIDIA, in place of Groq's adaptive
+# `_seconds_until_reset` (NVIDIA's endpoint returns no rate-limit headers
+# at all to pace off of -- confirmed empirically).
+_NVIDIA_PAUSE_SECONDS = 3.0
+# Short pause before retrying once on a failed NVIDIA chunk (a transient
+# network blip, a malformed response) -- much shorter than Groq's own
+# `_FALLBACK_SECONDS_BETWEEN_CHUNKS`, which is sized around Groq's
+# tokens-per-minute refill rate and doesn't apply to NVIDIA at all.
+_NVIDIA_RETRY_PAUSE_SECONDS = 5.0
 
 # Chunk size, in rendered characters of page text, per Groq call. This
 # account's real free-tier cap is 8000 tokens/minute *total* (prompt +
@@ -392,10 +406,9 @@ def _call_groq(body: dict) -> httpx.Response:
 
 def _call_nvidia(body: dict) -> httpx.Response:
     """The fallback provider's HTTP call, tried only when Groq fails and
-    an NVIDIA key is configured (see `_classify_remainder_via_nvidia`).
-    Factored out the same way as `_call_groq` so tests can monkeypatch it
-    independently. Its own, much longer timeout: see
-    `_NVIDIA_TIMEOUT_SECONDS`."""
+    an NVIDIA key is configured (see `_classify_chunk_nvidia`). Factored
+    out the same way as `_call_groq` so tests can monkeypatch it
+    independently. Its own timeout: see `_NVIDIA_TIMEOUT_SECONDS`."""
     settings = get_settings()
     return httpx.post(
         _NVIDIA_URL,
@@ -456,20 +469,17 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
         # live: with it, a real chunk's response started with `{"voices":`
         # immediately, no preamble at all.
         "chat_template_kwargs": {"thinking": False},
-        # Big enough for a WHOLE piece's worth of syllables in one
-        # response, since this is used for the whole-remainder fallback
-        # call (see `_classify_remainder_via_nvidia`), not a single small
-        # chunk. Raised from an initial 8000 after hitting real truncation
-        # on a real 15-page piece (4 voices x ~250 syllables each, each a
-        # `{"text": ..., "syllabic": ...}` JSON object -- roughly 12k+
-        # tokens just for the syllable arrays, before structural
-        # overhead): the onset-count budget block in the prompt makes the
-        # model count and name things more literally/verbosely (same
-        # effect already hit and fixed for Groq's own max_tokens), so an
-        # 8000 budget that was enough for an earlier, simpler prompt
-        # wasn't enough for this one. 16000 leaves real margin above the
-        # ~12k-token estimate.
-        "max_tokens": 16000,
+        # Per-chunk, same page-sized scope as Groq's own `_groq_body`
+        # (see that function's comment for the "why 3500" reasoning this
+        # mirrors) -- NOT sized for a whole piece (tried that: a single
+        # request covering every remaining chunk needed well over 8000
+        # tokens for a real 15-page piece's full syllable count, hit real
+        # truncation, and the module docstring covers why per-chunk beat
+        # that approach on both truncation risk and partial-success
+        # behavior for about the same total wall-clock cost). A little
+        # higher than Groq's 3500 since NVIDIA's reasoning-suppressed
+        # output ran slightly more verbose in testing.
+        "max_tokens": 4500,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(tokens, remaining)},
@@ -535,29 +545,33 @@ def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None
     e.g. an instrumental page, not itself an error), and how long the
     caller should wait before firing the next chunk (see
     `_seconds_until_reset`). If Groq itself is unusable (rate limit,
-    outage), see `classify_lyric_tokens`'s NVIDIA fallback -- deliberately
-    NOT handled per-chunk here (see that function's own doc comment for
-    why: NVIDIA's per-request latency is high enough that repeating a
-    per-chunk fallback for a whole piece would take many minutes)."""
+    outage), see `classify_lyric_tokens`'s NVIDIA fallback
+    (`_classify_chunk_nvidia`), not handled here -- this function is
+    Groq-only."""
     voices, response = _call_and_parse(_call_groq, _groq_body(tokens, remaining), "Groq")
     return voices, _seconds_until_reset(response)
 
 
-def _classify_remainder_via_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> list[dict]:
-    """Groq's whole-piece fallback: ONE NVIDIA call covering every token
-    passed in (not re-chunked), used for whatever pages hadn't been
-    classified yet when Groq was confirmed unusable.
-
-    Deliberately NOT a per-chunk fallback (mirroring Groq's own chunked
-    calls) -- measured NVIDIA's per-request latency at ~94s for a single
-    Groq-sized *chunk* (2-3 pages), against Groq's typical few seconds.
-    Repeating that per remaining chunk would take many minutes for a real
-    piece; one combined call amortizes NVIDIA's high per-request latency
-    across the whole remainder instead, and NVIDIA has already proven
-    capable of an entire 15-page piece in one request (~170s, `max_tokens`
-    in `_nvidia_body` sized for exactly this)."""
-    voices, _response = _call_and_parse(_call_nvidia, _nvidia_body(tokens, remaining), "NVIDIA")
-    return voices
+def _classify_chunk_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> list[dict]:
+    """Groq's fallback for one chunk, tried once more after a transient
+    failure (a malformed response, a network blip) before giving up on
+    just this chunk -- see `classify_lyric_tokens` for how this fits into
+    the overall per-piece loop once Groq itself is assumed down. Returns
+    `[]` rather than raising if both attempts fail, so one bad chunk never
+    takes down the pieces around it (same "show what we can" philosophy
+    the rest of this feature follows)."""
+    try:
+        voices, _response = _call_and_parse(_call_nvidia, _nvidia_body(tokens, remaining), "NVIDIA")
+        return voices
+    except LyricExtractionError:
+        logger.warning("NVIDIA chunk failed, retrying once", exc_info=True)
+        time.sleep(_NVIDIA_RETRY_PAUSE_SECONDS)
+        try:
+            voices, _response = _call_and_parse(_call_nvidia, _nvidia_body(tokens, remaining), "NVIDIA")
+            return voices
+        except LyricExtractionError:
+            logger.warning("NVIDIA chunk failed again, skipping it", exc_info=True)
+            return []
 
 
 def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, int] | None = None) -> list[dict]:
@@ -567,12 +581,13 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
     syllables in reading order per voice (concatenated across chunks in
     page order). Each chunk gets one retry on failure. If a chunk still
     fails after that: with an NVIDIA key configured, Groq is assumed down
-    for the rest of the run and every remaining chunk (this one included)
-    is combined into ONE NVIDIA call instead (see
-    `_classify_remainder_via_nvidia`); without one, that chunk is simply
-    skipped (its page contributes no lyrics) rather than losing the whole
-    piece over one bad response. Raises `LyricExtractionError` only for a
-    missing API key, or if literally nothing could be classified at all.
+    for the rest of the run (see the module docstring for why) and every
+    chunk from here on, this one included, goes to NVIDIA instead
+    (`_classify_chunk_nvidia`, itself retried once per chunk the same way
+    Groq is); without a key, that chunk is simply skipped (its page
+    contributes no lyrics) rather than losing the whole piece over one
+    bad response. Raises `LyricExtractionError` only for a missing API
+    key, or if literally nothing could be classified at all.
 
     NVIDIA is a completely separate account/quota from Groq, so it stays
     usable through a Groq outage or an exhausted daily cap (hit the
@@ -595,53 +610,48 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
     chunks = _chunk_tokens_by_page(tokens)
     remaining = dict(onset_counts) if onset_counts else {}
     merged: dict[str | None, list[dict]] = {}
-    i = 0
-    while i < len(chunks):
-        chunk = chunks[i]
-        stop_after_this_chunk = False
-        # A long piece means many sequential calls (one per chunk), each
-        # with some nonzero chance of a flaky response (a truncated or
-        # malformed JSON body, a transient network error) -- hit this for
-        # real on a 6-chunk piece where one chunk's response just wasn't
-        # parseable. One retry recovers from that without adding much
-        # total wait.
-        try:
-            voices, wait_seconds = _classify_chunk(chunk, remaining)
-        except LyricExtractionError:
-            logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
-            time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+    groq_available = True
+    for i, chunk in enumerate(chunks):
+        if groq_available:
+            # A long piece means many sequential Groq calls (one per
+            # chunk), each with some nonzero chance of a flaky response (a
+            # truncated or malformed JSON body, a transient network error)
+            # -- hit this for real on a 6-chunk piece where one chunk's
+            # response just wasn't parseable. One retry recovers from that
+            # without adding much total wait.
             try:
                 voices, wait_seconds = _classify_chunk(chunk, remaining)
             except LyricExtractionError:
-                if settings.nvidia_api_key:
-                    # Groq failed twice in a row on this chunk -- in every
-                    # real case observed building this, that meant Groq
-                    # was down for the rest of the run too (an exhausted
-                    # per-day cap fails identically on every subsequent
-                    # call), so switch entirely to ONE NVIDIA call
-                    # covering this chunk plus every chunk after it,
-                    # rather than repeating the same doomed Groq attempt
-                    # (and a slow NVIDIA fallback) per remaining chunk --
-                    # see `_classify_remainder_via_nvidia`'s own doc
-                    # comment for why per-chunk fallback doesn't work.
-                    logger.warning(
-                        "Groq failed twice on chunk %d/%d; switching to one NVIDIA call for "
-                        "all %d remaining chunk(s)",
-                        i + 1,
-                        len(chunks),
-                        len(chunks) - i,
-                    )
-                    remainder_tokens = [t for c in chunks[i:] for t in c]
-                    try:
-                        voices = _classify_remainder_via_nvidia(remainder_tokens, remaining)
-                    except LyricExtractionError:
-                        logger.warning("NVIDIA fallback also failed", exc_info=True)
-                        voices = []
-                    wait_seconds = 0.0
-                    stop_after_this_chunk = True
-                else:
-                    logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
-                    voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+                logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+                time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+                try:
+                    voices, wait_seconds = _classify_chunk(chunk, remaining)
+                except LyricExtractionError:
+                    if settings.nvidia_api_key:
+                        # Groq failed twice in a row on this chunk -- in
+                        # every real case observed building this, that
+                        # meant Groq was down for the rest of the run too
+                        # (an exhausted per-day cap fails identically on
+                        # every subsequent call), so stop spending each
+                        # later chunk's own retry-and-sleep cycle on a
+                        # provider that's already shown it won't recover;
+                        # this chunk and everything after it goes to
+                        # NVIDIA instead.
+                        logger.warning(
+                            "Groq failed twice on chunk %d/%d; treating it as down for the "
+                            "rest of this run and switching to NVIDIA",
+                            i + 1,
+                            len(chunks),
+                        )
+                        groq_available = False
+                        voices = _classify_chunk_nvidia(chunk, remaining)
+                        wait_seconds = _NVIDIA_PAUSE_SECONDS
+                    else:
+                        logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
+                        voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+        else:
+            voices = _classify_chunk_nvidia(chunk, remaining)
+            wait_seconds = _NVIDIA_PAUSE_SECONDS
 
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])
@@ -649,11 +659,8 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
             if voice in remaining:
                 remaining[voice] = max(0, remaining[voice] - len(entry["syllables"]))
 
-        if stop_after_this_chunk:
-            break
         if i < len(chunks) - 1:
             time.sleep(wait_seconds)
-        i += 1
 
     voices_out = [{"voice": voice, "syllables": syllables} for voice, syllables in merged.items()]
     if not voices_out:

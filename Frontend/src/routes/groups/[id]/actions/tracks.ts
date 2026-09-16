@@ -129,17 +129,20 @@ export const trackActions = {
 					// default timeout for real testing this against a real
 					// multi-page piece ("Couldn't reach the server" even though
 					// the Backend was still working) before adding this.
-					// Widened from 5 to 9 minutes once the Backend grew an
+					// Widened from 5 to 12 minutes once the Backend grew an
 					// NVIDIA fallback for when Groq's rate limit (or daily
-					// quota) blocks it: NVIDIA's own per-request latency is
-					// much higher (measured ~170s for a whole piece in one
-					// call at a smaller completion budget; raised further
-					// to accommodate a bigger budget after hitting real
-					// truncation), so the worst case now stacks a Groq
-					// retry (~35s) plus that NVIDIA call (up to 400s on the
-					// Backend's own side, see `_NVIDIA_TIMEOUT_SECONDS` in
-					// groq_client.py) on top of this action's own baseline.
-					signal: AbortSignal.timeout(9 * 60 * 1000)
+					// quota) blocks it: once Groq's confirmed down (a ~35s
+					// retry cost paid once, not per chunk), every
+					// remaining chunk goes to NVIDIA individually, and its
+					// per-request latency is meaningfully higher than
+					// Groq's (per-chunk `_NVIDIA_TIMEOUT_SECONDS` of 180s
+					// in groq_client.py). A 6-chunk piece needing NVIDIA
+					// for everything realistically lands around 9-10
+					// minutes total; 12 leaves margin above that without
+					// chasing the absolute worst case (every chunk hitting
+					// its own timeout ceiling), which this project's other
+					// timeouts don't fully guard against either.
+					signal: AbortSignal.timeout(12 * 60 * 1000)
 				},
 				fetch
 			)
