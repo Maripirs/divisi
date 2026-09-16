@@ -1,24 +1,45 @@
-"""Groq call: classify a PDF's raw word tokens into per-voice sung
-syllables, in reading order.
+"""Groq call (with an NVIDIA fallback): classify a PDF's raw word tokens
+into per-voice sung syllables, in reading order.
 
 Mirrors the proven request/response/error-handling shape from a sibling
-project's `~/projects/walkcode/server/llm.js` (Groq's OpenAI-compatible
+project's `~/projects/walkcode/server/llm.js` (an OpenAI-compatible
 `/chat/completions`, plain `Authorization: Bearer` header, JSON requested
 in prose rather than via `response_format`, and a defensive
-first-balanced-`{...}` extraction from the response text since the model
+first-balanced-`{...}` extraction from the response text since a model
 sometimes wraps its JSON in prose or code fences).
 
 Everything else here (page-based chunking, `reasoning_effort: "low"`,
 adaptive pacing off `x-ratelimit-reset-tokens`) was added after building
-against this account's real free tier and hitting real limits on a real
-15-page piece: a naive single request sending every word as one verbose
-JSON object per word came to ~84k tokens against an 8000-tokens-per-minute
+against Groq's real free tier and hitting real limits on a real 15-page
+piece: a naive single request sending every word as one verbose JSON
+object per word came to ~84k tokens against an 8000-tokens-per-minute
 account-wide cap; `openai/gpt-oss-120b` is a reasoning model whose hidden
 chain-of-thought can silently eat an entire completion budget and return
-nothing; and the rate limit itself is a continuously-refilling budget, not
-a rigid 60-second window, so pacing off the account's own reported reset
-time (rather than a blind fixed sleep) keeps a multi-chunk piece's total
-wait as short as the account's real budget allows.
+nothing; and the per-minute rate limit itself is a continuously-refilling
+budget, not a rigid 60-second window, so pacing off the account's own
+reported reset time (rather than a blind fixed sleep) keeps a multi-chunk
+piece's total wait as short as the account's real budget allows. There's
+also a separate, much bigger per-*day* cap (200,000 tokens on this
+account) with no reset-time header at all, hit for real during a day of
+iterating on this feature.
+
+That per-day cap is exactly why `classify_lyric_tokens` falls back to
+NVIDIA (`nvidia_lyrics_model`, `chat_template_kwargs: {"thinking": false}`
+rather than Groq's `reasoning_effort`, since NVIDIA's own reasoning
+models narrate their whole chain-of-thought directly in `content` with
+no separate field to skip past) once Groq is confirmed unusable and an
+NVIDIA key is configured -- a completely separate account/quota, so a
+Groq outage or exhausted daily cap doesn't stall the whole feature.
+Deliberately NOT a per-chunk fallback the way Groq's own calls are:
+measured NVIDIA's per-request latency at ~94s for a single Groq-sized
+chunk (2-3 pages), against Groq's typical few seconds, so repeating a
+fallback per remaining chunk would take many minutes for a real piece.
+Instead, the first chunk Groq fails on triggers ONE NVIDIA call covering
+that chunk plus every chunk after it (see
+`_classify_remainder_via_nvidia`) -- NVIDIA has already proven capable of
+an entire 15-page piece in one request (~170s). NVIDIA's endpoint also
+exposes no rate-limit headers at all (confirmed empirically), so there's
+no adaptive pacing to do for it the way there is for Groq.
 """
 
 from __future__ import annotations
@@ -36,7 +57,16 @@ from app.lyrics.extract import PdfWordToken
 logger = logging.getLogger("divisi.lyrics")
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+_NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 _TIMEOUT_SECONDS = 60.0
+# NVIDIA's own per-request latency runs far higher than Groq's -- measured
+# ~94s for a single *chunk*-sized request (one that fit Groq's much
+# tighter per-minute budget easily), against Groq's typical few seconds.
+# Long enough to cover the single whole-remainder call this module makes
+# (see `_classify_remainder_via_nvidia`): a WHOLE 15-page piece in one
+# request measured ~170s end to end. 240s leaves real margin above that
+# while still fitting inside the Frontend's own timeout for this action.
+_NVIDIA_TIMEOUT_SECONDS = 240.0
 
 # Chunk size, in rendered characters of page text, per Groq call. This
 # account's real free-tier cap is 8000 tokens/minute *total* (prompt +
@@ -356,19 +386,24 @@ def _call_groq(body: dict) -> httpx.Response:
     )
 
 
-def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None = None) -> tuple[list[dict], float]:
-    """One Groq call over a single chunk's tokens (already sized to fit
-    the account's rate limit by the caller). `remaining`, when given, is
-    each voice's true remaining sung-note count for the rest of the piece
-    (see `app.lyrics.inject.count_singable_onsets`), included in the
-    prompt as a ground-truth sanity check against classification drift.
-    Returns a `([{"voice": str | None, "syllables": [...]}], wait_seconds)`
-    pair -- the voices found in just this chunk (`[]` if nothing usable,
-    e.g. an instrumental page, not itself an error), and how long the
-    caller should wait before firing the next chunk (see
-    `_seconds_until_reset`)."""
+def _call_nvidia(body: dict) -> httpx.Response:
+    """The fallback provider's HTTP call, tried only when Groq fails and
+    an NVIDIA key is configured (see `_classify_remainder_via_nvidia`).
+    Factored out the same way as `_call_groq` so tests can monkeypatch it
+    independently. Its own, much longer timeout: see
+    `_NVIDIA_TIMEOUT_SECONDS`."""
     settings = get_settings()
-    body = {
+    return httpx.post(
+        _NVIDIA_URL,
+        json=body,
+        headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
+        timeout=_NVIDIA_TIMEOUT_SECONDS,
+    )
+
+
+def _groq_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> dict:
+    settings = get_settings()
+    return {
         "model": settings.groq_lyrics_model,
         "temperature": 0.1,
         # gpt-oss-120b is a reasoning model: by default it spends its
@@ -401,23 +436,60 @@ def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None
         ],
     }
 
+
+def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> dict:
+    settings = get_settings()
+    return {
+        "model": settings.nvidia_lyrics_model,
+        "temperature": 0.1,
+        # nemotron-3.5-lightning is also a reasoning model, but unlike
+        # Groq's gpt-oss-120b it doesn't put that reasoning in a separate
+        # response field -- it narrates the whole chain-of-thought
+        # directly in `content`, before the actual JSON answer, with no
+        # `reasoning_effort` param to shrink it (tried that; it made no
+        # measurable difference here). `chat_template_kwargs:
+        # {"thinking": false}` is what actually suppresses it, confirmed
+        # live: with it, a real chunk's response started with `{"voices":`
+        # immediately, no preamble at all.
+        "chat_template_kwargs": {"thinking": False},
+        # Big enough for a WHOLE piece's worth of syllables in one
+        # response, since this is used for the whole-remainder fallback
+        # call (see `_classify_remainder_via_nvidia`), not a single small
+        # chunk -- confirmed live against a real 15-page piece: completed
+        # with `finish_reason: stop` (not truncated) using this exact
+        # budget.
+        "max_tokens": 8000,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(tokens, remaining)},
+        ],
+    }
+
+
+def _call_and_parse(
+    call_fn, body: dict, provider_name: str
+) -> tuple[list[dict], httpx.Response]:
+    """Shared request/response handling for both providers: call, check
+    the status code, extract and validate the JSON shape. Raises
+    `LyricExtractionError` on any failure, tagged with which provider
+    failed so a caller falling back to a second provider can log which
+    one actually broke."""
     try:
-        response = _call_groq(body)
+        response = call_fn(body)
     except httpx.HTTPError as exc:
-        raise LyricExtractionError(f"Could not reach the Groq API: {exc}") from exc
+        raise LyricExtractionError(f"Could not reach the {provider_name} API: {exc}") from exc
 
     if response.status_code != 200:
         raise LyricExtractionError(
-            f"Groq API returned {response.status_code}: {response.text[:200]}"
+            f"{provider_name} API returned {response.status_code}: {response.text[:200]}"
         )
-    wait_seconds = _seconds_until_reset(response)
 
     data = response.json()
     content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
     parsed = _extract_json(content)
     if parsed is None or "voices" not in parsed:
-        logger.warning("Groq lyric response wasn't parseable JSON: %r", content[:500])
-        raise LyricExtractionError("Groq response wasn't valid JSON in the expected shape")
+        logger.warning("%s lyric response wasn't parseable JSON: %r", provider_name, content[:500])
+        raise LyricExtractionError(f"{provider_name} response wasn't valid JSON in the expected shape")
 
     voices_out: list[dict] = []
     for entry in parsed.get("voices") or []:
@@ -437,46 +509,91 @@ def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None
             syllables.append({"text": text, "syllabic": syllabic})
         if syllables:
             voices_out.append({"voice": voice, "syllables": syllables})
-    return voices_out, wait_seconds
+    return voices_out, response
+
+
+def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None = None) -> tuple[list[dict], float]:
+    """One Groq call over a single chunk's tokens (already sized to fit
+    Groq's rate limit by the caller). `remaining`, when given, is each
+    voice's true remaining sung-note count for the rest of the piece (see
+    `app.lyrics.inject.count_singable_onsets`), included in the prompt as
+    a ground-truth sanity check against classification drift.
+
+    Returns a `([{"voice": str | None, "syllables": [...]}], wait_seconds)`
+    pair -- the voices found in just this chunk (`[]` if nothing usable,
+    e.g. an instrumental page, not itself an error), and how long the
+    caller should wait before firing the next chunk (see
+    `_seconds_until_reset`). If Groq itself is unusable (rate limit,
+    outage), see `classify_lyric_tokens`'s NVIDIA fallback -- deliberately
+    NOT handled per-chunk here (see that function's own doc comment for
+    why: NVIDIA's per-request latency is high enough that repeating a
+    per-chunk fallback for a whole piece would take many minutes)."""
+    voices, response = _call_and_parse(_call_groq, _groq_body(tokens, remaining), "Groq")
+    return voices, _seconds_until_reset(response)
+
+
+def _classify_remainder_via_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> list[dict]:
+    """Groq's whole-piece fallback: ONE NVIDIA call covering every token
+    passed in (not re-chunked), used for whatever pages hadn't been
+    classified yet when Groq was confirmed unusable.
+
+    Deliberately NOT a per-chunk fallback (mirroring Groq's own chunked
+    calls) -- measured NVIDIA's per-request latency at ~94s for a single
+    Groq-sized *chunk* (2-3 pages), against Groq's typical few seconds.
+    Repeating that per remaining chunk would take many minutes for a real
+    piece; one combined call amortizes NVIDIA's high per-request latency
+    across the whole remainder instead, and NVIDIA has already proven
+    capable of an entire 15-page piece in one request (~170s, `max_tokens`
+    in `_nvidia_body` sized for exactly this)."""
+    voices, _response = _call_and_parse(_call_nvidia, _nvidia_body(tokens, remaining), "NVIDIA")
+    return voices
 
 
 def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, int] | None = None) -> list[dict]:
     """Send the PDF's raw word tokens to Groq, chunked by whole pages to
-    stay under the account's tokens-per-minute cap, and return
+    stay under Groq's tokens-per-minute cap, and return
     `[{"voice": str | None, "syllables": [{"text": str, "syllabic": str}]}]`,
     syllables in reading order per voice (concatenated across chunks in
-    page order). Each chunk gets one retry on failure; a chunk that still
-    fails after that is skipped (its page just contributes no lyrics)
-    rather than losing the whole piece over one bad response. Raises
-    `LyricExtractionError` only for a missing API key, or if literally
-    every chunk failed and there's nothing to return at all.
+    page order). Each chunk gets one retry on failure. If a chunk still
+    fails after that: with an NVIDIA key configured, Groq is assumed down
+    for the rest of the run and every remaining chunk (this one included)
+    is combined into ONE NVIDIA call instead (see
+    `_classify_remainder_via_nvidia`); without one, that chunk is simply
+    skipped (its page contributes no lyrics) rather than losing the whole
+    piece over one bad response. Raises `LyricExtractionError` only for a
+    missing API key, or if literally nothing could be classified at all.
+
+    NVIDIA is a completely separate account/quota from Groq, so it stays
+    usable through a Groq outage or an exhausted daily cap (hit the
+    latter for real: 200,000 tokens/day on the account this was built
+    against, exhausted by a day of iterating on this feature).
 
     `onset_counts`, when given (see `app.lyrics.inject.count_singable_onsets`
     -- ground truth from the actual score, computed before this call),
     seeds a running "remaining budget" per voice that's passed into each
-    chunk's prompt and decremented as syllables come back, so Groq has a
-    real target to check its own counting against instead of generating
+    chunk's prompt and decremented as syllables come back, so the model has
+    a real target to check its own counting against instead of generating
     an unconstrained-length list per voice. Built for real after a
     positional-only alignment (no cross-check at all) let one voice's
     classification silently drift out of sync with its notes for the rest
     of a piece -- the failure mode this budget is meant to catch early."""
     settings = get_settings()
-    if not settings.groq_api_key:
-        raise LyricExtractionError("Lyric generation is not configured (no Groq API key set)")
+    if not settings.groq_api_key and not settings.nvidia_api_key:
+        raise LyricExtractionError("Lyric generation is not configured (no API key set)")
 
     chunks = _chunk_tokens_by_page(tokens)
     remaining = dict(onset_counts) if onset_counts else {}
     merged: dict[str | None, list[dict]] = {}
-    for i, chunk in enumerate(chunks):
+    i = 0
+    while i < len(chunks):
+        chunk = chunks[i]
+        stop_after_this_chunk = False
         # A long piece means many sequential calls (one per chunk), each
         # with some nonzero chance of a flaky response (a truncated or
         # malformed JSON body, a transient network error) -- hit this for
         # real on a 6-chunk piece where one chunk's response just wasn't
         # parseable. One retry recovers from that without adding much
-        # total wait; if a chunk still fails after its retry, skip just
-        # that chunk (log it) rather than losing the whole piece's lyrics
-        # over one bad response -- same "show what we can" philosophy the
-        # rest of this feature already follows for partial results.
+        # total wait.
         try:
             voices, wait_seconds = _classify_chunk(chunk, remaining)
         except LyricExtractionError:
@@ -485,15 +602,47 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
             try:
                 voices, wait_seconds = _classify_chunk(chunk, remaining)
             except LyricExtractionError:
-                logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
-                voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+                if settings.nvidia_api_key:
+                    # Groq failed twice in a row on this chunk -- in every
+                    # real case observed building this, that meant Groq
+                    # was down for the rest of the run too (an exhausted
+                    # per-day cap fails identically on every subsequent
+                    # call), so switch entirely to ONE NVIDIA call
+                    # covering this chunk plus every chunk after it,
+                    # rather than repeating the same doomed Groq attempt
+                    # (and a slow NVIDIA fallback) per remaining chunk --
+                    # see `_classify_remainder_via_nvidia`'s own doc
+                    # comment for why per-chunk fallback doesn't work.
+                    logger.warning(
+                        "Groq failed twice on chunk %d/%d; switching to one NVIDIA call for "
+                        "all %d remaining chunk(s)",
+                        i + 1,
+                        len(chunks),
+                        len(chunks) - i,
+                    )
+                    remainder_tokens = [t for c in chunks[i:] for t in c]
+                    try:
+                        voices = _classify_remainder_via_nvidia(remainder_tokens, remaining)
+                    except LyricExtractionError:
+                        logger.warning("NVIDIA fallback also failed", exc_info=True)
+                        voices = []
+                    wait_seconds = 0.0
+                    stop_after_this_chunk = True
+                else:
+                    logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
+                    voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])
             voice = entry["voice"]
             if voice in remaining:
                 remaining[voice] = max(0, remaining[voice] - len(entry["syllables"]))
+
+        if stop_after_this_chunk:
+            break
         if i < len(chunks) - 1:
             time.sleep(wait_seconds)
+        i += 1
 
     voices_out = [{"voice": voice, "syllables": syllables} for voice, syllables in merged.items()]
     if not voices_out:

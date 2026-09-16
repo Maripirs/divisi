@@ -129,7 +129,14 @@ export const trackActions = {
 					// default timeout for real testing this against a real
 					// multi-page piece ("Couldn't reach the server" even though
 					// the Backend was still working) before adding this.
-					signal: AbortSignal.timeout(5 * 60 * 1000)
+					// Widened from 5 to 7 minutes once the Backend grew an
+					// NVIDIA fallback for when Groq's rate limit (or daily
+					// quota) blocks it: NVIDIA's own per-request latency is
+					// much higher (measured ~170s for a whole piece in one
+					// call), so the worst case now stacks a Groq retry
+					// (~35s) plus that NVIDIA call (up to 240s) on top of
+					// this action's own baseline.
+					signal: AbortSignal.timeout(7 * 60 * 1000)
 				},
 				fetch
 			)

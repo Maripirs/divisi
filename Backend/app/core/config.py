@@ -134,6 +134,23 @@ class Settings(BaseSettings):
     # clean single-JSON-object content (verified with a live smoke call).
     groq_lyrics_model: str = "openai/gpt-oss-120b"
 
+    # Fallback provider for lyric generation when Groq's rate limit (either
+    # the per-minute or the account's separate per-day cap) blocks a chunk
+    # -- hit the per-day cap for real while testing this feature (200,000
+    # tokens/day on this account, exhausted by a day of iteration). Empty
+    # key -> the fallback is simply skipped and a Groq failure surfaces as
+    # normal; nothing about the feature requires this to be configured.
+    # nemotron-3.5-lightning-30b-a3b: confirmed live on NVIDIA's catalog
+    # (GET /v1/models), no deprecation header (unlike nemotron-3-super-
+    # 120b-a12b, which 2026-10-03-deprecates), and verified end-to-end
+    # against a real piece with `chat_template_kwargs: {"thinking": false}`
+    # (see groq_client.py's `_nvidia_body` -- without it, this is a
+    # reasoning model that narrates its whole chain-of-thought directly in
+    # `content` with no separate field to skip past, unlike Groq's
+    # gpt-oss-120b).
+    nvidia_api_key: str = ""
+    nvidia_lyrics_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+
     # B20: the one group (if any) that offers a public, read-only "preview
     # Admin" mode from its guest join page — the seeded public demo choir
     # (see Backend/scripts/seed_demo.py, Backend/DEMO_SETUP.md), never a
