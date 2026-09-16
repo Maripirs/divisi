@@ -415,7 +415,7 @@ def test_classify_lyric_tokens_falls_back_to_nvidia_when_groq_fails_twice(monkey
     assert nvidia_calls[0]["model"] == get_settings().nvidia_lyrics_model
     assert nvidia_calls[0]["chat_template_kwargs"] == {"thinking": False}
     assert nvidia_calls[0]["max_tokens"] == 5500
-    assert nvidia_calls[0]["frequency_penalty"] == 0.4
+    assert "frequency_penalty" not in nvidia_calls[0]
 
 
 # --- _normalize_alternate_voice_shape: recovering NVIDIA's schema drift ----

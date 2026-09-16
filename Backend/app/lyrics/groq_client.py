@@ -491,6 +491,20 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
     return {
         "model": settings.nvidia_lyrics_model,
         "temperature": 0.1,
+        # Deliberately NO frequency_penalty here, after actually trying
+        # one: added `frequency_penalty: 0.4` to fight a degenerate
+        # repetition loop seen once in production (2026-09-16), redeployed,
+        # and on the very next real run every single NVIDIA chunk (10/10
+        # attempts) came back with corrupted JSON syntax -- missing quotes,
+        # dropped keys, garbage tokens mid-string -- instead of the mixed
+        # success/failure the same piece got with no penalty at all. This
+        # task's target output (a long JSON array of small, structurally
+        # repetitive objects: `"text"`, `"syllabic"`, `"single"`, commas,
+        # braces, over and over) is exactly what a frequency penalty
+        # punishes, so it fights the model's ability to keep emitting
+        # valid JSON far more than it stops rare repetition loops. Reverted
+        # the same night; do not re-add this without solid evidence it's
+        # actually net-positive for THIS task's output shape.
         # nemotron-3.5-lightning is also a reasoning model, but unlike
         # Groq's gpt-oss-120b it doesn't put that reasoning in a separate
         # response field -- it narrates the whole chain-of-thought
@@ -501,16 +515,6 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
         # live: with it, a real chunk's response started with `{"voices":`
         # immediately, no preamble at all.
         "chat_template_kwargs": {"thinking": False},
-        # A mild penalty against the model repeating the same tokens
-        # rather than genuinely continuing -- added after the first real
-        # per-chunk production run (2026-09-16) hit a degenerate
-        # repetition loop on one chunk (content devolved into a wall of
-        # "ellsellsellsells..." until it wasn't valid JSON at all, wasting
-        # that chunk's whole token budget on nothing). Standard
-        # OpenAI-compatible param name; 0.4 is a light touch, enough to
-        # break a loop without discouraging real repeated words a lyric
-        # legitimately has (e.g. "Thor, Thor, hear me").
-        "frequency_penalty": 0.4,
         # Per-chunk, same page-sized scope as Groq's own `_groq_body`
         # (see that function's comment for the "why 3500" reasoning this
         # mirrors) -- NOT sized for a whole piece (tried that: a single
