@@ -296,11 +296,11 @@ export interface LibraryEntryOut {
 	music_file_name: string | null;
 	pdf_file_name: string | null;
 	/** Id of this piece's open working draft (a `status: draft`,
-	 * `source: modification` `PieceVersion`), if any -- currently only
-	 * ever produced by "Generate lyrics from PDF"
-	 * (`app/api/routes/library/lyrics.py`), left unpublished for an admin
-	 * to review at `piece/[id]/review-lyrics` before it goes live. Null
-	 * when nothing's pending. See `working_draft`/
+	 * `source: modification` `PieceVersion`), if any -- produced by either
+	 * "Generate lyrics from PDF" (`app/api/routes/library/lyrics.py`) or
+	 * "AI edit" (`app/api/routes/library/edit.py`), left unpublished for an
+	 * admin to review at `piece/[id]/review` before it goes live.
+	 * Null when nothing's pending. See `working_draft`/
 	 * `pending_generated_version_id` in `Backend/app/services/pieces.py`. */
 	pending_generated_version_id: string | null;
 }

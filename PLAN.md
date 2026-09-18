@@ -70,7 +70,7 @@ real browser/touchscreen/device pass — not further Claude-side building.
 - [ ] **Carpool board UI + guest posting**: manual browser pass once deployed.
 - [ ] **Carpool Map**: needs a real Google Maps API key configured (human/account step) plus a real-browser pass; currently no-ops safely to the list-only board with no key set.
 - [ ] **Rendering-pipeline audio quality**: human hasn't listened to a rendered stem set to confirm the GM soundfont's quality. Low priority — the current player synthesizes client-side and never wires up the server-rendered stems at all; that pipeline is dormant, not on any critical path.
-- [ ] **Lyric generation on "The Challenge of Thor"**: live version currently has partial lyrics (first ~2 pages only, S/A/T/B got 49/53/46/45 of 247/238/276/277 true sung notes) after last night's NVIDIA-fallback debugging (see Log, 2026-09-16). Needs a real look at the player to confirm the partial lyrics that ARE there are actually correctly placed, plus a decision on whether to re-run generation once Groq's daily quota resets (should get much further than NVIDIA did) rather than continuing to lean on NVIDIA for this piece.
+- [ ] **Lyric generation on "The Challenge of Thor"**: reverted back to its original, no-lyrics version after the 2026-09-16 NVIDIA debugging session's partial results weren't good enough to keep live. Now that generate-lyrics lands an unpublished, reviewable draft instead of auto-publishing, and "AI edit" exists to fix specific wrong measures without starting over, worth a fresh attempt: generate, review side by side at `piece/[id]/review`, spot-fix anything wrong with a targeted AI edit, then approve — real end-to-end use of the review flow, not just a synthetic smoke test.
 
 ## OMR pipeline + in-app notation editor (parked)
 
@@ -157,6 +157,61 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
   more candidates flagged but not required.
 
 ## Log
+
+- 2026-09-18: Shipped "AI edit" -- a second, more general AI-assisted
+  editing tool alongside "Generate lyrics from PDF": an admin selects a
+  measure range directly in the rendered score (two clicks; `ScoreView`'s
+  existing click hit-test already resolves a real MusicXML measure number
+  via `note.sourceNote.SourceMeasure.MeasureNumber`), writes a
+  plain-language instruction, and gets back a reviewable draft with just
+  that range changed. New `Backend/app/scoreedit/` package (`client.py`:
+  one Groq-only call, no NVIDIA fallback -- deliberately, since a subtly
+  wrong pitch/rhythm from a less-reliable provider is much harder to
+  catch at a glance than a missing lyric, unlike the lyrics feature's own
+  trade; `apply.py`: `extract_range`/`splice_range` in music21, validating
+  the AI's replacement has the exact same part count and measure count it
+  was given before ever touching the score, a clean 422 otherwise --
+  adding/removing whole measures is out of scope for v1) and
+  `POST /library/pieces/{id}/edit-measures`, landing its result in the
+  same one-working-draft-slot as lyrics generation.
+  Redesigned the review flow to match: the two admin-only review pages
+  built for lyrics review (`review-lyrics`, then generalized once AI edit
+  needed the same UI to `review-draft`) and the AI-edit picker
+  (`ai-edit`) merged into one page, `piece/[id]/review`, always reachable
+  once a track has both files (not gated on anything having been
+  generated first, per explicit user direction) -- shows the live
+  version with the AI-edit form active when nothing's pending, or a
+  pending draft with Approve/Discard when one exists, **and** the AI-edit
+  form stays available either way: an admin reviewing a draft that has a
+  wrong lyric in it can select that measure and ask for a fix without
+  discarding the draft first (`edit-measures` itself now edits whichever
+  of the pending draft or the live version is currently being reviewed,
+  draft taking priority -- "complement, don't compete for the slot").
+  Real layout bugs found and fixed against the actual deployed-locally
+  page, not just in review: the page wasn't locked to the viewport at all
+  (missing `export const ssr = false` -- `ScoreView`'s `onDestroy` touches
+  `window` directly and unlike `onMount` isn't automatically browser-only
+  in Svelte, a real SSR crash); a dockable edit panel (top/side toggle)
+  had one CSS rule not gated behind the same width breakpoint as its
+  siblings, producing a broken half-applied state below it; the panes'
+  and dock's breakpoints (a mix of 700px/900px) were unified to one
+  consistent 700px after the 900px one turned out to need a
+  nearly-maximized window in practice; the measure-range form's
+  `flex-wrap` layout left each field wrapping onto its own line with a
+  large empty gap, replaced with an explicit CSS grid; and `ScoreView`'s
+  own built-in zoom pill (a full-width bar sticky to the top of its
+  scrolling ancestor, with `!important`-pinned button styling of its own)
+  didn't match `PdfView`'s bottom-right floating pill at all -- rather
+  than fight `!important` with more `!important`, hid `ScoreView`'s
+  built-in one and added a direct copy of `PdfView`'s pill driving
+  `ScoreView`'s already-bindable `zoom` prop instead.
+  Also shipped the same night, already live: the underlying "hold
+  generated lyrics for admin review" change itself (`9a33439`,
+  2026-09-16/17) -- `generate-lyrics` no longer auto-publishes, landing
+  as an unpublished working draft instead, after real production runs on
+  "The Challenge of Thor" (see the entry below) showed lyric
+  classification isn't reliable enough to trust straight to the live
+  version.
 
 - 2026-09-16: First real-world exercise of the NVIDIA lyric-generation
   fallback (shipped 2026-09-15 as a per-chunk design, `d141b1f`), triggered

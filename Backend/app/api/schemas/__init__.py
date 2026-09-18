@@ -55,6 +55,7 @@ from app.api.schemas.homework import HomeworkCreate, HomeworkOut, HomeworkUpdate
 from app.api.schemas.library import (
     AdminPreviewOut,
     DistributionOut,
+    EditMeasuresRequest,
     GuestAboutOut,
     GuestAuthIn,
     GuestAuthOut,

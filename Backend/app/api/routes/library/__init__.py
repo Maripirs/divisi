@@ -10,7 +10,7 @@ domain model in Backend/plan.md.
 
 from fastapi import APIRouter
 
-from . import files, lyrics, pieces, versions
+from . import edit, files, lyrics, pieces, versions
 
 router = APIRouter(prefix="/library", tags=["library"])
 
@@ -18,3 +18,4 @@ router.include_router(pieces.router)
 router.include_router(versions.router)
 router.include_router(files.router)
 router.include_router(lyrics.router)
+router.include_router(edit.router)

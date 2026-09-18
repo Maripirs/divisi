@@ -236,17 +236,25 @@
 						</form>
 					{/if}
 
-					<!-- A generated lyrics draft is waiting for an admin to look at
-					     it next to the source PDF before it goes live -- see the
-					     review page's own doc comment
-					     (`piece/[id]/review-lyrics/+page.server.ts`) for why this
-					     isn't just auto-published like every other admin action on
-					     this tab. -->
-					{#if track.pending_generated_version_id}
+					<!-- "Review & edit": the side-by-side PDF/score page
+					     (`piece/[id]/review/+page.server.ts`), always reachable
+					     once a track has both files -- not gated on anything
+					     having been generated first, unlike "Generate lyrics
+					     from PDF" above. It's where an admin picks a measure
+					     range and describes an AI edit
+					     (`Backend/app/api/routes/library/edit.py`), and also
+					     where either AI-assisted producer's pending draft
+					     (lyrics or AI edit -- both share the one-working-draft
+					     slot per piece) shows up for Approve/Discard, so this
+					     one link covers both states; the eyebrow below only
+					     appears to flag that a draft is actually waiting. -->
+					{#if track.has_music && track.has_pdf}
 						<div class="btn-row">
-							<p class="card-eyebrow">{m.groups_generate_lyrics_ready()}</p>
-							<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/review-lyrics`)}>
-								{m.groups_review_lyrics()}
+							{#if track.pending_generated_version_id}
+								<p class="card-eyebrow">{m.groups_draft_ready_to_review()}</p>
+							{/if}
+							<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/review`)}>
+								{m.groups_review_draft()}
 							</a>
 						</div>
 					{/if}

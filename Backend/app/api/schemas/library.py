@@ -83,6 +83,19 @@ class WorkingDraftOut(BaseModel):
     forked_from_live: bool
 
 
+class EditMeasuresRequest(BaseModel):
+    """Body of `POST /library/pieces/{id}/edit-measures` (the "AI edit"
+    feature, `app/scoreedit/`): a measure range picked by two clicks in
+    the Frontend's score view, plus a plain-language instruction for what
+    to change there. `measure_start`/`measure_end` are 1-based MusicXML
+    measure numbers, inclusive; the route 400s if `measure_end` is before
+    `measure_start` or either falls outside the piece."""
+
+    measure_start: int
+    measure_end: int
+    message: str
+
+
 class VersionPublishRequest(BaseModel):
     """B17: body of `POST /library/versions/{id}/publish`. `seams_resolved`
     is F16's editor gate (every OMR seam marked resolved client-side); the

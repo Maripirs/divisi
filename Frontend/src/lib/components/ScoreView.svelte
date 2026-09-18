@@ -49,6 +49,14 @@
 	 * short mark above the note rather than the full-height playback bar.
 	 * When `annotateMode` is on, clicking a note calls `onAnnotationPlace`
 	 * with its timestamp instead of `onNoteClick` seeking there.
+	 *
+	 * `onMeasureClick`, if given, is called alongside whichever of the above
+	 * two fires, with the clicked note's real MusicXML measure number
+	 * (`note.sourceNote.SourceMeasure.MeasureNumber`) -- built for the "AI
+	 * edit" feature's measure-range picker (`piece/[id]/review`), which
+	 * needs the actual measure number a click landed on, not a playback
+	 * timestamp. Purely additive: every other caller of this component
+	 * leaves it unset and sees no change in behavior.
 	 */
 	let {
 		xml,
@@ -61,6 +69,7 @@
 		annotateMode = false,
 		onAnnotationPlace,
 		onAnnotationMarkerClick,
+		onMeasureClick,
 		zoom = $bindable(1),
 		rendering = $bindable(false),
 		showBadge = true
@@ -75,6 +84,7 @@
 		annotateMode?: boolean;
 		onAnnotationPlace?: (wholeNotes: number) => void;
 		onAnnotationMarkerClick?: (id: string) => void;
+		onMeasureClick?: (measureNumber: number) => void;
 		// Bindable rather than a plain prop — both the +/− buttons/pinch
 		// gesture in here and the parent's persisted-settings restore on
 		// load need to drive the same value.
@@ -208,6 +218,9 @@
 		// always "place a new one"/"seek", never "open an existing marker".
 		if (annotateMode) onAnnotationPlace?.(timestamp);
 		else onNoteClick?.(timestamp);
+		// Additive, alongside whichever of the above just fired -- see this
+		// prop's own doc comment above the component's props block.
+		onMeasureClick?.(note.sourceNote.SourceMeasure.MeasureNumber);
 	}
 
 	// Resolves only after the browser has painted at least once. A single

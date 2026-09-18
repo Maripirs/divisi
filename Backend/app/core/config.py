@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     nvidia_lyrics_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
+    # AI-assisted measure-range edits (admin-triggered "AI edit" button,
+    # Backend/app/scoreedit/): a second, more general Groq-backed editing
+    # tool, deliberately Groq-only with no NVIDIA fallback (see
+    # `app/scoreedit/client.py`'s own doc comment for why a less-reliable
+    # fallback provider is an acceptable trade for lyrics but not for
+    # pitch/rhythm content). Reuses `groq_api_key` above, same account.
+    groq_score_edit_model: str = "openai/gpt-oss-120b"
+
     # B20: the one group (if any) that offers a public, read-only "preview
     # Admin" mode from its guest join page — the seeded public demo choir
     # (see Backend/scripts/seed_demo.py, Backend/DEMO_SETUP.md), never a
