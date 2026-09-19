@@ -11,7 +11,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://divisi:divisi@localhost:5432/divisi"
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 24
+    # 90 days: there's no refresh-token flow, so this is the whole session
+    # length. 24h (the old default) meant a multi-day work session routinely
+    # hit a forced re-login; 90 days is the standard "stay logged in" length
+    # general-use websites use.
+    jwt_expire_minutes: int = 60 * 24 * 90
     # B10: lifetime of the stateless guest token minted by
     # POST /guest/{join_code}/auth after a guest-password check. Long
     # (30 days) because the frontend stores it in an httpOnly cookie and
