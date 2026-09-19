@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, EmailStr, model_validator
 
 from app.db.models import (
     CarpoolEventStatus,
@@ -154,6 +154,13 @@ class CarpoolPostCreate(BaseModel):
     # and `app.services.carpool.serialize_post`). `None` (or omitted) means
     # nothing set, same as `notes`/`leave_time_text`.
     contact_phone: str | None = None
+    # B33: same opt-in, same visibility gating as `contact_phone` above
+    # (`CarpoolPost.contact_email`'s docstring), but format-validated via
+    # `EmailStr` rather than a manual regex, since email (unlike a phone
+    # number) has a real universal format. Also what makes the post owner
+    # eligible for a real Resend match notification (see
+    # `app/api/routes/carpool.py`'s `create_claim`/`create_interest`).
+    contact_email: EmailStr | None = None
     # B25: same anonymous-participant identity fields `ResponsibilitySignupCreate`
     # carries, for the same reason (mint-on-demand, reconnect via local_id).
     # Ignored for a bearer-authenticated member.
@@ -215,6 +222,9 @@ class CarpoolPostUpdate(BaseModel):
     # B30: same opt-in contact phone as `CarpoolPostCreate`, patchable like
     # `notes`/`leave_time_text`.
     contact_phone: str | None = None
+    # B33: same opt-in contact email as `CarpoolPostCreate`, patchable the
+    # same way.
+    contact_email: EmailStr | None = None
     status: CarpoolPostStatus | None = None
 
     @model_validator(mode="after")
@@ -293,6 +303,10 @@ class CarpoolPostOut(BaseModel):
     # admin, or a matched counterparty (see `CarpoolPost.contact_phone`'s
     # docstring).
     contact_phone: str | None
+    # B33: the *serialized*, already-visibility-gated value for the email
+    # mirror of `contact_phone` (`app.services.carpool.serialize_post`),
+    # same visibility rule, never the raw stored column directly.
+    contact_email: str | None
     # B27: a driver post's active claims (`id`, `user_id`, `display_name`,
     # `created_at`); always empty for a rider post, which can't be claimed.
     claims: list[CarpoolSeatClaimOut]

@@ -33,6 +33,8 @@
 	let notesDraft = $state(post.notes ?? '');
 	// svelte-ignore state_referenced_locally
 	let contactPhoneDraft = $state(post.contact_phone ?? '');
+	// svelte-ignore state_referenced_locally
+	let contactEmailDraft = $state(post.contact_email ?? '');
 	let saving = $state(false);
 	let guestError = $state('');
 
@@ -58,6 +60,7 @@
 					leaveTimeText: leaveDraft || null,
 					notes: notesDraft || null,
 					contactPhone: contactPhoneDraft || null,
+					contactEmail: contactEmailDraft || null,
 					localId: ensureLocalId()
 				})
 			});
@@ -137,6 +140,11 @@
 			<span>{m.carpool_contact_phone_field()}</span>
 			<input type="tel" bind:value={contactPhoneDraft} placeholder={m.groups_optional()} />
 		</label>
+		<label class="field">
+			<span>{m.carpool_contact_email_field()}</span>
+			<input type="email" bind:value={contactEmailDraft} placeholder={m.groups_optional()} />
+		</label>
+		<p class="card-note">{m.carpool_contact_email_hint()}</p>
 		{#if guestError}
 			<p class="error">{guestError}</p>
 		{/if}
@@ -208,6 +216,11 @@
 				<span>{m.carpool_contact_phone_field()}</span>
 				<input name="contactPhone" type="tel" bind:value={contactPhoneDraft} placeholder={m.groups_optional()} />
 			</label>
+			<label class="field">
+				<span>{m.carpool_contact_email_field()}</span>
+				<input name="contactEmail" type="email" bind:value={contactEmailDraft} placeholder={m.groups_optional()} />
+			</label>
+			<p class="card-note">{m.carpool_contact_email_hint()}</p>
 		{/snippet}
 	</EditableCard>
 {/if}

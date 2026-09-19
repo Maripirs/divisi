@@ -19,6 +19,7 @@
 	import CarpoolSaveRequiredNotice from './CarpoolSaveRequiredNotice.svelte';
 	import { formatDateTime } from '$lib/utils/dates';
 	import {
+		contactEmailError,
 		driverOfferError,
 		postMatchesDirection,
 		riderRequestError,
@@ -274,10 +275,12 @@
 	let guestOfferLeaveTime = $state('');
 	let guestOfferNotes = $state('');
 	let guestOfferContactPhone = $state('');
+	let guestOfferContactEmail = $state('');
 	let guestRequestOrigin = $state('');
 	let guestRequestDirection = $state<CarpoolPostDirection>('round_trip');
 	let guestRequestNotes = $state('');
 	let guestRequestContactPhone = $state('');
+	let guestRequestContactEmail = $state('');
 
 	function startOfferRide() {
 		guestCreateError = '';
@@ -362,6 +365,10 @@
 			guestCreateError = invalid === 'seats' ? m.carpool_driver_needs_seats() : m.carpool_enter_origin();
 			return;
 		}
+		if (contactEmailError(guestOfferContactEmail)) {
+			guestCreateError = m.carpool_invalid_email();
+			return;
+		}
 		submittingOffer = true;
 		await submitGuestPost(
 			eventId,
@@ -373,6 +380,7 @@
 				leaveTimeText: guestOfferLeaveTime,
 				notes: guestOfferNotes,
 				contactPhone: guestOfferContactPhone,
+				contactEmail: guestOfferContactEmail,
 				...(guestOfferPlace
 					? {
 							originLatitude: guestOfferPlace.latitude,
@@ -390,6 +398,7 @@
 				guestOfferLeaveTime = '';
 				guestOfferNotes = '';
 				guestOfferContactPhone = '';
+				guestOfferContactEmail = '';
 				guestOfferPlace = null;
 			}
 		);
@@ -401,6 +410,10 @@
 			guestCreateError = m.carpool_enter_origin();
 			return;
 		}
+		if (contactEmailError(guestRequestContactEmail)) {
+			guestCreateError = m.carpool_invalid_email();
+			return;
+		}
 		submittingRequest = true;
 		await submitGuestPost(
 			eventId,
@@ -410,6 +423,7 @@
 				originLabel: guestRequestOrigin,
 				notes: guestRequestNotes,
 				contactPhone: guestRequestContactPhone,
+				contactEmail: guestRequestContactEmail,
 				...(guestRequestPlace
 					? {
 							originLatitude: guestRequestPlace.latitude,
@@ -425,6 +439,7 @@
 				guestRequestDirection = 'round_trip';
 				guestRequestNotes = '';
 				guestRequestContactPhone = '';
+				guestRequestContactEmail = '';
 				guestRequestPlace = null;
 			}
 		);
@@ -796,6 +811,11 @@
 								<span>{m.carpool_contact_phone_field()}</span>
 								<input type="tel" bind:value={guestOfferContactPhone} placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_email_field()}</span>
+								<input type="email" bind:value={guestOfferContactEmail} placeholder={m.groups_optional()} />
+							</label>
+							<p class="card-note">{m.carpool_contact_email_hint()}</p>
 							{#if guestCreateError}
 								<p class="error">{guestCreateError}</p>
 							{/if}
@@ -867,6 +887,11 @@
 								<span>{m.carpool_contact_phone_field()}</span>
 								<input name="contactPhone" type="tel" placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_email_field()}</span>
+								<input name="contactEmail" type="email" placeholder={m.groups_optional()} />
+							</label>
+							<p class="card-note">{m.carpool_contact_email_hint()}</p>
 							{#if form?.form === 'offerRide' && form?.error}
 								<p class="error">{form.error}</p>
 							{/if}
@@ -952,6 +977,11 @@
 								<span>{m.carpool_contact_phone_field()}</span>
 								<input type="tel" bind:value={guestRequestContactPhone} placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_email_field()}</span>
+								<input type="email" bind:value={guestRequestContactEmail} placeholder={m.groups_optional()} />
+							</label>
+							<p class="card-note">{m.carpool_contact_email_hint()}</p>
 							{#if guestCreateError}
 								<p class="error">{guestCreateError}</p>
 							{/if}
@@ -1015,6 +1045,11 @@
 								<span>{m.carpool_contact_phone_field()}</span>
 								<input name="contactPhone" type="tel" placeholder={m.groups_optional()} />
 							</label>
+							<label class="field">
+								<span>{m.carpool_contact_email_field()}</span>
+								<input name="contactEmail" type="email" placeholder={m.groups_optional()} />
+							</label>
+							<p class="card-note">{m.carpool_contact_email_hint()}</p>
 							{#if form?.form === 'requestRide' && form?.error}
 								<p class="error">{form.error}</p>
 							{/if}

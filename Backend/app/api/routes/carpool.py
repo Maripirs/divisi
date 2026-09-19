@@ -33,12 +33,14 @@ gains an optional `direction` query param filter (see that function).
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_current_user_optional, get_optional_participant
+from app.core.config import get_settings
 from app.api.schemas import (
     CarpoolEventCreate,
     CarpoolEventOut,
@@ -82,11 +84,44 @@ from app.services.carpool import (
     serialize_posts,
 )
 from app.services.common import get_or_404
+from app.services.email import send_email
 from app.services.groups import get_group_or_404, require_admin, require_member
 from app.services.pages import require_member_page_access
 from app.services.participants import set_participant_cookie
 
 router = APIRouter(tags=["carpool"])
+
+logger = logging.getLogger("divisi.carpool")
+
+
+def _notify_post_owner_of_match(post: CarpoolPost, event: CarpoolEvent, actor: User) -> None:
+    """B33: best-effort "you've got a match" email to a post's owner, fired
+    right after a `CarpoolSeatClaim`/`CarpoolRiderInterest` is committed
+    (`create_claim`/`create_interest` below). Only the post's own owner is
+    emailed, never `actor` (the person claiming/expressing interest) --
+    they're already in the app and see the match immediately, so this is
+    purely for the owner who might not be looking.
+
+    `send_email` (`app.services.email`) already never raises on its own
+    (unconfigured Resend, network failure, non-2xx all just log and
+    return), but this is wrapped in its own try/except anyway --
+    belt-and-suspenders, so that nothing about building the notification
+    itself (a bad format string, a missing attribute) can ever surface as
+    a failure of the claim/interest creation it's attached to."""
+    if not post.contact_email:
+        return
+    try:
+        settings = get_settings()
+        board_url = f"{settings.frontend_base_url}/groups/{event.group_id}?tab=carpool"
+        subject = f"{actor.name} wants to carpool with you"
+        html_body = (
+            f"<p><strong>{actor.name}</strong> just matched with your carpool post for "
+            f"<strong>{event.title}</strong>.</p>"
+            f'<p>Open Divisi to coordinate: <a href="{board_url}">{board_url}</a></p>'
+        )
+        send_email(post.contact_email, subject, html_body)
+    except Exception:  # noqa: BLE001 - never let a notification failure break a claim/interest
+        logger.warning("Failed to send carpool match notification for post %s", post.id, exc_info=True)
 
 
 def _get_event_or_404(event_id: str, db: Session) -> CarpoolEvent:
@@ -484,6 +519,7 @@ def create_claim(
     db.add(claim)
     db.commit()
     db.refresh(claim)
+    _notify_post_owner_of_match(post, event, actor)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
     return claim
@@ -578,6 +614,7 @@ def create_interest(
     db.add(interest)
     db.commit()
     db.refresh(interest)
+    _notify_post_owner_of_match(post, event, actor)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
     return interest

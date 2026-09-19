@@ -49,6 +49,19 @@ export function formatContactPhone(phone: string): string {
 	return trimmed;
 }
 
+/** B33: a light client-side format check for `contact_email`, catching an
+ * obviously malformed address before a submission round-trips to the
+ * network for a 422. Deliberately not a full RFC 5322 validator -- the
+ * Backend's `EmailStr` (`Backend/app/api/schemas/carpool.py`) is the real
+ * gate, same "loose client check, strict server check" split
+ * `formatContactPhone`/`_PHONE_RE` already use for the phone field. Empty
+ * string always passes: this field is optional, same as `contact_phone`. */
+export function contactEmailError(email: string): boolean {
+	const trimmed = email.trim();
+	if (!trimmed) return false;
+	return !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 /** Admin event create/edit form: title, a real date/time, and a destination
  * label are all required. */
 export function eventFieldsMissing(title: string, startsAt: string, destinationLabel: string): boolean {

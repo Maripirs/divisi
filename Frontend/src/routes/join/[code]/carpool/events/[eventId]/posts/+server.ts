@@ -40,6 +40,11 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		// a matched counterparty once posted (see the Backend's
 		// `CarpoolPost.contact_phone` docstring).
 		contactPhone?: string;
+		// B33: the email mirror of `contactPhone` above, same opt-in, same
+		// visibility gating (`CarpoolPost.contact_email`'s docstring). Also
+		// what makes the post owner eligible for a real Resend match
+		// notification once a claim/interest lands on this post.
+		contactEmail?: string;
 		localId?: string;
 		displayName?: string;
 		// F35: same optional pin fields the member form action forwards
@@ -74,6 +79,7 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 		leave_time_text: body.leaveTimeText || null,
 		notes: body.notes || null,
 		contact_phone: body.contactPhone || null,
+		contact_email: body.contactEmail || null,
 		...originCoordinatesPayload({
 			latitude: body.originLatitude,
 			longitude: body.originLongitude,

@@ -122,6 +122,7 @@ export const carpoolActions = {
 		const leaveTimeText = String(form.get('leaveTimeText') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
 		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		const contactEmail = String(form.get('contactEmail') ?? '').trim();
 		// B32/F37: There / Back / Round trip, defaulting to round trip when
 		// the form somehow omits it (matches the Backend's own
 		// `CarpoolPostCreate.direction` default).
@@ -155,6 +156,7 @@ export const carpoolActions = {
 						leave_time_text: leaveTimeText || null,
 						notes: notes || null,
 						contact_phone: contactPhone || null,
+						contact_email: contactEmail || null,
 						...originCoordinatesPayload({
 							latitude: form.get('originLatitude') as string | null,
 							longitude: form.get('originLongitude') as string | null,
@@ -175,6 +177,7 @@ export const carpoolActions = {
 		const originLabel = String(form.get('originLabel') ?? '').trim();
 		const notes = String(form.get('notes') ?? '').trim();
 		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		const contactEmail = String(form.get('contactEmail') ?? '').trim();
 		const direction = String(form.get('direction') ?? 'round_trip');
 		if (!eventId) return fail(400, { error: m.carpool_missing_event(), form: 'requestRide' });
 		if (riderRequestError(originLabel)) {
@@ -193,6 +196,7 @@ export const carpoolActions = {
 						origin_label: originLabel,
 						notes: notes || null,
 						contact_phone: contactPhone || null,
+						contact_email: contactEmail || null,
 						...originCoordinatesPayload({
 							latitude: form.get('originLatitude') as string | null,
 							longitude: form.get('originLongitude') as string | null,
@@ -222,6 +226,7 @@ export const carpoolActions = {
 			leave_time_text?: string | null;
 			notes?: string | null;
 			contact_phone?: string | null;
+			contact_email?: string | null;
 		} = {};
 		if (form.has('direction')) body.direction = String(form.get('direction') ?? 'round_trip');
 		if (form.has('originLabel')) body.origin_label = String(form.get('originLabel') ?? '').trim();
@@ -232,6 +237,7 @@ export const carpoolActions = {
 		if (form.has('leaveTimeText')) body.leave_time_text = String(form.get('leaveTimeText') ?? '').trim() || null;
 		if (form.has('notes')) body.notes = String(form.get('notes') ?? '').trim() || null;
 		if (form.has('contactPhone')) body.contact_phone = String(form.get('contactPhone') ?? '').trim() || null;
+		if (form.has('contactEmail')) body.contact_email = String(form.get('contactEmail') ?? '').trim() || null;
 
 		return runAction('editPost', () =>
 			backendFetch(locals.token, `/carpool/posts/${postId}`, { method: 'PATCH', body: JSON.stringify(body) }, fetch)

@@ -159,6 +159,20 @@ class Settings(BaseSettings):
     # pitch/rhythm content). Reuses `groq_api_key` above, same account.
     groq_score_edit_model: str = "openai/gpt-oss-120b"
 
+    # Resend (email provider) for the carpool match notification (B33): a
+    # post owner who opted in a `contact_email` gets emailed when a rider
+    # claims their seat or a driver expresses interest in their request
+    # (`app.services.email.send_email`, called from `app/api/routes/
+    # carpool.py`'s `create_claim`/`create_interest`). Empty key -> a clean
+    # no-op (logged, not raised), same "unconfigured means skip" shape as
+    # `groq_api_key`/the OAuth credentials above. Real values live in
+    # `.env` locally / Render in prod, never checked in.
+    resend_api_key: str = ""
+    # The verified "From" address for those emails, e.g. "Divisi Carpool
+    # <carpool@divisi.maripi.net>": Resend requires the sending domain be
+    # verified on the account before mail from it will actually deliver.
+    resend_from_email: str = ""
+
     # B20: the one group (if any) that offers a public, read-only "preview
     # Admin" mode from its guest join page — the seeded public demo choir
     # (see Backend/scripts/seed_demo.py, Backend/DEMO_SETUP.md), never a

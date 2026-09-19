@@ -38,6 +38,11 @@
 			{m.carpool_contact_phone_label({ phone: formatContactPhone(post.contact_phone) })}
 		</a>
 	{/if}
+	{#if post.contact_email}
+		<a class="carpool-contact-link" href={`mailto:${post.contact_email}`}>
+			{m.carpool_contact_email_label({ email: post.contact_email })}
+		</a>
+	{/if}
 </div>
 
 <style>

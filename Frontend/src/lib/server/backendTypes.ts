@@ -266,6 +266,9 @@ export interface CarpoolPostOut {
 	leave_time_text: string | null;
 	notes: string | null;
 	contact_phone: string | null;
+	// B33: the email mirror of `contact_phone`, same "already visibility-
+	// gated, render whatever came back" contract.
+	contact_email: string | null;
 	claims: CarpoolSeatClaimOut[];
 	interests: CarpoolRiderInterestOut[];
 	created_at: string;

@@ -37,6 +37,8 @@ export const PATCH: RequestHandler = async ({ request, params, cookies, locals, 
 		// B30: same optional contact phone `updateCarpoolPost` (the member
 		// form action) accepts.
 		contactPhone?: string | null;
+		// B33: the email mirror of `contactPhone` above, same opt-in.
+		contactEmail?: string | null;
 		localId?: string;
 	};
 	try {
@@ -56,6 +58,7 @@ export const PATCH: RequestHandler = async ({ request, params, cookies, locals, 
 	if (body.leaveTimeText !== undefined) patchBody.leave_time_text = body.leaveTimeText || null;
 	if (body.notes !== undefined) patchBody.notes = body.notes || null;
 	if (body.contactPhone !== undefined) patchBody.contact_phone = body.contactPhone || null;
+	if (body.contactEmail !== undefined) patchBody.contact_email = body.contactEmail || null;
 
 	if (locals.token) {
 		try {

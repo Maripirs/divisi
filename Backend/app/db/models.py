@@ -839,6 +839,20 @@ class CarpoolPost(Base):
     # raw column. Format is loosely validated at the schema layer
     # (`CarpoolPostCreate`/`Update`), not here.
     contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    # B33: the email mirror of `contact_phone` just above, same opt-in,
+    # same read-time visibility gate (`app.services.carpool.
+    # _contact_email_visible_to`, the sibling of `_contact_phone_visible_to`),
+    # `None` unless the caller is the post's own owner, a group admin, or a
+    # matched counterparty. Unlike the phone number, an email address has a
+    # real universal format, so this is validated at the schema layer via
+    # pydantic's `EmailStr` (`CarpoolPostCreate`/`Update`) rather than a
+    # manual regex. Also the one Divisi actually emails: when a claim/
+    # interest is created against this post and this is set, the post
+    # owner gets a Resend notification (`app.services.email.send_email`,
+    # called from `app/api/routes/carpool.py`'s `create_claim`/
+    # `create_interest`) telling them who matched, so they don't have to
+    # be watching the app to find out.
+    contact_email: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

@@ -570,6 +570,8 @@ export interface GuestCarpoolPost {
 	// `CarpoolPost.contact_phone`'s docstring. `null` unless this viewer is
 	// the post's own owner or a matched counterparty.
 	contact_phone: string | null;
+	// B33: the email mirror of `contact_phone`, same already-gated contract.
+	contact_email: string | null;
 	claims: GuestCarpoolSeatClaim[];
 	// B30: a rider post's active interests, same shape as `claims`; always
 	// empty for a driver post.

@@ -215,6 +215,29 @@ def _contact_phone_visible_to(
     return post.contact_phone if matched else None
 
 
+def _contact_email_visible_to(
+    post: CarpoolPost,
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+    claims: list[CarpoolSeatClaim],
+    interests: list[CarpoolRiderInterest],
+) -> str | None:
+    """B33: the email mirror of `_contact_phone_visible_to` above, same
+    visibility rule applied to `CarpoolPost.contact_email` instead. See that
+    function's docstring for the "fails closed" reasoning."""
+    if post.contact_email is None or viewer_user_id is None:
+        return None
+    if viewer_user_id == post.user_id or viewer_is_admin:
+        return post.contact_email
+    if post.kind == CarpoolPostKind.driver:
+        matched = any(c.user_id == viewer_user_id for c in claims)
+    elif post.kind == CarpoolPostKind.rider:
+        matched = any(i.user_id == viewer_user_id for i in interests)
+    else:
+        matched = False
+    return post.contact_email if matched else None
+
+
 def serialize_post(
     post: CarpoolPost,
     db: Session,
@@ -295,6 +318,7 @@ def _serialize_post_with_related(
         leave_time_text=post.leave_time_text,
         notes=post.notes,
         contact_phone=_contact_phone_visible_to(post, viewer_user_id, viewer_is_admin, claims, interests),
+        contact_email=_contact_email_visible_to(post, viewer_user_id, viewer_is_admin, claims, interests),
         claims=[CarpoolSeatClaimOut.model_validate(c) for c in claims],
         interests=[CarpoolRiderInterestOut.model_validate(i) for i in interests],
         created_at=post.created_at,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	contactEmailError,
 	destinationCoordinatesPayload,
 	driverOfferError,
 	eventFieldsMissing,
@@ -65,6 +66,25 @@ describe('formatContactPhone', () => {
 
 	it('trims surrounding whitespace', () => {
 		expect(formatContactPhone('  5551234567  ')).toBe('(555) 123-4567');
+	});
+});
+
+describe('contactEmailError', () => {
+	it('passes an empty or blank value: the field is optional', () => {
+		expect(contactEmailError('')).toBe(false);
+		expect(contactEmailError('   ')).toBe(false);
+	});
+
+	it('passes a plausible address', () => {
+		expect(contactEmailError('alex@example.com')).toBe(false);
+		expect(contactEmailError('  alex@example.com  ')).toBe(false);
+	});
+
+	it('rejects an obviously malformed value', () => {
+		expect(contactEmailError('not an email')).toBe(true);
+		expect(contactEmailError('alex@')).toBe(true);
+		expect(contactEmailError('@example.com')).toBe(true);
+		expect(contactEmailError('alex@example')).toBe(true);
 	});
 });
 
