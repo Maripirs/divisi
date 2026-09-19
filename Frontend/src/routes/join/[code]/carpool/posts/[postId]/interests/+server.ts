@@ -17,16 +17,21 @@ import type { RequestHandler } from './$types';
  * the Backend's response.
  *
  * `create_interest` rejects with 400 for the domain checks (wrong kind, own
- * post, already interested) and 409 for a locked/archived event blocking a
- * non-admin — both map to the same `conflict` verdict here, since either
- * way the client just shows the Backend's own message inline:
+ * post, already interested, bad phone/email format) and 409 for a locked/
+ * archived event blocking a non-admin — both map to the same `conflict`
+ * verdict here, since either way the client just shows the Backend's own
+ * message inline:
  *   { ok: true, interest }
  *   { ok: false, error: 'save-required' }   min_identity=saved gate
  *   { ok: false, error: 'conflict', message }
  *   { ok: false, error: 'server' }
+ *
+ * B34: `contactPhone`/`contactEmail` are optional — left by the interested
+ * driver so the rider post's owner can reach back once this interest is
+ * active, mirroring the guest claim proxy.
  */
 export const POST: RequestHandler = async ({ request, params, cookies, locals, fetch }) => {
-	let body: { localId?: string; displayName?: string };
+	let body: { localId?: string; displayName?: string; contactPhone?: string; contactEmail?: string };
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
@@ -34,6 +39,8 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 	}
 	const postId = params.postId;
 	if (!postId) return json({ ok: false, error: 'server' as const });
+	const contactPhone = body.contactPhone?.trim() || null;
+	const contactEmail = body.contactEmail?.trim() || null;
 
 	// A logged-in member who reaches a guest page (e.g. via a shared join
 	// link) expresses interest as themselves through the authenticated route
@@ -43,7 +50,7 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 			const res = await backendFetch(
 				locals.token,
 				`/carpool/posts/${encodeURIComponent(postId)}/interests`,
-				{ method: 'POST', body: JSON.stringify({}) },
+				{ method: 'POST', body: JSON.stringify({ contact_phone: contactPhone, contact_email: contactEmail }) },
 				fetch
 			);
 			return json({ ok: true as const, interest: await res.json() });
@@ -67,7 +74,9 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 			headers,
 			body: JSON.stringify({
 				local_id: body.localId ?? undefined,
-				display_name: body.displayName ?? ''
+				display_name: body.displayName ?? '',
+				contact_phone: contactPhone,
+				contact_email: contactEmail
 			}),
 			signal: AbortSignal.timeout(20_000)
 		});

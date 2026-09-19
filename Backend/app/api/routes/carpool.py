@@ -94,13 +94,28 @@ router = APIRouter(tags=["carpool"])
 logger = logging.getLogger("divisi.carpool")
 
 
-def _notify_post_owner_of_match(post: CarpoolPost, event: CarpoolEvent, actor: User) -> None:
+def _notify_post_owner_of_match(
+    post: CarpoolPost,
+    event: CarpoolEvent,
+    actor: User,
+    contact_phone: str | None = None,
+    contact_email: str | None = None,
+) -> None:
     """B33: best-effort "you've got a match" email to a post's owner, fired
     right after a `CarpoolSeatClaim`/`CarpoolRiderInterest` is committed
     (`create_claim`/`create_interest` below). Only the post's own owner is
     emailed, never `actor` (the person claiming/expressing interest) --
     they're already in the app and see the match immediately, so this is
     purely for the owner who might not be looking.
+
+    B34: `contact_phone`/`contact_email` are the claim's/interest's own
+    opt-in contact info (`CarpoolSeatClaim.contact_phone`/`.contact_email`
+    or their `CarpoolRiderInterest` mirror), passed through as raw values
+    from the just-created row -- no visibility gating needed here, this
+    email always goes to the one person (`post.user_id`) who's entitled to
+    see them anyway. When provided, they fold right into the email body;
+    otherwise the email keeps its original "open the app to see who it is"
+    framing.
 
     `send_email` (`app.services.email`) already never raises on its own
     (unconfigured Resend, network failure, non-2xx all just log and
@@ -114,9 +129,19 @@ def _notify_post_owner_of_match(post: CarpoolPost, event: CarpoolEvent, actor: U
         settings = get_settings()
         board_url = f"{settings.frontend_base_url}/groups/{event.group_id}?tab=carpool"
         subject = f"{actor.name} wants to carpool with you"
+        # B34: when the claimant/interested party left their own contact
+        # info, fold it right into the email so the post owner can reach
+        # them without having to open the app first; otherwise keep the
+        # original "come see who it is" framing.
+        if contact_phone or contact_email:
+            reach_parts = [value for value in (contact_email, contact_phone) if value]
+            reach_line = f"<p>Reach them at {' / '.join(reach_parts)}.</p>"
+        else:
+            reach_line = ""
         html_body = (
             f"<p><strong>{actor.name}</strong> just matched with your carpool post for "
             f"<strong>{event.title}</strong>.</p>"
+            f"{reach_line}"
             f'<p>Open Divisi to coordinate: <a href="{board_url}">{board_url}</a></p>'
         )
         send_email(post.contact_email, subject, html_body)
@@ -515,11 +540,17 @@ def create_claim(
     if post.seats_total is not None and len(active) >= post.seats_total:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This post is full")
 
-    claim = CarpoolSeatClaim(driver_post_id=post.id, user_id=actor.id, display_name=actor.name)
+    claim = CarpoolSeatClaim(
+        driver_post_id=post.id,
+        user_id=actor.id,
+        display_name=actor.name,
+        contact_phone=payload.contact_phone,
+        contact_email=payload.contact_email,
+    )
     db.add(claim)
     db.commit()
     db.refresh(claim)
-    _notify_post_owner_of_match(post, event, actor)
+    _notify_post_owner_of_match(post, event, actor, payload.contact_phone, payload.contact_email)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
     return claim
@@ -610,11 +641,17 @@ def create_interest(
             status_code=status.HTTP_400_BAD_REQUEST, detail="You already have an interest on this post"
         )
 
-    interest = CarpoolRiderInterest(rider_post_id=post.id, user_id=actor.id, display_name=actor.name)
+    interest = CarpoolRiderInterest(
+        rider_post_id=post.id,
+        user_id=actor.id,
+        display_name=actor.name,
+        contact_phone=payload.contact_phone,
+        contact_email=payload.contact_email,
+    )
     db.add(interest)
     db.commit()
     db.refresh(interest)
-    _notify_post_owner_of_match(post, event, actor)
+    _notify_post_owner_of_match(post, event, actor, payload.contact_phone, payload.contact_email)
     if actor.is_anonymous:
         set_participant_cookie(response, actor, payload.local_id)
     return interest

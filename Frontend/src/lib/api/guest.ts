@@ -525,21 +525,31 @@ export interface GuestCarpoolEvent {
 
 /** B27: same `CarpoolSeatClaimOut` shape `$lib/server/backendTypes.ts`
  * carries for the member route, mirrored here for the same "no adapter in
- * between" reason as `GuestCarpoolPost` below. */
+ * between" reason as `GuestCarpoolPost` below.
+ *
+ * B34: `contact_phone`/`contact_email` are the claimant's own opt-in
+ * contact info, already visibility-gated by the Backend before this
+ * reaches here -- see `CarpoolSeatClaimOut`'s doc comment. */
 export interface GuestCarpoolSeatClaim {
 	id: string;
 	user_id: string;
 	display_name: string;
+	contact_phone: string | null;
+	contact_email: string | null;
 	created_at: string;
 }
 
 /** B30: same `CarpoolRiderInterestOut` shape `$lib/server/backendTypes.ts`
  * carries for the member route, mirrored here for the same "no adapter in
- * between" reason as `GuestCarpoolSeatClaim` above. */
+ * between" reason as `GuestCarpoolSeatClaim` above.
+ *
+ * B34: same gated `contact_phone`/`contact_email` as `GuestCarpoolSeatClaim`. */
 export interface GuestCarpoolRiderInterest {
 	id: string;
 	user_id: string;
 	display_name: string;
+	contact_phone: string | null;
+	contact_email: string | null;
 	created_at: string;
 }
 

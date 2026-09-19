@@ -496,3 +496,132 @@ def test_guest_rider_phone_revealed_only_after_guest_driver_expresses_interest(c
     ).json()
     post_unmatched = next(p for p in posts_unmatched if p["id"] == rider_post["id"])
     assert post_unmatched["contact_phone"] is None
+
+
+# --- B34: contact info left by the claimant/interested party themselves --
+# Mirrors B30's post-level contact-phone visibility, but in the other
+# direction: `CarpoolSeatClaim.contact_phone`/`.contact_email` (and their
+# `CarpoolRiderInterest` mirror) are visible to the driver/rider post's own
+# owner, a group admin, or the claimant/interested party themselves -- never
+# to another claimant/interested party on the same post. See
+# `app.services.carpool._claim_contact_phone_visible_to` /
+# `_interest_contact_phone_visible_to`.
+
+
+def test_claim_contact_info_visible_to_driver_owner_and_claimant_not_other_claimant(client):
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-clph1", seats_total=2)
+    rider_headers = _register_and_login(client, "cp-clph1-rider@example.com")
+    other_headers = _register_and_login(client, "cp-clph1-other@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-clph1-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-clph1-other@example.com")
+
+    claimed = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims",
+        json={"contact_phone": "415-555-0300", "contact_email": "rider@example.com"},
+        headers=rider_headers,
+    )
+    assert claimed.status_code == 201
+    claim_body = claimed.json()
+    # The claimant sees their own contact info right back in the create response.
+    assert claim_body["contact_phone"] == "415-555-0300"
+    assert claim_body["contact_email"] == "rider@example.com"
+
+    # A second claimant on the same post.
+    other_claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=other_headers
+    ).json()
+
+    owner_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=driver_headers).json()
+    owner_post = next(p for p in owner_view if p["id"] == driver_post["id"])
+    owner_claim = next(c for c in owner_post["claims"] if c["id"] == claim_body["id"])
+    assert owner_claim["contact_phone"] == "415-555-0300"
+    assert owner_claim["contact_email"] == "rider@example.com"
+
+    claimant_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=rider_headers).json()
+    claimant_post = next(p for p in claimant_view if p["id"] == driver_post["id"])
+    claimant_claim = next(c for c in claimant_post["claims"] if c["id"] == claim_body["id"])
+    assert claimant_claim["contact_phone"] == "415-555-0300"
+
+    # The other claimant sees this claimant's display_name (unconditionally)
+    # but never their phone/email.
+    other_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=other_headers).json()
+    other_post = next(p for p in other_view if p["id"] == driver_post["id"])
+    seen_claim = next(c for c in other_post["claims"] if c["id"] == claim_body["id"])
+    assert seen_claim["display_name"] == "Name"
+    assert seen_claim["contact_phone"] is None
+    assert seen_claim["contact_email"] is None
+    # And this other claimant's own row (no contact info given) stays None too.
+    own_row = next(c for c in other_post["claims"] if c["id"] == other_claim["id"])
+    assert own_row["contact_phone"] is None
+
+
+def test_admin_sees_claim_contact_info(client):
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-clph2")
+    rider_headers = _register_and_login(client, "cp-clph2-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-clph2-rider@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims",
+        json={"contact_phone": "415-555-0301"},
+        headers=rider_headers,
+    ).json()
+
+    admin_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers).json()
+    admin_post = next(p for p in admin_view if p["id"] == driver_post["id"])
+    admin_claim = next(c for c in admin_post["claims"] if c["id"] == claim["id"])
+    assert admin_claim["contact_phone"] == "415-555-0301"
+
+
+def test_interest_contact_info_visible_to_rider_owner_and_driver_not_other_driver(client):
+    admin_headers = _register_and_login(client, "cp-inph1-admin@example.com")
+    rider_headers = _register_and_login(client, "cp-inph1-rider@example.com")
+    driver_headers = _register_and_login(client, "cp-inph1-driver@example.com")
+    other_driver_headers = _register_and_login(client, "cp-inph1-other-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-inph1-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-inph1-driver@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-inph1-other-driver@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_headers
+    ).json()
+
+    interested = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests",
+        json={"contact_phone": "415-555-0302", "contact_email": "driver@example.com"},
+        headers=driver_headers,
+    )
+    assert interested.status_code == 201
+    interest_body = interested.json()
+    assert interest_body["contact_phone"] == "415-555-0302"
+    assert interest_body["contact_email"] == "driver@example.com"
+
+    other_interest = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=other_driver_headers
+    ).json()
+
+    owner_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=rider_headers).json()
+    owner_post = next(p for p in owner_view if p["id"] == rider_post["id"])
+    owner_interest = next(i for i in owner_post["interests"] if i["id"] == interest_body["id"])
+    assert owner_interest["contact_phone"] == "415-555-0302"
+    assert owner_interest["contact_email"] == "driver@example.com"
+
+    other_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=other_driver_headers).json()
+    other_post = next(p for p in other_view if p["id"] == rider_post["id"])
+    seen_interest = next(i for i in other_post["interests"] if i["id"] == interest_body["id"])
+    assert seen_interest["display_name"] == "Name"
+    assert seen_interest["contact_phone"] is None
+    own_row = next(i for i in other_post["interests"] if i["id"] == other_interest["id"])
+    assert own_row["contact_phone"] is None
+
+
+def test_invalid_claim_contact_phone_format_rejected(client):
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-clph3")
+    rider_headers = _register_and_login(client, "cp-clph3-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-clph3-rider@example.com")
+
+    rejected = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims",
+        json={"contact_phone": "call me maybe"},
+        headers=rider_headers,
+    )
+    assert rejected.status_code == 422

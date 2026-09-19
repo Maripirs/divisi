@@ -215,6 +215,73 @@ def _contact_phone_visible_to(
     return post.contact_phone if matched else None
 
 
+def _claim_contact_phone_visible_to(
+    claim: CarpoolSeatClaim,
+    post: CarpoolPost,
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+) -> str | None:
+    """B34: the inverse of `_contact_phone_visible_to` -- gates
+    `CarpoolSeatClaim.contact_phone` (an opt-in left by the person claiming
+    a seat, for the driver to reach back). Visible to the driver post's own
+    owner (`post.user_id`), a group admin, or the claimant themselves
+    (`viewer_user_id == claim.user_id`); `None` for everyone else,
+    including another claimant on the same post. Same "fails closed" shape
+    as `_contact_phone_visible_to`: no viewer identified never reveals it."""
+    if claim.contact_phone is None or viewer_user_id is None:
+        return None
+    if viewer_user_id == claim.user_id or viewer_user_id == post.user_id or viewer_is_admin:
+        return claim.contact_phone
+    return None
+
+
+def _claim_contact_email_visible_to(
+    claim: CarpoolSeatClaim,
+    post: CarpoolPost,
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+) -> str | None:
+    """B34: the email mirror of `_claim_contact_phone_visible_to` above."""
+    if claim.contact_email is None or viewer_user_id is None:
+        return None
+    if viewer_user_id == claim.user_id or viewer_user_id == post.user_id or viewer_is_admin:
+        return claim.contact_email
+    return None
+
+
+def _interest_contact_phone_visible_to(
+    interest: CarpoolRiderInterest,
+    post: CarpoolPost,
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+) -> str | None:
+    """B34: the rider-interest mirror of `_claim_contact_phone_visible_to`
+    -- gates `CarpoolRiderInterest.contact_phone` (an opt-in left by the
+    driver expressing interest, for the rider to reach back). Visible to
+    the rider post's own owner, a group admin, or the interested driver
+    themselves; `None` for everyone else, including another driver
+    interested in the same post."""
+    if interest.contact_phone is None or viewer_user_id is None:
+        return None
+    if viewer_user_id == interest.user_id or viewer_user_id == post.user_id or viewer_is_admin:
+        return interest.contact_phone
+    return None
+
+
+def _interest_contact_email_visible_to(
+    interest: CarpoolRiderInterest,
+    post: CarpoolPost,
+    viewer_user_id: str | None,
+    viewer_is_admin: bool,
+) -> str | None:
+    """B34: the email mirror of `_interest_contact_phone_visible_to` above."""
+    if interest.contact_email is None or viewer_user_id is None:
+        return None
+    if viewer_user_id == interest.user_id or viewer_user_id == post.user_id or viewer_is_admin:
+        return interest.contact_email
+    return None
+
+
 def _contact_email_visible_to(
     post: CarpoolPost,
     viewer_user_id: str | None,
@@ -319,8 +386,28 @@ def _serialize_post_with_related(
         notes=post.notes,
         contact_phone=_contact_phone_visible_to(post, viewer_user_id, viewer_is_admin, claims, interests),
         contact_email=_contact_email_visible_to(post, viewer_user_id, viewer_is_admin, claims, interests),
-        claims=[CarpoolSeatClaimOut.model_validate(c) for c in claims],
-        interests=[CarpoolRiderInterestOut.model_validate(i) for i in interests],
+        claims=[
+            CarpoolSeatClaimOut(
+                id=c.id,
+                user_id=c.user_id,
+                display_name=c.display_name,
+                contact_phone=_claim_contact_phone_visible_to(c, post, viewer_user_id, viewer_is_admin),
+                contact_email=_claim_contact_email_visible_to(c, post, viewer_user_id, viewer_is_admin),
+                created_at=c.created_at,
+            )
+            for c in claims
+        ],
+        interests=[
+            CarpoolRiderInterestOut(
+                id=i.id,
+                user_id=i.user_id,
+                display_name=i.display_name,
+                contact_phone=_interest_contact_phone_visible_to(i, post, viewer_user_id, viewer_is_admin),
+                contact_email=_interest_contact_email_visible_to(i, post, viewer_user_id, viewer_is_admin),
+                created_at=i.created_at,
+            )
+            for i in interests
+        ],
         created_at=post.created_at,
         updated_at=post.updated_at,
     )

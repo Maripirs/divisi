@@ -887,6 +887,17 @@ class CarpoolSeatClaim(Base):
     driver_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+    # B34: an opt-in phone/email for the claimant to reach back, mirroring
+    # `CarpoolPost.contact_phone`/`.contact_email` but in the other
+    # direction: it's the *driver post's owner* who unlocks these once this
+    # claim exists, not a matched counterparty. Gated at read time the same
+    # way (`app.services.carpool._claim_contact_phone_visible_to`/
+    # `_claim_contact_email_visible_to`) to the post's own owner, a group
+    # admin, or the claimant themselves; `None` for everyone else, including
+    # another claimant on the same post who can already see this row's
+    # `display_name` unconditionally.
+    contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[CarpoolSeatClaimStatus] = mapped_column(
         SAEnum(CarpoolSeatClaimStatus, native_enum=False),
         nullable=False,
@@ -930,6 +941,13 @@ class CarpoolRiderInterest(Base):
     rider_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+    # B34: the rider-interest mirror of `CarpoolSeatClaim.contact_phone`/
+    # `.contact_email` just above -- opt-in, revealed to the rider post's
+    # own owner (once this interest exists), a group admin, or the
+    # interested driver themselves, via `app.services.carpool.
+    # _interest_contact_phone_visible_to`/`_interest_contact_email_visible_to`.
+    contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[CarpoolRiderInterestStatus] = mapped_column(
         SAEnum(CarpoolRiderInterestStatus, native_enum=False),
         nullable=False,

@@ -266,6 +266,19 @@
 	let guestClaimTargetPostId = $state<string | null>(null);
 	let guestInterestTargetPostId = $state<string | null>(null);
 
+	// B34: the guest claim/interest paths' own optional contact-info step,
+	// expanded after the name is known (or right after the name prompt
+	// confirms) and before the actual claim/interest `fetch` fires. Pinned
+	// to a specific post the same way `guestClaimTargetPostId`/
+	// `guestInterestTargetPostId` already are: there's only ever one open
+	// contact form at a time.
+	let guestClaimContactTargetPostId = $state<string | null>(null);
+	let guestClaimContactPhone = $state('');
+	let guestClaimContactEmail = $state('');
+	let guestInterestContactTargetPostId = $state<string | null>(null);
+	let guestInterestContactPhone = $state('');
+	let guestInterestContactEmail = $state('');
+
 	let guestOfferOrigin = $state('');
 	// B32/F37: same There/Back/Round trip choice the member offer/request
 	// forms carry, defaulting to round trip like the Backend's own
@@ -316,8 +329,15 @@
 		guestInterestTargetPostId = null;
 		if (target === 'offer') offeringRide = true;
 		else if (target === 'request') requestingRide = true;
-		else if (target === 'claim' && claimTargetPostId) void submitGuestClaim(claimTargetPostId);
-		else if (target === 'interest' && interestTargetPostId) void submitGuestInterest(interestTargetPostId);
+		else if (target === 'claim' && claimTargetPostId) {
+			guestClaimContactTargetPostId = claimTargetPostId;
+			guestClaimContactPhone = '';
+			guestClaimContactEmail = '';
+		} else if (target === 'interest' && interestTargetPostId) {
+			guestInterestContactTargetPostId = interestTargetPostId;
+			guestInterestContactPhone = '';
+			guestInterestContactEmail = '';
+		}
 	}
 
 	type GuestWriteResult =
@@ -475,11 +495,29 @@
 			guestNameDraft = '';
 			return;
 		}
-		void submitGuestClaim(postId);
+		guestClaimContactTargetPostId = postId;
+		guestClaimContactPhone = '';
+		guestClaimContactEmail = '';
 	}
 
-	async function submitGuestClaim(postId: string) {
+	function cancelGuestClaimContact() {
+		guestClaimContactTargetPostId = null;
+	}
+
+	function confirmGuestClaimContact(postId: string) {
+		const contactPhone = guestClaimContactPhone;
+		const contactEmail = guestClaimContactEmail;
+		guestClaimContactTargetPostId = null;
+		void submitGuestClaim(postId, contactPhone, contactEmail);
+	}
+
+	async function submitGuestClaim(postId: string, contactPhone = '', contactEmail = '') {
 		if (!guest) return;
+		if (contactEmailError(contactEmail)) {
+			claimActionErrorFor = postId;
+			claimActionError = m.carpool_invalid_email();
+			return;
+		}
 		claimActionErrorFor = null;
 		claimActionError = '';
 		claimActionSaveRequired = false;
@@ -488,7 +526,12 @@
 			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/claims`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ localId: ensureLocalId(), displayName: $localProfile.displayName })
+				body: JSON.stringify({
+					localId: ensureLocalId(),
+					displayName: $localProfile.displayName,
+					contactPhone,
+					contactEmail
+				})
 			});
 			const result = (await res.json()) as GuestClaimResult;
 			if (result.ok) {
@@ -566,11 +609,29 @@
 			guestNameDraft = '';
 			return;
 		}
-		void submitGuestInterest(postId);
+		guestInterestContactTargetPostId = postId;
+		guestInterestContactPhone = '';
+		guestInterestContactEmail = '';
 	}
 
-	async function submitGuestInterest(postId: string) {
+	function cancelGuestInterestContact() {
+		guestInterestContactTargetPostId = null;
+	}
+
+	function confirmGuestInterestContact(postId: string) {
+		const contactPhone = guestInterestContactPhone;
+		const contactEmail = guestInterestContactEmail;
+		guestInterestContactTargetPostId = null;
+		void submitGuestInterest(postId, contactPhone, contactEmail);
+	}
+
+	async function submitGuestInterest(postId: string, contactPhone = '', contactEmail = '') {
 		if (!guest) return;
+		if (contactEmailError(contactEmail)) {
+			interestActionErrorFor = postId;
+			interestActionError = m.carpool_invalid_email();
+			return;
+		}
 		interestActionErrorFor = null;
 		interestActionError = '';
 		interestActionSaveRequired = false;
@@ -579,7 +640,12 @@
 			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/interests`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ localId: ensureLocalId(), displayName: $localProfile.displayName })
+				body: JSON.stringify({
+					localId: ensureLocalId(),
+					displayName: $localProfile.displayName,
+					contactPhone,
+					contactEmail
+				})
 			});
 			const result = (await res.json()) as GuestInterestResult;
 			if (result.ok) {
@@ -655,6 +721,9 @@
 					{myClaim}
 					guestNamePromptActive={guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
 					{guestNameDraft}
+					guestClaimContactActive={guestClaimContactTargetPostId === p.id}
+					{guestClaimContactPhone}
+					{guestClaimContactEmail}
 					{claimActionBusyId}
 					{claimActionErrorFor}
 					{claimActionSaveRequired}
@@ -664,6 +733,10 @@
 					onGuestNameCancel={() => (guestNamePromptFor = null)}
 					onGuestNameConfirm={confirmGuestName}
 					onStartClaim={startClaimSeat}
+					onGuestClaimContactPhoneInput={(value) => (guestClaimContactPhone = value)}
+					onGuestClaimContactEmailInput={(value) => (guestClaimContactEmail = value)}
+					onGuestClaimContactCancel={cancelGuestClaimContact}
+					onGuestClaimContactConfirm={confirmGuestClaimContact}
 					onReleaseGuestClaim={releaseGuestClaim}
 				/>
 			{/if}
@@ -676,6 +749,9 @@
 					{myInterest}
 					guestNamePromptActive={guestNamePromptFor === 'interest' && guestInterestTargetPostId === p.id}
 					{guestNameDraft}
+					guestInterestContactActive={guestInterestContactTargetPostId === p.id}
+					{guestInterestContactPhone}
+					{guestInterestContactEmail}
 					{interestActionBusyId}
 					{interestActionErrorFor}
 					{interestActionSaveRequired}
@@ -685,6 +761,10 @@
 					onGuestNameCancel={() => (guestNamePromptFor = null)}
 					onGuestNameConfirm={confirmGuestName}
 					onStartInterest={startExpressInterest}
+					onGuestInterestContactPhoneInput={(value) => (guestInterestContactPhone = value)}
+					onGuestInterestContactEmailInput={(value) => (guestInterestContactEmail = value)}
+					onGuestInterestContactCancel={cancelGuestInterestContact}
+					onGuestInterestContactConfirm={confirmGuestInterestContact}
 					onReleaseGuestInterest={releaseGuestInterest}
 				/>
 			{/if}

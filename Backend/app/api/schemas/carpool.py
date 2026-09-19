@@ -243,16 +243,36 @@ class CarpoolPostUpdate(BaseModel):
 class CarpoolSeatClaimCreate(BaseModel):
     """B27: same anonymous-participant identity fields `CarpoolPostCreate`
     carries, for the same mint-on-demand reason. A guest with no post of
-    their own can still claim a seat."""
+    their own can still claim a seat.
+
+    B34: same opt-in `contact_phone`/`contact_email` as `CarpoolPostCreate`,
+    revealed to the driver post's own owner (once this claim exists), a
+    group admin, or the claimant themselves -- see `CarpoolSeatClaim`'s
+    docstring and `app.services.carpool._claim_contact_phone_visible_to`/
+    `_claim_contact_email_visible_to`."""
 
     local_id: str | None = None
     display_name: str | None = None
+    contact_phone: str | None = None
+    contact_email: EmailStr | None = None
+
+    @model_validator(mode="after")
+    def _validate_contact_phone_format(self) -> "CarpoolSeatClaimCreate":
+        _validate_contact_phone(self.contact_phone)
+        return self
 
 
 class CarpoolSeatClaimOut(BaseModel):
     id: str
     user_id: str
     display_name: str
+    # B34: already visibility-gated by the Backend before this reaches a
+    # response, same "render whatever came back" contract as
+    # `CarpoolPostOut.contact_phone`/`.contact_email`. Plain `str`, not
+    # `EmailStr`: this is read-only output, not something re-validated on
+    # the way out.
+    contact_phone: str | None = None
+    contact_email: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -261,16 +281,31 @@ class CarpoolSeatClaimOut(BaseModel):
 class CarpoolRiderInterestCreate(BaseModel):
     """B30: same anonymous-participant identity fields `CarpoolSeatClaimCreate`
     carries, for the same mint-on-demand reason. A guest with no post of
-    their own can still express interest in a rider's request."""
+    their own can still express interest in a rider's request.
+
+    B34: same opt-in `contact_phone`/`contact_email` as
+    `CarpoolSeatClaimCreate`, revealed to the rider post's own owner (once
+    this interest exists), a group admin, or the interested driver
+    themselves."""
 
     local_id: str | None = None
     display_name: str | None = None
+    contact_phone: str | None = None
+    contact_email: EmailStr | None = None
+
+    @model_validator(mode="after")
+    def _validate_contact_phone_format(self) -> "CarpoolRiderInterestCreate":
+        _validate_contact_phone(self.contact_phone)
+        return self
 
 
 class CarpoolRiderInterestOut(BaseModel):
     id: str
     user_id: str
     display_name: str
+    # B34: same gated, render-as-is contract as `CarpoolSeatClaimOut` above.
+    contact_phone: str | None = None
+    contact_email: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -204,21 +204,37 @@ export type CarpoolLocationPrecision = 'exact' | 'approximate';
 
 /** B27: one seat claim against a driver's `CarpoolPost`. `user_id` is the
  * claimant (a real member or an anonymous participant, same actor shapes
- * `CarpoolPostOut.user_id` already carries). */
+ * `CarpoolPostOut.user_id` already carries).
+ *
+ * B34: `contact_phone`/`contact_email` are an opt-in the claimant may leave
+ * so the driver post's owner can reach back, already visibility-gated by
+ * the Backend (`app.services.carpool._claim_contact_phone_visible_to`/
+ * `_claim_contact_email_visible_to`) before this reaches here — `null`
+ * unless this viewer is the post's own owner, a group admin, or the
+ * claimant themselves. Same "render whatever came back" contract as
+ * `CarpoolPostOut.contact_phone`. */
 export interface CarpoolSeatClaimOut {
 	id: string;
 	user_id: string;
 	display_name: string;
+	contact_phone: string | null;
+	contact_email: string | null;
 	created_at: string;
 }
 
 /** B30: the rider-post mirror of `CarpoolSeatClaimOut` — one driver
  * expressing interest in a rider's `CarpoolPost`. Same shape, same actor
- * possibilities (`user_id` is a real member or an anonymous participant). */
+ * possibilities (`user_id` is a real member or an anonymous participant).
+ *
+ * B34: same gated `contact_phone`/`contact_email` as `CarpoolSeatClaimOut`
+ * above, visible to the rider post's own owner, a group admin, or the
+ * interested driver themselves. */
 export interface CarpoolRiderInterestOut {
 	id: string;
 	user_id: string;
 	display_name: string;
+	contact_phone: string | null;
+	contact_email: string | null;
 	created_at: string;
 }
 

@@ -671,6 +671,7 @@
 	"carpool_contact_email_field": "Contact email",
 	"carpool_contact_email_label": "Contact: {email}",
 	"carpool_contact_email_hint": "Skip this and you won't get an automatic email when someone matches with you: they'll still see your info in the app once they do.",
+	"carpool_claim_contact_hint": "Optional: only shown to the post's owner once this goes through, so they can reach you directly.",
 	"carpool_invalid_email": "Enter a valid email address, or leave it blank",
 	"carpool_submit_offer": "Offer this ride",
 	"carpool_submit_request": "Request a ride",

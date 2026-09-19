@@ -16,16 +16,21 @@ import type { RequestHandler } from './$types';
  * cookie, thread through a fresh one from the Backend's response.
  *
  * `create_claim` rejects with 400 for the domain checks (wrong kind, full,
- * already claimed) and 409 for a locked/archived event blocking a
- * non-admin — both map to the same `conflict` verdict here, since either
- * way the client just shows the Backend's own message inline:
+ * already claimed, bad phone/email format) and 409 for a locked/archived
+ * event blocking a non-admin — both map to the same `conflict` verdict
+ * here, since either way the client just shows the Backend's own message
+ * inline:
  *   { ok: true, claim }
  *   { ok: false, error: 'save-required' }   min_identity=saved gate
  *   { ok: false, error: 'conflict', message }
  *   { ok: false, error: 'server' }
+ *
+ * B34: `contactPhone`/`contactEmail` are optional — left by the claimant so
+ * the driver post's owner can reach back once this claim is active, same
+ * as the guest post-create proxy already forwards for `CarpoolPostCreate`.
  */
 export const POST: RequestHandler = async ({ request, params, cookies, locals, fetch }) => {
-	let body: { localId?: string; displayName?: string };
+	let body: { localId?: string; displayName?: string; contactPhone?: string; contactEmail?: string };
 	try {
 		body = (await request.json()) as typeof body;
 	} catch {
@@ -33,6 +38,8 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 	}
 	const postId = params.postId;
 	if (!postId) return json({ ok: false, error: 'server' as const });
+	const contactPhone = body.contactPhone?.trim() || null;
+	const contactEmail = body.contactEmail?.trim() || null;
 
 	// A logged-in member who reaches a guest page (e.g. via a shared join
 	// link) claims as themselves through the authenticated route instead,
@@ -42,7 +49,7 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 			const res = await backendFetch(
 				locals.token,
 				`/carpool/posts/${encodeURIComponent(postId)}/claims`,
-				{ method: 'POST', body: JSON.stringify({}) },
+				{ method: 'POST', body: JSON.stringify({ contact_phone: contactPhone, contact_email: contactEmail }) },
 				fetch
 			);
 			return json({ ok: true as const, claim: await res.json() });
@@ -66,7 +73,9 @@ export const POST: RequestHandler = async ({ request, params, cookies, locals, f
 			headers,
 			body: JSON.stringify({
 				local_id: body.localId ?? undefined,
-				display_name: body.displayName ?? ''
+				display_name: body.displayName ?? '',
+				contact_phone: contactPhone,
+				contact_email: contactEmail
 			}),
 			signal: AbortSignal.timeout(20_000)
 		});

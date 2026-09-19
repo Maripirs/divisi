@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { backendFetch } from '$lib/server/backend';
 import { datetimeLocalToIso } from '$lib/utils/dates';
 import {
+	contactEmailError,
 	destinationCoordinatesPayload,
 	driverOfferError,
 	eventFieldsMissing,
@@ -269,19 +270,40 @@ export const carpoolActions = {
 		return runAction('editPost', () => backendFetch(locals.token, `/carpool/posts/${postId}`, { method: 'DELETE' }, fetch));
 	},
 
-	// F33/B27: claim one seat on a driver's post. No body fields at all for
-	// a bearer member (identity comes from the token, same as `offerRide`);
-	// the Backend's own rejections (wrong kind, full, already claimed, event
-	// locked) all surface as `BackendApiError` via `runAction`. `form` is
-	// keyed by the post id rather than a fixed string so a rejection on one
-	// driver post's claim button doesn't render under a different one.
+	// F33/B27: claim one seat on a driver's post. `form` is keyed by the post
+	// id rather than a fixed string so a rejection on one driver post's claim
+	// button doesn't render under a different one.
+	//
+	// B34: `contactPhone`/`contactEmail` are optional — left by the
+	// claimant so the driver post's owner can reach back once this claim is
+	// active (see `CarpoolSeatClaim.contact_phone`'s docstring). Same
+	// "trim, empty becomes null" convention as `offerRide`/`requestRide`'s
+	// own contact fields; the Backend's own rejections (wrong kind, full,
+	// already claimed, event locked, bad phone/email format) all surface as
+	// `BackendApiError` via `runAction`.
 	claimSeat: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const driverPostId = String(form.get('driverPostId') ?? '');
+		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		const contactEmail = String(form.get('contactEmail') ?? '').trim();
 		if (!driverPostId) return fail(400, { error: m.carpool_missing_post(), form: 'claimSeat' });
+		if (contactEmailError(contactEmail)) {
+			return fail(400, { error: m.carpool_invalid_email(), form: `claimSeat:${driverPostId}` });
+		}
 
 		return runAction(`claimSeat:${driverPostId}`, () =>
-			backendFetch(locals.token, `/carpool/posts/${driverPostId}/claims`, { method: 'POST', body: JSON.stringify({}) }, fetch)
+			backendFetch(
+				locals.token,
+				`/carpool/posts/${driverPostId}/claims`,
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						contact_phone: contactPhone || null,
+						contact_email: contactEmail || null
+					})
+				},
+				fetch
+			)
 		);
 	},
 
@@ -301,19 +323,33 @@ export const carpoolActions = {
 
 	// B30: the rider-post mirror of `claimSeat` — a driver expressing
 	// interest in a rider's request, since a rider's post has no seats to
-	// claim. Same shape (no body fields for a bearer member, `form` keyed by
-	// the post id) and the same Backend rejections (wrong kind, own post,
-	// already interested, event locked) surfacing via `runAction`.
+	// claim. Same shape (`form` keyed by the post id) and the same Backend
+	// rejections (wrong kind, own post, already interested, event locked,
+	// bad phone/email format) surfacing via `runAction`.
+	//
+	// B34: same optional `contactPhone`/`contactEmail` as `claimSeat`, left
+	// by the interested driver so the rider post's owner can reach back.
 	expressInterest: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const riderPostId = String(form.get('riderPostId') ?? '');
+		const contactPhone = String(form.get('contactPhone') ?? '').trim();
+		const contactEmail = String(form.get('contactEmail') ?? '').trim();
 		if (!riderPostId) return fail(400, { error: m.carpool_missing_post(), form: 'expressInterest' });
+		if (contactEmailError(contactEmail)) {
+			return fail(400, { error: m.carpool_invalid_email(), form: `expressInterest:${riderPostId}` });
+		}
 
 		return runAction(`expressInterest:${riderPostId}`, () =>
 			backendFetch(
 				locals.token,
 				`/carpool/posts/${riderPostId}/interests`,
-				{ method: 'POST', body: JSON.stringify({}) },
+				{
+					method: 'POST',
+					body: JSON.stringify({
+						contact_phone: contactPhone || null,
+						contact_email: contactEmail || null
+					})
+				},
 				fetch
 			)
 		);

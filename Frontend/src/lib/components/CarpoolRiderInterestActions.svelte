@@ -13,6 +13,9 @@
 		myInterest,
 		guestNamePromptActive,
 		guestNameDraft,
+		guestInterestContactActive,
+		guestInterestContactPhone,
+		guestInterestContactEmail,
 		interestActionBusyId,
 		interestActionErrorFor,
 		interestActionSaveRequired,
@@ -22,6 +25,10 @@
 		onGuestNameCancel,
 		onGuestNameConfirm,
 		onStartInterest,
+		onGuestInterestContactPhoneInput,
+		onGuestInterestContactEmailInput,
+		onGuestInterestContactCancel,
+		onGuestInterestContactConfirm,
 		onReleaseGuestInterest
 	}: {
 		post: CarpoolPostOut;
@@ -31,6 +38,12 @@
 		myInterest: CarpoolRiderInterestOut | undefined;
 		guestNamePromptActive: boolean;
 		guestNameDraft: string;
+		/** B34: whether the guest's optional contact-info step is currently
+		 * expanded for this specific post, the rider-post mirror of
+		 * `CarpoolDriverClaimActions`'s `guestClaimContactActive`. */
+		guestInterestContactActive: boolean;
+		guestInterestContactPhone: string;
+		guestInterestContactEmail: string;
 		interestActionBusyId: string | null;
 		interestActionErrorFor: string | null;
 		interestActionSaveRequired: boolean;
@@ -40,8 +53,16 @@
 		onGuestNameCancel: () => void;
 		onGuestNameConfirm: () => void;
 		onStartInterest: (postId: string) => void;
+		onGuestInterestContactPhoneInput: (value: string) => void;
+		onGuestInterestContactEmailInput: (value: string) => void;
+		onGuestInterestContactCancel: () => void;
+		onGuestInterestContactConfirm: (postId: string) => void;
 		onReleaseGuestInterest: (postId: string, interestId: string) => void;
 	} = $props();
+
+	// B34: the member (non-guest) path's own optional contact-info step,
+	// same locally-expanded shape as `CarpoolDriverClaimActions`'s `claiming`.
+	let expressingInterest = $state(false);
 </script>
 
 <div class="btn-row">
@@ -69,21 +90,76 @@
 			onCancel={onGuestNameCancel}
 			onConfirm={onGuestNameConfirm}
 		/>
+	{:else if !isOwner && canPost && isGuest && guestInterestContactActive}
+		<form
+			class="carpool-claim-contact-form"
+			onsubmit={(e) => {
+				e.preventDefault();
+				onGuestInterestContactConfirm(post.id);
+			}}
+		>
+			<label class="field">
+				<span>{m.carpool_contact_phone_field()}</span>
+				<input
+					type="tel"
+					value={guestInterestContactPhone}
+					oninput={(e) => onGuestInterestContactPhoneInput(e.currentTarget.value)}
+					placeholder={m.groups_optional()}
+				/>
+			</label>
+			<label class="field">
+				<span>{m.carpool_contact_email_field()}</span>
+				<input
+					type="email"
+					value={guestInterestContactEmail}
+					oninput={(e) => onGuestInterestContactEmailInput(e.currentTarget.value)}
+					placeholder={m.groups_optional()}
+				/>
+			</label>
+			<p class="card-note">{m.carpool_claim_contact_hint()}</p>
+			<div class="btn-row">
+				<button type="submit" class="btn btn-outline" disabled={interestActionBusyId === post.id}>
+					{interestActionBusyId === post.id ? m.carpool_expressing_interest() : m.carpool_im_interested()}
+				</button>
+				<button type="button" class="text-link" onclick={onGuestInterestContactCancel}>{m.action_cancel()}</button>
+			</div>
+		</form>
 	{:else if !isOwner && canPost}
 		{#if isGuest}
-			<button
-				type="button"
-				class="btn btn-outline"
-				disabled={interestActionBusyId === post.id}
-				onclick={() => onStartInterest(post.id)}
-			>
-				{interestActionBusyId === post.id ? m.carpool_expressing_interest() : m.carpool_im_interested()}
+			<button type="button" class="btn btn-outline" onclick={() => onStartInterest(post.id)}>
+				{m.carpool_im_interested()}
 			</button>
-		{:else}
-			<form method="POST" action="?/expressInterest" use:enhance>
+		{:else if expressingInterest}
+			<form
+				class="carpool-claim-contact-form"
+				method="POST"
+				action="?/expressInterest"
+				use:enhance={() => {
+					return async ({ result, update }) => {
+						if (result.type === 'success') expressingInterest = false;
+						await update();
+					};
+				}}
+			>
 				<input type="hidden" name="riderPostId" value={post.id} />
-				<button type="submit" class="btn btn-outline">{m.carpool_im_interested()}</button>
+				<label class="field">
+					<span>{m.carpool_contact_phone_field()}</span>
+					<input name="contactPhone" type="tel" placeholder={m.groups_optional()} />
+				</label>
+				<label class="field">
+					<span>{m.carpool_contact_email_field()}</span>
+					<input name="contactEmail" type="email" placeholder={m.groups_optional()} />
+				</label>
+				<p class="card-note">{m.carpool_claim_contact_hint()}</p>
+				<div class="btn-row">
+					<button type="submit" class="btn btn-outline">{m.carpool_im_interested()}</button>
+					<button type="button" class="text-link" onclick={() => (expressingInterest = false)}>{m.action_cancel()}</button>
+				</div>
 			</form>
+		{:else}
+			<button type="button" class="btn btn-outline" onclick={() => (expressingInterest = true)}>
+				{m.carpool_im_interested()}
+			</button>
 		{/if}
 	{/if}
 </div>
