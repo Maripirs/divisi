@@ -30,6 +30,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
     # B19: a lazily minted "anonymous participant" (a local-only singer who
     # performed a shared action before registering). Its `email` is a
     # synthetic `anon-<uuid>@participants.divisi.invalid` value and its

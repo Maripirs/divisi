@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core import rate_limit
 from app.db import models  # noqa: F401  (register models on Base.metadata)
 from app.db import session as db_session_module
 from app.db.session import Base, get_db
@@ -64,6 +65,14 @@ def client(monkeypatch, db_sessionmaker):
     # looked up at call time — patch it here too so that task lands in the
     # same in-memory test DB instead of trying to reach a real Postgres.
     monkeypatch.setattr(db_session_module, "SessionLocal", TestingSessionLocal)
+    # `TestClient` reuses one fixed host across every test in this process,
+    # so the guest/auth rate limiters (keyed by IP) would otherwise let one
+    # test's requests count against another's window. Reset around every
+    # test that uses `client`, not just the files that hit the limit
+    # directly, since nearly every test file logs in/registers via this
+    # fixture (see app/core/rate_limit.py).
+    rate_limit._hits.clear()
     with TestClient(app) as c:
         yield c
+    rate_limit._hits.clear()
     app.dependency_overrides.clear()

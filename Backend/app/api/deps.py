@@ -4,7 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from app.core.security import decode_access_token, decode_participant_token
+from app.core.security import decode_access_token, decode_participant_token, pwd_ts
 from app.db.models import User
 from app.db.session import get_db
 
@@ -29,11 +29,14 @@ def get_current_user(
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    user_id = decode_access_token(token)
+    decoded = decode_access_token(token)
+    if decoded is None:
+        raise unauthorized
+    user_id, token_pwd_ts = decoded
     if user_id is None:
         raise unauthorized
     user = db.get(User, user_id)
-    if user is None:
+    if user is None or token_pwd_ts is None or pwd_ts(user.password_changed_at) != token_pwd_ts:
         raise unauthorized
     return user
 
@@ -47,10 +50,16 @@ def get_current_user_optional(
     members and anonymous participants from one handler)."""
     if not token:
         return None
-    user_id = decode_access_token(token)
+    decoded = decode_access_token(token)
+    if decoded is None:
+        return None
+    user_id, token_pwd_ts = decoded
     if user_id is None:
         return None
-    return db.get(User, user_id)
+    user = db.get(User, user_id)
+    if user is None or token_pwd_ts is None or pwd_ts(user.password_changed_at) != token_pwd_ts:
+        return None
+    return user
 
 
 def get_optional_participant(

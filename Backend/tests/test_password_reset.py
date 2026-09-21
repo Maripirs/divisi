@@ -34,9 +34,7 @@ def test_forgot_password_unknown_email_returns_the_same_generic_response(client)
 
 
 def test_forgot_password_logs_a_working_reset_link(client, caplog):
-    client.post(
-        "/auth/register", json={"email": "reset@example.com", "name": "Reset", "password": "hunter22"}
-    )
+    old_headers = _register_and_login(client, "reset@example.com", name="Reset")
     with caplog.at_level(logging.WARNING, logger="divisi.auth"):
         res = client.post("/auth/forgot-password", json={"email": "reset@example.com"})
     assert res.status_code == 202
@@ -49,6 +47,13 @@ def test_forgot_password_logs_a_working_reset_link(client, caplog):
     assert old_login.status_code == 401
     new_login = client.post("/auth/login", json={"email": "reset@example.com", "password": "newpassword123"})
     assert new_login.status_code == 200
+
+    # The session token minted before the reset is revoked, even though it
+    # hasn't expired -- a stolen token shouldn't survive its own owner's
+    # reset.
+    assert client.get("/auth/me", headers=old_headers).status_code == 401
+    new_headers = {"Authorization": f"Bearer {new_login.json()['access_token']}"}
+    assert client.get("/auth/me", headers=new_headers).status_code == 200
 
 
 def test_reset_password_token_is_single_use(client, caplog):

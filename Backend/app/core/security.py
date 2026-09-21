@@ -31,21 +31,38 @@ def hash_reset_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def create_access_token(subject: str) -> str:
+def pwd_ts(password_changed_at: datetime) -> int:
+    """Microsecond-epoch integer for the `pwd_ts` claim/comparison. Whole
+    seconds aren't fine-grained enough: a password change that lands in the
+    same wall-clock second as the login that's supposed to be revoked
+    (routine on a fast connection, and typical in tests) would otherwise
+    truncate to the same integer and silently fail to revoke."""
+    return int(password_changed_at.timestamp() * 1_000_000)
+
+
+def create_access_token(subject: str, password_changed_at: datetime) -> str:
+    """`pwd_ts` embeds the user's `password_changed_at` (as of mint time) so
+    `get_current_user` can reject a token minted before the account's most
+    recent password change/reset -- see `app/api/deps.py`."""
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
-    payload = {"sub": subject, "exp": expire}
+    payload = {"sub": subject, "exp": expire, "pwd_ts": pwd_ts(password_changed_at)}
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> str | None:
-    """Return the subject (user id) if the token is valid, else None."""
+def decode_access_token(token: str) -> tuple[str, int | None] | None:
+    """Return `(subject, pwd_ts)` if the token is valid, else None. `pwd_ts`
+    is `None` for an old-format token minted before this claim existed --
+    callers must treat that as a failed check, not a bypass."""
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     except JWTError:
         return None
-    return payload.get("sub")
+    subject = payload.get("sub")
+    if subject is None:
+        return None
+    return subject, payload.get("pwd_ts")
 
 
 def create_guest_token(group_id: str) -> str:
@@ -104,7 +121,7 @@ def decode_participant_token(token: str) -> tuple[str, str] | None:
     return user_id, payload.get("lid") or ""
 
 
-def create_admin_preview_token(user_id: str) -> str:
+def create_admin_preview_token(user_id: str, password_changed_at: datetime) -> str:
     """B20: a signed session token for the public demo's "preview Admin"
     mode. Same `sub` claim as a real access token, so `get_current_user`
     resolves the demo group's real admin account and every existing
@@ -112,10 +129,18 @@ def create_admin_preview_token(user_id: str) -> str:
     `scope = "admin_preview"` marker is what `app.main`'s middleware
     checks to reject every non-GET request carrying this token, so nothing
     a demo visitor does actually writes anywhere. Short-lived (2 hours):
-    this is a look-around session, not an account."""
+    this is a look-around session, not an account. Carries the same
+    `pwd_ts` claim a real access token does -- it's decoded through the
+    exact same `get_current_user` path, so without this claim the demo
+    admin's own password-change history would 401 every preview session."""
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(hours=2)
-    payload = {"sub": user_id, "scope": "admin_preview", "exp": expire}
+    payload = {
+        "sub": user_id,
+        "scope": "admin_preview",
+        "exp": expire,
+        "pwd_ts": pwd_ts(password_changed_at),
+    }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 

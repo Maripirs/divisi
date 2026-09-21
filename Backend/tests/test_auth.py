@@ -1,3 +1,6 @@
+from app.core import rate_limit
+
+
 def test_register_login_and_me(client):
     register = client.post(
         "/auth/register",
@@ -70,6 +73,29 @@ def test_change_password_with_correct_current_password(client):
     assert client.post("/auth/login", json={"email": email, "password": "hunter22"}).status_code == 401
     relogin = client.post("/auth/login", json={"email": email, "password": "newhunter22"})
     assert relogin.status_code == 200
+
+
+def test_password_change_revokes_old_session_token(client):
+    email = "changepw-revoke@example.com"
+    old_headers = _register_and_login(client, email)
+    assert client.get("/auth/me", headers=old_headers).status_code == 200
+
+    res = client.put(
+        "/auth/me/password",
+        json={"current_password": "hunter22", "new_password": "newhunter22"},
+        headers=old_headers,
+    )
+    assert res.status_code == 204
+
+    # The token minted before the change is now invalid, even though it
+    # hasn't expired.
+    assert client.get("/auth/me", headers=old_headers).status_code == 401
+
+    # A fresh login with the new password gets a token that works.
+    relogin = client.post("/auth/login", json={"email": email, "password": "newhunter22"})
+    assert relogin.status_code == 200
+    new_headers = {"Authorization": f"Bearer {relogin.json()['access_token']}"}
+    assert client.get("/auth/me", headers=new_headers).status_code == 200
 
 
 def test_change_password_wrong_current_password_rejected(client):
@@ -184,3 +210,21 @@ def test_delete_account_blocked_as_sole_group_admin(client):
 # B19's PIN-based "Save across devices" (`POST /auth/save`) is gone as of
 # B21, replaced by the group-scoped guest name match — see
 # `tests/test_participants.py` for that coverage.
+
+
+def test_login_endpoint_is_rate_limited(client):
+    client.post(
+        "/auth/register",
+        json={"email": "ratelimited@example.com", "name": "RL", "password": "hunter22"},
+    )
+
+    for _ in range(rate_limit._AUTH_MAX_REQUESTS_PER_WINDOW - 1):
+        response = client.post(
+            "/auth/login", json={"email": "ratelimited@example.com", "password": "wrong"}
+        )
+        assert response.status_code == 401
+
+    throttled = client.post(
+        "/auth/login", json={"email": "ratelimited@example.com", "password": "wrong"}
+    )
+    assert throttled.status_code == 429

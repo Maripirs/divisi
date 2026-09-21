@@ -269,7 +269,11 @@ def start_admin_preview(join_code: str, db: Session = Depends(get_db)) -> AdminP
     )
     if admin_membership is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    return AdminPreviewOut(access_token=create_admin_preview_token(admin_membership.user_id), group_id=group.id)
+    admin_user = db.get(User, admin_membership.user_id)
+    if admin_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    access_token = create_admin_preview_token(admin_user.id, admin_user.password_changed_at)
+    return AdminPreviewOut(access_token=access_token, group_id=group.id)
 
 
 @router.get("/{join_code}/name-matches", response_model=list[GuestNameMatchOut])

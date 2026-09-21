@@ -25,6 +25,7 @@ from app.api.schemas import (
     UserUpdate,
 )
 from app.core.config import get_settings
+from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
     create_access_token,
     generate_reset_token,
@@ -64,7 +65,7 @@ OAUTH_STATE_COOKIE = "divisi_oauth_state"
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
+def register(payload: UserCreate, db: Session = Depends(get_db), _rl: None = Depends(rate_limit_auth)) -> User:
     if db.query(User).filter(User.email == payload.email).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     user = User(email=payload.email, name=payload.name, hashed_password=hash_password(payload.password))
@@ -75,12 +76,12 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 
 
 @router.post("/login", response_model=Token)
-def login(payload: UserLogin, db: Session = Depends(get_db)) -> Token:
+def login(payload: UserLogin, db: Session = Depends(get_db), _rl: None = Depends(rate_limit_auth)) -> Token:
     invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
     user = db.query(User).filter(User.email == payload.email).first()
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise invalid
-    return Token(access_token=create_access_token(subject=user.id))
+    return Token(access_token=create_access_token(subject=user.id, password_changed_at=user.password_changed_at))
 
 
 @router.get("/me", response_model=UserOut)
@@ -138,6 +139,7 @@ def change_password(
     if not verify_password(payload.current_password, current_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     current_user.hashed_password = hash_password(payload.new_password)
+    current_user.password_changed_at = datetime.now(timezone.utc)
     db.commit()
 
 
@@ -276,6 +278,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     if user is None:
         raise invalid
     user.hashed_password = hash_password(payload.new_password)
+    user.password_changed_at = datetime.now(timezone.utc)
     record.used_at = datetime.now(timezone.utc)
     db.commit()
     return {"detail": "Password updated"}
@@ -384,7 +387,7 @@ def oauth_callback(
         db.add(OAuthAccount(user_id=user.id, provider=OAuthProvider.google, provider_user_id=profile["provider_user_id"]))
     db.commit()
 
-    access_token = create_access_token(subject=user.id)
+    access_token = create_access_token(subject=user.id, password_changed_at=user.password_changed_at)
     redirect = RedirectResponse(f"{settings.frontend_base_url}/login/oauth-callback?token={access_token}")
     redirect.delete_cookie(OAUTH_STATE_COOKIE)
     return redirect
