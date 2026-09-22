@@ -20,12 +20,13 @@ from app.db.models import (
     Piece,
     PieceVersion,
     User,
+    VersionSource,
+    VersionStatus,
 )
 from app.db.session import get_db
 from app.services.pieces import (
     create_piece_with_version,
     delete_piece,
-    pending_generated_version_id,
     resolve_new_piece_owner_id,
 )
 
@@ -143,19 +144,65 @@ async def upload_piece(
     return PieceUploadOut(piece=piece, version=version)
 
 
-def _omr_fields(piece_id: str, db: Session) -> dict:
-    """`latest_omr_job` + `pending_generated_version_id` for one piece —
-    the Tracks tab's "Generate music from PDF" state. Kept out of the main
-    query since most tracks never use it; two cheap indexed lookups."""
-    job = (
-        db.query(OmrJob)
-        .filter(OmrJob.piece_id == piece_id)
-        .order_by(OmrJob.created_at.desc())
-        .first()
+def _latest_versions_by_piece(piece_ids: list[str], db: Session) -> dict[str, PieceVersion]:
+    """The newest `PieceVersion` per piece id, in one query instead of one
+    query per piece. Rows come back grouped by `piece_id` and sorted
+    newest-first within each group, so the first row seen for a given
+    `piece_id` while iterating is guaranteed to be its newest."""
+    if not piece_ids:
+        return {}
+    versions = (
+        db.query(PieceVersion)
+        .filter(PieceVersion.piece_id.in_(piece_ids))
+        .order_by(PieceVersion.piece_id, PieceVersion.created_at.desc())
+        .all()
     )
+    latest: dict[str, PieceVersion] = {}
+    for v in versions:
+        latest.setdefault(v.piece_id, v)
+    return latest
+
+
+def _omr_fields_batch(piece_ids: list[str], db: Session) -> dict[str, dict]:
+    """Batched form of the old per-piece `_omr_fields`: same two lookups
+    (latest OmrJob, pending working-draft version id), done once across all
+    piece ids instead of once per piece."""
+    if not piece_ids:
+        return {}
+    jobs = (
+        db.query(OmrJob)
+        .filter(OmrJob.piece_id.in_(piece_ids))
+        .order_by(OmrJob.piece_id, OmrJob.created_at.desc())
+        .all()
+    )
+    latest_job_by_piece: dict[str, OmrJob] = {}
+    for job in jobs:
+        latest_job_by_piece.setdefault(job.piece_id, job)
+
+    drafts = (
+        db.query(PieceVersion)
+        .filter(
+            PieceVersion.piece_id.in_(piece_ids),
+            PieceVersion.status == VersionStatus.draft,
+            PieceVersion.source == VersionSource.modification,
+        )
+        .order_by(PieceVersion.piece_id, PieceVersion.created_at.desc())
+        .all()
+    )
+    pending_by_piece: dict[str, str] = {}
+    for d in drafts:
+        pending_by_piece.setdefault(d.piece_id, d.id)
+
     return {
-        "latest_omr_job": LibraryEntryOmrJobOut.model_validate(job) if job is not None else None,
-        "pending_generated_version_id": pending_generated_version_id(piece_id, db),
+        piece_id: {
+            "latest_omr_job": (
+                LibraryEntryOmrJobOut.model_validate(latest_job_by_piece[piece_id])
+                if piece_id in latest_job_by_piece
+                else None
+            ),
+            "pending_generated_version_id": pending_by_piece.get(piece_id),
+        }
+        for piece_id in piece_ids
     }
 
 
@@ -171,13 +218,28 @@ def list_my_library(
         .filter(Piece.owner_type == OwnerType.user, Piece.owner_id == current_user.id)
         .all()
     )
+    latest_versions_by_piece = _latest_versions_by_piece([p.id for p in owned_pieces], db)
+
+    my_group_ids = [
+        row[0]
+        for row in db.query(GroupMembership.group_id).filter(GroupMembership.user_id == current_user.id).all()
+    ]
+    distributed_rows = (
+        db.query(Distribution, PieceVersion, Piece)
+        .join(PieceVersion, Distribution.piece_version_id == PieceVersion.id)
+        .join(Piece, PieceVersion.piece_id == Piece.id)
+        .filter(Distribution.group_id.in_(my_group_ids))
+        .order_by(Distribution.distributed_at.desc())
+        .all()
+        if my_group_ids
+        else []
+    )
+
+    all_piece_ids = {p.id for p in owned_pieces} | {piece.id for _d, _v, piece in distributed_rows}
+    omr_fields_by_piece = _omr_fields_batch(list(all_piece_ids), db)
+
     for piece in owned_pieces:
-        latest = (
-            db.query(PieceVersion)
-            .filter(PieceVersion.piece_id == piece.id)
-            .order_by(PieceVersion.created_at.desc())
-            .first()
-        )
+        latest = latest_versions_by_piece.get(piece.id)
         if latest is None:
             continue
         entries.append(
@@ -198,23 +260,11 @@ def list_my_library(
                 has_pdf=latest.pdf_file_path is not None,
                 music_file_name=latest.file_name,
                 pdf_file_name=latest.pdf_file_name,
-                **_omr_fields(piece.id, db),
+                **omr_fields_by_piece[piece.id],
             )
         )
 
-    my_group_ids = [
-        row[0]
-        for row in db.query(GroupMembership.group_id).filter(GroupMembership.user_id == current_user.id).all()
-    ]
     if my_group_ids:
-        distributed_rows = (
-            db.query(Distribution, PieceVersion, Piece)
-            .join(PieceVersion, Distribution.piece_version_id == PieceVersion.id)
-            .join(Piece, PieceVersion.piece_id == Piece.id)
-            .filter(Distribution.group_id.in_(my_group_ids))
-            .order_by(Distribution.distributed_at.desc())
-            .all()
-        )
         seen_piece_ids: set[str] = set()
         for _distribution, version, piece in distributed_rows:
             if piece.id in seen_piece_ids:
@@ -238,7 +288,7 @@ def list_my_library(
                     has_pdf=version.pdf_file_path is not None,
                     music_file_name=version.file_name,
                     pdf_file_name=version.pdf_file_name,
-                    **_omr_fields(piece.id, db),
+                    **omr_fields_by_piece[piece.id],
                 )
             )
 

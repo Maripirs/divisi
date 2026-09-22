@@ -61,7 +61,7 @@ class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     token_hash: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -86,7 +86,7 @@ class OAuthAccount(Base):
     __table_args__ = (UniqueConstraint("provider", "provider_user_id", name="uq_oauth_identity"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     provider: Mapped[OAuthProvider] = mapped_column(SAEnum(OAuthProvider, native_enum=False), nullable=False)
     provider_user_id: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -138,7 +138,7 @@ class GroupMembership(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     role: Mapped[GroupRole] = mapped_column(
         SAEnum(GroupRole, native_enum=False), nullable=False, default=GroupRole.member
     )
@@ -242,7 +242,7 @@ class Piece(Base):
     owner_type: Mapped[OwnerType] = mapped_column(SAEnum(OwnerType, native_enum=False), nullable=False)
     # Polymorphic: a user id when owner_type == user, a group id when owner_type == group.
     # No FK constraint since it points at either table depending on owner_type.
-    owner_id: Mapped[str] = mapped_column(String, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     # Admin-set (group admin, or the owner for a personal piece) starting
     # tempo the player resets to — `None` means "use the MIDI file's own
     # tempo", today's behavior unchanged. Distinct from a singer's own
@@ -267,10 +267,10 @@ class PieceVersion(Base):
     __tablename__ = "piece_versions"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=False)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting a version the rest of the group still relies on.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     source: Mapped[VersionSource] = mapped_column(SAEnum(VersionSource, native_enum=False), nullable=False)
     status: Mapped[VersionStatus] = mapped_column(
@@ -289,7 +289,7 @@ class PieceVersion(Base):
     # never the name a human recognizes.
     file_name: Mapped[str | None] = mapped_column(String, nullable=True)
     pdf_file_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # B17: the editor's "Publish as live version" gate is client-side (every
     # OMR seam marked resolved in localStorage). The Backend can't verify
@@ -305,7 +305,7 @@ class Distribution(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     piece_version_id: Mapped[str] = mapped_column(String, ForeignKey("piece_versions.id"), nullable=False)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
     distributed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -317,8 +317,8 @@ class Annotation(Base):
     __tablename__ = "annotations"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=False)
     position: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -332,7 +332,7 @@ class AnnotationShare(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     annotation_id: Mapped[str] = mapped_column(String, ForeignKey("annotations.id"), nullable=False)
-    shared_with_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    shared_with_user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -359,8 +359,8 @@ class PieceMarkupMark(Base):
     # Creator / last editor. Always set. For a `group`-scoped mark this is
     # audit-only (any admin of the owning group may edit it), not a
     # permission check.
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=False)
     # "personal" (only the creator sees / edits it) or "group" (the shared
     # layer on a group-owned piece, co-edited by any admin of that group).
     # Plain string validated by a Pydantic enum at the API layer, same as
@@ -403,15 +403,15 @@ class Homework(Base):
     __tablename__ = "homework"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
-    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), nullable=True)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
+    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     range: Mapped[str] = mapped_column(String, nullable=False)
     instructions: Mapped[str] = mapped_column(String, nullable=False, default="")
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the assignment out from under the rest of the group.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -425,13 +425,13 @@ class WeeklyNote(Base):
     __tablename__ = "weekly_notes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(String, nullable=False, default="")
     note_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the note out from under the rest of the group.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -457,8 +457,8 @@ class PieceRehearsalNote(Base):
     __tablename__ = "piece_rehearsal_notes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
-    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
+    piece_id: Mapped[str] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=False)
     kind: Mapped[str] = mapped_column(String, nullable=False, default=PieceRehearsalNoteKind.other.value)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     body: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -467,7 +467,7 @@ class PieceRehearsalNote(Base):
     part_scope: Mapped[str | None] = mapped_column(String, nullable=True)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the note out from under the rest of the group.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     # Backlog: "promote a weekly note into a durable rehearsal note". Set
     # only by `POST /weekly-notes/{id}/promote` (`app/api/routes/
     # weekly_notes.py`), never by the plain create route. Nullable and left
@@ -480,7 +480,7 @@ class PieceRehearsalNote(Base):
     # so a stale id here is harmless, never dereferenced for anything but an
     # optional "promoted from" display.
     source_weekly_note_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("weekly_notes.id"), nullable=True
+        String, ForeignKey("weekly_notes.id"), index=True, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -502,13 +502,13 @@ class GroupResource(Base):
     __tablename__ = "group_resources"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
     label: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the resource out from under the rest of the group, same
     # convention as `WeeklyNote.created_by`.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -523,11 +523,11 @@ class ResponsibilitySchedule(Base):
     __tablename__ = "responsibility_schedules"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the schedule out from under the rest of the group.
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -541,7 +541,7 @@ class ResponsibilityRole(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     schedule_id: Mapped[str] = mapped_column(
-        String, ForeignKey("responsibility_schedules.id"), nullable=False
+        String, ForeignKey("responsibility_schedules.id"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     needed_count: Mapped[int] = mapped_column(default=1, server_default="1")
@@ -587,7 +587,7 @@ class ResponsibilityDateSchedule(Base):
         String, ForeignKey("responsibility_dates.id"), nullable=False
     )
     schedule_id: Mapped[str] = mapped_column(
-        String, ForeignKey("responsibility_schedules.id"), nullable=False
+        String, ForeignKey("responsibility_schedules.id"), index=True, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -616,8 +616,8 @@ class ResponsibilitySignup(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     date_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_dates.id"), nullable=False)
-    role_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_roles.id"), nullable=False)
-    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    role_id: Mapped[str] = mapped_column(String, ForeignKey("responsibility_roles.id"), index=True, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     guest_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -643,10 +643,10 @@ class OmrJob(Base):
     __tablename__ = "omr_jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     # No FK-level cascade (this codebase keeps DB constraints minimal); a
     # deleted piece just leaves its jobs pointing at a gone id, harmless.
-    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), nullable=True)
+    piece_id: Mapped[str | None] = mapped_column(String, ForeignKey("pieces.id"), index=True, nullable=True)
     status: Mapped[OmrJobStatus] = mapped_column(
         SAEnum(OmrJobStatus, native_enum=False), nullable=False, default=OmrJobStatus.pending
     )
@@ -713,7 +713,7 @@ class CarpoolEvent(Base):
     __tablename__ = "carpool_events"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), nullable=False)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     destination_label: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -730,7 +730,7 @@ class CarpoolEvent(Base):
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the event out from under the rest of the group (same
     # convention as `WeeklyNote.created_by`).
-    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -793,8 +793,8 @@ class CarpoolPost(Base):
     __tablename__ = "carpool_posts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    event_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_events.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    event_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_events.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     kind: Mapped[CarpoolPostKind] = mapped_column(SAEnum(CarpoolPostKind, native_enum=False), nullable=False)
     status: Mapped[CarpoolPostStatus] = mapped_column(
@@ -885,8 +885,8 @@ class CarpoolSeatClaim(Base):
     __tablename__ = "carpool_seat_claims"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    driver_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    driver_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     # B34: an opt-in phone/email for the claimant to reach back, mirroring
     # `CarpoolPost.contact_phone`/`.contact_email` but in the other
@@ -939,8 +939,8 @@ class CarpoolRiderInterest(Base):
     __tablename__ = "carpool_rider_interests"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    rider_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    rider_post_id: Mapped[str] = mapped_column(String, ForeignKey("carpool_posts.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     # B34: the rider-interest mirror of `CarpoolSeatClaim.contact_phone`/
     # `.contact_email` just above -- opt-in, revealed to the rider post's

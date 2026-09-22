@@ -616,3 +616,74 @@ def test_version_file_routes_access_gated_like_manifest(client):
 
     assert client.get(f"/library/versions/{version_id}/file", headers=stranger_headers).status_code == 403
     assert client.get(f"/library/versions/{version_id}/pdf", headers=stranger_headers).status_code == 403
+
+
+def test_library_batches_versions_and_omr_fields_across_owned_and_distributed(client, monkeypatch):
+    """Locks in the batched `_latest_versions_by_piece`/`_omr_fields_batch`
+    helpers behind `GET /library/pieces`: an owned piece with an OMR job, an
+    owned piece with none, and a distributed piece from another user's group
+    must each carry the right per-piece `latest_omr_job`/
+    `pending_generated_version_id`, not one bled over from another piece."""
+    from app.jobs import omr_jobs
+
+    def fake_run_omr(source_path, output_dir):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        musicxml_path = output_dir / "score.musicxml"
+        musicxml_path.write_bytes(b"<score-partwise/>")
+        midi_path = output_dir / "score.mid"
+        midi_path.write_bytes(b"fake midi bytes")
+        return musicxml_path, midi_path
+
+    monkeypatch.setattr(omr_jobs, "run_omr", fake_run_omr)
+
+    headers = _register_and_login(client, "batchlib@example.com")
+
+    # Owned piece #1: a scanned PDF track with a completed OMR job.
+    omr_upload = _upload_file(
+        client, headers, title="Scanned Track", include_music=False, include_pdf=True
+    )
+    omr_piece_id = omr_upload.json()["piece"]["id"]
+    job = client.post(
+        "/omr/jobs",
+        files={"file": ("score.pdf", io.BytesIO(b"%PDF-1.4 fake"), "application/pdf")},
+        data={"piece_id": omr_piece_id},
+        headers=headers,
+    )
+    assert job.status_code == 201
+
+    # Owned piece #2: plain, no OMR job ever run against it.
+    plain_piece_id = _upload_file(client, headers, title="Plain Track").json()["piece"]["id"]
+
+    # A piece distributed from another user's group this user belongs to.
+    admin_headers = _register_and_login(client, "batchlibadmin@example.com")
+    group_id = client.post("/groups", json={"name": "Batch Choir"}, headers=admin_headers).json()["id"]
+    client.post(f"/groups/{group_id}/members", json={"email": "batchlib@example.com"}, headers=admin_headers)
+    group_upload = _upload_file(
+        client, admin_headers, title="Group Piece", owner_type="group", group_id=group_id
+    )
+    group_piece_id = group_upload.json()["piece"]["id"]
+    group_version_id = group_upload.json()["version"]["id"]
+    client.post(f"/library/versions/{group_version_id}/submit", headers=admin_headers)
+    client.post(f"/library/versions/{group_version_id}/approve", headers=admin_headers)
+    client.post(
+        f"/library/pieces/{group_piece_id}/versions/{group_version_id}/distribute", headers=admin_headers
+    )
+
+    library = client.get("/library/pieces", headers=headers)
+    assert library.status_code == 200
+    entries = {e["piece_id"]: e for e in library.json()}
+    assert set(entries) == {omr_piece_id, plain_piece_id, group_piece_id}
+
+    omr_entry = entries[omr_piece_id]
+    assert omr_entry["latest_omr_job"] is not None
+    assert omr_entry["latest_omr_job"]["status"] == "done"
+    assert omr_entry["pending_generated_version_id"] is not None
+
+    plain_entry = entries[plain_piece_id]
+    assert plain_entry["latest_omr_job"] is None
+    assert plain_entry["pending_generated_version_id"] is None
+
+    group_entry = entries[group_piece_id]
+    assert group_entry["latest_omr_job"] is None
+    assert group_entry["pending_generated_version_id"] is None
+    assert group_entry["version_status"] == "approved"
