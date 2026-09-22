@@ -6,11 +6,33 @@
 	let { post }: { post: CarpoolPostOut } = $props();
 </script>
 
+{#snippet contactInfo(phone: string | null, email: string | null)}
+	{#if phone || email}
+		<p class="carpool-contact-info">
+			{m.carpool_contact_label()}
+			{#if phone}
+				<a class="carpool-contact-link" href={`tel:${phone.replace(/[^\d+]/g, '')}`}>
+					{formatContactPhone(phone)}
+				</a>
+			{/if}
+			{#if phone && email}
+				<span class="carpool-contact-sep">·</span>
+			{/if}
+			{#if email}
+				<a class="carpool-contact-link" href={`mailto:${email}`}>
+					{email}
+				</a>
+			{/if}
+		</p>
+	{/if}
+{/snippet}
+
 <div class="carpool-post-main">
 	<p class="card-title">
 		{post.display_name}
 		{#if post.status === 'hidden'}<span class="dim">· {m.carpool_hidden_badge()}</span>{/if}
 	</p>
+	{@render contactInfo(post.contact_phone, post.contact_email)}
 	<p class="card-meta">{m.carpool_origin_label({ origin: post.origin_label })}</p>
 	{#if post.kind === 'driver'}
 		{#if post.leave_time_text}
@@ -26,16 +48,7 @@
 						     see it (the driver post's own owner, a group admin, or the
 						     claimant themselves) -- see `CarpoolSeatClaimOut`'s doc
 						     comment, no extra client-side gating needed here. -->
-						{#if claim.contact_phone}
-							<a class="carpool-contact-link" href={`tel:${claim.contact_phone.replace(/[^\d+]/g, '')}`}>
-								{m.carpool_contact_phone_label({ phone: formatContactPhone(claim.contact_phone) })}
-							</a>
-						{/if}
-						{#if claim.contact_email}
-							<a class="carpool-contact-link" href={`mailto:${claim.contact_email}`}>
-								{m.carpool_contact_email_label({ email: claim.contact_email })}
-							</a>
-						{/if}
+						{@render contactInfo(claim.contact_phone, claim.contact_email)}
 					</div>
 				{:else}
 					<p class="carpool-seat carpool-seat--empty">{m.carpool_seat_empty({ number: i + 1 })}</p>
@@ -49,31 +62,12 @@
 					<p class="card-meta carpool-post-status">{interest.display_name}</p>
 					<!-- B34: same gated, render-as-is contact info as the seat claims
 					     above. -->
-					{#if interest.contact_phone}
-						<a class="carpool-contact-link" href={`tel:${interest.contact_phone.replace(/[^\d+]/g, '')}`}>
-							{m.carpool_contact_phone_label({ phone: formatContactPhone(interest.contact_phone) })}
-						</a>
-					{/if}
-					{#if interest.contact_email}
-						<a class="carpool-contact-link" href={`mailto:${interest.contact_email}`}>
-							{m.carpool_contact_email_label({ email: interest.contact_email })}
-						</a>
-					{/if}
+					{@render contactInfo(interest.contact_phone, interest.contact_email)}
 				</div>
 			{/each}
 		</div>
 	{/if}
 	{#if post.notes}<p class="card-note">{post.notes}</p>{/if}
-	{#if post.contact_phone}
-		<a class="carpool-contact-link" href={`tel:${post.contact_phone.replace(/[^\d+]/g, '')}`}>
-			{m.carpool_contact_phone_label({ phone: formatContactPhone(post.contact_phone) })}
-		</a>
-	{/if}
-	{#if post.contact_email}
-		<a class="carpool-contact-link" href={`mailto:${post.contact_email}`}>
-			{m.carpool_contact_email_label({ email: post.contact_email })}
-		</a>
-	{/if}
 </div>
 
 <style>
@@ -156,14 +150,27 @@
 		gap: 0.15rem;
 	}
 
-	.carpool-seat--occupied .carpool-contact-link,
-	.carpool-interest .carpool-contact-link {
+	.carpool-contact-info {
+		align-self: flex-start;
+		margin: 0;
+		display: flex;
+		align-items: baseline;
+		gap: 0.35rem;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.carpool-seat--occupied .carpool-contact-info,
+	.carpool-interest .carpool-contact-info {
 		/* Lines up under the name text, past the bullet in `.carpool-seat-line`. */
 		margin-left: 0.95rem;
 	}
 
+	.carpool-contact-sep {
+		color: var(--text-muted);
+	}
+
 	.carpool-contact-link {
-		align-self: flex-start;
 		color: var(--accent);
 		font-weight: 600;
 		font-size: 0.8125rem;
