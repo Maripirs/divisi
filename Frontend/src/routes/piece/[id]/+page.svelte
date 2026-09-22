@@ -2340,6 +2340,10 @@
 	}
 
 	.balance-label {
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
 		font-size: 0.8125rem;
 		font-weight: 600;
 		text-transform: capitalize;
