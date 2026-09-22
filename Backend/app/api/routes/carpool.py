@@ -450,6 +450,8 @@ def update_post(
         post.notes = payload.notes
     if "contact_phone" in fields:
         post.contact_phone = payload.contact_phone
+    if "contact_email" in fields:
+        post.contact_email = payload.contact_email
     db.commit()
     db.refresh(post)
     return serialize_post(post, db, viewer_user_id=actor.id, viewer_is_admin=is_admin)
