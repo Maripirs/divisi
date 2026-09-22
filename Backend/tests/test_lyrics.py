@@ -373,6 +373,63 @@ def test_classify_lyric_tokens_raises_when_no_api_key_configured(monkeypatch):
         classify_lyric_tokens(_tokens())
 
 
+# --- groq_client.py: Misaki tier (tried first, ahead of Groq and NVIDIA) ---
+
+
+def test_classify_lyric_tokens_uses_misaki_first_and_never_calls_groq(monkeypatch):
+    """When Misaki is configured and returns a clean response, it should
+    be used directly -- Groq must never even be attempted for this
+    chunk."""
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    good_content = json.dumps(
+        {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
+    )
+    monkeypatch.setattr(
+        groq_client,
+        "_call_misaki",
+        lambda body: _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]}),
+    )
+
+    def _fail_if_called(body):
+        raise AssertionError("Groq should never be called when Misaki succeeds")
+
+    monkeypatch.setattr(groq_client, "_call_groq", _fail_if_called)
+
+    voices = classify_lyric_tokens(_tokens())
+    assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
+
+
+def test_classify_lyric_tokens_falls_back_to_groq_when_misaki_fails_twice(monkeypatch):
+    """Misaki fails twice on a chunk (same "assume it's down for the rest
+    of the run" pattern as the Groq-to-NVIDIA handoff): the chunk should
+    fall through to Groq in the same iteration, not just get skipped."""
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(groq_client, "_call_misaki", lambda body: _FakeResponse(500, text="boom"))
+    good_content = json.dumps(
+        {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
+    )
+    groq_calls = []
+
+    def _fake_groq(body):
+        groq_calls.append(body)
+        return _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]})
+
+    monkeypatch.setattr(groq_client, "_call_groq", _fake_groq)
+
+    voices = classify_lyric_tokens(_tokens())
+    assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
+    assert len(groq_calls) == 1
+
+
 # --- groq_client.py: NVIDIA fallback (Groq's per-minute AND per-day caps) --
 #
 # Per chunk, same as Groq (see the module docstring for why the earlier

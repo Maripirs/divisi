@@ -1,5 +1,13 @@
-"""Groq call (with an NVIDIA fallback): classify a PDF's raw word tokens
-into per-voice sung syllables, in reading order.
+"""Misaki call, with a Groq fallback and then an NVIDIA fallback: classify
+a PDF's raw word tokens into per-voice sung syllables, in reading order.
+
+Misaki (a self-hosted, OpenAI-compatible endpoint, see `_MISAKI_URL`) is
+tried first for every chunk, ahead of both Groq and NVIDIA -- a bigger
+token budget and a separate quota from either. It's a new, unproven tier
+bolted on top of the existing Groq/NVIDIA pipeline described below, using
+the exact same "two failures = assume this tier is down for the rest of
+the run" pattern already proven for the Groq-to-NVIDIA handoff; it does
+not change why that handoff itself behaves the way it does.
 
 Mirrors the proven request/response/error-handling shape from a sibling
 project's `~/projects/walkcode/server/llm.js` (an OpenAI-compatible
@@ -69,6 +77,7 @@ logger = logging.getLogger("divisi.lyrics")
 
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 _NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+_MISAKI_URL = "https://llm.misaki.sh/v1/chat/completions"
 _TIMEOUT_SECONDS = 60.0
 # NVIDIA's measured generation rate is ~37-47 completion tokens/sec
 # (derived from two real requests: ~94s for 3500 truncated tokens, ~170s
@@ -87,6 +96,15 @@ _NVIDIA_PAUSE_SECONDS = 3.0
 # `_FALLBACK_SECONDS_BETWEEN_CHUNKS`, which is sized around Groq's
 # tokens-per-minute refill rate and doesn't apply to NVIDIA at all.
 _NVIDIA_RETRY_PAUSE_SECONDS = 5.0
+# Pause after a chunk served by Misaki, same reasoning as
+# `_NVIDIA_PAUSE_SECONDS`: no known rate-limit header to pace off of for
+# this self-hosted endpoint, so a short fixed pause stands in for Groq's
+# adaptive one.
+_MISAKI_PAUSE_SECONDS = 3.0
+# Short pause before retrying once on a failed Misaki chunk, mirroring
+# `_NVIDIA_RETRY_PAUSE_SECONDS` for the same reason (a transient blip, not
+# a rate limit to wait out).
+_MISAKI_RETRY_PAUSE_SECONDS = 5.0
 
 # Chunk size, in rendered characters of page text, per Groq call. This
 # account's real free-tier cap is 8000 tokens/minute *total* (prompt +
@@ -450,6 +468,21 @@ def _call_nvidia(body: dict) -> httpx.Response:
     )
 
 
+def _call_misaki(body: dict) -> httpx.Response:
+    """The first-tier provider's HTTP call, tried before Groq on every
+    chunk when a Misaki key is configured (see `_classify_chunk_misaki`).
+    Factored out the same way as `_call_groq`/`_call_nvidia` so tests can
+    monkeypatch it independently. Reuses Groq's own timeout -- no evidence
+    yet that this self-hosted endpoint needs NVIDIA's longer one."""
+    settings = get_settings()
+    return httpx.post(
+        _MISAKI_URL,
+        json=body,
+        headers={"Authorization": f"Bearer {settings.misaki_llm_key}"},
+        timeout=_TIMEOUT_SECONDS,
+    )
+
+
 def _groq_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> dict:
     settings = get_settings()
     return {
@@ -535,6 +568,25 @@ def _nvidia_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
     }
 
 
+def _misaki_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> dict:
+    settings = get_settings()
+    return {
+        "model": settings.misaki_lyrics_model,
+        "temperature": 0.1,
+        # Matches Groq's own `max_tokens` as a reasonable starting point --
+        # this model's real behavior under this task's load is unknown, so
+        # no reasoning-effort or chat-template tuning is invented for it
+        # here (those params were reverse-engineered specifically for
+        # Groq's gpt-oss-120b and NVIDIA's nemotron, see `_groq_body` and
+        # `_nvidia_body`).
+        "max_tokens": 3500,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": _build_user_prompt(tokens, remaining)},
+        ],
+    }
+
+
 def _call_and_parse(
     call_fn, body: dict, provider_name: str
 ) -> tuple[list[dict], httpx.Response]:
@@ -604,6 +656,18 @@ def _classify_chunk(tokens: list[PdfWordToken], remaining: dict[str, int] | None
     return voices, _seconds_until_reset(response)
 
 
+def _classify_chunk_misaki(tokens: list[PdfWordToken], remaining: dict[str, int] | None = None) -> tuple[list[dict], float]:
+    """One Misaki call over a single chunk's tokens, same shape as
+    `_classify_chunk` (Groq). Unlike `_classify_chunk_nvidia`, this raises
+    `LyricExtractionError` on failure rather than swallowing it to `[]`:
+    Misaki is not a terminal tier here, so the caller (`classify_lyric_
+    tokens`) needs to see the failure and fall through to Groq for this
+    same chunk, the same way a failed Groq chunk falls through to
+    NVIDIA."""
+    voices, _response = _call_and_parse(_call_misaki, _misaki_body(tokens, remaining), "Misaki")
+    return voices, _MISAKI_PAUSE_SECONDS
+
+
 def _classify_chunk_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -> list[dict]:
     """Groq's fallback for one chunk, tried once more after a transient
     failure (a malformed response, a network blip) before giving up on
@@ -627,24 +691,31 @@ def _classify_chunk_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int]
 
 
 def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, int] | None = None) -> list[dict]:
-    """Send the PDF's raw word tokens to Groq, chunked by whole pages to
-    stay under Groq's tokens-per-minute cap, and return
+    """Send the PDF's raw word tokens to Misaki first, falling back to
+    Groq and then NVIDIA, chunked by whole pages to stay under Groq's
+    tokens-per-minute cap, and return
     `[{"voice": str | None, "syllables": [{"text": str, "syllabic": str}]}]`,
     syllables in reading order per voice (concatenated across chunks in
-    page order). Each chunk gets one retry on failure. If a chunk still
-    fails after that: with an NVIDIA key configured, Groq is assumed down
-    for the rest of the run (see the module docstring for why) and every
-    chunk from here on, this one included, goes to NVIDIA instead
-    (`_classify_chunk_nvidia`, itself retried once per chunk the same way
-    Groq is); without a key, that chunk is simply skipped (its page
-    contributes no lyrics) rather than losing the whole piece over one
-    bad response. Raises `LyricExtractionError` only for a missing API
-    key, or if literally nothing could be classified at all.
+    page order). Each provider tier gets one retry per chunk on failure.
+    Misaki is tried first on every chunk when configured; if it fails
+    twice on one chunk, it's assumed down for the rest of the run (see the
+    module docstring) and that chunk, and every chunk after it, falls
+    through to the existing Groq/NVIDIA pipeline described next. If a
+    chunk still fails after Groq's own retry: with an NVIDIA key
+    configured, Groq is assumed down for the rest of the run (see the
+    module docstring for why) and every chunk from here on, this one
+    included, goes to NVIDIA instead (`_classify_chunk_nvidia`, itself
+    retried once per chunk the same way Groq is); without a key, that
+    chunk is simply skipped (its page contributes no lyrics) rather than
+    losing the whole piece over one bad response. Raises
+    `LyricExtractionError` only for a missing API key, or if literally
+    nothing could be classified at all.
 
     NVIDIA is a completely separate account/quota from Groq, so it stays
     usable through a Groq outage or an exhausted daily cap (hit the
     latter for real: 200,000 tokens/day on the account this was built
-    against, exhausted by a day of iterating on this feature).
+    against, exhausted by a day of iterating on this feature). Misaki is
+    a separate quota again from both.
 
     `onset_counts`, when given (see `app.lyrics.inject.count_singable_onsets`
     -- ground truth from the actual score, computed before this call),
@@ -656,54 +727,79 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
     classification silently drift out of sync with its notes for the rest
     of a piece -- the failure mode this budget is meant to catch early."""
     settings = get_settings()
-    if not settings.groq_api_key and not settings.nvidia_api_key:
+    if not settings.misaki_llm_key and not settings.groq_api_key and not settings.nvidia_api_key:
         raise LyricExtractionError("Lyric generation is not configured (no API key set)")
 
     chunks = _chunk_tokens_by_page(tokens)
     remaining = dict(onset_counts) if onset_counts else {}
     merged: dict[str | None, list[dict]] = {}
+    misaki_available = bool(settings.misaki_llm_key)
     groq_available = True
     for i, chunk in enumerate(chunks):
-        if groq_available:
-            # A long piece means many sequential Groq calls (one per
-            # chunk), each with some nonzero chance of a flaky response (a
-            # truncated or malformed JSON body, a transient network error)
-            # -- hit this for real on a 6-chunk piece where one chunk's
-            # response just wasn't parseable. One retry recovers from that
-            # without adding much total wait.
+        voices: list[dict] | None = None
+        wait_seconds: float | None = None
+
+        if misaki_available:
+            # Same "one retry, then assume this tier is down for the rest
+            # of the run" pattern as the Groq-to-NVIDIA handoff below, one
+            # level up: Misaki is tried first on every chunk.
             try:
-                voices, wait_seconds = _classify_chunk(chunk, remaining)
+                voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
             except LyricExtractionError:
-                logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
-                time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+                logger.warning("Misaki chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+                time.sleep(_MISAKI_RETRY_PAUSE_SECONDS)
+                try:
+                    voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
+                except LyricExtractionError:
+                    logger.warning(
+                        "Misaki failed twice on chunk %d/%d; treating it as down for the "
+                        "rest of this run and falling back to Groq",
+                        i + 1,
+                        len(chunks),
+                    )
+                    misaki_available = False
+
+        if not misaki_available:
+            if groq_available:
+                # A long piece means many sequential Groq calls (one per
+                # chunk), each with some nonzero chance of a flaky response (a
+                # truncated or malformed JSON body, a transient network error)
+                # -- hit this for real on a 6-chunk piece where one chunk's
+                # response just wasn't parseable. One retry recovers from that
+                # without adding much total wait.
                 try:
                     voices, wait_seconds = _classify_chunk(chunk, remaining)
                 except LyricExtractionError:
-                    if settings.nvidia_api_key:
-                        # Groq failed twice in a row on this chunk -- in
-                        # every real case observed building this, that
-                        # meant Groq was down for the rest of the run too
-                        # (an exhausted per-day cap fails identically on
-                        # every subsequent call), so stop spending each
-                        # later chunk's own retry-and-sleep cycle on a
-                        # provider that's already shown it won't recover;
-                        # this chunk and everything after it goes to
-                        # NVIDIA instead.
-                        logger.warning(
-                            "Groq failed twice on chunk %d/%d; treating it as down for the "
-                            "rest of this run and switching to NVIDIA",
-                            i + 1,
-                            len(chunks),
-                        )
-                        groq_available = False
-                        voices = _classify_chunk_nvidia(chunk, remaining)
-                        wait_seconds = _NVIDIA_PAUSE_SECONDS
-                    else:
-                        logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
-                        voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
-        else:
-            voices = _classify_chunk_nvidia(chunk, remaining)
-            wait_seconds = _NVIDIA_PAUSE_SECONDS
+                    logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+                    time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+                    try:
+                        voices, wait_seconds = _classify_chunk(chunk, remaining)
+                    except LyricExtractionError:
+                        if settings.nvidia_api_key:
+                            # Groq failed twice in a row on this chunk -- in
+                            # every real case observed building this, that
+                            # meant Groq was down for the rest of the run too
+                            # (an exhausted per-day cap fails identically on
+                            # every subsequent call), so stop spending each
+                            # later chunk's own retry-and-sleep cycle on a
+                            # provider that's already shown it won't recover;
+                            # this chunk and everything after it goes to
+                            # NVIDIA instead.
+                            logger.warning(
+                                "Groq failed twice on chunk %d/%d; treating it as down for the "
+                                "rest of this run and switching to NVIDIA",
+                                i + 1,
+                                len(chunks),
+                            )
+                            groq_available = False
+                            voices = _classify_chunk_nvidia(chunk, remaining)
+                            wait_seconds = _NVIDIA_PAUSE_SECONDS
+                        else:
+                            logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
+                            voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+            else:
+                voices = _classify_chunk_nvidia(chunk, remaining)
+                wait_seconds = _NVIDIA_PAUSE_SECONDS
 
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])

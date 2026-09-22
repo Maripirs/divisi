@@ -155,6 +155,17 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     nvidia_lyrics_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
+    # Misaki: a self-hosted, OpenAI-compatible endpoint tried FIRST for
+    # both AI-help features below, ahead of Groq (and, for lyrics, ahead
+    # of NVIDIA too) -- a bigger token budget than either hosted account,
+    # and its own separate quota entirely. Empty key -> the Misaki tier is
+    # simply skipped and each feature behaves exactly as it did before
+    # Misaki existed. Same uppercase-of-field-name env mapping as
+    # `groq_api_key` above (no alias needed): `MISAKI_LLM_KEY`.
+    misaki_llm_key: str = ""
+    misaki_lyrics_model: str = "default"
+    misaki_score_edit_model: str = "default"
+
     # AI-assisted measure-range edits (admin-triggered "AI edit" button,
     # Backend/app/scoreedit/): a second, more general Groq-backed editing
     # tool, deliberately Groq-only with no NVIDIA fallback (see

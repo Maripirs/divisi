@@ -291,6 +291,58 @@ def test_edit_measures_raises_when_no_api_key_configured(monkeypatch):
         edit_measures("<score-partwise></score-partwise>", "make it forte")
 
 
+def test_edit_measures_uses_misaki_first_and_never_calls_groq(monkeypatch):
+    from app.core.config import get_settings
+    from app.scoreedit import client as scoreedit_client
+
+    monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    fragment = "<score-partwise><part id=\"P1\"><measure>misaki</measure></part></score-partwise>"
+    monkeypatch.setattr(
+        scoreedit_client,
+        "_call_misaki",
+        lambda body: _FakeResponse(200, {"choices": [{"message": {"content": fragment}}]}),
+    )
+
+    def _fail_if_called(body):
+        raise AssertionError("Groq should never be called when Misaki succeeds")
+
+    monkeypatch.setattr(scoreedit_client, "_call_groq", _fail_if_called)
+
+    result = edit_measures("<score-partwise></score-partwise>", "make it forte")
+    assert "misaki" in result
+
+
+def test_edit_measures_falls_back_to_groq_when_misaki_fails(monkeypatch):
+    from app.core.config import get_settings
+    from app.scoreedit import client as scoreedit_client
+
+    monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    monkeypatch.setattr(scoreedit_client, "_call_misaki", lambda body: _FakeResponse(500, text="boom"))
+    fragment = "<score-partwise><part id=\"P1\"><measure>groq</measure></part></score-partwise>"
+    monkeypatch.setattr(
+        scoreedit_client,
+        "_call_groq",
+        lambda body: _FakeResponse(200, {"choices": [{"message": {"content": fragment}}]}),
+    )
+
+    result = edit_measures("<score-partwise></score-partwise>", "make it forte")
+    assert "groq" in result
+
+
+def test_edit_measures_raises_when_misaki_fails_and_groq_not_configured(monkeypatch):
+    from app.core.config import get_settings
+    from app.scoreedit import client as scoreedit_client
+
+    monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
+    monkeypatch.setattr(get_settings(), "groq_api_key", "")
+    monkeypatch.setattr(scoreedit_client, "_call_misaki", lambda body: _FakeResponse(500, text="boom"))
+
+    with pytest.raises(ScoreEditError):
+        edit_measures("<score-partwise></score-partwise>", "make it forte")
+
+
 def test_groq_body_uses_reasoning_effort_low_and_the_configured_model():
     from app.core.config import get_settings
     from app.scoreedit.client import _groq_body
