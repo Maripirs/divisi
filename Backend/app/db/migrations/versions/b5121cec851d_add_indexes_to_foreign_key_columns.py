@@ -20,7 +20,10 @@ depends_on = None
 # a sequential scan. Columns that are already the leftmost member of an
 # existing composite UniqueConstraint are skipped: Postgres can use that
 # composite index for a leftmost-column-only lookup too, so a dedicated
-# index here would just be redundant.
+# index here would just be redundant. `piece_markup_marks.piece_id` is also
+# skipped: migration `e4a8c2f6b1d9` already indexed it as `ix_piece_markup_
+# marks_piece_id` (models.py just never recorded that at the ORM level
+# until now) — re-creating it here would collide with the existing index.
 INDEXES = [
     ('ix_oauth_accounts_user_id', 'oauth_accounts', 'user_id'),
     ('ix_password_reset_tokens_user_id', 'password_reset_tokens', 'user_id'),
@@ -34,7 +37,6 @@ INDEXES = [
     ('ix_annotations_piece_id', 'annotations', 'piece_id'),
     ('ix_annotation_shares_shared_with_user_id', 'annotation_shares', 'shared_with_user_id'),
     ('ix_piece_markup_marks_user_id', 'piece_markup_marks', 'user_id'),
-    ('ix_piece_markup_marks_piece_id', 'piece_markup_marks', 'piece_id'),
     ('ix_homework_group_id', 'homework', 'group_id'),
     ('ix_homework_piece_id', 'homework', 'piece_id'),
     ('ix_homework_created_by', 'homework', 'created_by'),
