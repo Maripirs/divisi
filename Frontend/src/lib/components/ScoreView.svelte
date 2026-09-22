@@ -677,14 +677,6 @@
 
 <div class="score-view" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'} data-annotate={annotateMode}>
 	<div class="zoom-controls">
-		{#if annotateMode}
-			<!-- F4: the only cue (besides the parent's own "Cancel"/toggle
-			     control) that a tap on the score places a marker instead of
-			     seeking — a plain text hint here rather than a color change on
-			     the whole score, which would fight the display-mode/muted-staff
-			     coloring already using color to mean something else. -->
-			<span class="annotate-hint">{m.piece_tap_to_place_annotation()}</span>
-		{/if}
 		<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
 		<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
 		<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
@@ -708,6 +700,7 @@
 
 <style>
 	.score-view {
+		position: relative;
 		--score-page: var(--surface);
 		--score-chrome: var(--surface-2);
 		--score-chrome-border: var(--border);
@@ -719,30 +712,26 @@
 	}
 
 	.zoom-controls {
+		position: absolute;
+		right: 0.75rem;
+		bottom: 0.75rem;
 		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		gap: 0.25rem;
-		margin: 0;
-		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid var(--score-chrome-border);
-		background: var(--score-chrome);
-		/* `.score-view` itself doesn't scroll — the score's vertical scroll
-		   happens on an ancestor (`.score-area` in the player page) — so
-		   `sticky` pins this to that ancestor's viewport top instead of
-		   scrolling away with the score content above it. */
-		position: sticky;
-		top: 0;
+		gap: 2px;
+		padding: 3px;
+		background: var(--score-page);
+		border: 1px solid var(--score-chrome-border);
+		border-radius: var(--radius-full);
+		box-shadow: var(--shadow);
 		z-index: 1;
 	}
 	.zoom-controls button {
 		min-width: 2.125rem;
-		border: 1px solid var(--score-chrome-border);
-		background: var(--score-button);
+		border: none;
+		background: transparent;
 		color: var(--score-button-text);
+		padding: 0.4rem 0.6rem;
 		border-radius: var(--radius-full);
-		padding: 0.25rem 0.6rem;
-		font-size: 0.8125rem;
+		font-size: 0.875rem;
 		font-weight: 700;
 		cursor: pointer;
 	}
@@ -750,15 +739,12 @@
 		background: var(--score-button-hover);
 	}
 	.zoom-controls button:disabled {
-		opacity: 0.4;
+		opacity: 0.35;
 		cursor: default;
 	}
 	.zoom-level {
-		min-width: 4rem;
-		background: var(--score-button-active) !important;
-		color: var(--score-button-active-text) !important;
-		text-align: center;
 		font-variant-numeric: tabular-nums;
+		font-weight: 600;
 	}
 	/* Pinned near the top of the viewport, not just the score — so the badge
 	   is still visible when a Practice Setup change is made with the drawer
@@ -808,16 +794,6 @@
 			opacity: 0.8;
 		}
 	}
-	.annotate-hint {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		color: var(--accent);
-		font-size: 0.75rem;
-		font-weight: 700;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
 	.score-container {
 		width: 100%;
 		overflow-x: auto;
@@ -831,9 +807,10 @@
 		   zoom, which would scale the app's fixed top/bottom bars too. */
 		touch-action: pan-x pan-y;
 	}
-	/* F4: the only whole-score cue that taps place a marker right now — see
-	   `.annotate-hint`'s comment above for why nothing on the score's own
-	   coloring changes. */
+	/* F4: the only whole-score cue that taps place a marker right now — a
+	   dashed outline rather than a color change on the whole score, which
+	   would fight the display-mode/muted-staff coloring already using color
+	   to mean something else. */
 	.score-container.annotate-mode {
 		cursor: crosshair;
 		outline: 2px dashed var(--accent);
@@ -863,46 +840,4 @@
 		padding: 0.5rem 0.75rem;
 	}
 
-	/* Landscape phones have almost no vertical room. Rather than spend a
-	   full-width strip on the zoom bar, shrink it to a compact pill over the
-	   top-right corner of the score. It stays `position: sticky` (the only
-	   way to keep pinned while the score scrolls without escaping to the
-	   viewport and colliding with the app's top bar), but its own flow
-	   height is zeroed so it costs the score nothing: the buttons overflow
-	   downward over the top-right of the first system, and that overlap is
-	   the accepted trade-off. `pointer-events` is dropped on the empty strip
-	   and restored on the buttons so the overlap never eats a score tap. */
-	@media (orientation: landscape) and (max-height: 500px) {
-		.zoom-controls {
-			height: 0;
-			min-height: 0;
-			overflow: visible;
-			align-items: flex-start;
-			padding: 0.35rem 0.35rem 0;
-			gap: 0.2rem;
-			border-bottom: none;
-			background: transparent;
-			pointer-events: none;
-			z-index: 4;
-		}
-		.zoom-controls button {
-			pointer-events: auto;
-			min-width: 1.9rem;
-			padding: 0.15rem 0.5rem;
-			font-size: 0.75rem;
-			/* Legible over the score: translucent chrome fill so the pill
-			   reads as floating UI, not part of the engraving. */
-			background: color-mix(in srgb, var(--score-chrome) 90%, transparent);
-			backdrop-filter: blur(4px);
-		}
-		.zoom-level {
-			min-width: 3.2rem;
-		}
-		/* In annotate mode the placement hint shares this row; hide it here
-		   so the floating pill stays compact (the parent's transport toggle
-		   still signals annotate mode). */
-		.annotate-hint {
-			display: none;
-		}
-	}
 </style>
