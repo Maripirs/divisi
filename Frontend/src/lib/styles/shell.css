@@ -15,6 +15,16 @@
 	gap: 1.1rem;
 }
 
+/* Opt-in widening for pages that want a real desktop layout below —
+   currently just the carpool tab's two-column (map | posts) split. Stays
+   at .shell's own 640px everywhere else, and even here does nothing below
+   1024px, so mobile/tablet layouts are byte-for-byte unchanged. */
+@media (min-width: 1024px) {
+	.shell--wide {
+		max-width: 1040px;
+	}
+}
+
 .shell-header {
 	display: flex;
 	align-items: center;

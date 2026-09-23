@@ -85,7 +85,7 @@
 		redirectTo={page.url.pathname + page.url.search}
 	/>
 {:else}
-<main class="shell">
+<main class="shell" class:shell--wide={tab === 'carpool'}>
 	<!-- `data.group!` throughout this block (never plain `data.group`): its
 	     type is `GroupOut | undefined` purely to accommodate the `data.gate`
 	     branch above, which this whole `<main>` never renders from. See

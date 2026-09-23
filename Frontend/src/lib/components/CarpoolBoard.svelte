@@ -812,11 +812,16 @@
 		     `riders` are already direction-filtered above, so the map's pins
 		     respect the toggle too, no prop changes needed inside
 		     `CarpoolMap.svelte` itself. -->
-		{#if mapsAvailable}
-			<CarpoolMap destination={ev} {drivers} {riders} />
-		{/if}
-
-		{@render driversRidersSections(ev)}
+		<div class="carpool-columns">
+			{#if mapsAvailable}
+				<div class="carpool-map-col">
+					<CarpoolMap destination={ev} {drivers} {riders} />
+				</div>
+			{/if}
+			<div class="carpool-posts-col">
+				{@render driversRidersSections(ev)}
+			</div>
+		</div>
 	{/if}
 {/if}
 
@@ -1174,6 +1179,43 @@
 	.carpool-post:first-of-type {
 		border-top: none;
 		padding-top: 0;
+	}
+
+	/* Mobile/tablet: identical to today's flat stack — this wrapper only
+	   exists to (a) reproduce .shell's own 1.1rem gap now that these
+	   siblings are one level deeper, and (b) give the desktop rule below
+	   something to flip into a grid. */
+	.carpool-columns {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+	}
+
+	.carpool-posts-col {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+		min-width: 0;
+	}
+
+	@media (min-width: 1024px) {
+		.carpool-columns {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			align-items: start;
+		}
+
+		.carpool-map-col {
+			min-width: 0;
+			/* Keeps the (short, fixed-height) map in view while the (often much
+			   taller) posts column scrolls past it — the user explicitly asked
+			   for sticky behavior here. `top` matches .shell's own fixed-header
+			   clearance constant (see shell.css's `.shell` padding-top) plus a
+			   little breathing room, so it settles just below AppHeader instead
+			   of under it. */
+			position: sticky;
+			top: calc(6.5rem + env(safe-area-inset-top, 0px) + 1.1rem);
+		}
 	}
 
 </style>

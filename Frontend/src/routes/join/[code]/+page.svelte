@@ -264,7 +264,7 @@
 	</section>
 {/snippet}
 
-<main class="shell join-result">
+<main class="shell join-result" class:shell--wide={tab === 'carpool'}>
 	{#await data.result}
 		<!-- Shell + spinner paint immediately while the guest fetch fan-out
 		     streams in (see +page.ts for why the promise is unawaited). -->
