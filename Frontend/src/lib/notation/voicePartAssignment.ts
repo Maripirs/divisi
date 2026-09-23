@@ -82,8 +82,26 @@ function meanPitch(pitches: number[]): number {
 	return pitches.reduce((a, b) => a + b, 0) / pitches.length;
 }
 
-function capitalize(s: string): string {
+export function capitalize(s: string): string {
 	return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** One candidate track/part `assignVoiceParts` couldn't confidently map to a
+ * voice part -- real notes, but neither name-matched (pass 1) nor covered by
+ * the mean-pitch fallback (pass 2, which only fires when the unmatched-
+ * candidate count exactly equals the remaining-SATB-slot count). This is the
+ * shape that let a real 5-part divisi split silently vanish into the
+ * Accompaniment bucket -- see this file's own module doc comment -- so
+ * callers surface these for a human to resolve instead of guessing. */
+export interface AmbiguousCandidate {
+	/** Index into the `tracks` array passed to `assignVoiceParts` -- same
+	 * indexing `trackParts` uses, so callers can map back to their own raw
+	 * part/track list. */
+	index: number;
+	name: string | null;
+	minPitch: number;
+	maxPitch: number;
+	meanPitch: number;
 }
 
 export interface VoicePartAssignment {
@@ -100,6 +118,10 @@ export interface VoicePartAssignment {
 	 * accompaniment — that's a caller concern, since whatever wasn't
 	 * matched here becomes backing notes instead. */
 	parts: VoicePartInfo[];
+	/** Candidates with real notes that neither pass matched — a caller-
+	 * facing "please confirm these" list, not consumed anywhere else in
+	 * this function. See `AmbiguousCandidate`'s own doc comment. */
+	ambiguous: AmbiguousCandidate[];
 }
 
 export function assignVoiceParts(tracks: { name: string | null; pitches: number[] }[]): VoicePartAssignment {
@@ -184,7 +206,26 @@ export function assignVoiceParts(tracks: { name: string | null; pitches: number[
 		return baseDelta !== 0 ? baseDelta : (a.subIndex ?? 0) - (b.subIndex ?? 0);
 	});
 
-	return { trackParts, parts };
+	// Every candidate that never got a `trackParts` entry despite having real
+	// notes -- pass 2's exact-count check failing (the real "5 unnamed vocal
+	// parts" bug this feature exists to prevent, see this file's own module
+	// doc comment) is the main source; a base voice pass 3 filled with no
+	// track at all never lands here either way. Multi-staff/instrumental
+	// candidates are excluded for free: callers (e.g. `musicxml/parser.ts`)
+	// already fake those to `{ name: null, pitches: [] }` before calling
+	// this, so `pitches.length > 0` filters them out here too.
+	const ambiguous: AmbiguousCandidate[] = tracks
+		.map((t, index) => ({ index, name: t.name, pitches: t.pitches }))
+		.filter(({ index, pitches }) => trackParts[index] === undefined && pitches.length > 0)
+		.map(({ index, name, pitches }) => ({
+			index,
+			name,
+			minPitch: Math.min(...pitches),
+			maxPitch: Math.max(...pitches),
+			meanPitch: meanPitch(pitches)
+		}));
+
+	return { trackParts, parts, ambiguous };
 }
 
 /**

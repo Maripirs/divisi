@@ -1,6 +1,7 @@
 import { assignVoiceParts, splitChordalDivisi } from '../notation/voicePartAssignment.ts';
 import {
 	DEFAULT_TIME_SIGNATURE,
+	type AmbiguousPart,
 	type BackingNote,
 	type MIDILyricEvent,
 	type MIDINote,
@@ -64,7 +65,20 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	const candidates = rawParts.map((part) =>
 		part.staffCount > 1 ? { name: null, pitches: [] } : { name: part.name, pitches: part.notes.map((n) => n.pitch) }
 	);
-	const { trackParts, parts } = assignVoiceParts(candidates);
+	const { trackParts, parts, ambiguous } = assignVoiceParts(candidates);
+	// Map the generic candidate-index shape back to this format's own
+	// identity: the real `<score-part id="...">` value (already computed
+	// above as `partList`) is what `musicxml/partNameRewriter.ts` needs to
+	// find the right element to correct, and the raw part's own name (same
+	// value `candidates` fed in, just re-read from `partList` for clarity)
+	// is what the review UI shows for a human to recognize the part by.
+	const ambiguousParts: AmbiguousPart[] = ambiguous.map((c) => ({
+		partId: partList[c.index].id,
+		name: partList[c.index].name,
+		minPitch: c.minPitch,
+		maxPitch: c.maxPitch,
+		meanPitch: c.meanPitch
+	}));
 	// Accompaniment is always a single, unsplit bucket for everything
 	// `assignVoiceParts` didn't confidently map to a voice — present even
 	// when nothing ends up backing, so the mixer always has an
@@ -119,7 +133,8 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 		keySignatureFifths,
 		parts: split.parts,
 		trackParts,
-		voicePartChannels: {}
+		voicePartChannels: {},
+		ambiguousParts
 	};
 }
 

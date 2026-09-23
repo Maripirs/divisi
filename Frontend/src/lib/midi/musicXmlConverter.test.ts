@@ -33,7 +33,8 @@ function splitPiece(): ParsedMIDI {
 			{ id: 'accompaniment', base: 'accompaniment', label: 'Accompaniment' }
 		],
 		trackParts: {},
-		voicePartChannels: {}
+		voicePartChannels: {},
+		ambiguousParts: []
 	};
 }
 

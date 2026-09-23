@@ -98,6 +98,46 @@ export const actions: Actions = {
 		throw redirect(303, lh(`/groups/${groupId}?tab=tracks&view=admin`));
 	},
 
+	// Writes the reviewer's part-confirmation choices (built client-side by
+	// `+page.svelte` via `musicxml/partNameRewriter.ts`'s
+	// `applyPartNameAssignments`) into the draft's music file in place --
+	// same "overwrite a draft's file, no new version row" endpoint an F16
+	// editor save uses (`PUT /library/versions/{id}/file`), just with a
+	// corrected MusicXML string instead of a picked file. Raw `fetch` (not
+	// `backendFetch`) for the multipart body, same reasoning as
+	// `groups/[id]/actions/tracks.ts`'s uploads -- `backendFetch` force-sets
+	// `Content-Type: application/json` whenever a body is present, which
+	// breaks a multipart body.
+	resolveParts: async ({ params, locals, fetch, request }) => {
+		const form = await request.formData();
+		const draftId = String(form.get('draftId') ?? '');
+		const correctedXml = String(form.get('correctedXml') ?? '');
+		if (!draftId || !correctedXml) return fail(400, { error: m.groups_missing_track() });
+
+		const body = new FormData();
+		body.set('file', new Blob([correctedXml], { type: 'application/xml' }), 'corrected.musicxml');
+
+		let res: Response;
+		try {
+			res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${draftId}/file`, {
+				method: 'PUT',
+				headers: { Authorization: `Bearer ${locals.token}` },
+				body
+			});
+		} catch {
+			return fail(503, { error: m.errors_could_not_reach_server() });
+		}
+		if (!res.ok) {
+			const errBody = (await res.json().catch(() => ({}))) as { detail?: string };
+			return fail(res.status, { error: errBody.detail ?? m.upload_failed({ status: res.status }) });
+		}
+
+		// Back to this same page -- the next `load()` re-fetches `xml` from
+		// the now-corrected draft file, so the client-side re-parse's
+		// `ambiguousParts` reflects exactly what was just resolved.
+		throw redirect(303, lh(`/piece/${params.id}/review`));
+	},
+
 	discard: async ({ params, locals, fetch, request }) => {
 		const form = await request.formData();
 		const draftId = String(form.get('draftId') ?? '');

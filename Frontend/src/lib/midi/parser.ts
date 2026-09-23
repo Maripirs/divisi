@@ -3,6 +3,7 @@ import type { MidiEvent } from 'midi-file';
 import { assignVoiceParts, splitChordalDivisi } from '../notation/voicePartAssignment.ts';
 import {
 	DEFAULT_TIME_SIGNATURE,
+	type AmbiguousPart,
 	type BackingNote,
 	type MIDILyricEvent,
 	type MIDINote,
@@ -45,9 +46,19 @@ export function parseMidiFile(bytes: ArrayLike<number>): ParsedMIDI {
 	const tickToMs = makeTickToMsConverter(tempoChanges, ticksPerBeat);
 
 	const rawTracks = noteTrackEventLists.map(readTrack);
-	const { trackParts, parts } = assignVoiceParts(
+	const { trackParts, parts, ambiguous } = assignVoiceParts(
 		rawTracks.map((t) => ({ name: t.name, pitches: t.notes.map((n) => n.pitch) }))
 	);
+	// Track index as a string -- see `AmbiguousPart.partId`'s own doc
+	// comment for why (no MIDI write-back UI exists yet, so this is for
+	// type consistency with `musicxml/parser.ts` only).
+	const ambiguousParts: AmbiguousPart[] = ambiguous.map((c) => ({
+		partId: String(c.index),
+		name: c.name,
+		minPitch: c.minPitch,
+		maxPitch: c.maxPitch,
+		meanPitch: c.meanPitch
+	}));
 	// Accompaniment is always a single, unsplit bucket for everything
 	// `assignVoiceParts` didn't confidently map to a voice — present even
 	// when no track ends up backing, so the mixer always has an
@@ -109,7 +120,8 @@ export function parseMidiFile(bytes: ArrayLike<number>): ParsedMIDI {
 		keySignatureFifths,
 		parts: split.parts,
 		trackParts,
-		voicePartChannels
+		voicePartChannels,
+		ambiguousParts
 	};
 }
 

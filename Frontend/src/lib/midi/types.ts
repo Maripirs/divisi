@@ -95,6 +95,24 @@ export interface MIDILyricEvent {
 	partId: MixPart;
 }
 
+/** A track/part with real notes that `notation/voicePartAssignment.ts`'s
+ * `assignVoiceParts` couldn't confidently map to a voice part -- the review
+ * flow (`piece/[id]/review`) surfaces these for a human to confirm before a
+ * version can be approved, rather than letting them silently fall into the
+ * Accompaniment bucket the way the motivating bug did (see that file's own
+ * module doc comment). */
+export interface AmbiguousPart {
+	/** MusicXML: the `<score-part>` id (used as the rewrite target via
+	 * `musicxml/partNameRewriter.ts`). MIDI: the track index as a string --
+	 * informational only, no write-back UI consumes this yet (MIDI
+	 * track-name rewriting needs real binary surgery, out of scope here). */
+	partId: string;
+	name: string | null;
+	minPitch: number;
+	maxPitch: number;
+	meanPitch: number;
+}
+
 /** A MIDI time-signature meta-event's payload: `numerator` beats of
  * `denominator` note value per measure (e.g. 4/4, 6/8). */
 export interface MIDITimeSignature {
@@ -144,4 +162,9 @@ export interface ParsedMIDI {
 	 * sample-scheduled by FluidSynth itself), so per-part volume has to be
 	 * a live MIDI control message rather than a separate mixer node. */
 	voicePartChannels: Partial<Record<MixPart, number[]>>;
+	/** Every candidate `assignVoiceParts` couldn't confidently place -- see
+	 * `AmbiguousPart`'s own doc comment. Empty for a file where every real
+	 * vocal candidate was either name-matched or covered by the mean-pitch
+	 * fallback. */
+	ambiguousParts: AmbiguousPart[];
 }

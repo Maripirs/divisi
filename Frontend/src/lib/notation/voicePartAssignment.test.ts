@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MIDILyricEvent, MIDINote, MixPart, VisualState, VoicePartInfo } from '../midi/types.ts';
-import { mergeSplitDesksForDisplay, splitChordalDivisi } from './voicePartAssignment.ts';
+import { assignVoiceParts, mergeSplitDesksForDisplay, splitChordalDivisi } from './voicePartAssignment.ts';
 
 // Base parts list shape every test starts from: plain SATB + accompaniment,
 // the same unsplit shape `assignVoiceParts` produces for a file that names
@@ -16,6 +16,50 @@ const flatParts: VoicePartInfo[] = [
 function note(pitch: number, startMs: number, partId: string, durationMs = 500): MIDINote {
 	return { pitch, startMs, durationMs, partId };
 }
+
+describe('assignVoiceParts ambiguous candidates', () => {
+	it('surfaces every unnamed candidate as ambiguous when a 5-part divisi split breaks the exact-count fallback', () => {
+		// The real bug this feature exists to prevent: 5 unnamed vocal parts
+		// (a divisi split, e.g. Soprano 1/2 + Alto + Tenor + Bass) with no
+		// names to match on pass 1, and pass 2's mean-pitch fallback only
+		// fires when the unmatched-candidate count exactly equals the
+		// remaining-SATB-slot count (4) -- 5 != 4, so historically every one
+		// of these silently fell through to Accompaniment with no trace.
+		const tracks = [
+			{ name: null, pitches: [72, 74] }, // soprano 1 range
+			{ name: null, pitches: [67, 69] }, // soprano 2 range
+			{ name: null, pitches: [60, 62] }, // alto range
+			{ name: null, pitches: [53, 55] }, // tenor range
+			{ name: null, pitches: [45, 47] } // bass range
+		];
+		const result = assignVoiceParts(tracks);
+
+		expect(result.trackParts).toEqual({});
+		expect(result.ambiguous).toHaveLength(5);
+		expect(result.ambiguous.map((a) => a.index)).toEqual([0, 1, 2, 3, 4]);
+		expect(result.ambiguous[0]).toEqual({ index: 0, name: null, minPitch: 72, maxPitch: 74, meanPitch: 73 });
+	});
+
+	it('excludes a track that was actually assigned, whether by name match or the mean-pitch fallback', () => {
+		const tracks = [
+			{ name: 'Soprano', pitches: [72] },
+			{ name: null, pitches: [60] }, // fills alto via the exact-count fallback
+			{ name: null, pitches: [53] }, // fills tenor via the exact-count fallback
+			{ name: null, pitches: [45] } // fills bass via the exact-count fallback
+		];
+		const result = assignVoiceParts(tracks);
+
+		expect(result.trackParts).toEqual({ 0: 'soprano', 1: 'alto', 2: 'tenor', 3: 'bass' });
+		expect(result.ambiguous).toEqual([]);
+	});
+
+	it('excludes a candidate with no notes at all (the multi-staff/instrumental exclusion callers rely on)', () => {
+		const tracks = [{ name: null, pitches: [] }];
+		const result = assignVoiceParts(tracks);
+
+		expect(result.ambiguous).toEqual([]);
+	});
+});
 
 describe('splitChordalDivisi', () => {
 	it('splits a base voice whose every onset has exactly 2 notes, higher pitch on desk 1', () => {

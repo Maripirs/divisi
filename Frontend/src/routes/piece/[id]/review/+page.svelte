@@ -2,12 +2,16 @@
 	import { enhance } from '$app/forms';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+	import ConfirmPartsPanel, { type PartChoice } from '$lib/components/ConfirmPartsPanel.svelte';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import '$lib/styles/shell.css';
 	import { resolvedTheme } from '$lib/theme';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
+	import { parseMusicXmlFile } from '$lib/musicxml/parser';
+	import { applyPartNameAssignments, type PartNameAssignment } from '$lib/musicxml/partNameRewriter';
+	import { capitalize } from '$lib/notation/voicePartAssignment';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import type { PageData, ActionData } from './$types';
@@ -17,6 +21,48 @@
 	let approving = $state(false);
 	let discarding = $state(false);
 	let submittingEdit = $state(false);
+	let confirmingParts = $state(false);
+
+	// Client-side re-parse of the draft/live version's own MusicXML, purely
+	// to surface `ambiguousParts` here -- the score itself still renders via
+	// `ScoreView`'s own separate rendering path below, untouched by this.
+	// Wrapped defensively: `data.xml` is always real content the Backend
+	// already accepted, but a parse failure here should just hide the
+	// confirm-parts panel rather than break the whole review page.
+	let parsed = $derived.by(() => {
+		try {
+			return parseMusicXmlFile(data.xml);
+		} catch {
+			return null;
+		}
+	});
+
+	// The reviewer's in-progress part assignments for this draft, keyed by
+	// `AmbiguousPart.partId`. An entry absent from this record is exactly
+	// what "not yet resolved" looks like -- see `ConfirmPartsPanel`'s own
+	// `PartChoice` doc comment for why there's no explicit third option.
+	let assignments = $state<Record<string, PartChoice>>({});
+
+	let allResolved = $derived(
+		!parsed?.ambiguousParts?.length || parsed.ambiguousParts.every((p) => assignments[p.partId] !== undefined)
+	);
+
+	/** A resolved choice's label, matching `VoicePartInfo.label`'s own
+	 * `capitalize(base)[ subIndex]` / "Accompaniment" convention exactly, so
+	 * a part corrected here reads identically to one the file already named
+	 * itself once it's re-parsed. */
+	function choiceLabel(choice: PartChoice): string {
+		if (choice.kind === 'accompaniment') return 'Accompaniment';
+		return choice.subIndex !== undefined ? `${capitalize(choice.base)} ${choice.subIndex}` : capitalize(choice.base);
+	}
+
+	let correctedXml = $derived.by(() => {
+		if (!parsed?.ambiguousParts?.length) return '';
+		const partAssignments: PartNameAssignment[] = parsed.ambiguousParts
+			.filter((p) => assignments[p.partId] !== undefined)
+			.map((p) => ({ partId: p.partId, label: choiceLabel(assignments[p.partId]) }));
+		return applyPartNameAssignments(data.xml, partAssignments);
+	});
 
 	// `ScoreView`'s own built-in zoom pill is hidden here (see the
 	// `pane-score` style block below) and this one substituted instead --
@@ -100,6 +146,32 @@
 			{#if form?.error}<p class="error">{form.error}</p>{/if}
 
 			{#if data.draftId}
+				{#if parsed?.ambiguousParts?.length}
+					<ConfirmPartsPanel
+						ambiguousParts={parsed.ambiguousParts}
+						existingParts={parsed.parts}
+						{assignments}
+						onchange={(partId, choice) => {
+							if (choice === undefined) {
+								const next = { ...assignments };
+								delete next[partId];
+								assignments = next;
+							} else {
+								assignments = { ...assignments, [partId]: choice };
+							}
+						}}
+					/>
+					<form method="POST" action="?/resolveParts" use:enhance={withSubmitting((v) => (confirmingParts = v))}>
+						<input type="hidden" name="draftId" value={data.draftId} />
+						<input type="hidden" name="correctedXml" value={correctedXml} />
+						<div class="btn-row">
+							<button type="submit" class="btn btn-outline" disabled={confirmingParts || !allResolved}>
+								{confirmingParts ? m.confirm_parts_confirming() : m.confirm_parts_confirm_button()}
+							</button>
+						</div>
+					</form>
+					<hr class="edit-panel-divider" />
+				{/if}
 				<div class="btn-row">
 					<a class="text-link" href={lh(`/groups/${data.groupId}?tab=tracks&view=admin`)}>
 						{m.action_cancel()}
@@ -126,11 +198,14 @@
 					<form method="POST" action="?/approve" use:enhance={withSubmitting((v) => (approving = v))}>
 						<input type="hidden" name="draftId" value={data.draftId} />
 						<input type="hidden" name="groupId" value={data.groupId} />
-						<button type="submit" class="btn btn-primary" disabled={approving || discarding}>
+						<button type="submit" class="btn btn-primary" disabled={approving || discarding || !allResolved}>
 							{approving ? m.groups_uploading() : m.review_draft_approve()}
 						</button>
 					</form>
 				</div>
+				{#if !allResolved}
+					<p class="hint">{m.confirm_parts_all_resolved_hint()}</p>
+				{/if}
 				<hr class="edit-panel-divider" />
 			{/if}
 
