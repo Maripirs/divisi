@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -46,17 +45,6 @@
 		</p>
 	</section>
 </main>
-
-{#if guestJoinCode}
-	<!-- Same as `/settings`'s own footer: a code-guest has no dashboard
-	     `BottomNav`'s Home tab would resolve to (it's login-gated) — send
-	     them back where they came from instead. -->
-	<nav class="bottom-nav">
-		<a href={lh(`/join/${guestJoinCode}`)}>{m.settings_back_to_choir()}</a>
-	</nav>
-{:else}
-	<BottomNav />
-{/if}
 
 <style>
 	.body {

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import RoleSwitch from '$lib/components/RoleSwitch.svelte';
 	import GroupGuestGate from '$lib/components/GroupGuestGate.svelte';
 	import HomeworkTab from './tabs/HomeworkTab.svelte';
@@ -151,6 +150,4 @@
 		<AboutTab {data} {form} {mode} />
 	{/if}
 </main>
-
-<BottomNav />
 {/if}

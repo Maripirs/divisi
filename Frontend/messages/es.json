@@ -80,6 +80,7 @@
 	"home_active_count": "{count} activas",
 	"home_join_group": "Unirse a un grupo con un código",
 	"home_unknown_group": "Grupo desconocido",
+	"home_library_note": "Explora las pistas de ensayo de tus grupos",
 
 	"join_title": "Unirse a un grupo",
 	"join_pitch": "Ingresa el código que te compartió el/la director/a de tu coro. No necesitas cuenta para ver y practicar las pistas de ensayo de un grupo.",
@@ -171,7 +172,6 @@
 	"settings_more": "Más",
 	"settings_more_note": "Acerca de Divisi, portafolio",
 	"settings_log_out": "Cerrar sesión",
-	"settings_back_to_choir": "Volver a tu coro",
 	"settings_enter_name": "Ingresa un nombre",
 	"settings_enter_passwords": "Ingresa tu contraseña actual y la nueva",
 	"settings_password_too_short": "La nueva contraseña debe tener al menos 8 caracteres",
@@ -186,9 +186,6 @@
 	"more_creating_group_body3": "Si quieres usar Divisi con tu coro, contáctanos para hablar sobre crear un grupo.",
 
 	"app_header_home_label": "Inicio de Divisi",
-	"bottom_nav_home": "Inicio",
-	"bottom_nav_library": "Biblioteca",
-	"bottom_nav_primary": "Principal",
 
 	"action_save": "Guardar",
 	"action_cancel": "Cancelar",

@@ -11,9 +11,9 @@ export interface GroupSection {
 
 /** The bare root is not the library for either audience:
  *  - logged out → `/welcome` (onboarding), so a first-time visit can't skip it
- *  - logged in  → `/home`, the real landing page (bottom-nav Home)
+ *  - logged in  → `/home`, the real landing page
  * The library still lives at `/`, reached explicitly with `?lib=1` — set by
- * `BottomNav`'s Library tab and the player's back-to-library fallback.
+ * Home's library link and the player's back-to-library fallback.
  * `?guest=1` is accepted as a legacy alias for the same intent.
  *
  * The redirect gate keys off the session cookie, not the resolved `user`

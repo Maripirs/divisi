@@ -62,11 +62,10 @@
 <style>
 	.welcome {
 		position: relative;
-		/* `.shell`'s own padding (6.5rem top / 5.5rem bottom) reserves room
-		   for the fixed `AppHeader`/`BottomNav` every other page has —
-		   Welcome has neither, so inheriting that padding was the actual
-		   reason this page needed scrolling on a phone screen: ~190px of
-		   pure empty space top and bottom, not real content. */
+		/* `.shell`'s own top padding (6.5rem) reserves room for the fixed
+		   `AppHeader` every other page has — Welcome has none, so
+		   inheriting that padding was the actual reason this page needed
+		   scrolling on a phone screen: real empty space, not real content. */
 		padding-top: calc(1.25rem + env(safe-area-inset-top, 0px));
 		padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
 		gap: 0.85rem;

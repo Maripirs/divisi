@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
 	import { getPiece } from '$lib/pieces/registry';
 	// Annotations are hidden app-wide for now (see Frontend/plan.md's F3 log) —
@@ -183,9 +182,18 @@
 		</section>
 	{/await}
 
+	<!-- Library folded in here now that the persistent bottom nav (which
+	     used to carry a standalone Library tab) is gone — this row is the
+	     only way to reach it. Reuses the exact `?lib=1` href the root
+	     route's own redirect guard checks for (see its `+page.server.ts`),
+	     not a new route of its own. -->
+	<section class="card">
+		<a class="list-row-link" href={lh('/?lib=1')}>
+			<span>{m.library_title()}</span>
+			<span class="dim">{m.home_library_note()}</span>
+		</a>
+	</section>
 </main>
-
-<BottomNav />
 
 <style>
 	.join-group {

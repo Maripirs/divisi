@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
@@ -74,12 +73,12 @@
 
 <!-- Deliberately not `<main class="shell">` (every other page's normal-flow,
      scrolls-with-the-document container) -- this page must fill exactly the
-     viewport between the fixed header/footer with no page-level scroll at
-     all, only the PDF/score panes scroll internally. `.review-shell` is
+     viewport below the fixed header with no page-level scroll at all, only
+     the PDF/score panes scroll internally. `.review-shell` is
      `position: fixed`, sized to that gap directly (reusing `.shell`'s own
-     `6.5rem`/`5.5rem` header/footer clearance constants so it lines up with
-     every other page), rather than a normal-flow box the document could
-     still grow past. -->
+     `6.5rem` header clearance and matching its own bottom clearance so it
+     lines up with every other page), rather than a normal-flow box the
+     document could still grow past. -->
 <main class="review-shell">
 	<div class="review-body" data-dock={dock}>
 		<div class="edit-panel">
@@ -220,13 +219,11 @@
 	</div>
 </main>
 
-<BottomNav />
-
 <style>
-	/* Fills exactly the gap between the fixed `AppHeader` and fixed
-	   `BottomNav` -- the same clearance `.shell`'s own padding reserves
-	   elsewhere (`6.5rem`/`5.5rem` + safe-area), just applied as a fixed
-	   box's `top`/`bottom` instead of a normal-flow box's padding, since a
+	/* Fills exactly the gap below the fixed `AppHeader` -- the same
+	   clearance `.shell`'s own padding reserves elsewhere (`6.5rem` top /
+	   `1.75rem` bottom + safe-area), just applied as a fixed box's
+	   `top`/`bottom` instead of a normal-flow box's padding, since a
 	   normal-flow box can still grow taller than the viewport and hand
 	   scrolling to the whole page -- exactly what this page must not do.
 	   `overflow: hidden` here is the actual "no scroll outside the editor"
@@ -235,7 +232,7 @@
 	.review-shell {
 		position: fixed;
 		top: calc(6.5rem + env(safe-area-inset-top));
-		bottom: calc(5.5rem + env(safe-area-inset-bottom));
+		bottom: calc(1.75rem + env(safe-area-inset-bottom));
 		left: 0;
 		right: 0;
 		overflow: hidden;

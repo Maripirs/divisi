@@ -80,6 +80,7 @@
 	"home_active_count": "{count} active",
 	"home_join_group": "Join a group with a code",
 	"home_unknown_group": "Unknown group",
+	"home_library_note": "Browse your groups' rehearsal tracks",
 
 	"join_title": "Join a group",
 	"join_pitch": "Enter the join code your choir admin shared with you. No account needed to view and practice a group's rehearsal tracks.",
@@ -171,7 +172,6 @@
 	"settings_more": "More",
 	"settings_more_note": "About Divisi, portfolio",
 	"settings_log_out": "Log out",
-	"settings_back_to_choir": "Back to your choir",
 	"settings_enter_name": "Enter a name",
 	"settings_enter_passwords": "Enter your current and new password",
 	"settings_password_too_short": "New password must be at least 8 characters",
@@ -186,9 +186,6 @@
 	"more_creating_group_body3": "If you would like to use Divisi with your choir, reach out to discuss setting up a group.",
 
 	"app_header_home_label": "Divisi home",
-	"bottom_nav_home": "Home",
-	"bottom_nav_library": "Library",
-	"bottom_nav_primary": "Primary",
 
 	"action_save": "Save",
 	"action_cancel": "Cancel",

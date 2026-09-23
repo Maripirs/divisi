@@ -1,7 +1,6 @@
 <script lang="ts">
 	import PieceLibrary from '$lib/components/PieceLibrary.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import { buildRemotePiece } from '$lib/pieces/remotePiece';
@@ -82,12 +81,10 @@
 	{/if}
 </main>
 
-<BottomNav />
-
 <style>
 	/* Uses the shared `.shell` container (same max-width/padding/gap as
 	   Home/Groups/Settings) so AppHeader sits in an identical frame on
-	   every bottom-nav page — a wider/differently-padded container here
+	   every app shell page — a wider/differently-padded container here
 	   was making the header look like it changed size when switching
 	   pages, when only its surrounding whitespace did. */
 

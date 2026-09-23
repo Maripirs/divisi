@@ -9,7 +9,7 @@
 	width: 100%;
 	max-width: 640px;
 	margin: 0 auto;
-	padding: calc(6.5rem + env(safe-area-inset-top)) 1.1rem calc(5.5rem + env(safe-area-inset-bottom));
+	padding: calc(6.5rem + env(safe-area-inset-top)) 1.1rem calc(1.75rem + env(safe-area-inset-bottom));
 	display: flex;
 	flex-direction: column;
 	gap: 1.1rem;
@@ -41,7 +41,7 @@
 /* ---------- App shell header (AppHeader.svelte) ---------- */
 /* Divisi brand top-left + Settings top-right, page title below — see
    UX_WIREFRAME.md's "Navigation And Brand" direction. Used in place of
-   `.shell-header` on the bottom-nav screens (Home/Library/Groups/a
+   `.shell-header` on the main app screens (Home/Library/Groups/a
    group's own page/Settings). */
 
 .app-shell-header {
@@ -563,47 +563,6 @@ form {
 	width: 16px;
 	height: 16px;
 	accent-color: var(--accent);
-}
-
-/* ---------- Bottom nav ---------- */
-
-.bottom-nav {
-	position: fixed;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	display: flex;
-	justify-content: space-around;
-	background: var(--surface);
-	border-top: 1px solid var(--border);
-	padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom));
-	z-index: 10;
-}
-
-.bottom-nav a {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0.2rem;
-	font-size: 0.6875rem;
-	font-weight: 600;
-	color: var(--text-muted);
-	text-decoration: none;
-	padding: 0.2rem 0.6rem;
-}
-
-.bottom-nav a svg {
-	width: 20px;
-	height: 20px;
-	fill: none;
-	stroke: currentColor;
-	stroke-width: 1.8;
-	stroke-linecap: round;
-	stroke-linejoin: round;
-}
-
-.bottom-nav a.active {
-	color: var(--accent);
 }
 
 /* ---------- Empty state ---------- */

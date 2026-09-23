@@ -5,7 +5,6 @@
 	import { VOICE_PARTS as PLAYER_VOICE_PARTS, type DisplayMode, type MixMode, type VoicePart } from '$lib/midi/types';
 	import { DEFAULT_SETTINGS } from '$lib/fixtures/appData';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -15,8 +14,9 @@
 
 	// Present when reached from a specific group's join link
 	// (`routes/join/[code]`'s gear icon carries it along) rather than the
-	// logged-in dashboard's own Settings link — lets a guest get back to
-	// their group instead of the bottom nav's login-gated Home tab.
+	// logged-in dashboard's own Settings link — passed to AppHeader below so
+	// its brand link sends a guest back to their group instead of the
+	// login-gated `/home`.
 	let guestJoinCode = $derived(page.url.searchParams.get('code'));
 
 	// This is the "applies to the whole account" screen (see
@@ -214,16 +214,6 @@
 		</form>
 	{/if}
 </main>
-
-{#if guestJoinCode}
-	<!-- A code-guest has no dashboard `BottomNav`'s Home tab would resolve
-	     to (it's login-gated) — send them back where they came from instead. -->
-	<nav class="bottom-nav">
-		<a href={lh(`/join/${guestJoinCode}`)}>{m.settings_back_to_choir()}</a>
-	</nav>
-{:else}
-	<BottomNav />
-{/if}
 
 <style>
 	/* Reads as a sub-choice of "Voice" right above it, not a peer field —

@@ -2,7 +2,6 @@
 	import { enhance } from '$app/forms';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import AppHeader from '$lib/components/AppHeader.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -101,8 +100,6 @@
 		</form>
 	{/if}
 </main>
-
-<BottomNav />
 
 <style>
 	.range-tabs {
