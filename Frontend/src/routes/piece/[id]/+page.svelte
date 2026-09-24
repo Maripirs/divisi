@@ -292,6 +292,12 @@
 	let visualStates = $state<Record<MixPart, VisualState>>(initialDefaults.mix.visualStates);
 	let xml = $state('');
 	let msPerWholeNote = $state(0);
+	// One entry per rendered staff, same order as the `<part>`s in `xml` —
+	// tracked separately from `visualStates` because auto-split chordal
+	// divisi desks (e.g. `soprano-1`/`soprano-2`) collapse to one staff in
+	// `xml`, so the two arrays don't line up index-for-index (see
+	// `ConvertResult.staffVisualStates`).
+	let visibleStaffStates = $state<VisualState[]>([]);
 	let positionMs = $state(0);
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
@@ -374,7 +380,6 @@
 	// is `visualStates` — which is exactly what needs to invalidate it, since
 	// `parsed.parts` never changes again after that initial assignment.
 	let visibleMixParts = $derived((parsed?.parts ?? []).filter((part) => visualStates[part.id] !== 'off').map((part) => part.id));
-	let visibleStaffStates = $derived(visibleMixParts.map((part) => visualStates[part]));
 	// Every desk `voicePart` splits into, in this piece — length <= 1 means
 	// it isn't split here, which is when the desk picker stays hidden.
 	let desksForFocus = $derived((parsed?.parts ?? []).filter((part) => part.base === voicePart));
@@ -663,11 +668,13 @@
 		if (!parsed) return;
 		if (visibleMixParts.length === 0) {
 			xml = '';
+			visibleStaffStates = [];
 			loadState = { kind: 'noVisibleTracks' };
 			return;
 		}
 		if (visibleMixParts.length === 1 && !hasNotesForPart(parsed, visibleMixParts[0])) {
 			xml = '';
+			visibleStaffStates = [];
 			loadState = { kind: 'noNotesForVoicePart', part: visibleMixParts[0] };
 			return;
 		}
@@ -676,9 +683,11 @@
 			const result = convertVisualParts(parsed, visualStates, mutedNoteColor);
 			xml = result.xml;
 			msPerWholeNote = result.msPerWholeNote;
+			visibleStaffStates = result.staffVisualStates;
 			loadState = { kind: 'ready' };
 		} catch {
 			xml = '';
+			visibleStaffStates = [];
 			loadState = { kind: 'noNotesForVoicePart', part: voicePart };
 		}
 	}

@@ -51,6 +51,9 @@ export interface ConvertResult {
 	 * continuous mapping, not a per-note lookup table, so it works the same
 	 * whether one part or all four are on screen. */
 	msPerWholeNote: number;
+	/** One entry per emitted `<part>`, same order, so a caller doing
+	 * per-staff dimming doesn't have to re-derive which desks got merged. */
+	staffVisualStates: VisualState[];
 }
 
 /** Fallback color applied to non-selected notes in highlighted mode
@@ -71,7 +74,7 @@ export function convert(parsed: ParsedMIDI, partId: MixPart): ConvertResult {
 
 	const body = bodyXML(measureUnitSpans, useFlats, attributes);
 	const xml = scoreXML([{ id: 'P1', name: info.label, body }]);
-	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE };
+	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE, staffVisualStates: ['active'] };
 }
 
 /**
@@ -140,7 +143,11 @@ export function convertVisualParts(
 		return { id: `P${index + 1}`, name: part.label, body };
 	});
 
-	return { xml: scoreXML(parts), msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE };
+	return {
+		xml: scoreXML(parts),
+		msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE,
+		staffVisualStates: visibleParts.map((part) => displayVisualStates[part.id])
+	};
 }
 
 function notesForId(parsed: ParsedMIDI, partId: MixPart): MIDINote[] {
