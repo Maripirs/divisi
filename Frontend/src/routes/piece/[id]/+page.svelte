@@ -25,6 +25,7 @@
 		materializePartRecord,
 		matchingDisplayMode,
 		matchingMixMode,
+		mixerRows,
 		presetBalances,
 		presetVisualStates,
 		sameBalances,
@@ -755,11 +756,17 @@
 		else player?.seek(ms);
 	}
 
-	function setBalance(part: MixPart, value: number) {
-		const nextBalance = { ...balance, [part]: value };
+	// `ids` is a mixer row's full `deskIds` — one id for the focus voice's
+	// own desks (each is its own row), every desk of a non-focus voice
+	// otherwise (see `mixerRows`'s doc comment): moving that row's single
+	// slider moves every underlying desk together, same "whole voice in
+	// lockstep" rule the display presets already use for a non-focus voice.
+	function setBalance(ids: MixPart[], value: number) {
+		const nextBalance = { ...balance };
+		for (const id of ids) nextBalance[id] = value;
 		balance = nextBalance;
 		mixMode = matchingMixMode(parsed?.parts ?? [], nextBalance, voicePart, subPart);
-		player?.setPartVolume(part, value);
+		for (const id of ids) player?.setPartVolume(id, value);
 		persistSettings();
 	}
 
@@ -892,10 +899,14 @@
 		flashDefault('mix');
 	}
 
-	function cycleVisualState(part: MixPart) {
-		const currentIndex = VISUAL_STATES.indexOf(visualStates[part]);
+	// Same "whole row moves together" rule as `setBalance` above — `ids` is
+	// a mixer row's full `deskIds`, and every id in it gets the same next
+	// state, keyed off the first one's current state.
+	function cycleVisualState(ids: MixPart[]) {
+		const currentIndex = VISUAL_STATES.indexOf(visualStates[ids[0]]);
 		const nextState = VISUAL_STATES[(currentIndex + 1) % VISUAL_STATES.length];
-		const nextStates = { ...visualStates, [part]: nextState };
+		const nextStates = { ...visualStates };
+		for (const id of ids) nextStates[id] = nextState;
 		visualStates = nextStates;
 		displayMode = matchingDisplayMode(parsed?.parts ?? [], nextStates, voicePart, subPart);
 		persistSettings();
@@ -1612,19 +1623,25 @@
 						{/each}
 					</div>
 					{#if displayMode === 'custom' || mixMode === 'custom'}
+					<!-- Only the focus voice gets one row per desk — every other
+					     section collapses to a single row covering all its desks
+					     (see `mixerRows`'s doc comment). "Do you sing a specific
+					     desk?" above still reads the piece's real, unmerged
+					     `parsed.parts` — this collapsing is purely a mixer-display
+					     simplification, not a change to what desk the singer picks. -->
 					<div class="balances">
-						{#each parsed?.parts ?? [] as part (part.id)}
+						{#each mixerRows(parsed?.parts ?? [], voicePart) as row (row.id)}
 							<div class="balance-row">
 								{#if displayMode === 'custom'}
 									<button
 										type="button"
 										class="visual-state-btn"
-										class:visual-state-btn--off={visualStateFor(part.id) === 'off'}
-										class:visual-state-btn--muted={visualStateFor(part.id) === 'muted'}
-										class:visual-state-btn--active={visualStateFor(part.id) === 'active'}
-										aria-label={m.piece_visual_state_label({ part: part.label, state: VISUAL_STATE_LABELS[visualStateFor(part.id)]() })}
-										title={VISUAL_STATE_LABELS[visualStateFor(part.id)]()}
-										onclick={() => cycleVisualState(part.id)}
+										class:visual-state-btn--off={visualStateFor(row.deskIds[0]) === 'off'}
+										class:visual-state-btn--muted={visualStateFor(row.deskIds[0]) === 'muted'}
+										class:visual-state-btn--active={visualStateFor(row.deskIds[0]) === 'active'}
+										aria-label={m.piece_visual_state_label({ part: row.label, state: VISUAL_STATE_LABELS[visualStateFor(row.deskIds[0])]() })}
+										title={VISUAL_STATE_LABELS[visualStateFor(row.deskIds[0])]()}
+										onclick={() => cycleVisualState(row.deskIds)}
 									>
 										<svg viewBox="0 0 24 24" aria-hidden="true">
 											<path d="M9 18h6" />
@@ -1635,18 +1652,18 @@
 										</svg>
 									</button>
 								{/if}
-								<span class="balance-label" class:active={voicePart === part.base}>{part.label}</span>
+								<span class="balance-label" class:active={voicePart === row.base}>{row.label}</span>
 								{#if mixMode === 'custom'}
 									<input
 										type="range"
 										min="0"
 										max="1"
 										step="0.01"
-										value={balance[part.id]}
-										aria-label={m.piece_balance_label({ part: part.label })}
-										oninput={(e) => setBalance(part.id, Number((e.target as HTMLInputElement).value))}
+										value={balance[row.deskIds[0]]}
+										aria-label={m.piece_balance_label({ part: row.label })}
+										oninput={(e) => setBalance(row.deskIds, Number((e.target as HTMLInputElement).value))}
 									/>
-									<span class="balance-value">{describeBalance(balance[part.id])}</span>
+									<span class="balance-value">{describeBalance(balance[row.deskIds[0]])}</span>
 								{/if}
 							</div>
 						{/each}

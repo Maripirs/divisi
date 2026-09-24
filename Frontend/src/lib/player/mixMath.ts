@@ -13,6 +13,7 @@ import type {
 	VisualState,
 	VoicePart
 } from '$lib/midi/types';
+import { capitalize } from '../notation/voicePartAssignment';
 
 type Parts = ParsedMIDI['parts'];
 
@@ -65,6 +66,46 @@ export function isFocusPart(
 ): boolean {
 	if (part.base !== focusPart) return false;
 	return subPart === null || part.id === subPart;
+}
+
+// One mixer row per part id, except a non-focus voice's own auto-/named
+// divisi desks (e.g. "Soprano 1"/"Soprano 2") collapse into a single row
+// covering the whole section. The mixer only gives independent per-desk
+// control to the voice the singer actually cares about — every other
+// section is one slider, not one per desk, regardless of *why* the file
+// splits it (a real named split or `splitChordalDivisi`'s own auto-detect
+// both collapse the same way here, unlike `mergeSplitDesksForDisplay`,
+// which only merges auto-split pairs and only for the score, where a
+// genuine named split is a real two-staff engraving choice worth keeping
+// visible). Canonical S->A->T->B order falls out for free from `parts`
+// already being in that order.
+export interface MixerRow {
+	id: MixPart;
+	base: MixBase;
+	label: string;
+	/** Every underlying part id this row's slider/toggle controls — one for
+	 * the focus voice's own desks (each gets its own row), every desk of a
+	 * non-focus voice otherwise (adjusting the row moves them all together,
+	 * the same "every desk of a base in lockstep" rule presets already use
+	 * — see `isFocusPart`'s doc comment). */
+	deskIds: MixPart[];
+}
+
+export function mixerRows(parts: Parts, focusPart: VoicePart): MixerRow[] {
+	const rows: MixerRow[] = [];
+	const collapsedBases = new Set<MixBase>();
+	for (const part of parts) {
+		if (part.base === focusPart) {
+			rows.push({ id: part.id, base: part.base, label: part.label, deskIds: [part.id] });
+			continue;
+		}
+		if (collapsedBases.has(part.base)) continue;
+		collapsedBases.add(part.base);
+		const deskIds = parts.filter((p) => p.base === part.base).map((p) => p.id);
+		const label = deskIds.length > 1 ? capitalize(part.base) : part.label;
+		rows.push({ id: part.id, base: part.base, label, deskIds });
+	}
+	return rows;
 }
 
 export function presetVisualStates(

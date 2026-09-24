@@ -7,6 +7,7 @@ import {
 	materializePartRecord,
 	matchingDisplayMode,
 	matchingMixMode,
+	mixerRows,
 	presetBalances,
 	presetVisualStates,
 	sameBalances,
@@ -89,6 +90,46 @@ describe('isFocusPart', () => {
 	it('narrows to a single desk when subPart is set', () => {
 		expect(isFocusPart(splitParts[0], 'soprano', 'soprano-1')).toBe(true);
 		expect(isFocusPart(splitParts[1], 'soprano', 'soprano-1')).toBe(false);
+	});
+});
+
+describe('mixerRows', () => {
+	it('gives every part its own row when nothing is split', () => {
+		const rows = mixerRows(flatParts, 'alto');
+		expect(rows.map((r) => ({ id: r.id, label: r.label, deskIds: r.deskIds }))).toEqual([
+			{ id: 'soprano', label: 'Soprano', deskIds: ['soprano'] },
+			{ id: 'alto', label: 'Alto', deskIds: ['alto'] },
+			{ id: 'tenor', label: 'Tenor', deskIds: ['tenor'] },
+			{ id: 'bass', label: 'Bass', deskIds: ['bass'] },
+			{ id: 'accompaniment', label: 'Accompaniment', deskIds: ['accompaniment'] }
+		]);
+	});
+
+	it("keeps the focus voice's own desks split, one row each", () => {
+		const rows = mixerRows(splitParts, 'soprano');
+		const sopranoRows = rows.filter((r) => r.base === 'soprano');
+		expect(sopranoRows).toEqual([
+			{ id: 'soprano-1', base: 'soprano', label: 'Soprano 1', deskIds: ['soprano-1'] },
+			{ id: 'soprano-2', base: 'soprano', label: 'Soprano 2', deskIds: ['soprano-2'] }
+		]);
+	});
+
+	it('collapses a non-focus voice split into one row covering every desk', () => {
+		const rows = mixerRows(splitParts, 'alto');
+		const sopranoRow = rows.find((r) => r.base === 'soprano');
+		expect(sopranoRow).toEqual({
+			id: 'soprano-1',
+			base: 'soprano',
+			label: 'Soprano',
+			deskIds: ['soprano-1', 'soprano-2']
+		});
+		// Every other voice is untouched, still one row each.
+		expect(rows).toHaveLength(5);
+	});
+
+	it('keeps canonical S->A->T->B order', () => {
+		const rows = mixerRows(splitParts, 'alto');
+		expect(rows.map((r) => r.base)).toEqual(['soprano', 'alto', 'tenor', 'bass', 'accompaniment']);
 	});
 });
 
