@@ -604,8 +604,26 @@
 				);
 				if (preferred) subPart = preferred.id;
 			}
-			balance = materializePartRecord(parsed.parts, balance, initialDefaults.mix.balance);
-			visualStates = materializePartRecord(parsed.parts, visualStates, initialDefaults.mix.visualStates);
+			// `materializePartRecord` means "a persisted per-id value always
+			// wins, falling back to the base default only when that id has no
+			// entry yet" — correct for Custom mode (its whole purpose is
+			// preserving a hand-tuned per-part mix across reloads), but wrong
+			// for a preset (`flat`/`highlighted`/`solo`): a stale id left over
+			// from this piece's persisted settings (e.g. a part-id scheme from
+			// an older approved version) would silently win over what the
+			// preset should compute fresh from the file as it stands today —
+			// this is exactly what let "Les djinns" leave Alto un-greyed under
+			// "My part + others" despite Soprano being the correctly-selected
+			// focus. Presets always recompute fresh; only Custom trusts the
+			// persisted per-id cache.
+			balance =
+				mixMode === 'custom'
+					? materializePartRecord(parsed.parts, balance, initialDefaults.mix.balance)
+					: presetBalances(parsed.parts, mixMode, voicePart, subPart);
+			visualStates =
+				displayMode === 'custom'
+					? materializePartRecord(parsed.parts, visualStates, initialDefaults.mix.visualStates)
+					: presetVisualStates(parsed.parts, displayMode, voicePart, subPart);
 			await player.load(parsed);
 			if (destroyed) {
 				player.destroy();
