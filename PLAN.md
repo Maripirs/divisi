@@ -50,10 +50,11 @@ branch, not on `main`.
 
 ## Open work
 
-None outstanding on the building side. Every piece of real, unbuilt work
-has already been built (verified against the actual state of `main` via
-`git log`). What remains is entirely deploy/verification/decision work,
-tracked in the two sections below.
+None outstanding on the building side. Both halves of the ambiguous
+voice-part gate (Part A: `/review` confirmation, `cf362db`; Part B:
+Tracks-tab direct-upload gate, `4bb9fbc`) and the player "greying out" fix
+(`ace3802`) are done — see Log. What remains is deploy/verification/
+decision work, tracked in the two sections below.
 
 ## Awaiting human verification
 
@@ -62,6 +63,9 @@ Frontend code for all of these is built, committed to `main`, and
 real browser/touchscreen/device pass — not further Claude-side building.
 
 - [x] **Frontend redeploy.** Shipped 2026-09-15 (see Log). Still needs a live-site confirm pass.
+- [x] **Frontend redeploy, round 2.** Shipped 2026-09-23 (see Log) —
+  everything from that session's work is live on `divisi.maripi.net`.
+  Still needs a live-site confirm pass.
 - [ ] **Real backend-hosted piece playback**: member and guest, including password-protected groups — sounds/looks right end to end.
 - [ ] **PDF markup**: pen/stamp/eraser/undo, the annotation-mode on/off toggle, and the "My mix" vs. reference-recording audio-source picker — real touchscreen/browser confirm.
 - [ ] **Piece Notes panel**: director + personal notes on both the player and the Rehearsal Tracks card, as admin and as plain member.
@@ -158,6 +162,95 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Log
 
+- 2026-09-23: Fixed a live prod bug ("Odysseus and the Sirens"): 5 real
+  vocal parts (a Soprano 1/2 + Alto/Tenor/Bass divisi) exported from an
+  external scan tool as unnamed `<part-name>`s ("Part 1".."Part 6"), which
+  broke `assignVoiceParts`'s pitch-fallback (only fires when the unmatched
+  candidate count exactly equals the remaining SATB-slot count -- 5 != 4)
+  -- every real vocal part silently landed in the Accompaniment bucket,
+  SATB mixer entirely silent. Fixed by hand: renamed the 5 `<part-name>`s
+  by pitch-range/clef analysis, uploaded as a new approved `PieceVersion`
+  directly (DB insert + object-storage PUT, mirroring exactly what the
+  upload API does -- confirmed byte-identical round-trip). Piece id
+  `14d93c8d-df1a-4a2d-aa83-0d9222149b54`, new version
+  `5810e994-a9f8-4900-86b7-e4ad995e6c86`.
+- 2026-09-23: Shipped "ambiguous voice parts must be confirmed before
+  approval" Part A (the `/review` flow half), to prevent the above from
+  recurring: `assignVoiceParts` now also returns which candidate parts it
+  couldn't confidently place (`ambiguous`/`ambiguousParts`, threaded
+  through both parsers); new `partNameRewriter.ts`
+  (`applyPartNameAssignments`, a targeted regex rewrite of just
+  `<part-name>` text, no DOM round-trip, so the rest of the file stays
+  byte-for-byte untouched) and `ConfirmPartsPanel.svelte`; the review
+  page's Approve button is now disabled until every ambiguous part is
+  assigned to a voice/desk or Accompaniment, submitting the corrected
+  file through a new `resolveParts` action to the existing
+  `PUT /library/versions/{id}/file` endpoint -- no new backend
+  endpoint/schema needed. MusicXML only for v1 (MIDI types threaded
+  through for consistency, no UI/write-back yet); no "leave unresolved"
+  escape hatch (an unvisited row just blocks approval); merging two
+  candidates into one voice deferred (already expressible via two rows on
+  the same base voice with different desk numbers). New
+  `voicePartAssignment.test.ts`/`partNameRewriter.test.ts`; full suite
+  green (243 tests), `npm run check` clean. Commit `cf362db`.
+- 2026-09-23: Shipped Part B, closing the actual hole the real bug above
+  shipped through: a fresh MusicXML upload via the Tracks tab used to
+  auto-publish in one shot (upload -> submit -> approve -> distribute)
+  with zero review step. Backend: `working_draft`/`publish_version`/
+  `_omr_fields_batch` broadened to also recognize an unpublished
+  `source=original` version (a brand-new piece's still-draft first
+  version, not just an AI-edit "modification" draft); `list_my_library`
+  gained an admin-only branch surfacing a group piece with zero
+  `Distribution` rows, previously invisible to everyone including the
+  admin who just uploaded it. Frontend: new shared
+  `lib/pieces/parseMusicBytes.ts` (extracted from `remotePiece.ts`'s
+  MIDI/MusicXML dispatch); the Tracks tab now parses a selected file
+  client-side before submitting and, if it has ambiguous parts, skips the
+  publish chain and redirects to `/piece/{id}/review` to resolve them with
+  Part A's `ConfirmPartsPanel` instead of publishing blind; `/review`'s
+  PDF-required gate loosened for a music-only pending draft. No-ambiguity
+  uploads are unchanged. Backend suite green aside from 10 pre-existing,
+  unrelated failures in `test_lyrics.py`/`test_score_edit.py` (separate
+  in-progress Groq/NVIDIA work, not touched by this change); frontend
+  247/247. Commit `4bb9fbc`.
+- 2026-09-23: Applied the player "greying out" fix diagnosed earlier the
+  same day (see the prior entry below) -- `piece/[id]/+page.svelte`'s
+  `bootstrap()` now recomputes `visualStates`/`balance` fresh via
+  `presetVisualStates`/`presetBalances` for a preset display/mix mode,
+  only falling back to the persisted per-id cache (`materializePartRecord`)
+  in Custom mode. Commit `ace3802`.
+- 2026-09-23: Deleted the three throwaway `nav-retire-test-...@example.com`
+  accounts created verifying the bottom-nav removal (confirmed zero
+  related rows in any table first).
+- 2026-09-23: Redeployed the frontend (`npm run build && npx wrangler
+  deploy`) -- everything from this session (bottom-nav retirement, carpool
+  two-column desktop layout, ambiguous voice-part gate Parts A+B, the
+  greying-out fix) is now live on `divisi.maripi.net`. Smoke-checked
+  `/welcome` returns 200 post-deploy.
+- 2026-09-23: Gave the Carpool tab a real desktop layout -- the app's
+  first opt-in wide breakpoint (`.shell--wide`, 1040px at
+  `min-width: 1024px`; every other tab stays at today's 640px `.shell`).
+  Map and the drivers/riders posts split into a two-column CSS grid at
+  that width (unchanged single-column stack below it), map column sticky
+  so it stays in view while a long posts list scrolls past. Applies to
+  both the member carpool tab and the guest join page, since both share
+  `CarpoolBoard`. Commit `35892b8`.
+- 2026-09-23: Retired the persistent two-item bottom nav (Home/Library) --
+  Library folded into a link card on Home instead, since one nav item left
+  on its own didn't make sense as a "nav." `BottomNav.svelte` deleted,
+  `.shell`'s bottom padding shrunk now that nothing's pinned there
+  (5.5rem -> 1.75rem), unused `bottom_nav_*` i18n keys removed. Also
+  dropped a guest-only duplicate nav bar on the settings pages, found
+  along the way. Commit `985ea9c`. Verification created a throwaway test
+  account against the prod DB (`nav-retire-test-...@example.com`) --
+  cleanup still pending a human decision.
+- 2026-09-23: Root-caused (fix not yet applied) a live report: the
+  player's "My part + others" display mode wasn't greying out every part
+  it should on "Les djinns, Op. 12" (Alto stayed full-black alongside the
+  focus voice). Not a part-detection issue -- see Open work above for the
+  full diagnosis (`materializePartRecord` in `piece/[id]/+page.svelte`'s
+  `bootstrap()` letting a stale per-id cached value override a preset
+  display mode's fresh computation) and the exact fix to apply.
 - 2026-09-18: Shipped "AI edit" -- a second, more general AI-assisted
   editing tool alongside "Generate lyrics from PDF": an admin selects a
   measure range directly in the rendered score (two clicks; `ScoreView`'s
