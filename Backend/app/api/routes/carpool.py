@@ -470,13 +470,27 @@ def delete_post(
     admin's later lock. Deliberate narrower reading of "locked/archived
     events reject new posts" (plan.md's B24), which this extends to edits
     but not to a member deleting their own row. Admin delete always works
-    too, same as admin edit. B25: actor resolution matches `update_post`."""
+    too, same as admin edit. B25: actor resolution matches `update_post`.
+
+    A driver post with any claim ever made against it (active *or*
+    released — `CarpoolSeatClaim` is soft-removed, never hard-deleted, so
+    a released claim's row still physically references this post) would
+    otherwise violate the `driver_post_id` foreign key and crash with an
+    unhandled `IntegrityError` (500) the moment `db.delete(post)` runs;
+    same story for a rider post via `CarpoolRiderInterest.rider_post_id`.
+    Deleting a post means there's no ride left for any of those claims/
+    interests to refer to either way, so they're deleted right along with
+    it -- the one exception to "soft-remove, keep a trace" every other
+    claim/interest removal in this file follows, justified by the parent
+    row itself being gone, not just released."""
     post = _get_post_or_404(post_id, db)
     event = _event_for_post(post, db)
     actor = resolve_existing_actor(local_id, maybe_user, maybe_participant, db)
     is_admin = is_group_admin(event.group_id, actor, db)
     if post.user_id != actor.id and not is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Can only delete your own post")
+    db.query(CarpoolSeatClaim).filter(CarpoolSeatClaim.driver_post_id == post.id).delete()
+    db.query(CarpoolRiderInterest).filter(CarpoolRiderInterest.rider_post_id == post.id).delete()
     db.delete(post)
     db.commit()
 

@@ -106,6 +106,57 @@ def test_member_cannot_edit_or_delete_others_post(client):
     assert forbidden_delete.status_code == 403
 
 
+def test_deleting_a_driver_post_with_an_active_claim_succeeds(client):
+    # Regression: `driver_post_id` has no ON DELETE CASCADE, and
+    # CarpoolSeatClaim is soft-removed, never hard-deleted -- an
+    # unhandled IntegrityError (500) instead of a clean delete was the
+    # real live bug.
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-del-driver")
+    rider_headers = _register_and_login(client, "cp-del-driver-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-del-driver-rider@example.com")
+    claimed = client.post("/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers)
+    assert claimed.status_code == 201
+
+    deleted = client.delete("/carpool/posts/" + driver_post["id"], headers=driver_headers)
+    assert deleted.status_code == 204
+
+
+def test_deleting_a_driver_post_with_a_released_claim_succeeds(client):
+    # A *released* (soft-removed) claim's row still physically references
+    # the post -- same FK hazard as an active claim.
+    admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-del-released")
+    rider_headers = _register_and_login(client, "cp-del-released-rider@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-del-released-rider@example.com")
+    claim = client.post(
+        "/carpool/posts/" + driver_post["id"] + "/claims", json={}, headers=rider_headers
+    ).json()
+    released = client.delete("/carpool/claims/" + claim["id"], headers=rider_headers)
+    assert released.status_code == 204
+
+    deleted = client.delete("/carpool/posts/" + driver_post["id"], headers=driver_headers)
+    assert deleted.status_code == 204
+
+
+def test_deleting_a_rider_post_with_an_active_interest_succeeds(client):
+    admin_headers = _register_and_login(client, "cp-del-rider-admin@example.com")
+    rider_owner_headers = _register_and_login(client, "cp-del-rider-owner@example.com")
+    driver_headers = _register_and_login(client, "cp-del-rider-driver@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-del-rider-owner@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-del-rider-driver@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    rider_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=rider_owner_headers
+    ).json()
+    interested = client.post(
+        "/carpool/posts/" + rider_post["id"] + "/interests", json={}, headers=driver_headers
+    )
+    assert interested.status_code == 201
+
+    deleted = client.delete("/carpool/posts/" + rider_post["id"], headers=rider_owner_headers)
+    assert deleted.status_code == 204
+
+
 def test_member_cannot_set_own_post_status(client):
     admin_headers = _register_and_login(client, "cp-post-admin6@example.com")
     member_headers = _register_and_login(client, "cp-post-member6@example.com")

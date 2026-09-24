@@ -49,6 +49,6 @@
 		{/if}
 	</div>
 {/if}
-{#if isOwner && form?.form === 'editPost' && form?.error}
+{#if (isOwner || isAdmin) && form?.form === 'editPost' && form?.error}
 	<p class="error">{form.error}</p>
 {/if}
