@@ -1,8 +1,6 @@
 import type { ParsedMIDI } from '../midi/types';
-import { parseMidiFile } from '../midi/parser';
-import { parseMusicXmlFile } from '../musicxml/parser';
-import { extractMusicXmlText, isMxl } from '../musicxml/mxl';
 import type { Piece, PiecePresentation } from './types';
+import { parseMusicBytes } from './parseMusicBytes';
 
 /** Metadata for one real Backend piece, as resolved server-side by
  * `routes/piece/[id]/+page.server.ts` from `/library/pieces`. Deliberately
@@ -26,32 +24,13 @@ export interface RemotePieceMeta {
 	groupId: string | null;
 }
 
-/** Sniffs which parser a fetched music file needs: MIDI files start with
- * the 4-byte `MThd` magic; `.mxl` (compressed MusicXML) with the `PK` ZIP
- * magic is unpacked to its score document first; anything else is treated
- * as plain MusicXML text. */
+/** Fetches a music file and parses it via `parseMusicBytes`'s magic-byte
+ * dispatch (MIDI / `.mxl` / plain MusicXML). A parse failure surfaces as a
+ * thrown `Error` the caller's `piece.load()` catch turns into its normal
+ * "couldn't load" state. */
 async function loadRemoteMusicFile(url: string): Promise<ParsedMIDI> {
 	const buffer = await fetch(url).then((r) => r.arrayBuffer());
-	const bytes = new Uint8Array(buffer);
-	let magic = '';
-	for (let i = 0; i < 4 && i < bytes.length; i++) magic += String.fromCharCode(bytes[i]);
-	if (magic === 'MThd') return parseMidiFile(bytes);
-	if (isMxl(bytes)) {
-		let xmlText: string;
-		try {
-			xmlText = extractMusicXmlText(bytes);
-		} catch (err) {
-			// A truncated / corrupt ZIP (fflate throws a raw `FlateError`) or an
-			// archive with no score document: surface it the way an unparseable
-			// plain MusicXML does, a thrown `Error` the caller's `piece.load()`
-			// catch turns into its normal "couldn't load" state.
-			throw new Error(
-				`Malformed MusicXML: ${err instanceof Error ? err.message : String(err)}`
-			);
-		}
-		return parseMusicXmlFile(xmlText);
-	}
-	return parseMusicXmlFile(new TextDecoder().decode(bytes));
+	return parseMusicBytes(new Uint8Array(buffer));
 }
 
 /** Builds a `Piece` from a real Backend piece's metadata — the F5-scoped

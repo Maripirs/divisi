@@ -15,6 +15,7 @@ from app.api.schemas.library import LibraryEntryOmrJobOut
 from app.db.models import (
     Distribution,
     GroupMembership,
+    GroupRole,
     OmrJob,
     OwnerType,
     Piece,
@@ -184,7 +185,12 @@ def _omr_fields_batch(piece_ids: list[str], db: Session) -> dict[str, dict]:
         .filter(
             PieceVersion.piece_id.in_(piece_ids),
             PieceVersion.status == VersionStatus.draft,
-            PieceVersion.source == VersionSource.modification,
+            # `original`-source alongside `modification`: an unpublished
+            # first version (a brand-new Tracks-tab upload, never yet
+            # submitted) is a "pending draft" too — see
+            # `app.services.pieces.working_draft`'s own doc comment for
+            # why `source == original` unambiguously means that.
+            PieceVersion.source.in_([VersionSource.modification, VersionSource.original]),
         )
         .order_by(PieceVersion.piece_id, PieceVersion.created_at.desc())
         .all()
@@ -235,8 +241,46 @@ def list_my_library(
         else []
     )
 
-    all_piece_ids = {p.id for p in owned_pieces} | {piece.id for _d, _v, piece in distributed_rows}
+    # A group-owned piece with zero `Distribution` rows at all is otherwise
+    # invisible to everyone, full stop — including the admin who just
+    # uploaded it, until they submit/approve/distribute it. This is what
+    # makes a just-uploaded Tracks-tab piece (whose only version is a
+    # `draft`/`source=original` row, see `working_draft`'s own doc comment)
+    # show up for the admin who owns it, e.g. so its `/review` link stays
+    # reachable while ambiguous parts are still unresolved. Scoped to
+    # groups this user actually admins — a plain member has no business
+    # seeing a track before it's been shared with the group.
+    admin_group_ids = {
+        row[0]
+        for row in db.query(GroupMembership.group_id)
+        .filter(GroupMembership.user_id == current_user.id, GroupMembership.role == GroupRole.admin)
+        .all()
+    }
+    undistributed_admin_pieces: list[Piece] = []
+    if admin_group_ids:
+        distributed_piece_ids = {
+            row[0]
+            for row in db.query(PieceVersion.piece_id)
+            .join(Distribution, Distribution.piece_version_id == PieceVersion.id)
+            .distinct()
+            .all()
+        }
+        undistributed_admin_pieces = (
+            db.query(Piece)
+            .filter(Piece.owner_type == OwnerType.group, Piece.owner_id.in_(admin_group_ids))
+            .filter(~Piece.id.in_(distributed_piece_ids))
+            .all()
+        )
+
+    all_piece_ids = (
+        {p.id for p in owned_pieces}
+        | {piece.id for _d, _v, piece in distributed_rows}
+        | {p.id for p in undistributed_admin_pieces}
+    )
     omr_fields_by_piece = _omr_fields_batch(list(all_piece_ids), db)
+    latest_versions_by_undistributed_piece = _latest_versions_by_piece(
+        [p.id for p in undistributed_admin_pieces], db
+    )
 
     for piece in owned_pieces:
         latest = latest_versions_by_piece.get(piece.id)
@@ -291,5 +335,31 @@ def list_my_library(
                     **omr_fields_by_piece[piece.id],
                 )
             )
+
+    for piece in undistributed_admin_pieces:
+        latest = latest_versions_by_undistributed_piece.get(piece.id)
+        if latest is None:
+            continue
+        entries.append(
+            LibraryEntryOut(
+                piece_id=piece.id,
+                title=piece.title,
+                owner_type=piece.owner_type,
+                owner_id=piece.owner_id,
+                version_id=latest.id,
+                version_status=latest.status,
+                version_source=latest.source,
+                version_created_at=latest.created_at,
+                default_tempo_bpm=piece.default_tempo_bpm,
+                composer=piece.composer,
+                youtube_url=piece.youtube_url,
+                presentation=piece.presentation,
+                has_music=latest.file_path is not None,
+                has_pdf=latest.pdf_file_path is not None,
+                music_file_name=latest.file_name,
+                pdf_file_name=latest.pdf_file_name,
+                **omr_fields_by_piece[piece.id],
+            )
+        )
 
     return entries

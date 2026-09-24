@@ -291,6 +291,13 @@ def test_failed_job_with_piece_id_leaves_no_draft(client, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)  # no engine on PATH -> job fails
     headers = _register_and_login(client, "genfail@example.com")
     piece_id, original_version_id = _upload_pdf_track(client, headers, "Doomed Track")
+    # Submit + approve the original version first -- otherwise it's itself
+    # picked up as a "pending draft" by Part B's broadened `source=original`
+    # fallback (a never-submitted piece's first version -- see
+    # `working_draft`'s own doc comment), which isn't what this test means
+    # to check (a failed OMR run genuinely leaving nothing new pending).
+    assert client.post(f"/library/versions/{original_version_id}/submit", headers=headers).status_code == 200
+    assert client.post(f"/library/versions/{original_version_id}/approve", headers=headers).status_code == 200
 
     created = client.post(
         "/omr/jobs",

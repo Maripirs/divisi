@@ -36,7 +36,18 @@ export const load: PageServerLoad = async ({ params, locals, url, fetch }) => {
 	const entries = await backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch);
 	const entry = entries.find((e) => e.piece_id === params.id);
 	if (!entry) throw error(404, m.piece_not_found());
-	if (!entry.has_music || !entry.has_pdf) {
+	if (!entry.has_music) {
+		throw error(400, m.ai_edit_missing_files());
+	}
+	// A PDF isn't required to reach this page when there's a pending draft
+	// (`pending_generated_version_id`) -- Part B's Tracks-tab upload path
+	// routinely lands here music-only, with no PDF at all, whenever the
+	// uploaded music file has ambiguous parts to confirm. Part A's own
+	// producers ("Generate lyrics from PDF", AI edit) never run on a
+	// PDF-less piece in the first place, so this loosening can't regress
+	// either of those. `+page.svelte` uses `hasPdf` below to skip the PDF
+	// pane entirely rather than render it broken/empty.
+	if (!entry.has_pdf && !entry.pending_generated_version_id) {
 		throw error(400, m.ai_edit_missing_files());
 	}
 
@@ -73,6 +84,12 @@ export const load: PageServerLoad = async ({ params, locals, url, fetch }) => {
 		pieceTitle: entry.title,
 		groupId: entry.owner_id,
 		draftId,
+		// `entry.has_pdf` reflects whichever version is actually being shown
+		// (the pending draft, if any -- see `versionId` above), so this is
+		// exactly whether `pdfUrl` below resolves to real bytes. `+page.svelte`
+		// uses it to skip the PDF pane entirely for a music-only draft rather
+		// than render one against a version with nothing there.
+		hasPdf: entry.has_pdf,
 		pdfUrl: `/piece/${params.id}/versions/${versionId}/pdf`,
 		xml
 	};

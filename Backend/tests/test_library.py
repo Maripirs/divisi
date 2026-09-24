@@ -651,8 +651,16 @@ def test_library_batches_versions_and_omr_fields_across_owned_and_distributed(cl
     )
     assert job.status_code == 201
 
-    # Owned piece #2: plain, no OMR job ever run against it.
-    plain_piece_id = _upload_file(client, headers, title="Plain Track").json()["piece"]["id"]
+    # Owned piece #2: plain, no OMR job ever run against it. Submitted +
+    # approved so it's not itself an open working draft (Part B's broadened
+    # `source=original` fallback treats a never-submitted piece's initial
+    # version as one -- see `working_draft`'s own doc comment), which would
+    # otherwise show up as its own `pending_generated_version_id` below.
+    plain_upload = _upload_file(client, headers, title="Plain Track")
+    plain_piece_id = plain_upload.json()["piece"]["id"]
+    plain_version_id = plain_upload.json()["version"]["id"]
+    assert client.post(f"/library/versions/{plain_version_id}/submit", headers=headers).status_code == 200
+    assert client.post(f"/library/versions/{plain_version_id}/approve", headers=headers).status_code == 200
 
     # A piece distributed from another user's group this user belongs to.
     admin_headers = _register_and_login(client, "batchlibadmin@example.com")

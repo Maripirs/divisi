@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import FileSlot from '$lib/components/FileSlot.svelte';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import Disclosure from '$lib/components/Disclosure.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { getPieceByTitle } from '$lib/pieces/registry';
 	import { pieceAvailability, resourceCount } from '$lib/pieces/availability';
+	import { parseMusicBytes } from '$lib/pieces/parseMusicBytes';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
@@ -74,6 +76,53 @@
 		return resourceCount(pieceAvailability(track.has_music, track.has_pdf, track.youtube_url, bundled));
 	}
 
+	/** Part B gap fix: a brand-new upload or a file-replace edit goes straight
+	 * through Backend `tracks.ts`'s one-shot submit->approve->distribute
+	 * chain with no review step at all -- exactly the path the real
+	 * Odysseus-and-the-Sirens bug shipped through (5 unnamed divisi parts
+	 * silently dumped into Accompaniment). Before either form's one
+	 * submission goes out, re-parse the picked music file client-side with
+	 * the same dispatch/heuristic the player itself uses
+	 * (`parseMusicBytes`/`voicePartAssignment.ts`); if it comes back with
+	 * `ambiguousParts`, flag this submission with `skip_publish` so the
+	 * Backend action skips straight to `/review` for a human to confirm
+	 * instead. Still exactly one request either way -- no extra round trip.
+	 *
+	 * Fails open on purpose: a missing file (PDF-only upload/edit), a parse
+	 * error (corrupt file, unsupported format, anything) is swallowed and
+	 * falls straight through to today's unchanged behavior. Correctness of
+	 * this gate is nice-to-have; it must never add friction or block an
+	 * upload an admin could already do today. */
+	async function gateAmbiguousUpload(formData: FormData): Promise<void> {
+		const file = formData.get('file');
+		if (!(file instanceof File) || file.size === 0) return;
+		try {
+			const bytes = new Uint8Array(await file.arrayBuffer());
+			if (parseMusicBytes(bytes).ambiguousParts.length > 0) {
+				formData.set('skip_publish', '1');
+			}
+		} catch {
+			// Fails open -- see doc comment above.
+		}
+	}
+
+	/** Same shape as `$lib/utils/enhance.ts`'s `withSubmitting` (flip a
+	 * "submitting" boolean, optionally run cleanup, then `update()`), with
+	 * `gateAmbiguousUpload` run first against the form's own `formData` --
+	 * kept local to this file rather than folded into the shared helper
+	 * since it's specific to the two forms here that carry a music file. */
+	function withUploadGate(set: (value: boolean) => void, onSettled?: () => void): SubmitFunction {
+		return async ({ formData }) => {
+			await gateAmbiguousUpload(formData);
+			set(true);
+			return async ({ update }) => {
+				set(false);
+				onSettled?.();
+				await update();
+			};
+		};
+	}
+
 	let visibleTracks = $derived(
 		mode === 'admin'
 			? data.tracks
@@ -129,7 +178,7 @@
 						method="POST"
 						action="?/updatePieceDetails"
 						enctype="multipart/form-data"
-						use:enhance={withSubmitting((v) => (savingDetails = v), () => (editingDetailsPieceId = null))}
+						use:enhance={withUploadGate((v) => (savingDetails = v), () => (editingDetailsPieceId = null))}
 					>
 						<input type="hidden" name="pieceId" value={track.piece_id} />
 						<label class="field">
@@ -247,8 +296,16 @@
 					     (lyrics or AI edit -- both share the one-working-draft
 					     slot per piece) shows up for Approve/Discard, so this
 					     one link covers both states; the eyebrow below only
-					     appears to flag that a draft is actually waiting. -->
-					{#if track.has_music && track.has_pdf}
+					     appears to flag that a draft is actually waiting.
+					     Also reachable with music but no PDF yet whenever
+					     `pending_generated_version_id` is set -- a
+					     Tracks-tab upload with ambiguous parts and no PDF
+					     (see `groups/[id]/actions/tracks.ts`'s
+					     `skip_publish` redirect) needs this link to stay
+					     reachable if the admin navigates away before
+					     resolving it, same "pending draft" id either
+					     producer sets. -->
+					{#if (track.has_music && track.has_pdf) || track.pending_generated_version_id}
 						<div class="btn-row">
 							{#if track.pending_generated_version_id}
 								<p class="card-eyebrow">{m.groups_draft_ready_to_review()}</p>
@@ -418,7 +475,7 @@
 				method="POST"
 				action="?/uploadTrack"
 				enctype="multipart/form-data"
-				use:enhance={withSubmitting((v) => (uploadingTrack = v), () => (showUploadForm = false))}
+				use:enhance={withUploadGate((v) => (uploadingTrack = v), () => (showUploadForm = false))}
 			>
 				<label class="field">
 					<span>{m.groups_upload_name()}</span>

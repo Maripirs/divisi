@@ -144,21 +144,41 @@ def add_version(
 
 def working_draft(piece_id: str, db: Session) -> PieceVersion | None:
     """The single open *working draft* on a piece, if any: a `draft`
-    `PieceVersion` with `source == modification`. This is what
-    generate-from-PDF auto-imports into and what the in-app editor opens
-    and saves back (B17 / F16). "At most one open" is enforced by the two
-    writers — `get_or_create_working_draft` reuses this one instead of
-    making another, and `_import_draft_version` rejects it before adding a
-    fresh one — so if more than one exists (legacy rows) the newest wins.
+    `PieceVersion` with `source == modification`, or — falling back when
+    there's no such row — a `draft` `PieceVersion` with `source ==
+    original`. This is what generate-from-PDF auto-imports into and what
+    the in-app editor opens and saves back (B17 / F16); the `original`
+    fallback additionally covers a piece's very first version while it's
+    still unsubmitted (a brand-new Tracks-tab upload, before
+    submit/approve/distribute has ever run on it) — `source == original` is
+    set exactly once, by `create_piece_with_version`, so `status == draft`
+    on such a version unambiguously means "never yet submitted or
+    approved", no separate `Distribution`-emptiness check needed. "At most
+    one open" is enforced by the two writers — `get_or_create_working_draft`
+    reuses this one instead of making another, and `_import_draft_version`
+    rejects it before adding a fresh one — so if more than one exists
+    (legacy rows) the newest wins.
 
     Widened from B8's `pending_generated_version_id`, which returned just
     the id and is now a thin wrapper over this."""
-    return (
+    modification_draft = (
         db.query(PieceVersion)
         .filter(
             PieceVersion.piece_id == piece_id,
             PieceVersion.status == VersionStatus.draft,
             PieceVersion.source == VersionSource.modification,
+        )
+        .order_by(PieceVersion.created_at.desc())
+        .first()
+    )
+    if modification_draft is not None:
+        return modification_draft
+    return (
+        db.query(PieceVersion)
+        .filter(
+            PieceVersion.piece_id == piece_id,
+            PieceVersion.status == VersionStatus.draft,
+            PieceVersion.source == VersionSource.original,
         )
         .order_by(PieceVersion.created_at.desc())
         .first()
@@ -260,8 +280,16 @@ def publish_version(version: PieceVersion, user, db: Session) -> PieceVersion:
     individual endpoints do, without the per-endpoint "creator only"
     submit check (the caller has already required review authority, and a
     working draft's creator is often not whoever publishes it — it may be
-    the OMR runner). A personal piece stops after `approved`."""
-    if not (version.status == VersionStatus.draft and version.source == VersionSource.modification):
+    the OMR runner). A personal piece stops after `approved`.
+
+    Accepts a `draft` version of either `modification` or `original`
+    source — the latter covers publishing a piece's very first version
+    directly (e.g. after resolving ambiguous parts on a fresh Tracks-tab
+    upload in `/review`), matching `working_draft`'s own broadened scope."""
+    if not (
+        version.status == VersionStatus.draft
+        and version.source in (VersionSource.modification, VersionSource.original)
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only an open working draft can be published",

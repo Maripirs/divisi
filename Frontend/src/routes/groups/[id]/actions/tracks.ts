@@ -1,7 +1,8 @@
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendFetch, BackendApiError } from '$lib/server/backend';
 import { m } from '$lib/paraglide/messages';
+import { lh } from '$lib/i18n';
 import type { Actions } from '../$types';
 import { runAction } from './_shared';
 
@@ -87,6 +88,19 @@ export const trackActions = {
 					throw new BackendApiError(versionRes.status, body.detail ?? m.upload_failed({ status: versionRes.status }));
 				}
 				const versionId = (await versionRes.json()).id as string;
+
+				// Part B gap fix: a music file that TracksTab.svelte's client-side
+				// re-parse flagged as having ambiguous voice parts skips the
+				// one-shot publish chain below entirely and goes to `/review`
+				// instead, reusing Part A's confirm-parts flow -- see that
+				// component's own `gateAmbiguousUpload` doc comment for the
+				// full reasoning. `skip_publish` is decided client-side before
+				// this same request was ever sent, so this remains exactly one
+				// Backend round trip either way.
+				if (form.get('skip_publish') === '1') {
+					throw redirect(303, lh(`/piece/${pieceId}/review`));
+				}
+
 				await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
 				await backendFetch(locals.token, `/library/versions/${versionId}/approve`, { method: 'POST' }, fetch);
 				await backendFetch(
@@ -226,6 +240,16 @@ export const trackActions = {
 			}
 			const uploaded = (await uploadRes.json()) as { piece: { id: string }; version: { id: string } };
 			const versionId = uploaded.version.id;
+
+			// Part B gap fix: same ambiguous-parts detour as `updatePieceDetails`'s
+			// file-replace branch above -- see that one's comment, and
+			// `TracksTab.svelte`'s `gateAmbiguousUpload`, for the full
+			// reasoning. This is exactly the path the real "Odysseus and the
+			// Sirens" bug shipped through (a brand-new piece, uploaded and
+			// auto-published in one shot, no review step at all).
+			if (form.get('skip_publish') === '1') {
+				throw redirect(303, lh(`/piece/${uploaded.piece.id}/review`));
+			}
 
 			await backendFetch(locals.token, `/library/versions/${versionId}/submit`, { method: 'POST' }, fetch);
 			await backendFetch(locals.token, `/library/versions/${versionId}/approve`, { method: 'POST' }, fetch);

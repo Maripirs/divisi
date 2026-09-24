@@ -249,10 +249,19 @@
 			</form>
 		</div>
 
-		<div class="compare-panes">
-			<div class="pane">
-				<PdfView pdfUrl={data.pdfUrl} pieceId={data.pieceId} canMarkup={false} />
-			</div>
+		<div class="compare-panes" class:single-pane={!data.hasPdf}>
+			<!-- A Tracks-tab upload with ambiguous parts can reach this page
+			     with a music file but no PDF yet (Part A's own producers --
+			     "Generate lyrics from PDF", AI edit -- never run PDF-less, so
+			     this only ever applies to that new path). Skipping the pane
+			     outright rather than handing `PdfView` an empty/failing URL
+			     -- `single-pane` above hands the score the full width instead
+			     of a broken half-empty layout. -->
+			{#if data.hasPdf}
+				<div class="pane">
+					<PdfView pdfUrl={data.pdfUrl} pieceId={data.pieceId} canMarkup={false} />
+				</div>
+			{/if}
 			<!-- `pane-score`: unlike `PdfView` (which scrolls its own content
 			     internally and keeps its zoom pill fixed outside that scroll),
 			     `ScoreView` relies on an ancestor to scroll (see its own
@@ -497,6 +506,14 @@
 		.compare-panes {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+
+	/* No PDF pane at all (a music-only draft, see the template above) -- the
+	   score pane gets the full width instead of the two-column split, at
+	   every viewport. Comes after the `@media` block above on purpose so it
+	   wins the cascade there too (same specificity, later wins). */
+	.compare-panes.single-pane {
+		grid-template-columns: 1fr;
 	}
 
 	.pane {

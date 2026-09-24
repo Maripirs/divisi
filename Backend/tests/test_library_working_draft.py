@@ -39,6 +39,12 @@ def _make_group_with_member(client, admin_headers, member_email, name="Choir"):
 def test_working_draft_created_by_cloning_the_live_version(client):
     headers = _register_and_login(client, "wd-create@example.com")
     piece_id, live_version_id = _upload_personal_piece(client, headers)
+    # Move the initial version out of `draft` first -- otherwise it's
+    # itself the open working draft (Part B's broadened `source=original`
+    # fallback, see `working_draft`'s doc comment) and get-or-create just
+    # returns it instead of cloning, which is what this test wants to lock in.
+    assert client.post(f"/library/versions/{live_version_id}/submit", headers=headers).status_code == 200
+    assert client.post(f"/library/versions/{live_version_id}/approve", headers=headers).status_code == 200
 
     r = client.post(f"/library/pieces/{piece_id}/working-draft", headers=headers)
     assert r.status_code == 200
@@ -181,11 +187,18 @@ def test_publish_refuses_unresolved_seams(client):
     assert client.post(f"/library/pieces/{piece_id}/working-draft", headers=headers).json()["version"]["id"] == draft_id
 
 
-def test_publish_a_non_working_draft_is_409(client):
+def test_publish_a_non_draft_version_is_409(client):
+    """Publishing only ever applies to a version still in `draft` status --
+    once it's been submitted (or beyond), `publish_version` refuses it
+    regardless of `source`. (A fresh `draft`/`source=original` version --
+    what `_upload_personal_piece` itself creates -- is now publishable
+    directly; see `test_publish_a_fresh_original_source_draft` below for
+    that broadened case.)"""
     headers = _register_and_login(client, "wd-pub-nonwd@example.com")
-    _piece_id, live_version_id = _upload_personal_piece(client, headers)
+    _piece_id, version_id = _upload_personal_piece(client, headers)
+    assert client.post(f"/library/versions/{version_id}/submit", headers=headers).status_code == 200
 
-    r = client.post(f"/library/versions/{live_version_id}/publish", json={"seams_resolved": True}, headers=headers)
+    r = client.post(f"/library/versions/{version_id}/publish", json={"seams_resolved": True}, headers=headers)
     assert r.status_code == 409
 
 
@@ -250,3 +263,89 @@ def test_generate_replaces_an_existing_open_working_draft(client, monkeypatch):
 
     # The old one was rejected, not left dangling.
     assert client.post(f"/library/versions/{first_draft}/publish", json={"seams_resolved": True}, headers=headers).status_code == 409
+
+
+# --- Part B: a fresh original-source draft (a brand-new, never-submitted
+# piece) is discoverable/publishable through the same working-draft slot,
+# closing the gap where a new Tracks-tab upload had no review step at all --
+# see Backend/app/services/pieces.py's `working_draft`/`publish_version` doc
+# comments for the reasoning. ---------------------------------------------
+
+
+def test_working_draft_finds_a_fresh_original_source_draft(client):
+    headers = _register_and_login(client, "wd-original@example.com")
+    piece_id, version_id = _upload_personal_piece(client, headers)
+
+    r = client.post(f"/library/pieces/{piece_id}/working-draft", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    # Found the existing original-source draft rather than cloning a new
+    # modification version on top of it.
+    assert body["forked_from_live"] is False
+    assert body["version"]["id"] == version_id
+    assert body["version"]["source"] == "original"
+    assert body["version"]["status"] == "draft"
+
+
+def test_publish_a_fresh_original_source_draft(client):
+    headers = _register_and_login(client, "wd-pub-original@example.com")
+    piece_id, version_id = _upload_personal_piece(client, headers)
+
+    r = client.post(f"/library/versions/{version_id}/publish", json={"seams_resolved": True}, headers=headers)
+    assert r.status_code == 200
+    assert r.json()["status"] == "approved"
+
+    # No longer an open working draft -- a fresh copy-on-edit starts next time.
+    again = client.post(f"/library/pieces/{piece_id}/working-draft", headers=headers).json()
+    assert again["version"]["id"] != version_id
+    assert again["forked_from_live"] is True
+
+
+def test_publish_a_fresh_original_source_draft_distributes_for_a_group_piece(client):
+    admin = _register_and_login(client, "wd-pub-original-admin@example.com")
+    member = _register_and_login(client, "wd-pub-original-member@example.com")
+    group_id = _make_group_with_member(client, admin, "wd-pub-original-member@example.com")
+    upload = client.post(
+        "/library/pieces",
+        data={"title": "Group Piece", "owner_type": "group", "group_id": group_id},
+        files={"file": ("g.xml", io.BytesIO(b"<score-partwise/>"), "application/xml")},
+        headers=admin,
+    )
+    piece_id = upload.json()["piece"]["id"]
+    version_id = upload.json()["version"]["id"]
+
+    r = client.post(f"/library/versions/{version_id}/publish", json={"seams_resolved": True}, headers=admin)
+    assert r.status_code == 200
+
+    member_lib = client.get("/library/pieces", headers=member).json()
+    entry = next(e for e in member_lib if e["piece_id"] == piece_id)
+    assert entry["version_id"] == version_id
+
+
+def test_admin_sees_own_groups_undistributed_piece_in_library(client):
+    """Part B: `list_my_library`'s new admin-only branch -- a group-owned
+    piece with zero `Distribution` rows at all (exactly what a brand-new
+    Tracks-tab upload is, before publish) is now visible to the admin who
+    uploaded it, so its `/review` link stays reachable while ambiguous
+    parts are still unresolved."""
+    admin = _register_and_login(client, "wd-undist-admin@example.com")
+    member = _register_and_login(client, "wd-undist-member@example.com")
+    group_id = _make_group_with_member(client, admin, "wd-undist-member@example.com")
+    upload = client.post(
+        "/library/pieces",
+        data={"title": "Never Distributed", "owner_type": "group", "group_id": group_id},
+        files={"file": ("g.xml", io.BytesIO(b"<score-partwise/>"), "application/xml")},
+        headers=admin,
+    )
+    piece_id = upload.json()["piece"]["id"]
+    version_id = upload.json()["version"]["id"]
+
+    admin_lib = client.get("/library/pieces", headers=admin).json()
+    entry = next((e for e in admin_lib if e["piece_id"] == piece_id), None)
+    assert entry is not None
+    assert entry["version_id"] == version_id
+    assert entry["pending_generated_version_id"] == version_id
+
+    # A plain member (not admin) gets nothing -- it's never been shared.
+    member_lib = client.get("/library/pieces", headers=member).json()
+    assert all(e["piece_id"] != piece_id for e in member_lib)
