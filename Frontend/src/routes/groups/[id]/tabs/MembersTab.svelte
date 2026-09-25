@@ -22,10 +22,28 @@
 	let savingTitle = $state(false);
 	let addingMember = $state(false);
 	let memberEmail = $state('');
+
+	// Known names: admin-only rename-that-merges-history for the free-text
+	// guest names typed into Responsibilities/Carpool. Keyed by the name
+	// itself (`KnownNameOut` has no id), single-field inline edit like the
+	// member title row above.
+	let editingKnownName = $state<string | null>(null);
+	let knownNameDraft = $state('');
+	let savingKnownName = $state(false);
+
+	// Local copy of the roster so `removeMember` can drop a row the instant
+	// it's confirmed, instead of waiting for the reload; resynced whenever
+	// the server data actually changes (a reload, or another tab's edit).
+	// svelte-ignore state_referenced_locally
+	let members = $state(data.members);
+	$effect(() => {
+		members = data.members;
+	});
 </script>
 
+<div class="content-narrow">
 <section class="card">
-	{#each data.members as member (member.user_id)}
+	{#each members as member (member.user_id)}
 		<div class="member-row">
 			<div class="member-identity">
 				<span class="member-name-line">
@@ -95,7 +113,19 @@
 							<button type="button" class="text-link" onclick={cancel}>
 								{m.action_cancel()}
 							</button>
-							<form method="POST" action="?/removeMember" use:enhance>
+							<form
+								method="POST"
+								action="?/removeMember"
+								use:enhance={({ formData }) => {
+									const userId = String(formData.get('userId'));
+									const removed = members.find((mem) => mem.user_id === userId);
+									members = members.filter((mem) => mem.user_id !== userId);
+									return async ({ result, update }) => {
+										if (result.type !== 'success' && removed) members = [...members, removed];
+										await update();
+									};
+								}}
+							>
 								<input type="hidden" name="userId" value={member.user_id} />
 								<button type="submit" class="text-link text-link--danger">{m.groups_confirm()}</button>
 							</form>
@@ -138,7 +168,71 @@
 			</button>
 		</form>
 	</section>
+
+	<section class="card">
+		<p class="card-eyebrow">{m.groups_known_names()}</p>
+		<p class="card-note">{m.groups_known_names_note()}</p>
+
+		{#if data.knownNames.length === 0}
+			<p class="card-note">{m.groups_known_names_none()}</p>
+		{/if}
+
+		{#each data.knownNames as kn (kn.name)}
+			{#if editingKnownName === kn.name}
+				<form
+					method="POST"
+					action="?/renameKnownName"
+					use:enhance={withSubmitting((v) => (savingKnownName = v), () => (editingKnownName = null))}
+				>
+					<input type="hidden" name="oldName" value={kn.name} />
+					<label class="field">
+						<span>{m.groups_known_names()}</span>
+						<input name="newName" bind:value={knownNameDraft} required />
+					</label>
+					{#if form?.form === 'knownNames' && form?.error}
+						<p class="error">{form.error}</p>
+					{/if}
+					<div class="btn-row">
+						<button type="button" class="btn btn-outline" onclick={() => (editingKnownName = null)}>
+							{m.action_cancel()}
+						</button>
+						<button class="btn btn-primary" type="submit" disabled={savingKnownName}>
+							{savingKnownName ? m.reset_password_saving() : m.action_save()}
+						</button>
+					</div>
+				</form>
+			{:else}
+				<div class="list-row">
+					<span class="known-name-block">
+						<span class="known-name-line">
+							<span>{kn.name}</span>
+							<span class="dim">
+								{kn.count === 1 ? m.groups_known_names_uses_one({ count: kn.count }) : m.groups_known_names_uses_other({ count: kn.count })}
+							</span>
+						</span>
+						{#if kn.phone || kn.email}
+							<span class="known-name-line dim">
+								{#if kn.phone}<span>{m.groups_known_names_phone({ phone: kn.phone })}</span>{/if}
+								{#if kn.email}<span>{m.groups_known_names_email({ email: kn.email })}</span>{/if}
+							</span>
+						{/if}
+					</span>
+					<button
+						type="button"
+						class="text-link"
+						onclick={() => {
+							knownNameDraft = kn.name;
+							editingKnownName = kn.name;
+						}}
+					>
+						{m.drawer_edit()}
+					</button>
+				</div>
+			{/if}
+		{/each}
+	</section>
 {/if}
+</div>
 
 <style>
 	.member-row {
@@ -204,5 +298,18 @@
 		color: var(--text);
 		border-radius: var(--radius-md);
 		padding: 0.5rem 0.6rem;
+	}
+
+	.known-name-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+
+	.known-name-line {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		flex-wrap: wrap;
 	}
 </style>

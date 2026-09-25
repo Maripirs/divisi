@@ -469,11 +469,13 @@ def _call_nvidia(body: dict) -> httpx.Response:
 
 
 def _call_misaki(body: dict) -> httpx.Response:
-    """The first-tier provider's HTTP call, tried before Groq on every
-    chunk when a Misaki key is configured (see `_classify_chunk_misaki`).
-    Factored out the same way as `_call_groq`/`_call_nvidia` so tests can
-    monkeypatch it independently. Reuses Groq's own timeout -- no evidence
-    yet that this self-hosted endpoint needs NVIDIA's longer one."""
+    """The second-tier provider's HTTP call, tried after Groq on every
+    chunk when a Misaki key is configured (see `_classify_chunk_misaki`;
+    temporarily demoted from first tier, see `classify_lyric_tokens`'s own
+    doc comment). Factored out the same way as `_call_groq`/`_call_nvidia`
+    so tests can monkeypatch it independently. Reuses Groq's own timeout
+    -- no evidence yet that this self-hosted endpoint needs NVIDIA's
+    longer one."""
     settings = get_settings()
     return httpx.post(
         _MISAKI_URL,
@@ -573,13 +575,22 @@ def _misaki_body(tokens: list[PdfWordToken], remaining: dict[str, int] | None) -
     return {
         "model": settings.misaki_lyrics_model,
         "temperature": 0.1,
-        # Matches Groq's own `max_tokens` as a reasonable starting point --
-        # this model's real behavior under this task's load is unknown, so
-        # no reasoning-effort or chat-template tuning is invented for it
-        # here (those params were reverse-engineered specifically for
-        # Groq's gpt-oss-120b and NVIDIA's nemotron, see `_groq_body` and
-        # `_nvidia_body`).
-        "max_tokens": 3500,
+        # Deliberately no `max_tokens` here, unlike Groq/NVIDIA. Started at
+        # Groq's own 3500 as a placeholder while this model's real behavior
+        # under this task's load was unknown; confirmed hit for real on a
+        # 7-page chunk of "Ezekiel Saw de Wheel" (2026-09-22):
+        # `finish_reason: length`, `completion_tokens` landing exactly on
+        # whatever this value was set to, response cut off mid-JSON every
+        # time. Raising it (tried 5500, then 12000) just moved the same
+        # problem to a bigger chunk instead of removing it -- Misaki runs
+        # unmetered on a friend's own machine with no server-side generation
+        # cap of its own and no quota cost, so any fixed number here is an
+        # artificial ceiling this feature doesn't actually need. Confirmed
+        # the API accepts a request with the field left out entirely and
+        # stops naturally on its own (`finish_reason: stop`) instead of
+        # truncating. No reasoning-effort or chat-template tuning here
+        # either -- those were reverse-engineered specifically for Groq's
+        # gpt-oss-120b and NVIDIA's nemotron.
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(tokens, remaining)},
@@ -661,9 +672,9 @@ def _classify_chunk_misaki(tokens: list[PdfWordToken], remaining: dict[str, int]
     `_classify_chunk` (Groq). Unlike `_classify_chunk_nvidia`, this raises
     `LyricExtractionError` on failure rather than swallowing it to `[]`:
     Misaki is not a terminal tier here, so the caller (`classify_lyric_
-    tokens`) needs to see the failure and fall through to Groq for this
+    tokens`) needs to see the failure and fall through to NVIDIA for this
     same chunk, the same way a failed Groq chunk falls through to
-    NVIDIA."""
+    Misaki."""
     voices, _response = _call_and_parse(_call_misaki, _misaki_body(tokens, remaining), "Misaki")
     return voices, _MISAKI_PAUSE_SECONDS
 
@@ -690,26 +701,52 @@ def _classify_chunk_nvidia(tokens: list[PdfWordToken], remaining: dict[str, int]
             return []
 
 
+def _chunk_exceeds_budget(voices: list[dict], remaining: dict[str, int]) -> bool:
+    """True if any voice's syllable count in a single chunk's response
+    already exceeds the true remaining-for-the-rest-of-the-piece budget
+    computed before this chunk was sent (see `count_singable_onsets`) --
+    a chunk cannot legitimately need more sung syllables for a voice than
+    that voice has left in the whole rest of the piece, so overshooting
+    it (beyond a small tolerance for classification noise) is a strong
+    sign this chunk's response drifted (duplicated text, wrong voice
+    attribution) rather than a false alarm."""
+    for entry in voices:
+        voice, got = entry["voice"], len(entry["syllables"])
+        budget = remaining.get(voice)
+        if budget is not None and got > budget + max(3, round(budget * 0.1)):
+            return True
+    return False
+
+
 def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, int] | None = None) -> list[dict]:
-    """Send the PDF's raw word tokens to Misaki first, falling back to
-    Groq and then NVIDIA, chunked by whole pages to stay under Groq's
+    """Send the PDF's raw word tokens to Groq first, falling back to
+    Misaki and then NVIDIA, chunked by whole pages to stay under Groq's
     tokens-per-minute cap, and return
     `[{"voice": str | None, "syllables": [{"text": str, "syllabic": str}]}]`,
     syllables in reading order per voice (concatenated across chunks in
     page order). Each provider tier gets one retry per chunk on failure.
-    Misaki is tried first on every chunk when configured; if it fails
-    twice on one chunk, it's assumed down for the rest of the run (see the
-    module docstring) and that chunk, and every chunk after it, falls
-    through to the existing Groq/NVIDIA pipeline described next. If a
-    chunk still fails after Groq's own retry: with an NVIDIA key
-    configured, Groq is assumed down for the rest of the run (see the
-    module docstring for why) and every chunk from here on, this one
-    included, goes to NVIDIA instead (`_classify_chunk_nvidia`, itself
-    retried once per chunk the same way Groq is); without a key, that
-    chunk is simply skipped (its page contributes no lyrics) rather than
-    losing the whole piece over one bad response. Raises
-    `LyricExtractionError` only for a missing API key, or if literally
-    nothing could be classified at all.
+
+    Groq is temporarily promoted ahead of Misaki (2026-09-23): Misaki runs
+    on a friend's own machine, and in one evening of testing it hit three
+    separate failure modes unrelated to this feature's own code (a
+    `max_tokens` truncation, now fixed -- see `_misaki_body`; a
+    `max_parallel_requests` 429 from its LiteLLM proxy; and a bare
+    connection drop), all pointing at that endpoint being unreliable right
+    now rather than at anything fixable here. Swap the two tiers back (see
+    git history around this date for the previous order) once it's stable
+    again.
+
+    Groq is tried first on every chunk; if it fails twice on one chunk,
+    it's assumed down for the rest of the run (see the module docstring)
+    and that chunk, and every chunk after it, falls through to Misaki
+    (when configured), then NVIDIA if Misaki also fails twice. Each
+    fallback tier gets the same one-retry-then-assume-down treatment as
+    the last: `_classify_chunk_misaki`, then `_classify_chunk_nvidia`
+    (itself retried once per chunk the same way). With no NVIDIA key
+    configured, a chunk that exhausts every configured tier is simply
+    skipped (its page contributes no lyrics) rather than losing the whole
+    piece over one bad response. Raises `LyricExtractionError` only for a
+    missing API key, or if literally nothing could be classified at all.
 
     NVIDIA is a completely separate account/quota from Groq, so it stays
     usable through a Groq outage or an exhausted daily cap (hit the
@@ -725,7 +762,10 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
     an unconstrained-length list per voice. Built for real after a
     positional-only alignment (no cross-check at all) let one voice's
     classification silently drift out of sync with its notes for the rest
-    of a piece -- the failure mode this budget is meant to catch early."""
+    of a piece -- the failure mode this budget is meant to catch early.
+    Each chunk's response is also checked against this budget right after
+    it comes back, before it's merged: overshooting it triggers one retry
+    of just that chunk (see `_chunk_exceeds_budget`)."""
     settings = get_settings()
     if not settings.misaki_llm_key and not settings.groq_api_key and not settings.nvidia_api_key:
         raise LyricExtractionError("Lyric generation is not configured (no API key set)")
@@ -735,71 +775,96 @@ def classify_lyric_tokens(tokens: list[PdfWordToken], onset_counts: dict[str, in
     merged: dict[str | None, list[dict]] = {}
     misaki_available = bool(settings.misaki_llm_key)
     groq_available = True
-    for i, chunk in enumerate(chunks):
+
+    def _classify_via_tiers(i: int, chunk: list[PdfWordToken]) -> tuple[list[dict], float]:
+        nonlocal misaki_available, groq_available
         voices: list[dict] | None = None
         wait_seconds: float | None = None
 
-        if misaki_available:
-            # Same "one retry, then assume this tier is down for the rest
-            # of the run" pattern as the Groq-to-NVIDIA handoff below, one
-            # level up: Misaki is tried first on every chunk.
+        if groq_available:
+            # A long piece means many sequential Groq calls (one per
+            # chunk), each with some nonzero chance of a flaky response (a
+            # truncated or malformed JSON body, a transient network error)
+            # -- hit this for real on a 6-chunk piece where one chunk's
+            # response just wasn't parseable. One retry recovers from that
+            # without adding much total wait.
             try:
-                voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
+                voices, wait_seconds = _classify_chunk(chunk, remaining)
             except LyricExtractionError:
-                logger.warning("Misaki chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
-                time.sleep(_MISAKI_RETRY_PAUSE_SECONDS)
-                try:
-                    voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
-                except LyricExtractionError:
-                    logger.warning(
-                        "Misaki failed twice on chunk %d/%d; treating it as down for the "
-                        "rest of this run and falling back to Groq",
-                        i + 1,
-                        len(chunks),
-                    )
-                    misaki_available = False
-
-        if not misaki_available:
-            if groq_available:
-                # A long piece means many sequential Groq calls (one per
-                # chunk), each with some nonzero chance of a flaky response (a
-                # truncated or malformed JSON body, a transient network error)
-                # -- hit this for real on a 6-chunk piece where one chunk's
-                # response just wasn't parseable. One retry recovers from that
-                # without adding much total wait.
+                logger.warning("Groq chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+                time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
                 try:
                     voices, wait_seconds = _classify_chunk(chunk, remaining)
                 except LyricExtractionError:
-                    logger.warning("Chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
-                    time.sleep(_FALLBACK_SECONDS_BETWEEN_CHUNKS)
+                    logger.warning(
+                        "Groq failed twice on chunk %d/%d; treating it as down for the "
+                        "rest of this run and falling back to Misaki",
+                        i + 1,
+                        len(chunks),
+                    )
+                    groq_available = False
+
+        if not groq_available:
+            if misaki_available:
+                # Same "one retry, then assume this tier is down for the
+                # rest of the run" pattern as the Misaki-to-NVIDIA handoff
+                # below, one level up.
+                try:
+                    voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
+                except LyricExtractionError:
+                    logger.warning("Misaki chunk %d/%d failed, retrying once", i + 1, len(chunks), exc_info=True)
+                    time.sleep(_MISAKI_RETRY_PAUSE_SECONDS)
                     try:
-                        voices, wait_seconds = _classify_chunk(chunk, remaining)
+                        voices, wait_seconds = _classify_chunk_misaki(chunk, remaining)
                     except LyricExtractionError:
                         if settings.nvidia_api_key:
-                            # Groq failed twice in a row on this chunk -- in
-                            # every real case observed building this, that
-                            # meant Groq was down for the rest of the run too
-                            # (an exhausted per-day cap fails identically on
-                            # every subsequent call), so stop spending each
-                            # later chunk's own retry-and-sleep cycle on a
-                            # provider that's already shown it won't recover;
-                            # this chunk and everything after it goes to
-                            # NVIDIA instead.
+                            # Misaki failed twice in a row on this chunk --
+                            # stop spending each later chunk's own
+                            # retry-and-sleep cycle on a tier that's already
+                            # shown it won't recover; this chunk and
+                            # everything after it goes to NVIDIA instead.
                             logger.warning(
-                                "Groq failed twice on chunk %d/%d; treating it as down for the "
+                                "Misaki failed twice on chunk %d/%d; treating it as down for the "
                                 "rest of this run and switching to NVIDIA",
                                 i + 1,
                                 len(chunks),
                             )
-                            groq_available = False
+                            misaki_available = False
                             voices = _classify_chunk_nvidia(chunk, remaining)
                             wait_seconds = _NVIDIA_PAUSE_SECONDS
                         else:
                             logger.warning("Chunk %d/%d failed again, skipping it", i + 1, len(chunks), exc_info=True)
                             voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
-            else:
+            elif settings.nvidia_api_key:
+                # Misaki was never configured at all (as opposed to having
+                # failed above), so there's no key check already behind us
+                # the way there is once `misaki_available` gets flipped
+                # False for real -- check for one here before touching
+                # NVIDIA, same as every other tier transition does.
                 voices = _classify_chunk_nvidia(chunk, remaining)
                 wait_seconds = _NVIDIA_PAUSE_SECONDS
+            else:
+                voices, wait_seconds = [], _FALLBACK_SECONDS_BETWEEN_CHUNKS
+
+        return voices, wait_seconds
+
+    for i, chunk in enumerate(chunks):
+        voices, wait_seconds = _classify_via_tiers(i, chunk)
+
+        if remaining and _chunk_exceeds_budget(voices, remaining):
+            logger.warning(
+                "Chunk %d/%d returned more syllables for at least one voice than "
+                "that voice has left in the piece; retrying the chunk once",
+                i + 1,
+                len(chunks),
+            )
+            voices, wait_seconds = _classify_via_tiers(i, chunk)
+            if _chunk_exceeds_budget(voices, remaining):
+                logger.warning(
+                    "Chunk %d/%d still looks off after the retry; keeping it anyway",
+                    i + 1,
+                    len(chunks),
+                )
 
         for entry in voices:
             merged.setdefault(entry["voice"], []).extend(entry["syllables"])

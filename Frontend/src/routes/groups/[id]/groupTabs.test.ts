@@ -7,6 +7,7 @@ const allEnabled: GroupTabData = {
 	membersEnabled: true,
 	responsibilitiesEnabled: true,
 	carpoolEnabled: true,
+	teamsEnabled: true,
 	pageSettings: []
 };
 
@@ -20,18 +21,40 @@ describe('computeGroupTabs', () => {
 			'members',
 			'responsibilities',
 			'carpool',
+			'teams',
 			'about'
 		]);
 	});
 
 	it('hides a built-in tab a member has no access to, but tracks/about stay unconditional', () => {
 		const tabs = computeGroupTabs({ ...allEnabled, homeworkEnabled: false, membersEnabled: false }, 'member');
-		expect(tabs.map((t) => t.key)).toEqual(['tracks', 'weeklyNotes', 'responsibilities', 'carpool', 'about']);
+		expect(tabs.map((t) => t.key)).toEqual(['tracks', 'weeklyNotes', 'responsibilities', 'carpool', 'teams', 'about']);
 	});
 
 	it('hides carpool from a member when it is disabled, but tracks/about stay unconditional', () => {
 		const tabs = computeGroupTabs({ ...allEnabled, carpoolEnabled: false }, 'member');
-		expect(tabs.map((t) => t.key)).toEqual(['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'about']);
+		expect(tabs.map((t) => t.key)).toEqual([
+			'primary',
+			'tracks',
+			'weeklyNotes',
+			'members',
+			'responsibilities',
+			'teams',
+			'about'
+		]);
+	});
+
+	it('hides teams from a member when it is disabled, but tracks/about stay unconditional', () => {
+		const tabs = computeGroupTabs({ ...allEnabled, teamsEnabled: false }, 'member');
+		expect(tabs.map((t) => t.key)).toEqual([
+			'primary',
+			'tracks',
+			'weeklyNotes',
+			'members',
+			'responsibilities',
+			'carpool',
+			'about'
+		]);
 	});
 
 	it('admin mode shows every built-in tab regardless of the member flags', () => {
@@ -42,6 +65,7 @@ describe('computeGroupTabs', () => {
 				membersEnabled: false,
 				responsibilitiesEnabled: false,
 				carpoolEnabled: false,
+				teamsEnabled: false,
 				pageSettings: []
 			},
 			'admin'
@@ -53,6 +77,7 @@ describe('computeGroupTabs', () => {
 			'members',
 			'responsibilities',
 			'carpool',
+			'teams',
 			'about'
 		]);
 	});
@@ -69,7 +94,15 @@ describe('computeGroupTabs', () => {
 			},
 			'member'
 		);
-		expect(tabs.map((t) => t.key)).toEqual(['tracks', 'weeklyNotes', 'members', 'responsibilities', 'carpool', 'about']);
+		expect(tabs.map((t) => t.key)).toEqual([
+			'tracks',
+			'weeklyNotes',
+			'members',
+			'responsibilities',
+			'carpool',
+			'teams',
+			'about'
+		]);
 	});
 
 	it("member-mode preview reflects carpool's real pageSettings enabled value too", () => {
@@ -80,6 +113,33 @@ describe('computeGroupTabs', () => {
 			},
 			'member'
 		);
-		expect(tabs.map((t) => t.key)).toEqual(['primary', 'tracks', 'weeklyNotes', 'members', 'responsibilities', 'about']);
+		expect(tabs.map((t) => t.key)).toEqual([
+			'primary',
+			'tracks',
+			'weeklyNotes',
+			'members',
+			'responsibilities',
+			'teams',
+			'about'
+		]);
+	});
+
+	it("member-mode preview reflects teams' real pageSettings enabled value too", () => {
+		const tabs = computeGroupTabs(
+			{
+				...allEnabled,
+				pageSettings: [{ page: 'teams', enabled: false, audience: 'members', min_identity: 'anyone' }]
+			},
+			'member'
+		);
+		expect(tabs.map((t) => t.key)).toEqual([
+			'primary',
+			'tracks',
+			'weeklyNotes',
+			'members',
+			'responsibilities',
+			'carpool',
+			'about'
+		]);
 	});
 });

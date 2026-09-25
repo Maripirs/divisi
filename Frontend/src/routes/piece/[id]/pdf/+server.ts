@@ -8,7 +8,16 @@ import type { RequestHandler } from './$types';
  * instead — see `remotePiece.ts`'s `buildRemotePiece`) proxies straight to
  * the Backend's unauthenticated `GET /guest/{code}/pieces/{id}/pdf`
  * instead, which is already keyed by piece id, no version lookup needed. */
-export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
+export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies, request }) => {
+	// pdf.js drives its own byte-range streaming for large PDFs; forwarding
+	// the browser's Range header here (and passing the backend's resulting
+	// 206/Content-Range straight back through) is what makes that work. Left
+	// unforwarded, the backend always returns the full file with a 200 and
+	// an `Accept-Ranges: bytes` header, which pdf.js misreads as a satisfied
+	// range request, and its internal chunk-size math then throws
+	// `Bad end offset: <full file size>`.
+	const range = request.headers.get('range');
+	const rangeHeaders: Record<string, string> = range ? { Range: range } : {};
 	try {
 		if (!locals.token) {
 			const code = url.searchParams.get('code');
@@ -19,7 +28,7 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 			const guestUrl = new URL(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${params.id}/pdf`);
 			const token = readGuestCookie(cookies, code);
 			if (token) guestUrl.searchParams.set('token', token);
-			const res = await fetch(guestUrl.toString());
+			const res = await fetch(guestUrl.toString(), { headers: rangeHeaders });
 			return new Response(res.body, { status: res.status, headers: res.headers });
 		}
 
@@ -32,7 +41,7 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 		if (!entry) return new Response(null, { status: 404 });
 
 		const res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${entry.version_id}/pdf`, {
-			headers: { Authorization: `Bearer ${locals.token}` }
+			headers: { Authorization: `Bearer ${locals.token}`, ...rangeHeaders }
 		});
 		return new Response(res.body, { status: res.status, headers: res.headers });
 	} catch {

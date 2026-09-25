@@ -45,6 +45,7 @@ from app.api.schemas import (
     ResponsibilityGuestRoleCoverageOut,
     ResponsibilityGuestScheduleGroupOut,
     ResponsibilityGuestSignupOut,
+    TeamOut,
     WeeklyNoteOut,
 )
 from app.api.deps import get_optional_participant
@@ -71,6 +72,7 @@ from app.db.models import (
     ResponsibilityDateSchedule,
     ResponsibilityRole,
     ResponsibilitySchedule,
+    Team,
     User,
     WeeklyNote,
 )
@@ -80,6 +82,7 @@ from app.services.carpool import list_events_ordered, serialize_posts
 from app.services.pages import require_guest_page_access
 from app.services.participants import find_guest_matches
 from app.services.responsibilities import role_coverage, signup_display_name
+from app.services.teams import team_out
 from app.storage.files import resolve_existing_source_path
 
 router = APIRouter(prefix="/guest", tags=["guest"], dependencies=[Depends(rate_limit_guest)])
@@ -622,6 +625,34 @@ def list_guest_responsibility_dates(
             )
         )
     return out
+
+
+@router.get("/{join_code}/teams", response_model=list[TeamOut])
+def list_guest_teams(
+    join_code: str,
+    password: str | None = None,
+    token: str | None = None,
+    db: Session = Depends(get_db),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> list[TeamOut]:
+    """Read-only, same no-auth stance as the rest of this router. Gated by
+    the `teams` page settings, members-only audience by default (B12). A
+    guest is never an admin, so this always uses the redacted `team_out`
+    shape (never `team_admin_out`) unconditionally, regardless of anything
+    the caller claims — the full roster and raw contact fields never leak
+    here. `maybe_participant` (the `divisi_participant` cookie) resolves
+    `my_signup` when present, same as a member's own view; with no cookie
+    yet, every role's `my_signup` is simply `None`."""
+    group = _get_group_by_join_code_or_404(join_code, db)
+    _authorize_guest(group, password, token)
+    require_guest_page_access(group.id, GroupPage.teams, db)
+    teams = (
+        db.query(Team)
+        .filter(Team.group_id == group.id)
+        .order_by(Team.sort_order.asc(), Team.created_at.asc())
+        .all()
+    )
+    return [team_out(t, maybe_participant, db) for t in teams]
 
 
 @router.get(

@@ -82,7 +82,8 @@
 		members: m.groups_members_tab_title,
 		about: m.groups_about_tab_title,
 		responsibilities: m.responsibilities_tab_title,
-		carpool: m.carpool_tab_title
+		carpool: m.carpool_tab_title,
+		teams: m.teams_tab_title
 	};
 	const PAGE_ORDER: GroupPage[] = [
 		'homework',
@@ -91,7 +92,8 @@
 		'members',
 		'about',
 		'responsibilities',
-		'carpool'
+		'carpool',
+		'teams'
 	];
 	// Real two-way local state for the page-visibility form (matching the
 	// tabs' order, not the Backend's alphabetical one) — a plain one-way
@@ -114,6 +116,7 @@
 
 </script>
 
+<div class="content-narrow">
 {#if mode === 'admin'}
 	<section class="card">
 		<p class="card-eyebrow">{m.groups_settings()}</p>
@@ -474,6 +477,7 @@
 		</ConfirmButton>
 	</section>
 {/if}
+</div>
 
 <style>
 	.body {

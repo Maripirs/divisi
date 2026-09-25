@@ -7,7 +7,7 @@
 
 .shell {
 	width: 100%;
-	max-width: 640px;
+	max-width: 1040px;
 	margin: 0 auto;
 	padding: calc(6.5rem + env(safe-area-inset-top)) 1.1rem calc(1.75rem + env(safe-area-inset-bottom));
 	display: flex;
@@ -15,13 +15,33 @@
 	gap: 1.1rem;
 }
 
-/* Opt-in widening for pages that want a real desktop layout below —
-   currently just the carpool tab's two-column (map | posts) split. Stays
-   at .shell's own 640px everywhere else, and even here does nothing below
-   1024px, so mobile/tablet layouts are byte-for-byte unchanged. */
+/* Pages/tabs that don't want the full 1040px (forms, settings, prose, a
+   single list-in-a-box) cap their own content here instead of the shell
+   varying. Centered, matching `.shell` itself, rather than left-aligned
+   under the wider header. */
+.content-narrow {
+	width: 100%;
+	max-width: 640px;
+	margin: 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+}
+
+/* Plain 2-column grid (document order, not masonry) for flat lists of
+   roughly-uniform cards inside a wide `.shell` page. Same breakpoint as
+   below so it never activates without the extra width to fill. */
+.card-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+}
+
 @media (min-width: 1024px) {
-	.shell--wide {
-		max-width: 1040px;
+	.card-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		align-items: start;
 	}
 }
 
@@ -55,8 +75,15 @@
 	box-shadow: var(--shadow);
 }
 
+/* A fixed global constant, always matching `.shell`'s own cap, never
+   conditional on route or tab state: a group page's tabs share this one
+   header instance via local tab-switch state (not navigation), so a width
+   that tracked the active tab would visibly resize the header on every
+   tab click. One fixed header width keeps the masthead stable regardless
+   of which tab (or how wide/narrow that tab's own body) is showing below
+   it. */
 .app-shell-header-inner {
-	max-width: 640px;
+	max-width: 1040px;
 	margin: 0 auto;
 	padding: calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.75rem;
 	display: flex;
@@ -309,6 +336,11 @@
 	color: var(--accent);
 	cursor: pointer;
 	white-space: nowrap;
+}
+
+.text-link:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .text-link--danger {

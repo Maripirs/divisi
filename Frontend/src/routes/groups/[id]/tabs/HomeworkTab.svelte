@@ -3,6 +3,8 @@
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { groupByLabel } from '$lib/components/groupCards';
+	import { formatCalendarDate, isPastDueDate } from '$lib/utils/dates';
 	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
 
@@ -30,15 +32,54 @@
 	// submit/disable/reset behavior.
 	let savingHomework = $state(false);
 
+	// Local copy of the roster so a confirmed delete can drop its row the
+	// instant it's clicked, instead of waiting for the reload; resynced
+	// whenever the server data actually changes.
+	// svelte-ignore state_referenced_locally
+	let homework = $state(data.homework);
+	$effect(() => {
+		homework = data.homework;
+	});
+	// `deleteHomework` goes through `EditableCard`'s own built-in delete
+	// button (its `use:enhance` lives there, not here), so there's no local
+	// `use:enhance` to hook the optimistic removal into. A failed delete
+	// returns `fail(...)`, which SvelteKit surfaces via `form` without
+	// reloading `data` (`invalidateAll` only runs on success), so undo the
+	// optimistic removal here by re-syncing from `data.homework`, which
+	// still holds the item since the delete never actually landed.
+	$effect(() => {
+		if (form?.form === 'deleteHomework' && 'error' in form && form.error) homework = data.homework;
+	});
+	// `EditableCard`'s delete button submits the same `<form>` as Save, via
+	// `formaction`, so the only way to tell the two apart from up here
+	// (without reaching into `EditableCard` itself) is the native submit
+	// event's `submitter`, caught here as it bubbles up from wherever a
+	// homework card's edit form was submitted.
+	function handleHomeworkFormSubmit(e: SubmitEvent) {
+		if (e.submitter?.getAttribute('formaction') !== '?/deleteHomework') return;
+		const id = new FormData(e.target as HTMLFormElement).get('homeworkId');
+		if (typeof id === 'string') homework = homework.filter((hw) => hw.id !== id);
+	}
+
 	// Past due date -> collapsed below the active list, same current/past
 	// split ResponsibilitiesTab already does for dates (`isUpcoming`/
 	// `pastDates` there). No due date at all reads as "still relevant"
 	// (open-ended), so only a due date that's actually passed counts as
 	// past; the Home page's own feed (`routes/home/+page.server.ts`) takes
 	// the same stance to decide what still surfaces there at all.
-	const isPastDue = (hw: { due_date: string | null }) => hw.due_date !== null && new Date(hw.due_date) < new Date();
-	let currentHomework = $derived(data.homework.filter((hw) => !isPastDue(hw)));
-	let pastHomework = $derived(data.homework.filter(isPastDue));
+	const isPastDue = (hw: { due_date: string | null }) => hw.due_date !== null && isPastDueDate(hw.due_date);
+	let currentHomework = $derived(homework.filter((hw) => !isPastDue(hw)));
+	// Reversed so the most recently due item leads, same convention
+	// `partitionDatesByUpcoming` uses for past responsibility dates.
+	let pastHomework = $derived(homework.filter(isPastDue).reverse());
+
+	// One header per run of same-due-date homework, same treatment Home's
+	// own "For next rehearsal" card uses (`groupByLabel` in `groupCards.ts`)
+	// — `currentHomework` keeps the Backend's oldest-first order, `pastHomework`
+	// is reversed to newest-first above.
+	const dueDateLabel = (hw: { due_date: string | null }) => formatCalendarDate(hw.due_date, m.home_no_due_date());
+	let currentHomeworkGroups = $derived(groupByLabel(currentHomework, dueDateLabel));
+	let pastHomeworkGroups = $derived(groupByLabel(pastHomework, dueDateLabel));
 </script>
 
 {#snippet homeworkRow(hw: (typeof data.homework)[number])}
@@ -48,9 +89,10 @@
 		range: hw.range,
 		instructions: hw.instructions,
 		dueDate: hw.due_date,
+		pieceId: hw.piece_id,
 		pieceTitle: hw.pieceTitle
 	}}
-	<HomeworkCard item={hwItem} collapsible>
+	<HomeworkCard item={hwItem} collapsible bare showDate={false}>
 		{#if mode === 'admin' && editingHomeworkId === hw.id}
 			<EditableCard
 				saveAction="?/updateHomework"
@@ -93,11 +135,6 @@
 				{/snippet}
 			</EditableCard>
 		{:else}
-			{#if hw.piece_id}
-				<div class="btn-row">
-					<a class="btn btn-outline" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
-				</div>
-			{/if}
 			{#if mode === 'admin'}
 				<button
 					type="button"
@@ -118,15 +155,34 @@
 	</HomeworkCard>
 {/snippet}
 
+{#snippet dateGroup(group: (typeof currentHomeworkGroups)[number])}
+	<!-- One collapsible date card per run of same-due-date homework, same
+	     tap-to-collapse idea `HomeworkCard`'s own `collapsible` prop gives
+	     each song below it — native `<details>` needs no state of its own,
+	     the `[open]` attribute drives the chevron via CSS. Defaults open so
+	     collapsing is opt-in, not a surprise on load. -->
+	<details class="card date-group" open>
+		<summary class="card-eyebrow">
+			<span>{group.label}</span>
+			<span class="chevron" aria-hidden="true"></span>
+		</summary>
+		{#each group.items as hw (hw.id)}
+			{@render homeworkRow(hw)}
+		{/each}
+	</details>
+{/snippet}
+
 {#if mode === 'admin'}
 	<p class="tab-meta">{m.groups_active_count({ count: currentHomework.length })}</p>
 {/if}
 {#if currentHomework.length === 0}
 	<p class="empty">{m.join_no_homework()}</p>
 {:else}
-	{#each currentHomework as hw (hw.id)}
-		{@render homeworkRow(hw)}
+	<div class="card-grid" onsubmit={handleHomeworkFormSubmit}>
+	{#each currentHomeworkGroups as group (group.label)}
+		{@render dateGroup(group)}
 	{/each}
+	</div>
 {/if}
 {#if mode === 'admin'}
 	<div class="btn-row">
@@ -138,10 +194,10 @@
 	<!-- Collapsed below the active list and the admin's "Add homework"
 	     button, same past/upcoming split ResponsibilitiesTab already uses
 	     for dates: rarely needed once due, still there for reference. -->
-	<details class="past-homework">
+	<details class="past-homework" onsubmit={handleHomeworkFormSubmit}>
 		<summary>{m.homework_past_heading({ count: pastHomework.length })}</summary>
-		{#each pastHomework as hw (hw.id)}
-			{@render homeworkRow(hw)}
+		{#each pastHomeworkGroups as group (group.label)}
+			{@render dateGroup(group)}
 		{/each}
 	</details>
 {/if}
@@ -154,15 +210,52 @@
 	}
 
 	/* Same treatment as ResponsibilitiesTab's `.past-dates`: a muted
-	   text-link summary, a little breathing room once open. */
-	.past-homework summary {
+	   text-link summary, a little breathing room once open. `>` (not a
+	   descendant selector) so this only styles `.past-homework`'s own
+	   "Past homework (n)" toggle — each nested `.date-group`'s own
+	   `<summary class="card-eyebrow">` is a summary too, and a descendant
+	   selector here would leak these font-size/padding/color overrides onto
+	   it, making every past-section date card look different from the
+	   current-section ones for no reason. */
+	.past-homework > summary {
 		cursor: pointer;
 		color: var(--text-muted);
 		font-size: 0.8125rem;
 		padding: 0.35rem 0;
 	}
 
-	.past-homework[open] summary {
-		margin-bottom: 0.5rem;
+	/* The current-section date cards sit directly in the page's `.shell`
+	   flex column and get its 1.1rem gap for free. These live one level
+	   deeper, inside `.past-homework`, which had no gap of its own — so
+	   they stacked edge-to-edge instead of matching that rhythm. Same gap
+	   here (replacing the old fixed margin-bottom below the summary, which
+	   `gap` now covers) makes past cards read the same as current ones. */
+	.past-homework[open] {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+	}
+
+	/* Per-date card as a native `<details>`: the eyebrow doubles as the
+	   tappable summary, with the same chevron `HomeworkCard` uses per song
+	   (`.chevron`/`.chevron.is-open` in shell.css) so the two collapse
+	   affordances read as one visual language. No bound state needed — the
+	   `[open]` attribute IS the collapse state, so the chevron rotation is
+	   pure CSS. */
+	.date-group summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.date-group summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.date-group[open] > summary .chevron {
+		transform: rotate(225deg);
 	}
 </style>

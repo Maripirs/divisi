@@ -17,8 +17,8 @@ import { writable } from 'svelte/store';
  * The reactive surface is a `svelte/store` (same choice as `theme.ts`), so
  * this file stays plain `.ts` and unit-testable without the Svelte
  * compiler. The pure helpers below (`parseStoredProfile`, `needsName`,
- * `shouldShowSignupBanner`, ...) carry the logic; the store is a thin
- * localStorage-backed wrapper over them.
+ * ...) carry the logic; the store is a thin localStorage-backed wrapper
+ * over them.
  *
  * Storage is guarded on `typeof localStorage` rather than SvelteKit's
  * `$app/environment` `browser` flag so the vitest `node` env (which stubs
@@ -34,12 +34,6 @@ export interface LocalProfile {
 	/** The name the choir sees. Empty until lazily prompted at the first
 	 * shared action. */
 	displayName: string;
-	/** True once the visitor has completed at least one responsibility
-	 * signup. Gates the one-time "you're only on this device" banner. */
-	signedUp: boolean;
-	/** True once that banner has been dismissed. It never reappears after
-	 * this. */
-	bannerDismissed: boolean;
 }
 
 /** A v4-ish uuid. Prefers the platform `crypto.randomUUID` (present in
@@ -61,17 +55,16 @@ export function makeLocalProfile(overrides: Partial<LocalProfile> = {}): LocalPr
 	return {
 		localId: newLocalId(),
 		displayName: '',
-		signedUp: false,
-		bannerDismissed: false,
 		...overrides
 	};
 }
 
 /** Parse a stored JSON blob back into a `LocalProfile`, tolerating a
  * missing/short/malformed value (returns `null`) and a blob written by an
- * older shape (fills in the new flags, and simply drops a stale `saved`
- * field from a pre-B21 blob — it isn't part of the shape any more). A blob
- * with no usable `localId` is treated as absent. */
+ * older shape (simply drops stale fields, e.g. a pre-B21 `saved` field or
+ * the retired `signedUp`/`bannerDismissed` flags — none of them are part
+ * of the shape any more). A blob with no usable `localId` is treated as
+ * absent. */
 export function parseStoredProfile(raw: string | null): LocalProfile | null {
 	if (!raw) return null;
 	let parsed: unknown;
@@ -85,9 +78,7 @@ export function parseStoredProfile(raw: string | null): LocalProfile | null {
 	if (typeof obj.localId !== 'string' || obj.localId.length === 0) return null;
 	return {
 		localId: obj.localId,
-		displayName: typeof obj.displayName === 'string' ? obj.displayName : '',
-		signedUp: obj.signedUp === true,
-		bannerDismissed: obj.bannerDismissed === true
+		displayName: typeof obj.displayName === 'string' ? obj.displayName : ''
 	};
 }
 
@@ -128,14 +119,6 @@ export function needsName(
 	return profile.displayName.trim().length === 0;
 }
 
-/** The one-time post-signup "you're only on this device" banner shows once
- * the visitor has signed up, until they dismiss it. */
-export function shouldShowSignupBanner(
-	profile: Pick<LocalProfile, 'signedUp' | 'bannerDismissed'>
-): boolean {
-	return profile.signedUp && !profile.bannerDismissed;
-}
-
 // --- reactive store -------------------------------------------------------
 
 /** The live local profile. Components read `$localProfile`; every mutator
@@ -160,14 +143,6 @@ export function ensureLocalId(): string {
 
 export function setDisplayName(name: string): void {
 	update((profile) => ({ ...profile, displayName: name.trim() }));
-}
-
-export function markSignedUp(): void {
-	update((profile) => ({ ...profile, signedUp: true }));
-}
-
-export function dismissSignupBanner(): void {
-	update((profile) => ({ ...profile, bannerDismissed: true }));
 }
 
 /** Test seam: drop the stored profile and reset the store to a fresh one. */

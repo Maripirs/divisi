@@ -2,12 +2,12 @@
 	import { browser } from '$app/environment';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
-	import { getPiece } from '$lib/pieces/registry';
 	// Annotations are hidden app-wide for now (see Frontend/plan.md's F3 log) —
 	// not imported here.
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { groupByLabel } from '$lib/components/groupCards';
 	import { formatCalendarDate, formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
 
@@ -73,47 +73,49 @@
 		{@const visibleResponsibilities = home.responsibilities.filter(
 			(r) => !dismissedResponsibilityIds.has(r.id)
 		)}
+	<div class="card-grid">
 	{#if home.homework.length > 0}
+		{@const nextRehearsal = groupByLabel(home.homework, (hw) =>
+			formatCalendarDate(hw.due_date, m.home_no_due_date())
+		)[0]}
 		<section class="card">
 			<p class="card-eyebrow">{m.home_due_soon()}</p>
-			{#each home.homework as hw (hw.id)}
-				<!-- Real homework points at a real Backend piece — the player
-				     only knows bundled demo pieces (see Frontend/plan.md's
-				     backlog), so a "Start" shortcut only shows up if this
-				     happens to line up with one; a real piece still gets a
-				     "Practice" link, just one tap further in via expand. -->
-				{@const bundledPiece = hw.piece_id ? getPiece(hw.piece_id) : undefined}
-				{#if hw.instructions || hw.piece_id}
-					<button
-						type="button"
-						class="hw-row"
-						aria-expanded={expandedHomeworkId === hw.id}
-						onclick={() => (expandedHomeworkId = expandedHomeworkId === hw.id ? null : hw.id)}
-					>
-						<span>{hw.title}, {hw.range}</span>
-						<span class="hw-row-end">
-							<span class="dim">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
-							<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
-						</span>
-					</button>
-				{:else}
-					<!-- Nothing to expand into (no instructions, no linked piece) —
-					     plain info row, no chevron implying there's more to tap. -->
-					<div class="hw-row hw-row--static">
-						<span>{hw.title}, {hw.range}</span>
-						<span class="dim">{formatCalendarDate(hw.due_date, m.home_no_due_date())}</span>
-					</div>
-				{/if}
-				{#if expandedHomeworkId === hw.id}
+			<p class="hw-date-header">{nextRehearsal.label}</p>
+			{#each nextRehearsal.items as hw (hw.id)}
+				<div class="hw-row">
+					{#if hw.instructions}
+						<button
+							type="button"
+							class="hw-row-toggle"
+							aria-expanded={expandedHomeworkId === hw.id}
+							onclick={() => (expandedHomeworkId = expandedHomeworkId === hw.id ? null : hw.id)}
+						>
+							<span>{hw.title}, {hw.range}</span>
+						</button>
+					{:else}
+						<!-- Nothing to expand into (no instructions) — plain text,
+						     no chevron implying there's more to tap. -->
+						<span class="hw-row-toggle hw-row-toggle--static">{hw.title}, {hw.range}</span>
+					{/if}
+					{#if hw.piece_id}
+						<!-- Always visible, not gated behind the expand toggle —
+						     that one only concerns whether there are instructions to
+						     reveal, a separate question from "can I jump into this
+						     piece". Sits just left of the chevron so the two
+						     trailing controls read as one cluster. -->
+						<a class="hw-play-btn" href={lh(`/piece/${hw.piece_id}`)} aria-label={m.home_start()}>
+							<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+								<path d="M8 5v14l11-7z" />
+							</svg>
+						</a>
+					{/if}
+					{#if hw.instructions}
+						<span class="chevron" class:is-open={expandedHomeworkId === hw.id} aria-hidden="true"></span>
+					{/if}
+				</div>
+				{#if hw.instructions && expandedHomeworkId === hw.id}
 					<div class="due-soon-detail">
-						{#if hw.instructions}
-							<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
-						{/if}
-						{#if bundledPiece}
-							<a class="btn btn-primary btn-block" href={lh(`/piece/${bundledPiece.id}`)}>{m.home_start()}</a>
-						{:else if hw.piece_id}
-							<a class="btn btn-outline btn-block" href={lh(`/piece/${hw.piece_id}`)}>{m.homework_detail_practice()}</a>
-						{/if}
+						<p class="card-note">&ldquo;{hw.instructions}&rdquo;</p>
 					</div>
 				{/if}
 			{/each}
@@ -175,11 +177,14 @@
 		     of pointing at a page that no longer exists. -->
 		<a class="btn btn-outline btn-block join-group" href={lh('/join')}>{m.home_join_group()}</a>
 	</section>
+	</div>
 	{:catch}
+		<div class="content-narrow">
 		<section class="card">
 			<p class="empty">{m.load_failed()}</p>
 			<a class="btn btn-outline btn-block join-group" href={lh('/join')}>{m.home_join_group()}</a>
 		</section>
+		</div>
 	{/await}
 
 	<!-- Library folded in here now that the persistent bottom nav (which
@@ -201,18 +206,25 @@
 	}
 
 	/* Quieter than `.list-row-link` (no border/background box per row) —
-	   see the template comment above the "Due soon" section for why. Still
-	   a real `<button>` when it toggles, just styled as a plain divided
-	   list rather than a stack of buttons. */
+	   see the template comment above the "Due soon" section for why. A
+	   plain flex wrapper now (the expand toggle and the play button are
+	   independently tappable siblings inside it, same shape as `.resp-row`
+	   below), not a `<button>` of its own. */
 	.hw-row {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: 0.5rem;
 		width: 100%;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.hw-row-toggle {
+		display: flex;
+		align-items: center;
+		flex: 1;
+		min-width: 0;
 		padding: 0.55rem 0.1rem;
 		border: none;
-		border-bottom: 1px solid var(--border);
 		background: none;
 		color: inherit;
 		font: inherit;
@@ -220,21 +232,47 @@
 		cursor: pointer;
 	}
 
-	.hw-row--static {
+	.hw-row-toggle--static {
 		cursor: default;
 	}
 
-	.hw-row-end {
+	/* Small circular play icon, same triangle glyph as the player's own
+	   `.play-btn` (`piece/[id]/+page.svelte`) at row scale — always visible
+	   when there's a piece to jump into, independent of the expand toggle. */
+	.hw-play-btn {
+		flex-shrink: 0;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		flex: 0 0 auto;
+		justify-content: center;
+		background: var(--accent);
+		color: var(--accent-contrast);
+		transition: background-color 0.15s ease;
 	}
 
-	.hw-row .dim {
-		color: var(--text-muted);
+	.hw-play-btn:hover {
+		background: var(--accent-hover);
+	}
+
+	.hw-play-btn svg {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* The next rehearsal's due date, above its homework rows (see
+	   `groupByLabel` in `groupCards.ts`). Extra top margin (beyond the
+	   section's own padding) separates it from the card eyebrow above it. */
+	.hw-date-header {
+		margin: 0.6rem 0 0.1rem;
 		font-size: 0.8125rem;
-		white-space: nowrap;
+		font-weight: 600;
+		color: var(--text-muted);
+	}
+
+	.hw-date-header:first-child {
+		margin-top: 0;
 	}
 
 	/* A "Due soon" row's expanded detail — sits right under that row, not

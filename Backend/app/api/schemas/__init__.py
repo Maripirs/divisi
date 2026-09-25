@@ -37,6 +37,8 @@ from app.api.schemas.groups import (
     GroupPageSettingsUpdate,
     GroupPageSettingUpdate,
     GroupRehearsalScheduleUpdate,
+    KnownNameOut,
+    KnownNameRenameIn,
 )
 from app.api.schemas.carpool import (
     CarpoolEventCreate,
@@ -109,6 +111,17 @@ from app.api.schemas.responsibilities import (
     ResponsibilitySignupCreate,
     ResponsibilitySignupOut,
 )
+from app.api.schemas.teams import (
+    TeamAdminOut,
+    TeamCreate,
+    TeamOut,
+    TeamRoleCreate,
+    TeamRoleOut,
+    TeamRoleUpdate,
+    TeamSignupCreate,
+    TeamSignupOut,
+    TeamUpdate,
+)
 from app.api.schemas.weekly_notes import (
     WeeklyNoteCreate,
     WeeklyNoteOut,
@@ -164,6 +177,8 @@ __all__ = [
     "HomeworkCreate",
     "HomeworkOut",
     "HomeworkUpdate",
+    "KnownNameOut",
+    "KnownNameRenameIn",
     "LibraryEntryOut",
     "MarkupMarkCreate",
     "MarkupMarkOut",
@@ -206,6 +221,15 @@ __all__ = [
     "ResponsibilitySignupCreate",
     "ResponsibilitySignupOut",
     "TimeSignatureOut",
+    "TeamAdminOut",
+    "TeamCreate",
+    "TeamOut",
+    "TeamRoleCreate",
+    "TeamRoleOut",
+    "TeamRoleUpdate",
+    "TeamSignupCreate",
+    "TeamSignupOut",
+    "TeamUpdate",
     "Token",
     "UserCreate",
     "UserLogin",

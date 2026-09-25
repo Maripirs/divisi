@@ -28,6 +28,7 @@
 		{#await data.groupSections}
 			<LoadingBlock />
 		{:then groupSections}
+		<div class="card-grid">
 		{#each groupSections as { group, pieces } (group.id)}
 			<!-- Only pieces with a real practice file get shown here — a
 			     distributed track with nothing wired up yet has nothing this
@@ -75,6 +76,7 @@
 				{/if}
 			</section>
 		{/each}
+		</div>
 		{:catch}
 			<p class="empty-note">{m.load_failed()}</p>
 		{/await}

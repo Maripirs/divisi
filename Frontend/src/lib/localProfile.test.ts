@@ -2,19 +2,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import {
 	LOCAL_PROFILE_KEY,
-	dismissSignupBanner,
 	ensureLocalId,
 	localProfile,
 	makeLocalProfile,
-	markSignedUp,
 	needsName,
 	newLocalId,
 	parseStoredProfile,
 	readLocalProfile,
 	resetLocalProfile,
 	serializeProfile,
-	setDisplayName,
-	shouldShowSignupBanner
+	setDisplayName
 } from './localProfile';
 
 // Map-backed Web Storage shim — same approach as player/persistence.test.ts.
@@ -56,31 +53,14 @@ describe('parseStoredProfile', () => {
 		expect(parseStoredProfile(JSON.stringify({ localId: '' }))).toBeNull();
 	});
 	it('round-trips a full profile', () => {
-		const profile = makeLocalProfile({
-			localId: 'abc',
-			displayName: 'Sam',
-			signedUp: true,
-			bannerDismissed: true
-		});
+		const profile = makeLocalProfile({ localId: 'abc', displayName: 'Sam' });
 		expect(parseStoredProfile(serializeProfile(profile))).toEqual(profile);
 	});
-	it('fills in missing flags from an older blob shape', () => {
-		const parsed = parseStoredProfile(JSON.stringify({ localId: 'abc' }));
-		expect(parsed).toEqual({
-			localId: 'abc',
-			displayName: '',
-			signedUp: false,
-			bannerDismissed: false
-		});
-	});
-	it('drops a stale pre-B21 `saved` field rather than surfacing it', () => {
-		const parsed = parseStoredProfile(JSON.stringify({ localId: 'abc', saved: true }));
-		expect(parsed).toEqual({
-			localId: 'abc',
-			displayName: '',
-			signedUp: false,
-			bannerDismissed: false
-		});
+	it('drops stale fields from an older blob shape (a pre-B21 `saved` field, or the retired signedUp/bannerDismissed flags) rather than surfacing them', () => {
+		const parsed = parseStoredProfile(
+			JSON.stringify({ localId: 'abc', saved: true, signedUp: true, bannerDismissed: true })
+		);
+		expect(parsed).toEqual({ localId: 'abc', displayName: '' });
 	});
 });
 
@@ -94,18 +74,6 @@ describe('needsName', () => {
 	});
 	it('is false for a logged-in member regardless of local display name', () => {
 		expect(needsName({ displayName: '' }, { loggedIn: true })).toBe(false);
-	});
-});
-
-describe('shouldShowSignupBanner', () => {
-	it('is false before the first signup', () => {
-		expect(shouldShowSignupBanner({ signedUp: false, bannerDismissed: false })).toBe(false);
-	});
-	it('is true after a signup, until dismissed', () => {
-		expect(shouldShowSignupBanner({ signedUp: true, bannerDismissed: false })).toBe(true);
-	});
-	it('is false once dismissed', () => {
-		expect(shouldShowSignupBanner({ signedUp: true, bannerDismissed: true })).toBe(false);
 	});
 });
 
@@ -131,18 +99,6 @@ describe('local profile lifecycle (store + mutators)', () => {
 		expect(needsName(get(localProfile))).toBe(false);
 		// Re-reading from storage sees the same name (reused silently after).
 		expect(readLocalProfile().displayName).toBe('Sam');
-	});
-
-	it('markSignedUp then the banner shows once, then stays gone after dismiss', () => {
-		expect(shouldShowSignupBanner(get(localProfile))).toBe(false);
-		markSignedUp();
-		expect(shouldShowSignupBanner(get(localProfile))).toBe(true);
-		dismissSignupBanner();
-		expect(shouldShowSignupBanner(get(localProfile))).toBe(false);
-		// Persisted: a fresh read still has the flags.
-		const reread = readLocalProfile();
-		expect(reread.signedUp).toBe(true);
-		expect(reread.bannerDismissed).toBe(true);
 	});
 
 	it('ensureLocalId returns a stable id and syncs the store', () => {

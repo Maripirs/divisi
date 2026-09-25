@@ -36,10 +36,9 @@ export function clearDemoPreviewGuest(): void {
 	demoPreviewGuest.set(null);
 }
 
-/** Pure gating logic, pulled out for direct unit testing (same pattern as
- * `localProfile.ts`'s `shouldShowSignupBanner`): should the Settings
- * drawer show the "Preview Admin" block for the given guest state? `null`
- * means "not currently viewing a guest join page at all". */
+/** Pure gating logic, pulled out for direct unit testing: should the
+ * Settings drawer show the "Preview Admin" block for the given guest
+ * state? `null` means "not currently viewing a guest join page at all". */
 export function shouldShowAdminPreview(state: DemoPreviewGuestState | null): boolean {
 	return state !== null && state.adminPreviewAvailable && state.joinCode.trim().length > 0;
 }

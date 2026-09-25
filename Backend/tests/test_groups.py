@@ -169,6 +169,7 @@ def test_group_created_with_default_page_settings(client):
         "responsibilities",
         "weekly_notes",
         "carpool",
+        "teams",
     }
     for page, row in by_page.items():
         assert row["enabled"] is True

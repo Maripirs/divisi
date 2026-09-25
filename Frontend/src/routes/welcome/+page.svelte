@@ -25,6 +25,7 @@
 </script>
 
 <main class="shell welcome">
+	<div class="content-narrow">
 	<LanguageSwitcher />
 	<div class="hero">
 		<Logo size={64} />
@@ -57,6 +58,7 @@
 	</div>
 
 	<p class="login-link">{m.welcome_already_have_account()} <a href={lh('/login')}>{m.welcome_log_in()}</a></p>
+	</div>
 </main>
 
 <style>
@@ -68,6 +70,10 @@
 		   scrolling on a phone screen: real empty space, not real content. */
 		padding-top: calc(1.25rem + env(safe-area-inset-top, 0px));
 		padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+		gap: 0.85rem;
+	}
+
+	.welcome .content-narrow {
 		gap: 0.85rem;
 	}
 

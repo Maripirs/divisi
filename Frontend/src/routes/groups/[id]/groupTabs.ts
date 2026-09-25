@@ -2,16 +2,21 @@ import { m } from '$lib/paraglide/messages';
 import type { GroupOut, GroupPage, GroupPageSettingOut } from '$lib/server/backendTypes';
 import type { SessionUser } from '../../+layout.server';
 
-/** The seven built-in tabs, in their fixed display order. `+page.svelte`
+/** The eight built-in tabs, in their fixed display order. `+page.svelte`
  * switches between these with local `$state` (zero navigation).
  *
  * B31/F36: `carpool` joined this list as a built-in tab, promoted from the
  * generic `GroupCustomPage` system (its one and only template), which the
- * Backend dropped entirely. There is no more per-group "which custom pages
- * exist" question to answer, so unlike every version of this file before
- * F36, a tab entry is always exactly one of these seven — no separate
- * slug-addressed branch. */
-export type BuiltinTabKey = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'carpool' | 'about';
+ * Backend dropped entirely. `teams` joined later the same way structurally
+ * (a plain built-in tab, gated by `realEnabled` below like every other one
+ * here) but for a different reason: it's a genuinely new page, not a
+ * promotion — it started life as a frontend-only localStorage prototype
+ * with no Backend model at all, and only got a real `GroupPage` value once
+ * that design settled (see `TeamsTab.svelte`'s own doc comment). There is no
+ * more per-group "which custom pages exist" question to answer, so unlike
+ * every version of this file before F36, a tab entry is always exactly one
+ * of these eight — no separate slug-addressed branch. */
+export type BuiltinTabKey = 'primary' | 'tracks' | 'weeklyNotes' | 'members' | 'responsibilities' | 'carpool' | 'teams' | 'about';
 
 export interface GroupTabEntry {
 	label: string;
@@ -26,6 +31,7 @@ export interface GroupTabData {
 	membersEnabled: boolean;
 	responsibilitiesEnabled: boolean;
 	carpoolEnabled: boolean;
+	teamsEnabled: boolean;
 	/** B12's real, admin-set per-page `enabled` value (`GET
 	 * .../page-settings`, admin-only). Empty for a non-admin caller, whose
 	 * own `*Enabled` flags above are already accurate for them (see
@@ -76,9 +82,10 @@ export function assertUngated<T extends { group?: GroupOut; user?: SessionUser |
 
 /** F31/B31: the ordered, filtered, labeled tab list for the main group
  * page. Fixed order: Homework, Rehearsal Tracks, Weekly Notes, Members,
- * Responsibilities, Carpool, Info — Carpool sits in the slot the old single
- * "Pages" list-tab used to occupy, back when it was the one custom page any
- * group could create.
+ * Responsibilities, Carpool, Teams, Info — Carpool sits in the slot the old
+ * single "Pages" list-tab used to occupy, back when it was the one custom
+ * page any group could create; Teams just slots in after it as the next
+ * built-in page to ship.
  *
  * `mode === 'admin'` bypasses every built-in page's member-visibility gate
  * (mirrors the Backend's own admin-always-passes rule) — see `+page.svelte`'s
@@ -111,6 +118,11 @@ export function computeGroupTabs(data: GroupTabData, mode: 'member' | 'admin'): 
 			key: 'carpool',
 			visible: mode === 'admin' || realEnabled(data, 'carpool', data.carpoolEnabled),
 			label: m.carpool_tab_title()
+		},
+		{
+			key: 'teams',
+			visible: mode === 'admin' || realEnabled(data, 'teams', data.teamsEnabled),
+			label: m.teams_tab_title()
 		}
 	];
 

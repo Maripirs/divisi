@@ -11,6 +11,8 @@
 		canPost,
 		isGuest,
 		myClaim,
+		userId,
+		postingAsName,
 		guestNamePromptActive,
 		guestNameDraft,
 		guestClaimContactActive,
@@ -29,13 +31,22 @@
 		onGuestClaimContactEmailInput,
 		onGuestClaimContactCancel,
 		onGuestClaimContactConfirm,
-		onReleaseGuestClaim
+		onReleaseGuestClaim,
+		onOptimisticClaimAdd,
+		onOptimisticClaimRemove
 	}: {
 		post: CarpoolPostOut;
 		isOwner: boolean;
 		canPost: boolean;
 		isGuest: boolean;
 		myClaim: CarpoolSeatClaimOut | undefined;
+		/** This viewer's own id and posting name, only used by the member
+		 * (non-guest) `claimSeat` form below to build an optimistic claim
+		 * entry before the real one comes back from the Backend. The guest
+		 * path never reads these; its own claim flow lives entirely in
+		 * `CarpoolBoard.svelte` instead. */
+		userId: string;
+		postingAsName: string;
 		guestNamePromptActive: boolean;
 		guestNameDraft: string;
 		/** B34: whether the guest's optional contact-info step is currently
@@ -58,6 +69,13 @@
 		onGuestClaimContactCancel: () => void;
 		onGuestClaimContactConfirm: (postId: string) => void;
 		onReleaseGuestClaim: (postId: string, claimId: string) => void;
+		/** Mutates `CarpoolBoard`'s shared `posts` state immediately, so this
+		 * post's seat list updates the instant a claim/release is submitted
+		 * rather than after the reload. `onOptimisticClaimAdd` doubles as
+		 * both the initial optimistic add (a freshly built temp claim) and a
+		 * failed release's revert (the real claim, put back). */
+		onOptimisticClaimAdd: (postId: string, claim: CarpoolSeatClaimOut) => void;
+		onOptimisticClaimRemove: (postId: string, claimId: string) => void;
 	} = $props();
 
 	// B34: the member (non-guest) path's own optional contact-info step,
@@ -79,7 +97,18 @@
 				{claimActionBusyId === myClaim.id ? m.carpool_releasing() : m.carpool_release_seat()}
 			</button>
 		{:else}
-			<form method="POST" action="?/releaseSeat" use:enhance>
+			<form
+				method="POST"
+				action="?/releaseSeat"
+				use:enhance={() => {
+					const removed = myClaim;
+					if (removed) onOptimisticClaimRemove(post.id, removed.id);
+					return async ({ result, update }) => {
+						if (result.type !== 'success' && removed) onOptimisticClaimAdd(post.id, removed);
+						await update();
+					};
+				}}
+			>
 				<input type="hidden" name="claimId" value={myClaim.id} />
 				<button type="submit" class="btn btn-outline">{m.carpool_release_seat()}</button>
 			</form>
@@ -136,9 +165,20 @@
 				class="carpool-claim-contact-form"
 				method="POST"
 				action="?/claimSeat"
-				use:enhance={() => {
+				use:enhance={({ formData }) => {
+					const tempId = `optimistic-${crypto.randomUUID()}`;
+					const optimisticClaim: CarpoolSeatClaimOut = {
+						id: tempId,
+						user_id: userId,
+						display_name: postingAsName,
+						contact_phone: (formData.get('contactPhone') as string) || null,
+						contact_email: (formData.get('contactEmail') as string) || null,
+						created_at: new Date().toISOString()
+					};
+					onOptimisticClaimAdd(post.id, optimisticClaim);
 					return async ({ result, update }) => {
 						if (result.type === 'success') claiming = false;
+						else onOptimisticClaimRemove(post.id, tempId);
 						await update();
 					};
 				}}

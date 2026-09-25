@@ -15,15 +15,19 @@
 	 * `coverageLabel` moved in here from the two identical copies.
 	 *
 	 * `editing` + `edit` (member admin): replaces the header with the
-	 * slotted edit form. `roleExtra(role)` renders under each role's
+	 * slotted edit form. `headerAction` renders right next to the date line
+	 * itself (not editing only) -- the "Edit" trigger button, so it's one
+	 * click away from the header it edits instead of sitting below a
+	 * roster that can run long. `roleExtra(role)` renders under each role's
 	 * coverage row — the member page's signup list + assign/sign-up
 	 * controls; the guest page passes nothing. `children` renders after all
-	 * roles — the member page's edit / lock / cancel / delete row. */
+	 * roles — the member page's cancel/duplicate/role-set-attach row. */
 	let {
 		item,
 		editing = false,
 		flush = false,
 		edit,
+		headerAction,
 		roleExtra,
 		children
 	}: {
@@ -33,6 +37,7 @@
 		 *  plain flex column, for embedding inside an existing card. */
 		flush?: boolean;
 		edit?: Snippet;
+		headerAction?: Snippet;
 		roleExtra?: Snippet<[ResponsibilityRole]>;
 		children?: Snippet;
 	} = $props();
@@ -48,9 +53,12 @@
 	{#if editing && edit}
 		{@render edit()}
 	{:else}
-		<p class="rdc-date">
-			{formatDateTime(item.date)}{#if item.canceled} · {m.responsibilities_canceled()}{:else if item.locked} · {m.responsibilities_locked()}{/if}
-		</p>
+		<div class="rdc-header">
+			<p class="rdc-date">
+				{formatDateTime(item.date)}{#if item.canceled} · {m.responsibilities_canceled()}{:else if item.locked} · {m.responsibilities_locked()}{/if}
+			</p>
+			{@render headerAction?.()}
+		</div>
 		{#if item.notes}
 			<p class="card-note">{item.notes}</p>
 		{/if}
@@ -85,6 +93,13 @@
 	   card's headline, and small uppercase text reads poorly at the larger
 	   OS text sizes this app's older user base tends to run at. `rem` sizing
 	   (not `px`) keeps it scaling with that setting. */
+	.rdc-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+
 	.rdc-date {
 		margin: 0;
 		font-size: 1rem;

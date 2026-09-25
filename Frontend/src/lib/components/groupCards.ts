@@ -10,6 +10,9 @@ export interface HomeworkCardItem {
 	range: string;
 	instructions: string;
 	dueDate: string | null;
+	/** Drives the card's own Play button — both the member and guest DTOs
+	 * carry a piece id, so this isn't member-only like `pieceTitle` below. */
+	pieceId?: string | null;
 	/** Member side only — the linked track's title. */
 	pieceTitle?: string | null;
 }
@@ -95,6 +98,29 @@ export function partitionDatesByUpcoming<T extends { date: string }>(
 	return { upcoming, past };
 }
 
+/** Splits an already-sorted list into runs of consecutive equal labels —
+ * e.g. homework grouped under one header per due date. Shared by Home's
+ * "For next rehearsal" card and the group page's Homework tab, which derive
+ * the label their own way (Home reads the raw Backend `due_date`, the tab
+ * reads the normalized `HomeworkCardItem.dueDate`), so the label itself is
+ * the caller's job — this just splits on where it changes. */
+export function groupByLabel<T>(
+	items: readonly T[],
+	labelOf: (item: T) => string
+): { label: string; items: T[] }[] {
+	const groups: { label: string; items: T[] }[] = [];
+	for (const item of items) {
+		const label = labelOf(item);
+		const current = groups.at(-1);
+		if (current && current.label === label) {
+			current.items.push(item);
+		} else {
+			groups.push({ label, items: [item] });
+		}
+	}
+	return groups;
+}
+
 export function coverageTotals(
 	roles: readonly Pick<ResponsibilityRole, 'neededCount' | 'activeCount'>[]
 ): ResponsibilityCoverageTotals {
@@ -122,4 +148,40 @@ export function coverageTotals(
 			? 'overfilled'
 			: 'covered';
 	return { active, needed, openSlots, filledFraction, status };
+}
+
+/** Every distinct name worth suggesting back to someone typing a name into
+ * a plain text field -- current members, plus everyone who's ever shown up
+ * in a responsibility signup or a carpool post for this group. Helps a
+ * repeat volunteer/guest get suggested their own name consistently (same
+ * spelling every time) instead of typing a near-miss variant that reads as
+ * a different person -- particularly for a guest, since the B21 name-match
+ * reconnect flow (`join/[code]/+page.svelte`) keys off an exact name
+ * match. Shared by the member Responsibilities tab's admin "assign by
+ * name" field (members + responsibilities, no carpool -- a member page has
+ * no carpool posts of its own to read) and the guest join page (
+ * responsibilities + carpool, no members -- a guest page never exposes the
+ * member roster at all, so this must not either). */
+export function collectKnownNames(sources: {
+	members?: readonly { name: string }[];
+	responsibilities?: readonly {
+		schedules: readonly { roles: readonly { signups: readonly { name: string }[] }[] }[];
+	}[];
+	carpoolPosts?: readonly { display_name: string }[];
+}): string[] {
+	const names = new Set<string>();
+	for (const mem of sources.members ?? []) names.add(mem.name);
+	for (const date of sources.responsibilities ?? []) {
+		for (const schedule of date.schedules) {
+			for (const role of schedule.roles) {
+				for (const signup of role.signups) {
+					if (signup.name) names.add(signup.name);
+				}
+			}
+		}
+	}
+	for (const post of sources.carpoolPosts ?? []) {
+		if (post.display_name) names.add(post.display_name);
+	}
+	return [...names].sort((a, b) => a.localeCompare(b));
 }

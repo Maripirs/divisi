@@ -61,6 +61,7 @@
 {#if data.weeklyNotes.length === 0}
 	<p class="empty">{m.join_no_weekly_notes()}</p>
 {:else}
+	<div class="card-grid">
 	{#each data.weeklyNotes as n (n.id)}
 		{@const noteItem = { id: n.id, title: n.title, body: n.body, noteDate: n.note_date }}
 		<WeeklyNoteCard
@@ -155,4 +156,5 @@
 			{/if}
 		</WeeklyNoteCard>
 	{/each}
+	</div>
 {/if}

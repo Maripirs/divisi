@@ -18,6 +18,7 @@
 <main class="shell">
 	<AppHeader title={m.settings_more()} homeHref={guestJoinCode ? lh(`/join/${guestJoinCode}`) : lh('/home')} />
 
+	<div class="content-narrow">
 	<section class="card">
 		<p class="card-eyebrow">{m.more_about_title()}</p>
 		<p class="card-meta body">
@@ -44,6 +45,7 @@
 			{m.more_creating_group_body3()}
 		</p>
 	</section>
+	</div>
 </main>
 
 <style>

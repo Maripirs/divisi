@@ -25,10 +25,19 @@ export interface GroupOut {
 }
 
 /** B12: per-(group, page) visibility, replacing the old single
- * `guest_homework_visible` flag — one row per page, always all 6 (B31 added
+ * `guest_homework_visible` flag — one row per page, always all 7 (B31 added
  * `carpool`, promoted from the generic `GroupCustomPage` system, its one and
- * only template, to a built-in page like every other one here). */
-export type GroupPage = 'homework' | 'tracks' | 'members' | 'about' | 'responsibilities' | 'weekly_notes' | 'carpool';
+ * only template, to a built-in page like every other one here; `teams`
+ * followed later as a genuinely new built-in page, not a promotion). */
+export type GroupPage =
+	| 'homework'
+	| 'tracks'
+	| 'members'
+	| 'about'
+	| 'responsibilities'
+	| 'weekly_notes'
+	| 'carpool'
+	| 'teams';
 export type PageAudience = 'members' | 'everyone';
 /** B19: whether a shared *write* on this page requires a Saved account.
  * `anyone` (default) lets an anonymous local-only participant act;
@@ -42,6 +51,16 @@ export interface GroupPageSettingOut {
 	enabled: boolean;
 	audience: PageAudience;
 	min_identity: PageMinIdentity;
+}
+
+/** One distinct free-text guest name pulled from a group's Responsibility
+ * signups or Carpool posts/claims/interests (never a real member's own
+ * account name), with how many rows across the group carry it. */
+export interface KnownNameOut {
+	name: string;
+	count: number;
+	phone: string | null;
+	email: string | null;
 }
 
 /** B13: a named volunteer program inside a group (e.g. "Snack and rehearsal
@@ -289,6 +308,63 @@ export interface CarpoolPostOut {
 	interests: CarpoolRiderInterestOut[];
 	created_at: string;
 	updated_at: string;
+}
+
+/** A group's standing list of teams/committees a member can express
+ * interest in helping with (see `Backend/app/db/models.py`'s `Team`/
+ * `TeamRole`/`TeamSignup` and `Backend/app/api/schemas/teams.py`). */
+export interface TeamSignupOut {
+	id: string;
+	user_id: string;
+	name: string;
+	text_value: string | null;
+	created_at: string;
+}
+
+/** One team's role/task. `signup_count`/`my_signup` are safe for any
+ * caller; `signups` (the full roster) is only ever populated for an admin
+ * caller — the same member-vs-admin split `TeamOut`/`TeamAdminOut` draw for
+ * a team overall, just at the role level (`Backend/app/api/routes/
+ * teams.py`'s `list_teams`). */
+export interface TeamRoleOut {
+	id: string;
+	name: string;
+	has_text_field: boolean;
+	sort_order: number;
+	signup_count: number;
+	my_signup: TeamSignupOut | null;
+	signups: TeamSignupOut[];
+}
+
+/** Member/guest-facing team shape: `contact_email`/`contact_phone` are
+ * already `null` unless the admin opted to show that one to members — the
+ * Backend redacts, never the Frontend. See `TeamAdminOut` for the admin's
+ * own always-raw view of the same two fields. */
+export interface TeamOut {
+	id: string;
+	name: string;
+	description: string;
+	contact_name: string | null;
+	contact_email: string | null;
+	contact_phone: string | null;
+	roles: TeamRoleOut[];
+}
+
+/** Admin-facing team shape: `contact_email`/`contact_phone` are always the
+ * true stored values (never redacted), plus the two show-flags themselves
+ * so the admin UI can render/edit the toggles. `GET .../teams` returns this
+ * shape for an admin caller, `TeamOut` for a plain member — same route,
+ * picked server-side. */
+export interface TeamAdminOut {
+	id: string;
+	name: string;
+	description: string;
+	contact_name: string | null;
+	contact_email: string | null;
+	contact_phone: string | null;
+	contact_show_email: boolean;
+	contact_show_phone: boolean;
+	roles: TeamRoleOut[];
 }
 
 export interface LibraryEntryOut {

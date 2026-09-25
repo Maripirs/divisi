@@ -5,7 +5,7 @@
 	import EditableCard from '$lib/components/EditableCard.svelte';
 	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import CoverageMeter from '$lib/components/CoverageMeter.svelte';
-	import { coverageTotals, partitionDatesByUpcoming } from '$lib/components/groupCards';
+	import { collectKnownNames, coverageTotals, partitionDatesByUpcoming } from '$lib/components/groupCards';
 	import {
 		datetimeLocalToIso,
 		formatDateTime,
@@ -27,6 +27,33 @@
 	// a reactive read of `data` (it never meaningfully changes afterward).
 	// svelte-ignore state_referenced_locally
 	assertUngated(data);
+
+	// Local copy of the responsibilities tree (dates -> schedules -> roles ->
+	// signups), so a signup/removal can update the roster the instant it's
+	// submitted rather than waiting for the reload. Resynced whenever the
+	// server data actually changes.
+	// svelte-ignore state_referenced_locally
+	let responsibilities = $state(data.responsibilities);
+	$effect(() => {
+		responsibilities = data.responsibilities;
+	});
+
+	// `form` is one shared object for the whole tab, with no per-role
+	// identity of its own -- rendering `form?.error` directly inside
+	// `roleExtra` (called once per role) showed the exact same "already
+	// signed up" message under every role on the date, not just the one
+	// that actually failed. Track which role a signup attempt belongs to
+	// alongside it, so the error only renders where it happened.
+	let signUpErrorRoleId = $state<string | null>(null);
+	// Disables the plain member self-signup button while its own request
+	// is in flight -- the optimistic append above hides the button by
+	// flipping `alreadySignedUp` before the real response lands, but only
+	// once Svelte's next reactive flush runs; without this, a fast double
+	// click (or double tap) can fire a second real request in that gap,
+	// which the Backend correctly rejects as a duplicate once the first
+	// one lands -- the likely cause of a live "already signed up" error on
+	// a genuinely first-ever signup.
+	let signingUpRoleId = $state<string | null>(null);
 
 	let creatingSchedule = $state(false);
 	let addingDate = $state(false);
@@ -53,26 +80,45 @@
 	// oldest-first (soonest next), `pastDates` is reversed so the most
 	// recent past date leads.
 	// Plain helper mirroring the partition below, for the one-shot `$state`
-	// seed (a `$state` initialiser can't read a `$derived`).
+	// seed (a `$state` initialiser can't read a `$derived`). No past-date
+	// fallback: showing an old date by default when nothing's upcoming reads
+	// as "this is what's next" when it's actually stale -- a past date is
+	// still reachable through the disclosure below, just not auto-selected.
 	function seedSelectedDateId(): string | null {
-		const { upcoming, past } = partitionDatesByUpcoming(data.responsibilities);
-		return upcoming[0]?.id ?? past[0]?.id ?? null;
+		return partitionDatesByUpcoming(data.responsibilities).upcoming[0]?.id ?? null;
 	}
 	let selectedDateId = $state<string | null>(seedSelectedDateId());
-	let responsibilityDates = $derived(partitionDatesByUpcoming(data.responsibilities));
+	let responsibilityDates = $derived(partitionDatesByUpcoming(responsibilities));
 	let upcomingDates = $derived(responsibilityDates.upcoming);
 	let pastDates = $derived(responsibilityDates.past);
+	// Same no-stale-default rule as the seed above -- once `selectedDateId`
+	// no longer matches anything real (its date got deleted), fall back to
+	// the soonest upcoming date, never a past one, unless the id itself
+	// still resolves (a past date the viewer explicitly clicked stays shown).
 	let selectedDate = $derived(
-		data.responsibilities.find((d) => d.id === selectedDateId) ??
-			upcomingDates[0] ??
-			pastDates[0] ??
-			data.responsibilities[0] ??
-			null
+		responsibilities.find((d) => d.id === selectedDateId) ?? upcomingDates[0] ?? null
 	);
+	// Autocomplete source for the "or type a name" non-member assign field
+	// below -- see `collectKnownNames`'s own doc comment (groupCards.ts).
+	let knownNames = $derived(collectKnownNames({ members: data.members, responsibilities }));
 	// Which schedule's row (admin Templates panel) has swapped its role-chip
 	// summary for the inline edit forms — one at a time, same click-to-reveal
 	// pattern as the Homework / Tracks / Members editors.
 	let editingScheduleId = $state<string | null>(null);
+	// Bound draft state for the schedule/roles editor below, seeded fresh
+	// from the schedule every time its own "Edit" is clicked -- everything
+	// (schedule name + every existing role's name/count) saves in one POST
+	// instead of a separate save per role, and `bind:value` here (rather
+	// than the uncontrolled `value={...}` the per-role forms used before)
+	// is what keeps a field showing what you typed through the reload a
+	// save triggers, instead of snapping back to empty.
+	let scheduleNameDraft = $state('');
+	let roleDrafts = $state<{ id: string; name: string; neededCount: number }[]>([]);
+	// New, not-yet-saved role rows appended below the existing ones -- same
+	// blank-row-plus-"+ Add role" shape the create-schedule form above
+	// already uses, just starting from 0 instead of 1 since existing roles
+	// already fill that role here.
+	let newRoleRowCount = $state(0);
 	// Click-to-reveal for the two create forms the header actions open.
 	let showNewSchedule = $state(false);
 	let showAddDate = $state(false);
@@ -129,8 +175,58 @@
 		const raw = String(formData.get('date') ?? '');
 		if (raw) formData.set('date', datetimeLocalToIso(raw));
 	}
+
+	// Both signup optimistic-update sites need a handle on the specific role
+	// inside the `responsibilities` tree, keyed by (dateId, roleId) the way
+	// the assign/self-signup forms already carry them as hidden fields.
+	function findRawRole(dateId: string, roleId: string) {
+		const date = responsibilities.find((d) => d.id === dateId);
+		for (const schedule of date?.schedules ?? []) {
+			const role = schedule.roles.find((r) => r.role_id === roleId);
+			if (role) return role;
+		}
+		return null;
+	}
+
+	// `removeResponsibilitySignup` only carries the signup's own id, not
+	// which date/role it belongs to, so reverting it locally means walking
+	// the tree to find it first.
+	function findSignupRole(signupId: string) {
+		for (const date of responsibilities) {
+			for (const schedule of date.schedules) {
+				for (const role of schedule.roles) {
+					if (role.signups.some((s) => s.id === signupId)) return role;
+				}
+			}
+		}
+		return null;
+	}
+
+	// A role's `active_count`/`status` badge are Backend-computed fields,
+	// separate from its own `signups` array -- mutating `signups` alone (the
+	// optimistic add/remove below) left the badge showing stale coverage
+	// until the real reload landed, the "still marked Covered after Remove
+	// me" bug. Call this right after every optimistic `signups` mutation so
+	// the two stay in sync in the meantime.
+	function syncRoleCoverage(role: { active_count: number; needed_count: number; status: string; signups: unknown[] }) {
+		role.active_count = role.signups.length;
+		role.status =
+			role.active_count < role.needed_count
+				? 'underfilled'
+				: role.active_count > role.needed_count
+					? 'overfilled'
+					: 'covered';
+	}
 </script>
 
+<div class="content-narrow">
+{#if mode === 'admin'}
+	<datalist id="responsibility-known-names">
+		{#each knownNames as name (name)}
+			<option value={name}></option>
+		{/each}
+	</datalist>
+{/if}
 <div class="resp-head">
 	<div>
 		<p class="card-title">{m.responsibilities_tab_title()}</p>
@@ -259,7 +355,7 @@
 	{/if}
 {/if}
 
-{#if data.responsibilities.length === 0}
+{#if responsibilities.length === 0}
 	<p class="empty">{m.join_no_responsibilities()}</p>
 {:else}
 	<!-- One date chip, shared by the upcoming strip and the past-dates
@@ -356,6 +452,22 @@
 				</EditableCard>
 			{/snippet}
 
+			{#snippet headerAction()}
+				{#if mode === 'admin' && editingDateId !== d.id}
+					<button
+						type="button"
+						class="text-link"
+						onclick={() => {
+							dateEditDraft = toDatetimeLocalValue(d.date);
+							notesEditDraft = d.notes;
+							editingDateId = d.id;
+						}}
+					>
+						{m.drawer_edit()}
+					</button>
+				{/if}
+			{/snippet}
+
 			{#snippet roleExtra(role)}
 				{@const alreadySignedUp = (role.signups ?? []).some((s) => s.userId === data.user.id)}
 				<!-- Signup names are visible to any member, not just the
@@ -367,12 +479,50 @@
 					<div class="list-row">
 						<span class="dim">{s.name}</span>
 						{#if mode === 'admin'}
-							<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
+							<form
+								method="POST"
+								action="?/removeResponsibilitySignup"
+								use:enhance={({ formData }) => {
+									const signupId = String(formData.get('signupId'));
+									const role = findSignupRole(signupId);
+									const removed = role?.signups.find((x) => x.id === signupId);
+									if (role) {
+										role.signups = role.signups.filter((x) => x.id !== signupId);
+										syncRoleCoverage(role);
+									}
+									return async ({ result, update }) => {
+										if (result.type !== 'success' && role && removed) {
+											role.signups = [...role.signups, removed];
+											syncRoleCoverage(role);
+										}
+										await update();
+									};
+								}}
+							>
 								<input type="hidden" name="signupId" value={s.id} />
 								<button type="submit" class="text-link">{m.groups_remove()}</button>
 							</form>
 						{:else if s.userId === data.user.id}
-							<form method="POST" action="?/removeResponsibilitySignup" use:enhance>
+							<form
+								method="POST"
+								action="?/removeResponsibilitySignup"
+								use:enhance={({ formData }) => {
+									const signupId = String(formData.get('signupId'));
+									const role = findSignupRole(signupId);
+									const removed = role?.signups.find((x) => x.id === signupId);
+									if (role) {
+										role.signups = role.signups.filter((x) => x.id !== signupId);
+										syncRoleCoverage(role);
+									}
+									return async ({ result, update }) => {
+										if (result.type !== 'success' && role && removed) {
+											role.signups = [...role.signups, removed];
+											syncRoleCoverage(role);
+										}
+										await update();
+									};
+								}}
+							>
 								<input type="hidden" name="signupId" value={s.id} />
 								<button type="submit" class="text-link">{m.groups_remove_me()}</button>
 							</form>
@@ -381,7 +531,38 @@
 				{/each}
 				{#if mode === 'admin' && role.status === 'underfilled'}
 					<div class="assign-group">
-						<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
+						<form
+							method="POST"
+							action="?/signUpResponsibility"
+							use:enhance={({ formData }) => {
+								const dateId = String(formData.get('dateId'));
+								const roleId = String(formData.get('roleId'));
+								const userId = String(formData.get('userId'));
+								signUpErrorRoleId = null;
+								const raw = findRawRole(dateId, roleId);
+								const member = data.members.find((mem) => mem.user_id === userId);
+								const optimistic = {
+									id: `optimistic-${crypto.randomUUID()}`,
+									user_id: userId,
+									name: member?.name ?? '',
+									email: null,
+									created_at: new Date().toISOString()
+								};
+								if (raw) {
+									raw.signups = [...raw.signups, optimistic];
+									syncRoleCoverage(raw);
+								}
+								return async ({ result, update }) => {
+									if (result.type !== 'success' && raw) {
+										raw.signups = raw.signups.filter((s) => s.id !== optimistic.id);
+										syncRoleCoverage(raw);
+										signUpErrorRoleId = roleId;
+									}
+									await update();
+								};
+							}}
+							class="assign-row"
+						>
 							<input type="hidden" name="dateId" value={d.id} />
 							<input type="hidden" name="roleId" value={role.roleId} />
 							<select name="userId">
@@ -394,10 +575,40 @@
 						     `ResponsibilitySignup` docstring for why this and the
 						     member picker above are two separate forms rather
 						     than one with both fields, which the Backend rejects. -->
-						<form method="POST" action="?/signUpResponsibility" use:enhance class="assign-row">
+						<form
+							method="POST"
+							action="?/signUpResponsibility"
+							use:enhance={({ formData }) => {
+								const dateId = String(formData.get('dateId'));
+								const roleId = String(formData.get('roleId'));
+								const name = String(formData.get('name') ?? '').trim();
+								signUpErrorRoleId = null;
+								const raw = findRawRole(dateId, roleId);
+								const optimistic = {
+									id: `optimistic-${crypto.randomUUID()}`,
+									user_id: null,
+									name,
+									email: null,
+									created_at: new Date().toISOString()
+								};
+								if (raw && name) {
+									raw.signups = [...raw.signups, optimistic];
+									syncRoleCoverage(raw);
+								}
+								return async ({ result, update }) => {
+									if (result.type !== 'success' && raw && name) {
+										raw.signups = raw.signups.filter((s) => s.id !== optimistic.id);
+										syncRoleCoverage(raw);
+										signUpErrorRoleId = roleId;
+									}
+									await update();
+								};
+							}}
+							class="assign-row"
+						>
 							<input type="hidden" name="dateId" value={d.id} />
 							<input type="hidden" name="roleId" value={role.roleId} />
-							<input name="name" placeholder={m.groups_or_type_name()} />
+							<input name="name" placeholder={m.groups_or_type_name()} list="responsibility-known-names" />
 							<button type="submit" class="btn btn-outline">{m.groups_assign()}</button>
 						</form>
 					</div>
@@ -405,17 +616,52 @@
 					     member self-signup form below. A demo "Preview Admin"
 					     session (F24 / Backend B20) surfaces its
 					     `PREVIEW_READ_ONLY:` rejection here rather than
-					     silently no-opping. -->
-					{#if form?.form === 'signUp' && form?.error}
+					     silently no-opping. Scoped to this role via
+					     `signUpErrorRoleId`, see its own doc comment above --
+					     `form?.error` alone can't tell which role a failure
+					     belongs to. -->
+					{#if form?.form === 'signUp' && form?.error && signUpErrorRoleId === role.roleId}
 						<p class="error">{form.error}</p>
 					{/if}
 				{:else if !alreadySignedUp && !d.locked && !d.canceled && role.status === 'underfilled'}
-					<form method="POST" action="?/signUpResponsibility" use:enhance>
+					<form
+						method="POST"
+						action="?/signUpResponsibility"
+						use:enhance={({ formData }) => {
+							const dateId = String(formData.get('dateId'));
+							const roleId = String(formData.get('roleId'));
+							signUpErrorRoleId = null;
+							signingUpRoleId = roleId;
+							const raw = findRawRole(dateId, roleId);
+							const optimistic = {
+								id: `optimistic-${crypto.randomUUID()}`,
+								user_id: data.user.id,
+								name: data.user.name,
+								email: null,
+								created_at: new Date().toISOString()
+							};
+							if (raw) {
+								raw.signups = [...raw.signups, optimistic];
+								syncRoleCoverage(raw);
+							}
+							return async ({ result, update }) => {
+								if (result.type !== 'success' && raw) {
+									raw.signups = raw.signups.filter((s) => s.id !== optimistic.id);
+									syncRoleCoverage(raw);
+									signUpErrorRoleId = roleId;
+								}
+								signingUpRoleId = null;
+								await update();
+							};
+						}}
+					>
 						<input type="hidden" name="dateId" value={d.id} />
 						<input type="hidden" name="roleId" value={role.roleId} />
-						<button type="submit" class="text-link">{m.groups_sign_up()}</button>
+						<button type="submit" class="text-link" disabled={signingUpRoleId === role.roleId}>
+							{m.groups_sign_up()}
+						</button>
 					</form>
-					{#if form?.form === 'signUp' && form?.error}
+					{#if form?.form === 'signUp' && form?.error && signUpErrorRoleId === role.roleId}
 						<p class="error">{form.error}</p>
 					{/if}
 				{/if}
@@ -423,17 +669,6 @@
 
 			{#if mode === 'admin' && editingDateId !== d.id}
 				<div class="btn-row">
-					<button
-						type="button"
-						class="btn btn-outline"
-						onclick={() => {
-							dateEditDraft = toDatetimeLocalValue(d.date);
-							notesEditDraft = d.notes;
-							editingDateId = d.id;
-						}}
-					>
-						{m.drawer_edit()}
-					</button>
 					<form method="POST" action="?/updateResponsibilityDate" use:enhance>
 						<input type="hidden" name="dateId" value={d.id} />
 						<input type="hidden" name="canceled" value={d.canceled ? 'false' : 'true'} />
@@ -578,58 +813,99 @@
 		{#each data.schedules as schedule (schedule.id)}
 			<div class="responsibility-template">
 				{#if editingScheduleId === schedule.id}
-					<form method="POST" action="?/updateResponsibilitySchedule" use:enhance class="inline-edit-row">
+					<!-- One form, one Save, for the schedule name and every
+					     existing role together -- see `roleDrafts`' own doc
+					     comment above for why this replaced a separate
+					     save-button per role. Each existing role still carries
+					     its own hidden `roleId` (an empty one on a freshly
+					     added, not-yet-saved row) so the server action can zip
+					     the three parallel arrays back together and tell
+					     "update this role" apart from "create a new one",
+					     same parallel-array shape the create-schedule form
+					     above already uses. Remove stays an immediate,
+					     separate action via `formaction`, same pattern
+					     `EditableCard`'s own delete button uses, keyed off its
+					     own `deleteRoleId` field so it doesn't collide with
+					     the repeated `roleId` inputs above it. -->
+					<form
+						method="POST"
+						action="?/updateResponsibilitySchedule"
+						use:enhance={() => {
+							return async ({ update }) => {
+								// `update()` defaults to resetting the underlying <form>
+								// on success, which snaps every input back to its
+								// `defaultValue` -- empty, since these are all plain
+								// `bind:value` with no literal `value="..."` attribute.
+								// Harmless on a form that closes right after saving (the
+								// date editor above), but this one stays open, so a
+								// reset here is exactly the "saving empties the form" bug.
+								await update({ reset: false });
+							};
+						}}
+						class="schedule-edit-form"
+					>
 						<input type="hidden" name="scheduleId" value={schedule.id} />
-						<input name="name" value={schedule.name} required />
-						<button type="submit" class="btn btn-outline">{m.action_save()}</button>
-					</form>
-
-					{#each schedule.roles as role (role.id)}
-						<form method="POST" action="?/updateResponsibilityRole" use:enhance class="inline-edit-row">
-							<input type="hidden" name="roleId" value={role.id} />
-							<input name="name" value={role.name} placeholder={m.groups_role()} required />
-							<input name="neededCount" type="number" min="1" value={role.needed_count} />
-							<button type="submit" class="btn btn-outline">{m.action_save()}</button>
-							<button type="submit" formaction="?/deleteResponsibilityRole" class="text-link text-link--danger">
-								{m.groups_remove()}
-							</button>
-						</form>
-					{/each}
-					<form method="POST" action="?/addResponsibilityRole" use:enhance class="inline-edit-row">
-						<input type="hidden" name="scheduleId" value={schedule.id} />
-						<input name="name" placeholder={m.groups_new_role()} />
-						<input name="neededCount" type="number" min="1" value="1" />
-						<button type="submit" class="btn btn-outline">{m.groups_add_role()}</button>
-					</form>
-
-					{#if form?.form === 'editSchedule' && form?.error}
-						<p class="error">{form.error}</p>
-					{/if}
-
-					<div class="btn-row">
-						<button type="button" class="text-link" onclick={() => (editingScheduleId = null)}>
-							{m.responsibilities_done()}
-						</button>
-						<ConfirmButton>
-							{#snippet trigger(start)}
-								<button type="button" class="text-link text-link--danger" onclick={start}>
-									{m.groups_delete_responsibility()}
+						<label class="field">
+							<span>{m.groups_upload_name()}</span>
+							<input name="name" bind:value={scheduleNameDraft} required />
+						</label>
+						{#each roleDrafts as role, i (role.id || i)}
+							<div class="role-row">
+								<input type="hidden" name="roleId" value={role.id} />
+								<input name="roleName" bind:value={role.name} placeholder={m.groups_role_placeholder()} required />
+								<input name="roleNeeded" type="number" min="1" bind:value={role.neededCount} />
+								<button
+									type="submit"
+									formaction="?/deleteResponsibilityRole"
+									formnovalidate
+									name="deleteRoleId"
+									value={role.id}
+									class="text-link text-link--danger"
+								>
+									{m.groups_remove()}
 								</button>
-							{/snippet}
-							{#snippet confirm(cancel)}
-								<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
-								<div class="btn-row">
-									<button type="button" class="btn btn-outline" onclick={cancel}>
-										{m.action_cancel()}
+							</div>
+						{/each}
+						{#each { length: newRoleRowCount } as _, i (i)}
+							<div class="role-row">
+								<input type="hidden" name="roleId" value="" />
+								<input name="roleName" placeholder={m.groups_role_placeholder()} />
+								<input name="roleNeeded" type="number" min="1" value="1" />
+							</div>
+						{/each}
+						<button type="button" class="text-link" onclick={() => (newRoleRowCount += 1)}>
+							{m.groups_add_role()}
+						</button>
+
+						{#if form?.form === 'editSchedule' && form?.error}
+							<p class="error">{form.error}</p>
+						{/if}
+
+						<div class="btn-row">
+							<button type="submit" class="btn btn-outline">{m.action_save()}</button>
+							<button type="button" class="text-link" onclick={() => (editingScheduleId = null)}>
+								{m.responsibilities_done()}
+							</button>
+							<ConfirmButton>
+								{#snippet trigger(start)}
+									<button type="button" class="text-link text-link--danger" onclick={start}>
+										{m.groups_delete_responsibility()}
 									</button>
-									<form method="POST" action="?/deleteResponsibilitySchedule" use:enhance>
-										<input type="hidden" name="scheduleId" value={schedule.id} />
-										<button type="submit" class="btn btn-danger">{m.groups_delete_responsibility()}</button>
-									</form>
-								</div>
-							{/snippet}
-						</ConfirmButton>
-					</div>
+								{/snippet}
+								{#snippet confirm(cancel)}
+									<p class="card-note">{m.groups_delete_responsibility_warning()}</p>
+									<div class="btn-row">
+										<button type="button" class="btn btn-outline" onclick={cancel}>
+											{m.action_cancel()}
+										</button>
+										<button type="submit" formaction="?/deleteResponsibilitySchedule" formnovalidate class="btn btn-danger">
+											{m.groups_delete_responsibility()}
+										</button>
+									</div>
+								{/snippet}
+							</ConfirmButton>
+						</div>
+					</form>
 				{:else}
 					<div class="template-summary">
 						<div>
@@ -642,7 +918,16 @@
 								{/each}
 							</div>
 						</div>
-						<button type="button" class="text-link" onclick={() => (editingScheduleId = schedule.id)}>
+						<button
+							type="button"
+							class="text-link"
+							onclick={() => {
+								scheduleNameDraft = schedule.name;
+								roleDrafts = schedule.roles.map((r) => ({ id: r.id, name: r.name, neededCount: r.needed_count }));
+								newRoleRowCount = 0;
+								editingScheduleId = schedule.id;
+							}}
+						>
 							{m.drawer_edit()}
 						</button>
 					</div>
@@ -651,6 +936,7 @@
 		{/each}
 	</section>
 {/if}
+</div>
 
 <style>
 	/* Quick-add ‹ / › week stepper: the rehearsal date sits between two
@@ -690,37 +976,6 @@
 	.quick-add-step__arrow:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
-	}
-
-	.inline-edit-row {
-		display: flex;
-		flex-direction: row;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.inline-edit-row input:not([type]) {
-		flex: 1 1 auto;
-		min-width: 0;
-		font: inherit;
-		font-size: 0.875rem;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text);
-		border-radius: var(--radius-md);
-		padding: 0.5rem 0.6rem;
-	}
-
-	.inline-edit-row input[type='number'] {
-		flex: 0 0 4.5rem;
-		font: inherit;
-		font-size: 0.875rem;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: var(--text);
-		border-radius: var(--radius-md);
-		padding: 0.5rem 0.6rem;
 	}
 
 	.role-row {

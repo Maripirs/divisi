@@ -13,6 +13,8 @@ import type {
 	GroupResourceOut,
 	HomeworkOut,
 	ResponsibilityDateOut,
+	TeamAdminOut,
+	TeamOut,
 	WeeklyNoteOut
 } from '$lib/server/backendTypes';
 import type { LayoutServerLoad } from './$types';
@@ -95,6 +97,9 @@ async function resolveGroupGuestGate(
  * ever one carpool page per group now (no more per-custom-page fan-out the
  * old B24/F28 design note warned against), so loading its events list here
  * is the same small, fixed cost as everything else in this `Promise.all`.
+ * Teams joined the same way as a sixth once it got its own real Backend
+ * model and `GroupPage` value (it used to be a frontend-only localStorage
+ * prototype with no gate to check at all).
  * The *selected* event's posts still stay on `+page.server.ts` alone (they
  * depend on the `?event=` query param, which this layout has no per-tab
  * reason to read). */
@@ -145,6 +150,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 					weeklyNotesEnabled: false,
 					carpoolEvents: [],
 					carpoolEnabled: false,
+					teams: [],
+					teamsEnabled: false,
 					groupResources: [],
 					groupResourcesEnabled: false,
 					pageSettings: []
@@ -169,6 +176,7 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			responsibilitiesResult,
 			weeklyNotesResult,
 			carpoolEventsResult,
+			teamsResult,
 			groupResourcesResult,
 			pageSettings
 		] = await Promise.all([
@@ -181,6 +189,13 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			fetchPageOrDisabled(backendJson<WeeklyNoteOut[]>(locals.token, `/groups/${group.id}/weekly-notes`, undefined, fetch), []),
 			fetchPageOrDisabled(
 				backendJson<CarpoolEventOut[]>(locals.token, `/groups/${group.id}/carpool/events`, undefined, fetch),
+				[]
+			),
+			// The route picks `TeamAdminOut[]` vs `TeamOut[]` server-side based
+			// on the caller's real role, same "one route, shape picked by the
+			// Backend" convention `/groups/{id}/teams` itself documents.
+			fetchPageOrDisabled(
+				backendJson<TeamOut[] | TeamAdminOut[]>(locals.token, `/groups/${group.id}/teams`, undefined, fetch),
 				[]
 			),
 			// Backlog: gated on the `about` page's own settings, not a page of
@@ -235,6 +250,8 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 			weeklyNotesEnabled: weeklyNotesResult.enabled,
 			carpoolEvents: carpoolEventsResult.data,
 			carpoolEnabled: carpoolEventsResult.enabled,
+			teams: teamsResult.data,
+			teamsEnabled: teamsResult.enabled,
 			groupResources: groupResourcesResult.data,
 			groupResourcesEnabled: groupResourcesResult.enabled,
 			pageSettings

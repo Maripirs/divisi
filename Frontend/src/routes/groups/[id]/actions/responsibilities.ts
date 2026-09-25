@@ -27,15 +27,48 @@ export const responsibilityActions = {
 		);
 	},
 
+	// One save for the schedule's name and every one of its roles together
+	// (a schedule name field plus parallel roleId/roleName/roleNeeded arrays,
+	// same zip-by-position shape `createResponsibilitySchedule` above already
+	// uses) -- was a separate PATCH-and-reload per role, annoying enough on a
+	// schedule with several roles that the human asked for one Save instead.
+	// An empty `roleId` (the schedule-editor's own freshly added, not-yet-
+	// saved rows) means "create"; a real one means "update that role". A
+	// blank `roleName` is dropped either way, same as a blank row in the
+	// create form.
 	updateResponsibilitySchedule: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const scheduleId = String(form.get('scheduleId') ?? '');
 		const name = String(form.get('name') ?? '').trim();
 		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_name(), form: 'editSchedule' });
 
-		return runAction('editSchedule', () =>
-			backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, fetch)
-		);
+		const roleIds = form.getAll('roleId').map(String);
+		const roleNames = form.getAll('roleName').map((v) => String(v).trim());
+		const roleCounts = form.getAll('roleNeeded').map((v) => Number(v) || 1);
+
+		return runAction('editSchedule', async () => {
+			await backendFetch(locals.token, `/responsibilities/schedules/${scheduleId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, fetch);
+			for (let i = 0; i < roleNames.length; i++) {
+				const roleName = roleNames[i];
+				if (!roleName) continue;
+				const roleId = roleIds[i];
+				if (roleId) {
+					await backendFetch(
+						locals.token,
+						`/responsibilities/roles/${roleId}`,
+						{ method: 'PATCH', body: JSON.stringify({ name: roleName, needed_count: roleCounts[i] ?? 1 }) },
+						fetch
+					);
+				} else {
+					await backendFetch(
+						locals.token,
+						`/responsibilities/schedules/${scheduleId}/roles`,
+						{ method: 'POST', body: JSON.stringify({ name: roleName, needed_count: roleCounts[i] ?? 1 }) },
+						fetch
+					);
+				}
+			}
+		});
 	},
 
 	// Deletes the whole responsibility — its roles, dates, and signups go
@@ -51,43 +84,14 @@ export const responsibilityActions = {
 		);
 	},
 
-	addResponsibilityRole: async ({ request, locals, fetch }) => {
-		const form = await request.formData();
-		const scheduleId = String(form.get('scheduleId') ?? '');
-		const name = String(form.get('name') ?? '').trim();
-		const neededCount = Number(form.get('neededCount')) || 1;
-		if (!scheduleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
-
-		return runAction('editSchedule', () =>
-			backendFetch(
-				locals.token,
-				`/responsibilities/schedules/${scheduleId}/roles`,
-				{ method: 'POST', body: JSON.stringify({ name, needed_count: neededCount }) },
-				fetch
-			)
-		);
-	},
-
-	updateResponsibilityRole: async ({ request, locals, fetch }) => {
-		const form = await request.formData();
-		const roleId = String(form.get('roleId') ?? '');
-		const name = String(form.get('name') ?? '').trim();
-		const neededCount = Number(form.get('neededCount')) || 1;
-		if (!roleId || !name) return fail(400, { error: m.groups_enter_role_name(), form: 'editSchedule' });
-
-		return runAction('editSchedule', () =>
-			backendFetch(
-				locals.token,
-				`/responsibilities/roles/${roleId}`,
-				{ method: 'PATCH', body: JSON.stringify({ name, needed_count: neededCount }) },
-				fetch
-			)
-		);
-	},
-
+	// `deleteRoleId`, not `roleId`: this button lives inside the same big
+	// edit-schedule form as the parallel `roleId` array above (one per role
+	// row, for the save action's own zip), so it needs its own field name to
+	// point at just the row that was clicked, the same "formaction button,
+	// distinct field name" shape `EditableCard`'s own delete button uses.
 	deleteResponsibilityRole: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
-		const roleId = String(form.get('roleId') ?? '');
+		const roleId = String(form.get('deleteRoleId') ?? '');
 		if (!roleId) return fail(400, { error: m.groups_missing_role(), form: 'editSchedule' });
 
 		return runAction('editSchedule', () =>

@@ -35,14 +35,17 @@
 		rememberCarpoolInterest,
 		rememberCarpoolPost
 	} from '$lib/utils/carpoolOwnership';
-	import { ensureLocalId, localProfile, markSignedUp, needsName, setDisplayName } from '$lib/localProfile';
+	import { ensureLocalId, localProfile, needsName, setDisplayName } from '$lib/localProfile';
 	import { loadGoogleMaps, type GoogleMapsHandle } from '$lib/utils/googleMaps';
 	import { googlePlacesAutocomplete, type PlaceSelection } from '$lib/actions/googlePlaces';
 	import { m } from '$lib/paraglide/messages';
 	import type {
 		CarpoolEventOut,
+		CarpoolLocationPrecision,
 		CarpoolPostDirection,
+		CarpoolPostKind,
 		CarpoolPostOut,
+		CarpoolPostStatus,
 		CarpoolRiderInterestOut,
 		CarpoolSeatClaimOut
 	} from '$lib/server/backendTypes';
@@ -107,7 +110,7 @@
 		userName = null,
 		events,
 		selectedEventId,
-		posts,
+		posts: postsProp,
 		form,
 		guest = null
 	}: {
@@ -127,6 +130,21 @@
 		form: { form?: string; error?: string } | null;
 		guest?: { code: string } | null;
 	} = $props();
+
+	// Optimistic-update local copy of `posts`: every claim/interest/post
+	// action below mutates this immediately, before its round trip
+	// resolves, so a row appears/disappears/changes the instant the button
+	// is clicked instead of after the reload. Re-synced here once the real
+	// reload lands (`update()`/`invalidateAll()`, already called by every
+	// action below), which both confirms a successful mutation and cleans
+	// up anything a manual revert missed. `drivers`/`riders` below, and
+	// every child action component, already read off `posts`, so they get
+	// this for free without their own resync logic.
+	// svelte-ignore state_referenced_locally
+	let posts = $state(postsProp);
+	$effect(() => {
+		posts = postsProp;
+	});
 
 	let isGuest = $derived(guest !== null);
 	// Shown as "Posting as {name}" right on the offer/request forms: a
@@ -198,6 +216,76 @@
 	let guestOfferExact = $state(false);
 	let guestRequestPlace = $state<PlaceSelection | null>(null);
 	let guestRequestExact = $state(false);
+	// --- optimistic local-copy mutators -------------------------------
+	// Small, generic helpers that every action below (member `use:enhance`
+	// callbacks and guest `fetch` calls alike) uses to mutate `posts`
+	// immediately, and to reverse that same mutation on failure. Kept
+	// separate from the actions themselves since both the member and guest
+	// paths, and both the driver-claim and rider-interest actions, share
+	// the same "add/remove one post" or "add/remove one entry in a post's
+	// sub-list" shape.
+
+	function addPost(post: CarpoolPostOut) {
+		posts = [...posts, post];
+	}
+
+	function removePostById(postId: string) {
+		posts = posts.filter((p) => p.id !== postId);
+	}
+
+	function setPostStatus(postId: string, status: CarpoolPostStatus) {
+		posts = posts.map((p) => (p.id === postId ? { ...p, status } : p));
+	}
+
+	function updatePostClaims(postId: string, update: (claims: CarpoolSeatClaimOut[]) => CarpoolSeatClaimOut[]) {
+		posts = posts.map((p) => (p.id === postId ? { ...p, claims: update(p.claims) } : p));
+	}
+
+	function updatePostInterests(
+		postId: string,
+		update: (interests: CarpoolRiderInterestOut[]) => CarpoolRiderInterestOut[]
+	) {
+		posts = posts.map((p) => (p.id === postId ? { ...p, interests: update(p.interests) } : p));
+	}
+
+	/** Builds a client-side stand-in `CarpoolPostOut` for the guest offer/
+	 * request forms below, whose real id/timestamps only exist once the
+	 * Backend responds. Only ever used for the optimistic append in
+	 * `submitGuestPost`; the eventual `invalidateAll()` reload there
+	 * replaces this whole `posts` array with the real one (see the
+	 * `$effect` resync above), so this temp entry, and any field here
+	 * that's only a best guess (`seats_available` assumed equal to
+	 * `seats_total`, no claims/interests yet), only needs to hold up for
+	 * the brief window before that reload lands. */
+	function buildOptimisticGuestPost(eventId: string, body: Record<string, unknown>): CarpoolPostOut {
+		const now = new Date().toISOString();
+		const seatsTotal = typeof body.seatsTotal === 'number' ? body.seatsTotal : null;
+		return {
+			id: `optimistic-${crypto.randomUUID()}`,
+			event_id: eventId,
+			user_id: ensureLocalId(),
+			display_name: $localProfile.displayName,
+			kind: body.kind as CarpoolPostKind,
+			status: 'open',
+			direction: body.direction as CarpoolPostDirection,
+			origin_label: (body.originLabel as string) ?? '',
+			origin_latitude: typeof body.originLatitude === 'number' ? body.originLatitude : null,
+			origin_longitude: typeof body.originLongitude === 'number' ? body.originLongitude : null,
+			origin_place_id: (body.originPlaceId as string) ?? null,
+			origin_precision: (body.originPrecision as CarpoolLocationPrecision) ?? null,
+			seats_total: seatsTotal,
+			seats_available: seatsTotal,
+			leave_time_text: (body.leaveTimeText as string) || null,
+			notes: (body.notes as string) || null,
+			contact_phone: (body.contactPhone as string) || null,
+			contact_email: (body.contactEmail as string) || null,
+			claims: [],
+			interests: [],
+			created_at: now,
+			updated_at: now
+		};
+	}
+
 	/** F33/B27: this viewer's own active claim on a driver post, if any —
 	 * a member compares `user_id` (same as post ownership), a guest checks
 	 * `carpoolOwnership.ts`'s claim-id tracking instead, for the same
@@ -355,6 +443,8 @@
 		if (!guest) return;
 		guestCreateError = '';
 		guestSaveRequired = false;
+		const optimisticPost = buildOptimisticGuestPost(eventId, body);
+		addPost(optimisticPost);
 		try {
 			const res = await fetch(`/join/${guest.code}/carpool/events/${eventId}/posts`, {
 				method: 'POST',
@@ -364,17 +454,20 @@
 			const result = (await res.json()) as GuestWriteResult;
 			if (result.ok) {
 				rememberCarpoolPost(result.post.id);
-				markSignedUp();
 				onSuccess(result.post);
 				await invalidateAll();
 			} else if (result.error === 'save-required') {
+				removePostById(optimisticPost.id);
 				guestSaveRequired = true;
 			} else if (result.error === 'conflict') {
+				removePostById(optimisticPost.id);
 				guestCreateError = result.message || m.carpool_guest_action_failed();
 			} else {
+				removePostById(optimisticPost.id);
 				guestCreateError = m.carpool_guest_action_failed();
 			}
 		} catch {
+			removePostById(optimisticPost.id);
 			guestCreateError = m.carpool_guest_action_failed();
 		}
 	}
@@ -522,6 +615,15 @@
 		claimActionError = '';
 		claimActionSaveRequired = false;
 		claimActionBusyId = postId;
+		const optimisticClaim: CarpoolSeatClaimOut = {
+			id: `optimistic-${crypto.randomUUID()}`,
+			user_id: ensureLocalId(),
+			display_name: $localProfile.displayName,
+			contact_phone: contactPhone || null,
+			contact_email: contactEmail || null,
+			created_at: new Date().toISOString()
+		};
+		updatePostClaims(postId, (claims) => [...claims, optimisticClaim]);
 		try {
 			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/claims`, {
 				method: 'POST',
@@ -536,16 +638,18 @@
 			const result = (await res.json()) as GuestClaimResult;
 			if (result.ok) {
 				rememberCarpoolClaim(result.claim.id);
-				markSignedUp();
 				await invalidateAll();
 			} else if (result.error === 'save-required') {
+				updatePostClaims(postId, (claims) => claims.filter((c) => c.id !== optimisticClaim.id));
 				claimActionErrorFor = postId;
 				claimActionSaveRequired = true;
 			} else {
+				updatePostClaims(postId, (claims) => claims.filter((c) => c.id !== optimisticClaim.id));
 				claimActionErrorFor = postId;
 				claimActionError = result.error === 'conflict' && result.message ? result.message : m.carpool_guest_action_failed();
 			}
 		} catch {
+			updatePostClaims(postId, (claims) => claims.filter((c) => c.id !== optimisticClaim.id));
 			claimActionErrorFor = postId;
 			claimActionError = m.carpool_guest_action_failed();
 		} finally {
@@ -561,6 +665,8 @@
 		claimActionError = '';
 		claimActionSaveRequired = false;
 		claimActionBusyId = claimId;
+		const removedClaim = posts.find((p) => p.id === postId)?.claims.find((c) => c.id === claimId);
+		updatePostClaims(postId, (claims) => claims.filter((c) => c.id !== claimId));
 		try {
 			const res = await fetch(
 				`/join/${guest.code}/carpool/claims/${claimId}?localId=${encodeURIComponent(ensureLocalId())}`,
@@ -571,10 +677,12 @@
 				forgetCarpoolClaim(claimId);
 				await invalidateAll();
 			} else {
+				if (removedClaim) updatePostClaims(postId, (claims) => [...claims, removedClaim]);
 				claimActionErrorFor = postId;
 				claimActionError = m.carpool_guest_action_failed();
 			}
 		} catch {
+			if (removedClaim) updatePostClaims(postId, (claims) => [...claims, removedClaim]);
 			claimActionErrorFor = postId;
 			claimActionError = m.carpool_guest_action_failed();
 		} finally {
@@ -636,6 +744,15 @@
 		interestActionError = '';
 		interestActionSaveRequired = false;
 		interestActionBusyId = postId;
+		const optimisticInterest: CarpoolRiderInterestOut = {
+			id: `optimistic-${crypto.randomUUID()}`,
+			user_id: ensureLocalId(),
+			display_name: $localProfile.displayName,
+			contact_phone: contactPhone || null,
+			contact_email: contactEmail || null,
+			created_at: new Date().toISOString()
+		};
+		updatePostInterests(postId, (interests) => [...interests, optimisticInterest]);
 		try {
 			const res = await fetch(`/join/${guest.code}/carpool/posts/${postId}/interests`, {
 				method: 'POST',
@@ -650,17 +767,19 @@
 			const result = (await res.json()) as GuestInterestResult;
 			if (result.ok) {
 				rememberCarpoolInterest(result.interest.id);
-				markSignedUp();
 				await invalidateAll();
 			} else if (result.error === 'save-required') {
+				updatePostInterests(postId, (interests) => interests.filter((i) => i.id !== optimisticInterest.id));
 				interestActionErrorFor = postId;
 				interestActionSaveRequired = true;
 			} else {
+				updatePostInterests(postId, (interests) => interests.filter((i) => i.id !== optimisticInterest.id));
 				interestActionErrorFor = postId;
 				interestActionError =
 					result.error === 'conflict' && result.message ? result.message : m.carpool_guest_action_failed();
 			}
 		} catch {
+			updatePostInterests(postId, (interests) => interests.filter((i) => i.id !== optimisticInterest.id));
 			interestActionErrorFor = postId;
 			interestActionError = m.carpool_guest_action_failed();
 		} finally {
@@ -674,6 +793,8 @@
 		interestActionError = '';
 		interestActionSaveRequired = false;
 		interestActionBusyId = interestId;
+		const removedInterest = posts.find((p) => p.id === postId)?.interests.find((i) => i.id === interestId);
+		updatePostInterests(postId, (interests) => interests.filter((i) => i.id !== interestId));
 		try {
 			const res = await fetch(
 				`/join/${guest.code}/carpool/interests/${interestId}?localId=${encodeURIComponent(ensureLocalId())}`,
@@ -684,10 +805,12 @@
 				forgetCarpoolInterest(interestId);
 				await invalidateAll();
 			} else {
+				if (removedInterest) updatePostInterests(postId, (interests) => [...interests, removedInterest]);
 				interestActionErrorFor = postId;
 				interestActionError = m.carpool_guest_action_failed();
 			}
 		} catch {
+			if (removedInterest) updatePostInterests(postId, (interests) => [...interests, removedInterest]);
 			interestActionErrorFor = postId;
 			interestActionError = m.carpool_guest_action_failed();
 		} finally {
@@ -711,7 +834,16 @@
 			{@const myClaim = p.kind === 'driver' ? myClaimFor(p) : undefined}
 			{@const myInterest = p.kind === 'rider' ? myInterestFor(p) : undefined}
 			<CarpoolPostDetails post={p} />
-			<CarpoolPostActions post={p} {isOwner} {isAdmin} {form} onEdit={(post) => (editingPostId = post.id)} />
+			<CarpoolPostActions
+				post={p}
+				{isOwner}
+				{isAdmin}
+				{form}
+				onEdit={(post) => (editingPostId = post.id)}
+				onOptimisticDelete={removePostById}
+				onOptimisticRestore={addPost}
+				onOptimisticStatus={setPostStatus}
+			/>
 			{#if p.kind === 'driver'}
 				<CarpoolDriverClaimActions
 					post={p}
@@ -719,6 +851,8 @@
 					{canPost}
 					{isGuest}
 					{myClaim}
+					{userId}
+					{postingAsName}
 					guestNamePromptActive={guestNamePromptFor === 'claim' && guestClaimTargetPostId === p.id}
 					{guestNameDraft}
 					guestClaimContactActive={guestClaimContactTargetPostId === p.id}
@@ -738,6 +872,9 @@
 					onGuestClaimContactCancel={cancelGuestClaimContact}
 					onGuestClaimContactConfirm={confirmGuestClaimContact}
 					onReleaseGuestClaim={releaseGuestClaim}
+					onOptimisticClaimAdd={(postId, claim) => updatePostClaims(postId, (claims) => [...claims, claim])}
+					onOptimisticClaimRemove={(postId, claimId) =>
+						updatePostClaims(postId, (claims) => claims.filter((c) => c.id !== claimId))}
 				/>
 			{/if}
 			{#if p.kind === 'rider'}
@@ -747,6 +884,8 @@
 					{canPost}
 					{isGuest}
 					{myInterest}
+					{userId}
+					{postingAsName}
 					guestNamePromptActive={guestNamePromptFor === 'interest' && guestInterestTargetPostId === p.id}
 					{guestNameDraft}
 					guestInterestContactActive={guestInterestContactTargetPostId === p.id}
@@ -766,6 +905,10 @@
 					onGuestInterestContactCancel={cancelGuestInterestContact}
 					onGuestInterestContactConfirm={confirmGuestInterestContact}
 					onReleaseGuestInterest={releaseGuestInterest}
+					onOptimisticInterestAdd={(postId, interest) =>
+						updatePostInterests(postId, (interests) => [...interests, interest])}
+					onOptimisticInterestRemove={(postId, interestId) =>
+						updatePostInterests(postId, (interests) => interests.filter((i) => i.id !== interestId))}
 				/>
 			{/if}
 		{/if}

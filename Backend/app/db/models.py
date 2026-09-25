@@ -166,6 +166,9 @@ class GroupPage(str, enum.Enum):
     # B31: promoted from the generic `GroupCustomPage` system (its one and
     # only template) to a built-in page like every other one here.
     carpool = "carpool"
+    # A group's standing list of teams/committees a member can express
+    # interest in helping with (see `Team`/`TeamRole`/`TeamSignup` below).
+    teams = "teams"
 
 
 class PageAudience(str, enum.Enum):
@@ -957,3 +960,66 @@ class CarpoolRiderInterest(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Team(Base):
+    """A group's standing team/committee (e.g. "Publicity Team") a member
+    can express interest in helping with, via one or more `TeamRole`s. The
+    optional contact's `email`/`phone` are stored independently of whether
+    they're shown to members: `contact_show_email`/`contact_show_phone` are
+    flat, admin-set booleans, not counterparty-matching like
+    `CarpoolPost.contact_phone`'s visibility gate, since a team's contact is
+    a shared point of reach, not tied to a specific requester. `sort_order`
+    is admin-controlled display order (see `app/api/routes/teams.py`'s
+    create route for how it's assigned)."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    group_id: Mapped[str] = mapped_column(String, ForeignKey("groups.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    contact_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_show_email: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    contact_show_phone: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeamRole(Base):
+    """One role/task under a `Team` (e.g. "Submit publicity to media
+    outlets") a member signs up for. `has_text_field` is a per-role flag,
+    not hardcoded to one role name, so any role (e.g. an "Other, tell us
+    more" role) can optionally carry a free-text value on its signups."""
+
+    __tablename__ = "team_roles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    team_id: Mapped[str] = mapped_column(String, ForeignKey("teams.id"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    has_text_field: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeamSignup(Base):
+    """One member expressing interest in one `TeamRole`. Unlike
+    `ResponsibilitySignup`, there's no name-only/no-account guest path here:
+    `user_id` is always a real row, either a real member or an anonymous
+    participant minted by `resolve_page_write_actor` (see
+    `app/api/routes/teams.py`). Unique per (role, user) so re-signing up is
+    a no-op collision, not a duplicate row, same shape as
+    `ResponsibilitySignup.uq_responsibility_signup`. `text_value` is only
+    ever set when the role's `has_text_field` is true; toggling that flag
+    off nulls out any existing values (see `update_role` in the routes)."""
+
+    __tablename__ = "team_signups"
+    __table_args__ = (UniqueConstraint("role_id", "user_id", name="uq_team_signup"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    role_id: Mapped[str] = mapped_column(String, ForeignKey("team_roles.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    text_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

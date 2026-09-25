@@ -15,6 +15,7 @@ from app.api.routes import (
     piece_markup,
     piece_rehearsal_notes,
     responsibilities,
+    teams,
     weekly_notes,
 )
 from app.core.config import get_settings
@@ -67,6 +68,7 @@ app.include_router(responsibilities.router)
 app.include_router(weekly_notes.router)
 app.include_router(carpool.router)
 app.include_router(group_resources.router)
+app.include_router(teams.router)
 
 
 @app.get("/health")

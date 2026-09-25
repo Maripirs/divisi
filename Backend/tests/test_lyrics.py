@@ -373,12 +373,14 @@ def test_classify_lyric_tokens_raises_when_no_api_key_configured(monkeypatch):
         classify_lyric_tokens(_tokens())
 
 
-# --- groq_client.py: Misaki tier (tried first, ahead of Groq and NVIDIA) ---
+# --- groq_client.py: Misaki tier (tried after Groq, ahead of NVIDIA -----
+# temporarily demoted from first tier on 2026-09-23, see
+# `classify_lyric_tokens`'s own doc comment for why) --------------------
 
 
-def test_classify_lyric_tokens_uses_misaki_first_and_never_calls_groq(monkeypatch):
-    """When Misaki is configured and returns a clean response, it should
-    be used directly -- Groq must never even be attempted for this
+def test_classify_lyric_tokens_uses_groq_first_and_never_calls_misaki(monkeypatch):
+    """When Groq is configured and returns a clean response, it should be
+    used directly -- Misaki must never even be attempted for this
     chunk."""
     from app.core.config import get_settings
     from app.lyrics import groq_client
@@ -390,44 +392,44 @@ def test_classify_lyric_tokens_uses_misaki_first_and_never_calls_groq(monkeypatc
     )
     monkeypatch.setattr(
         groq_client,
-        "_call_misaki",
+        "_call_groq",
         lambda body: _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]}),
     )
 
     def _fail_if_called(body):
-        raise AssertionError("Groq should never be called when Misaki succeeds")
+        raise AssertionError("Misaki should never be called when Groq succeeds")
 
-    monkeypatch.setattr(groq_client, "_call_groq", _fail_if_called)
+    monkeypatch.setattr(groq_client, "_call_misaki", _fail_if_called)
 
     voices = classify_lyric_tokens(_tokens())
     assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
 
 
-def test_classify_lyric_tokens_falls_back_to_groq_when_misaki_fails_twice(monkeypatch):
-    """Misaki fails twice on a chunk (same "assume it's down for the rest
-    of the run" pattern as the Groq-to-NVIDIA handoff): the chunk should
-    fall through to Groq in the same iteration, not just get skipped."""
+def test_classify_lyric_tokens_falls_back_to_misaki_when_groq_fails_twice(monkeypatch):
+    """Groq fails twice on a chunk (same "assume it's down for the rest of
+    the run" pattern as the Misaki-to-NVIDIA handoff): the chunk should
+    fall through to Misaki in the same iteration, not just get skipped."""
     from app.core.config import get_settings
     from app.lyrics import groq_client
 
     monkeypatch.setattr(get_settings(), "misaki_llm_key", "test-misaki-key")
     monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
     monkeypatch.setattr(groq_client.time, "sleep", lambda s: None)
-    monkeypatch.setattr(groq_client, "_call_misaki", lambda body: _FakeResponse(500, text="boom"))
+    monkeypatch.setattr(groq_client, "_call_groq", lambda body: _FakeResponse(500, text="boom"))
     good_content = json.dumps(
         {"voices": [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]}
     )
-    groq_calls = []
+    misaki_calls = []
 
-    def _fake_groq(body):
-        groq_calls.append(body)
+    def _fake_misaki(body):
+        misaki_calls.append(body)
         return _FakeResponse(200, {"choices": [{"message": {"content": good_content}}]})
 
-    monkeypatch.setattr(groq_client, "_call_groq", _fake_groq)
+    monkeypatch.setattr(groq_client, "_call_misaki", _fake_misaki)
 
     voices = classify_lyric_tokens(_tokens())
     assert voices == [{"voice": "soprano", "syllables": [{"text": "Ah", "syllabic": "single"}]}]
-    assert len(groq_calls) == 1
+    assert len(misaki_calls) == 1
 
 
 # --- groq_client.py: NVIDIA fallback (Groq's per-minute AND per-day caps) --
@@ -905,6 +907,39 @@ def test_classify_lyric_tokens_passes_a_decrementing_running_budget_to_each_chun
     assert "soprano: 5 sung notes remaining" in seen_bodies[0]["messages"][1]["content"]
     # After the first chunk returned 1 syllable, the second chunk should see 5 - 1 = 4 remaining.
     assert "soprano: 4 sung notes remaining" in seen_bodies[1]["messages"][1]["content"]
+
+
+def test_classify_lyric_tokens_retries_a_chunk_that_overshoots_its_remaining_budget(monkeypatch, caplog):
+    """A single chunk's response can already be checked against the
+    per-voice `remaining` budget before it's merged: if it claims more
+    syllables for a voice than that voice has left in the whole rest of
+    the piece, that's a strong drift signal worth one immediate retry of
+    just that chunk, rather than only logging a warning once everything
+    is already merged."""
+    from app.core.config import get_settings
+    from app.lyrics import groq_client
+
+    monkeypatch.setattr(get_settings(), "groq_api_key", "test-key")
+    calls: list[dict] = []
+
+    def _fake_call(body):
+        calls.append(body)
+        if len(calls) == 1:
+            # Way more than the 5-note budget: should trigger a retry.
+            syllables = [{"text": f"la{i}", "syllabic": "single"} for i in range(10)]
+        else:
+            syllables = [{"text": "la", "syllabic": "single"}] * 4
+        payload = {"voices": [{"voice": "soprano", "syllables": syllables}]}
+        return _FakeResponse(200, {"choices": [{"message": {"content": json.dumps(payload)}}]})
+
+    monkeypatch.setattr(groq_client, "_call_groq", _fake_call)
+
+    with caplog.at_level("WARNING", logger="divisi.lyrics"):
+        voices = classify_lyric_tokens(_tokens(), onset_counts={"soprano": 5})
+
+    assert len(calls) == 2
+    assert voices == [{"voice": "soprano", "syllables": [{"text": "la", "syllabic": "single"}] * 4}]
+    assert any("retrying the chunk once" in r.message for r in caplog.records)
 
 
 def test_classify_lyric_tokens_logs_a_warning_when_the_final_count_drifts_from_the_target(monkeypatch, caplog):

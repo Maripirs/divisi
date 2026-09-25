@@ -172,6 +172,39 @@ export const actions: Actions = {
 		throw redirect(303, lh(`/piece/${params.id}/review`));
 	},
 
+	// Same trigger as the Tracks tab's own "Generate lyrics from PDF"
+	// button (`groups/[id]/actions/tracks.ts`'s `generateLyrics` action),
+	// exposed here too so an admin already on this page doesn't have to
+	// leave it to kick off a (re)generation. Only shown in the template
+	// while `!data.draftId`, same as Tracks tab hides its own button once
+	// a draft is already pending -- this endpoint always creates a new
+	// unpublished draft, never touches a pending one.
+	generateLyrics: async ({ params, locals, fetch }) => {
+		try {
+			await backendFetch(
+				locals.token,
+				`/library/pieces/${params.id}/generate-lyrics`,
+				{
+					method: 'POST',
+					// Same generous timeout as the Tracks tab's own trigger for
+					// this endpoint -- see `groups/[id]/actions/tracks.ts`'s
+					// `generateLyrics` action for the full reasoning (Groq's
+					// per-page rate-limit pacing, NVIDIA fallback's own longer
+					// per-chunk timeout on a bad day).
+					signal: AbortSignal.timeout(15 * 60 * 1000)
+				},
+				fetch
+			);
+		} catch (err) {
+			if (err instanceof BackendApiError) return fail(err.status, { error: err.message });
+			throw err;
+		}
+
+		// Back to this same page -- it now has a pending draft, so the next
+		// load shows it with Approve/Discard instead of the edit form.
+		throw redirect(303, lh(`/piece/${params.id}/review`));
+	},
+
 	submitEdit: async ({ params, locals, fetch, request }) => {
 		const form = await request.formData();
 		const startRaw = String(form.get('measure_start') ?? '').trim();

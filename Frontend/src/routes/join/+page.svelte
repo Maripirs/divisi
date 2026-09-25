@@ -23,6 +23,7 @@
 </script>
 
 <main class="shell join">
+	<div class="content-narrow">
 	<div class="hero">
 		<Logo size={48} />
 		<h1>{m.join_title()}</h1>
@@ -51,6 +52,7 @@
 	<p class="back-link">
 		<a href={lh(data.user ? '/home' : '/welcome')}>← {m.join_back()}</a>
 	</p>
+	</div>
 </main>
 
 <style>

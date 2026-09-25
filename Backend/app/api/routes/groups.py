@@ -23,12 +23,16 @@ from app.api.schemas import (
     GroupPageSettingOut,
     GroupPageSettingsUpdate,
     GroupRehearsalScheduleUpdate,
+    KnownNameOut,
+    KnownNameRenameIn,
 )
 from app.core.join_codes import generate_join_code
 from app.core.security import hash_password
 from app.db.models import Group, GroupMembership, GroupPage, GroupPageSettings, GroupRole, User
 from app.db.session import get_db
+from app.services.actors import is_group_admin
 from app.services.groups import get_group_or_404
+from app.services.known_names import list_known_names, rename_known_name
 from app.services.pages import require_member_page_access, seed_default_page_settings
 
 router = APIRouter(prefix="/groups", tags=["groups"])
@@ -373,3 +377,46 @@ def update_member_title(
     user = db.get(User, user_id)
     assert user is not None
     return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role, title=membership.title)
+
+
+@router.get("/{group_id}/known-names", response_model=list[KnownNameOut])
+def get_known_names(
+    group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[KnownNameOut]:
+    """Admin-only: every distinct free-text guest name across this group's
+    Responsibilities signups and Carpool posts/claims/interests, with a
+    usage count, so an admin can spot near-duplicate spellings to fix via
+    `rename_known_name` below. Also includes each name's most-recent
+    phone/email from Carpool, if any — safe to expose here since this
+    whole route already requires admin."""
+    get_group_or_404(group_id, db)
+    if not is_group_admin(group_id, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    return [
+        KnownNameOut(name=kn.name, count=kn.count, phone=kn.phone, email=kn.email)
+        for kn in list_known_names(group_id, db)
+    ]
+
+
+@router.post("/{group_id}/known-names/rename")
+def rename_group_known_name(
+    group_id: str,
+    payload: KnownNameRenameIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, int]:
+    """Admin-only: rewrite one free-text name to another everywhere it
+    appears in this group (past signups, past carpool posts/claims/
+    interests), a rename-that-merges-history, not a separate suggestion
+    layered on top. Never touches `users.name` — real member accounts are
+    out of scope."""
+    get_group_or_404(group_id, db)
+    if not is_group_admin(group_id, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    try:
+        renamed_count = rename_known_name(group_id, payload.old_name, payload.new_name, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"renamed_count": renamed_count}

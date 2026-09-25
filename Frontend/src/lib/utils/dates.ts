@@ -29,6 +29,23 @@ export function formatCalendarDate(iso: string | null | undefined, fallback = ''
 }
 
 /**
+ * True once a calendar date (a homework due date) has fully passed — the
+ * due date's calendar day is before today's, not merely before the current
+ * instant. A due date is stored as UTC midnight (see the module comment),
+ * so comparing it directly against `new Date()` flips it to "past" the
+ * moment UTC rolls over to that day, hours before the day itself is over in
+ * any timezone behind UTC (caught live: a Sept 23 due date reading as past
+ * for all of Sept 23). Comparing calendar days instead keeps it current for
+ * the whole day.
+ */
+export function isPastDueDate(iso: string, now: Date = new Date()): boolean {
+	const due = new Date(iso);
+	const dueDay = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+	const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+	return dueDay < today;
+}
+
+/**
  * The date part of a real timestamp (a time-anchored responsibility, a
  * "shared on" date) — rendered in the viewer's local timezone.
  */

@@ -9,6 +9,7 @@
 	import MembersTab from './tabs/MembersTab.svelte';
 	import ResponsibilitiesTab from './tabs/ResponsibilitiesTab.svelte';
 	import CarpoolTab from './tabs/CarpoolTab.svelte';
+	import TeamsTab from './tabs/TeamsTab.svelte';
 	import AboutTab from './tabs/AboutTab.svelte';
 	import { computeGroupTabs, type BuiltinTabKey } from './groupTabs';
 	import '$lib/styles/shell.css';
@@ -84,7 +85,7 @@
 		redirectTo={page.url.pathname + page.url.search}
 	/>
 {:else}
-<main class="shell" class:shell--wide={tab === 'carpool'}>
+<main class="shell">
 	<!-- `data.group!` throughout this block (never plain `data.group`): its
 	     type is `GroupOut | undefined` purely to accommodate the `data.gate`
 	     branch above, which this whole `<main>` never renders from. See
@@ -146,6 +147,8 @@
 		<ResponsibilitiesTab {data} {form} {mode} />
 	{:else if tab === 'carpool'}
 		<CarpoolTab {data} {form} {mode} />
+	{:else if tab === 'teams'}
+		<TeamsTab {data} {form} {mode} />
 	{:else}
 		<AboutTab {data} {form} {mode} />
 	{/if}

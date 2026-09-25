@@ -143,6 +143,7 @@
 {#if visibleTracks.length === 0}
 	<p class="empty">{m.library_no_tracks()}</p>
 {:else}
+	<div class="card-grid">
 	{#each visibleTracks as track (track.piece_id)}
 		<!-- The bundled-registry title match is only a fallback for a
 		     track with nothing of its own wired up yet — once an admin
@@ -466,6 +467,7 @@
 			</Disclosure>
 		</section>
 	{/each}
+	</div>
 {/if}
 {#if mode === 'admin'}
 	{#if showUploadForm}

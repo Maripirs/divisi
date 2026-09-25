@@ -15,6 +15,7 @@
 
 <main class="shell">
 	<AppHeader title={m.groups_new_title()} />
+	<div class="content-narrow">
 	<p class="crumbs"><a href={lh('/home')}>{m.home_title()}</a> / {m.groups_new_title()}</p>
 
 	<form
@@ -37,6 +38,7 @@
 			{submitting ? m.groups_new_creating() : m.groups_new_title()}
 		</button>
 	</form>
+	</div>
 </main>
 
 <style>

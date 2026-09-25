@@ -11,6 +11,8 @@
 		canPost,
 		isGuest,
 		myInterest,
+		userId,
+		postingAsName,
 		guestNamePromptActive,
 		guestNameDraft,
 		guestInterestContactActive,
@@ -29,13 +31,22 @@
 		onGuestInterestContactEmailInput,
 		onGuestInterestContactCancel,
 		onGuestInterestContactConfirm,
-		onReleaseGuestInterest
+		onReleaseGuestInterest,
+		onOptimisticInterestAdd,
+		onOptimisticInterestRemove
 	}: {
 		post: CarpoolPostOut;
 		isOwner: boolean;
 		canPost: boolean;
 		isGuest: boolean;
 		myInterest: CarpoolRiderInterestOut | undefined;
+		/** This viewer's own id and posting name, only used by the member
+		 * (non-guest) `expressInterest` form below to build an optimistic
+		 * interest entry before the real one comes back from the Backend.
+		 * The guest path never reads these; its own interest flow lives
+		 * entirely in `CarpoolBoard.svelte` instead. */
+		userId: string;
+		postingAsName: string;
 		guestNamePromptActive: boolean;
 		guestNameDraft: string;
 		/** B34: whether the guest's optional contact-info step is currently
@@ -58,6 +69,11 @@
 		onGuestInterestContactCancel: () => void;
 		onGuestInterestContactConfirm: (postId: string) => void;
 		onReleaseGuestInterest: (postId: string, interestId: string) => void;
+		/** Mutates `CarpoolBoard`'s shared `posts` state immediately, the
+		 * rider-post mirror of `CarpoolDriverClaimActions`'s
+		 * `onOptimisticClaimAdd`/`onOptimisticClaimRemove`. */
+		onOptimisticInterestAdd: (postId: string, interest: CarpoolRiderInterestOut) => void;
+		onOptimisticInterestRemove: (postId: string, interestId: string) => void;
 	} = $props();
 
 	// B34: the member (non-guest) path's own optional contact-info step,
@@ -77,7 +93,18 @@
 				{interestActionBusyId === myInterest.id ? m.carpool_releasing() : m.carpool_withdraw_interest()}
 			</button>
 		{:else}
-			<form method="POST" action="?/releaseInterest" use:enhance>
+			<form
+				method="POST"
+				action="?/releaseInterest"
+				use:enhance={() => {
+					const removed = myInterest;
+					if (removed) onOptimisticInterestRemove(post.id, removed.id);
+					return async ({ result, update }) => {
+						if (result.type !== 'success' && removed) onOptimisticInterestAdd(post.id, removed);
+						await update();
+					};
+				}}
+			>
 				<input type="hidden" name="interestId" value={myInterest.id} />
 				<button type="submit" class="btn btn-outline">{m.carpool_withdraw_interest()}</button>
 			</form>
@@ -134,9 +161,20 @@
 				class="carpool-claim-contact-form"
 				method="POST"
 				action="?/expressInterest"
-				use:enhance={() => {
+				use:enhance={({ formData }) => {
+					const tempId = `optimistic-${crypto.randomUUID()}`;
+					const optimisticInterest: CarpoolRiderInterestOut = {
+						id: tempId,
+						user_id: userId,
+						display_name: postingAsName,
+						contact_phone: (formData.get('contactPhone') as string) || null,
+						contact_email: (formData.get('contactEmail') as string) || null,
+						created_at: new Date().toISOString()
+					};
+					onOptimisticInterestAdd(post.id, optimisticInterest);
 					return async ({ result, update }) => {
 						if (result.type === 'success') expressingInterest = false;
+						else onOptimisticInterestRemove(post.id, tempId);
 						await update();
 					};
 				}}

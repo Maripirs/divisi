@@ -14,14 +14,7 @@
 	import type { GuestPiece } from '$lib/api/guest';
 	import { invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import {
-		localProfile,
-		ensureLocalId,
-		setDisplayName,
-		markSignedUp,
-		dismissSignupBanner,
-		shouldShowSignupBanner
-	} from '$lib/localProfile';
+	import { localProfile, ensureLocalId, setDisplayName } from '$lib/localProfile';
 	import {
 		isOwnedResponsibilitySignup,
 		rememberResponsibilitySignup,
@@ -35,7 +28,11 @@
 	import { lh } from '$lib/i18n';
 	import { formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
-	import { partitionDatesByUpcoming, type ResponsibilityRole } from '$lib/components/groupCards';
+	import {
+		collectKnownNames,
+		partitionDatesByUpcoming,
+		type ResponsibilityRole
+	} from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
 
@@ -183,7 +180,6 @@
 				| { ok: false; error: 'conflict'; message?: string }
 				| { ok: false; error: 'server' };
 			if (body.ok) {
-				markSignedUp();
 				// F34: remember this signup as ours so the "Remove me" control
 				// shows up for it once `result.responsibilities` reloads below,
 				// and again on a later page visit.
@@ -254,6 +250,7 @@
 	     wake): the request that landed here just triggered the wake-up, so
 	     an immediate retry usually succeeds. Offer that inline rather than
 	     making the visitor guess that a manual refresh fixes it. -->
+	<div class="content-narrow">
 	<section class="card">
 		<p class="card-title">{m.join_something_went_wrong()}</p>
 		<p class="card-meta">{m.errors_could_not_reach_server()}</p>
@@ -262,16 +259,19 @@
 		</button>
 		<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_back()}</a>
 	</section>
+	</div>
 {/snippet}
 
-<main class="shell join-result" class:shell--wide={tab === 'carpool'}>
+<main class="shell join-result">
 	{#await data.result}
 		<!-- Shell + spinner paint immediately while the guest fetch fan-out
 		     streams in (see +page.ts for why the promise is unawaited). -->
+		<div class="content-narrow">
 		<div class="hero">
 			<Logo size={48} />
 		</div>
 		<LoadingBlock />
+		</div>
 	{:then result}
 		{#if result.error !== null}
 			<!-- No group to head the page (not-found / server), so lead with
@@ -283,6 +283,7 @@
 		{/if}
 
 		{#if result.error === 'not-found'}
+			<div class="content-narrow">
 			<section class="card">
 				<p class="card-title">{m.join_code_not_found()}</p>
 				<p class="card-meta">
@@ -290,33 +291,37 @@
 				</p>
 				<a class="btn btn-outline btn-block" href={lh('/join')}>{m.join_try_another_code()}</a>
 			</section>
+			</div>
 		{:else if result.error === 'server'}
 			{@render serverErrorCard()}
 		{:else if result.group}
+			{@const knownNames = collectKnownNames({
+				responsibilities: result.responsibilities,
+				carpoolPosts: result.carpoolPosts
+			})}
+			<!-- No member roster here on purpose -- see `collectKnownNames`'s own
+			     doc comment (groupCards.ts): a guest page never exposes the
+			     member list, so this datalist must not either. Shared by every
+			     "type your name" input below (this page's own Responsibilities
+			     self-signup prompt, and `CarpoolGuestNamePrompt`'s input inside
+			     `CarpoolBoard`) via the plain HTML `list`/`id` link, not a prop
+			     -- it works across component boundaries for free, so nothing
+			     downstream needs this list threaded through as a prop. -->
+			<datalist id="guest-known-names">
+				{#each knownNames as name (name)}
+					<option value={name}></option>
+				{/each}
+			</datalist>
 			<AppHeader title={result.group.groupName} homeHref={lh('/welcome')} />
 
-			<!-- The persistent "browsing as a guest, sign in" banner used to live
-			     here (removed 2026-09-11: the human found it redundant now that
+			<!-- The persistent "browsing as a guest, sign in" banner, and later
+			     the one-time post-signup "you're only on this device" banner,
+			     used to live here. Both removed (2026-09-11 and today,
+			     respectively): the human found them redundant now that
 			     Settings already covers the same ground for a guest -
 			     `settings_guest_note` plus Save-across-devices / Log in / Create
-			     account, see `SettingsDrawer.svelte`). The gear icon in
+			     account, see `SettingsDrawer.svelte`. The gear icon in
 			     `AppHeader` is the one, quieter way in now. -->
-
-			{#if shouldShowSignupBanner($localProfile)}
-				<!-- F23: shown once, after the first responsibility signup,
-				     until dismissed (the flag persists in the local profile
-				     store, so it does not reappear). B21: no more "Save"
-				     action here — reconnecting this identity on another
-				     device just means typing the same name again there. -->
-				<section class="card card--highlight">
-					<p class="card-note">{m.local_only_banner_body()}</p>
-					<div class="btn-row">
-						<button type="button" class="btn btn-outline" onclick={dismissSignupBanner} aria-label={m.join_dismiss()}>
-							{m.join_not_now()}
-						</button>
-					</div>
-				</section>
-			{/if}
 
 			{#if result.homeworkVisible || result.responsibilitiesVisible || result.weeklyNotesVisible || result.carpoolVisible || result.aboutVisible}
 				<!-- F31/B31: same shared-tab-list shape the member side uses
@@ -335,23 +340,28 @@
 				{#if result.homework.length === 0}
 					<p class="empty">{m.join_no_homework()}</p>
 				{:else}
+					<div class="card-grid">
 					{#each result.homework as hw (hw.id)}
 						<HomeworkCard item={hw} />
 					{/each}
+					</div>
 				{/if}
 			{:else if tab === 'weeklyNotes' && result.weeklyNotesVisible}
 				{#if result.weeklyNotes.length === 0}
 					<p class="empty">{m.join_no_weekly_notes()}</p>
 				{:else}
+					<div class="card-grid">
 					{#each result.weeklyNotes as n (n.id)}
 						<WeeklyNoteCard item={n} />
 					{/each}
+					</div>
 				{/if}
 			{:else if tab === 'responsibilities' && result.responsibilitiesVisible}
 				<!-- Guest coverage view: same signup names a member sees, just
 				     never an email or account id (see the Backend's
 				     `ResponsibilityGuestRoleCoverageOut`), plus F23's
 				     local-only "Sign me up" per role for an open/unlocked date. -->
+				<div class="content-narrow">
 				{#if result.responsibilities.length === 0}
 					<p class="empty">{m.join_no_responsibilities()}</p>
 				{:else}
@@ -408,7 +418,7 @@
 										>
 											<label class="field">
 												<span>{m.responsibilities_name_prompt()}</span>
-												<input bind:value={nameDraft} required autocomplete="name" />
+												<input bind:value={nameDraft} required autocomplete="name" list="guest-known-names" />
 											</label>
 											<div class="btn-row">
 												<button
@@ -520,6 +530,7 @@
 						</details>
 					{/if}
 				{/if}
+				</div>
 			{:else if tab === 'carpool' && result.carpoolVisible}
 				<!-- B31/F36: carpool as a plain guest tab, same `CarpoolBoard`
 				     the member/admin route renders (`groups/[id]/tabs/
@@ -547,6 +558,7 @@
 				     branch) — same two pieces of content, none of the editors,
 				     no "Leave group"/join-link controls (a guest is already past
 				     the join link, and has nothing to "leave"). -->
+				<div class="content-narrow">
 				<section class="card">
 					<p class="card-eyebrow">{m.groups_about_tab_title()}</p>
 					<p class="card-meta body">{result.about.description || m.groups_no_description()}</p>
@@ -565,6 +577,7 @@
 						{/each}
 					{/if}
 				</section>
+				</div>
 			{:else}
 				<!-- Same as the member group page's Tracks tab: a guest only sees
 				     pieces that actually have a practice file wired up (no dead
@@ -582,6 +595,7 @@
 				{#if visiblePieces.length === 0}
 					<p class="empty">{m.library_no_tracks()}</p>
 				{:else}
+					<div class="card-grid">
 					{#each visiblePieces as piece (piece.pieceId)}
 						<!-- Bundled-title match is only a fallback for a piece with
 						     nothing of its own wired up yet — real uploaded content
@@ -657,6 +671,7 @@
 							</Disclosure>
 						</section>
 					{/each}
+					</div>
 				{/if}
 			{/if}
 		{/if}

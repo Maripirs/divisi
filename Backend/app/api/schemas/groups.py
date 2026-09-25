@@ -102,6 +102,28 @@ class GroupMemberTitleUpdate(BaseModel):
     title: str | None = None
 
 
+class KnownNameOut(BaseModel):
+    """One distinct free-text guest name from `app.services.known_names.
+    list_known_names`, with how many signup/post/claim/interest rows across
+    the group carry it. `phone`/`email` are the most-recently-created
+    non-null value seen for that name across the Carpool tables that carry
+    contact info (independently picked for each), `None` when the name
+    never came with that piece of contact info (e.g. Responsibilities-only
+    names always have both `None`, since that table has no contact
+    fields). This route is admin-only, so no extra visibility gating is
+    applied here beyond that."""
+
+    name: str
+    count: int
+    phone: str | None = None
+    email: str | None = None
+
+
+class KnownNameRenameIn(BaseModel):
+    old_name: str
+    new_name: str
+
+
 class GroupMemberOut(BaseModel):
     user_id: str
     # Plain `str`, not `EmailStr`: an anonymous participant (B19) carries a

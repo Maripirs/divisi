@@ -21,6 +21,7 @@
 	let approving = $state(false);
 	let discarding = $state(false);
 	let submittingEdit = $state(false);
+	let generatingLyrics = $state(false);
 	let confirmingParts = $state(false);
 
 	// Client-side re-parse of the draft/live version's own MusicXML, purely
@@ -45,6 +46,18 @@
 
 	let allResolved = $derived(
 		!parsed?.ambiguousParts?.length || parsed.ambiguousParts.every((p) => assignments[p.partId] !== undefined)
+	);
+
+	// `assignVoiceParts` always fills every SATB base with a placeholder
+	// `VoicePartInfo` even when no track resolved to it (so the mixer shows
+	// all four voices on an SA-only piece too) -- `ConfirmPartsPanel`'s own
+	// desk-number defaulting treats any `existingParts` entry as "desk 1
+	// already taken" for that voice, so a phantom placeholder here made
+	// every first pick in an ambiguous-heavy file (like a whole SATB
+	// export with generic part names) default to desk 2 instead of the
+	// plain, unsplit id. Only pass parts genuinely backed by a track.
+	let realExistingParts = $derived(
+		parsed ? parsed.parts.filter((p) => Object.values(parsed.trackParts).includes(p.id)) : []
 	);
 
 	/** A resolved choice's label, matching `VoicePartInfo.label`'s own
@@ -149,7 +162,7 @@
 				{#if parsed?.ambiguousParts?.length}
 					<ConfirmPartsPanel
 						ambiguousParts={parsed.ambiguousParts}
-						existingParts={parsed.parts}
+						existingParts={realExistingParts}
 						{assignments}
 						onchange={(partId, choice) => {
 							if (choice === undefined) {
@@ -206,6 +219,26 @@
 				{#if !allResolved}
 					<p class="hint">{m.confirm_parts_all_resolved_hint()}</p>
 				{/if}
+				<hr class="edit-panel-divider" />
+			{/if}
+
+			<!-- Same trigger as the Tracks tab's own "Generate lyrics from PDF"
+			     button -- hidden once a draft is already pending, same as
+			     there, since this always creates a fresh draft rather than
+			     touching a pending one (see `+page.server.ts`'s own
+			     `generateLyrics` action). -->
+			{#if !data.draftId}
+				<form
+					method="POST"
+					action="?/generateLyrics"
+					use:enhance={withSubmitting((v) => (generatingLyrics = v))}
+				>
+					<div class="btn-row">
+						<button type="submit" class="btn btn-outline" disabled={generatingLyrics}>
+							{generatingLyrics ? m.groups_uploading() : m.groups_generate_lyrics_button()}
+						</button>
+					</div>
+				</form>
 				<hr class="edit-panel-divider" />
 			{/if}
 

@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { selectDefaultCarpoolEventId } from '$lib/utils/carpool';
-import type { CarpoolPostOut, LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
+import type { CarpoolPostOut, KnownNameOut, LibraryEntryOut, ResponsibilityScheduleOut } from '$lib/server/backendTypes';
 import type { Actions, PageServerLoad } from './$types';
 import { groupActions } from './actions/group';
 import { memberActions } from './actions/members';
@@ -10,7 +10,9 @@ import { homeworkActions } from './actions/homework';
 import { weeklyNoteActions } from './actions/weeklyNotes';
 import { responsibilityActions } from './actions/responsibilities';
 import { carpoolActions } from './actions/carpool';
+import { teamActions } from './actions/teams';
 import { groupResourceActions } from './actions/groupResources';
+import { knownNameActions } from './actions/knownNames';
 
 // F31/B31: the group/role lookup, the five built-in pages' lists (+ their
 // enabled flags, carpool's events among them), and the admin-only real
@@ -32,12 +34,12 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 	// outside this branch.
 	//
 	// `homework`/`tracks`/`schedules`/`pageSettings`/`carpoolSelectedEventId`/
-	// `carpoolPosts` get the same empty placeholders here as the layout's own
-	// gate branch gives its fields, and for the same reason: matching this
-	// load's two branches to the same shape (never `undefined`-vs-"present")
-	// is what keeps every Tab component's own `data.homework`/`data.tracks`/
-	// etc. typed as a plain array instead of `... | undefined` everywhere,
-	// gated or not.
+	// `carpoolPosts`/`knownNames` get the same empty placeholders here as the
+	// layout's own gate branch gives its fields, and for the same reason:
+	// matching this load's two branches to the same shape (never
+	// `undefined`-vs-"present") is what keeps every Tab component's own
+	// `data.homework`/`data.tracks`/etc. typed as a plain array instead of
+	// `... | undefined` everywhere, gated or not.
 	if (parentData.gate) {
 		return {
 			gate: parentData.gate,
@@ -46,7 +48,8 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 			schedules: [],
 			pageSettings: [],
 			carpoolSelectedEventId: null,
-			carpoolPosts: []
+			carpoolPosts: [],
+			knownNames: []
 		};
 	}
 	const { group, isAdmin, homework, pageSettings, carpoolEvents } = parentData;
@@ -67,6 +70,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 		// to be fetched here too; it moved up to `./+layout.server.ts`, which
 		// `pageSettings` above is now sourced from.)
 		let schedules: ResponsibilityScheduleOut[] = [];
+		let knownNames: KnownNameOut[] = [];
 		if (isAdmin) {
 			schedules = await backendJson<ResponsibilityScheduleOut[]>(
 				locals.token,
@@ -74,6 +78,7 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 				undefined,
 				fetch
 			);
+			knownNames = await backendJson<KnownNameOut[]>(locals.token, `/groups/${group.id}/known-names`, undefined, fetch);
 		}
 
 		// B31/F36: carpool's events list already came down from the shared
@@ -99,7 +104,8 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 			schedules,
 			pageSettings,
 			carpoolSelectedEventId,
-			carpoolPosts
+			carpoolPosts,
+			knownNames
 		};
 	} catch (err) {
 		if (err instanceof BackendApiError) throw error(err.status, err.message);
@@ -120,5 +126,7 @@ export const actions: Actions = {
 	...weeklyNoteActions,
 	...responsibilityActions,
 	...carpoolActions,
-	...groupResourceActions
+	...teamActions,
+	...groupResourceActions,
+	...knownNameActions
 };

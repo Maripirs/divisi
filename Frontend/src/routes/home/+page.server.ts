@@ -2,6 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
+import { isPastDueDate } from '$lib/utils/dates';
 import type { GroupOut, HomeworkOut, ResponsibilityDateOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
@@ -51,7 +52,7 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 	// No due date at all reads as "still relevant" (open-ended), same stance
 	// the Homework tab's own current/past split takes (`HomeworkTab.svelte`);
 	// only a due date that's actually passed makes a homework item past.
-	const isActiveHomework = (hw: HomeworkOut) => hw.due_date === null || new Date(hw.due_date) >= now;
+	const isActiveHomework = (hw: HomeworkOut) => hw.due_date === null || !isPastDueDate(hw.due_date);
 
 	// Earliest-due-first across every group — the Backend already orders
 	// each group's own list that way, this just merges them. Past-due

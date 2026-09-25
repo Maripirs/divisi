@@ -3,7 +3,7 @@
 Generalizes B10's single `Group.guest_homework_visible` boolean into a
 per-(group, page) `enabled`/`audience` row across all built-in pages
 (homework, tracks, members, about, responsibilities, weekly_notes,
-carpool). Kept separate from `app/services/pieces.py` since it's a
+carpool, teams). Kept separate from `app/services/pieces.py` since it's a
 group-level concern, not a piece-level one, but follows the same "shared
 helper, not reimplemented per-route" shape.
 
@@ -41,6 +41,7 @@ DEFAULT_AUDIENCE: dict[GroupPage, PageAudience] = {
     GroupPage.responsibilities: PageAudience.members,
     GroupPage.weekly_notes: PageAudience.members,
     GroupPage.carpool: PageAudience.members,
+    GroupPage.teams: PageAudience.members,
 }
 
 

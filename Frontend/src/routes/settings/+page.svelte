@@ -84,6 +84,7 @@
 		homeHref={guestJoinCode ? lh(`/join/${guestJoinCode}`) : lh('/home')}
 	/>
 
+	<div class="content-narrow">
 	<section class="card">
 		<p class="card-eyebrow">{m.settings_account()}</p>
 		{#if data.user}
@@ -213,6 +214,7 @@
 			<button class="btn btn-danger btn-block" type="submit">{m.settings_log_out()}</button>
 		</form>
 	{/if}
+	</div>
 </main>
 
 <style>
