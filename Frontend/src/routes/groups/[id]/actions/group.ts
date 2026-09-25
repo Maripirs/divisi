@@ -28,14 +28,21 @@ export const groupActions = {
 		);
 	},
 
-	// B12: admin-only replace of all 5 pages' enabled/audience in one go —
+	// B12: admin-only replace of every page's enabled/audience in one go —
 	// the form always submits every page's current state (checkboxes for
-	// unchecked/disabled pages just don't appear in the FormData), so this
-	// builds the full set rather than a true partial patch even though the
-	// Backend endpoint itself supports one.
+	// unchecked/disabled pages just don't appear in the FormData, but each
+	// page's `audience_*` <select> always does), so this builds the full set
+	// rather than a true partial patch even though the Backend endpoint
+	// itself supports one. Which pages exist is read off the submitted
+	// `audience_*` field names instead of a hand-maintained list here: a
+	// hardcoded list (missing `carpool` and `teams`, added after this was
+	// first written) silently dropped both from ever being saved even
+	// though `AboutTab.svelte`'s `PAGE_ORDER` rendered a row for each.
 	updatePageSettings: async ({ request, locals, fetch, params }) => {
 		const form = await request.formData();
-		const pages: GroupPage[] = ['homework', 'tracks', 'members', 'about', 'responsibilities', 'weekly_notes'];
+		const pages = [...form.keys()]
+			.filter((key) => key.startsWith('audience_'))
+			.map((key) => key.slice('audience_'.length) as GroupPage);
 		const updates = pages.map((page) => ({
 			page,
 			enabled: form.get(`enabled_${page}`) === 'on',

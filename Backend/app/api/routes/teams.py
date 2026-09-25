@@ -1,7 +1,8 @@
-"""Teams routes: a group's standing list of teams/committees a member can
-express interest in helping with (see `app/db/models.py`'s `Team`/
-`TeamRole`/`TeamSignup` docstrings and `app/api/schemas/teams.py`'s own
-module docstring for the member-vs-admin data-shape split).
+"""Teams routes: a group's standing list of teams/committees, each with a
+list of roles that are either `interest` (member self-signup) or `roster`
+(admin-maintained names, no self-signup); see `app/db/models.py`'s `Team`/
+`TeamRole`/`TeamRoleMode`/`TeamSignup` docstrings and `app/api/schemas/
+teams.py`'s own module docstring for the member-vs-admin data-shape split.
 
 Three path shapes on one router, same "combine related resources on one
 router, split by path prefix" convention `responsibilities.py` uses:
@@ -9,7 +10,7 @@ router, split by path prefix" convention `responsibilities.py` uses:
 `/teams/{id}/roles` (single-team get/edit, since once you have an id you
 don't need the group in the path), `/teams/roles/{id}` (single-role
 edit/delete), and `/teams/roles/{id}/signups` / `/teams/signups/{id}` for
-the member-facing self-signup/withdraw actions.
+the member-facing self-signup/admin-roster-assignment/withdraw actions.
 
 Guest reads live in `app/api/routes/guest.py` (`GET /guest/{join_code}/
 teams`), per this codebase's convention of keeping every unauthenticated
@@ -35,11 +36,11 @@ from app.api.schemas import (
     TeamSignupOut,
     TeamUpdate,
 )
-from app.db.models import GroupPage, Team, TeamRole, TeamSignup, User
+from app.db.models import GroupPage, Team, TeamRole, TeamRoleMode, TeamSignup, User
 from app.db.session import get_db
 from app.services.actors import authorize_page_write_actor, is_group_admin, resolve_existing_actor, resolve_or_mint_actor
 from app.services.common import get_or_404
-from app.services.groups import get_group_or_404, require_admin, require_member
+from app.services.groups import get_group_or_404, group_role, require_admin, require_member
 from app.services.pages import require_member_page_access
 from app.services.participants import set_participant_cookie
 from app.services.teams import role_out, roles_for_team, signup_out, team_admin_out, team_out
@@ -162,7 +163,14 @@ def add_role(
     team = _get_team_or_404(team_id, db)
     require_admin(team.group_id, current_user, db)
     next_sort = db.query(TeamRole).filter(TeamRole.team_id == team_id).count()
-    role = TeamRole(team_id=team_id, name=payload.name, has_text_field=payload.has_text_field, sort_order=next_sort)
+    role = TeamRole(
+        team_id=team_id,
+        name=payload.name,
+        has_text_field=payload.has_text_field,
+        mode=payload.mode,
+        roster_visible_to_members=payload.roster_visible_to_members,
+        sort_order=next_sort,
+    )
     db.add(role)
     db.commit()
     db.refresh(role)
@@ -192,6 +200,10 @@ def update_role(
             db.query(TeamSignup).filter(TeamSignup.role_id == role_id).update(
                 {TeamSignup.text_value: None}, synchronize_session=False
             )
+    if "mode" in fields_sent and payload.mode is not None:
+        role.mode = payload.mode
+    if "roster_visible_to_members" in fields_sent and payload.roster_visible_to_members is not None:
+        role.roster_visible_to_members = payload.roster_visible_to_members
     db.commit()
     db.refresh(role)
     return role_out(role, current_user, is_admin=True, db=db)
@@ -224,16 +236,79 @@ def create_signup(
     maybe_user: User | None = Depends(get_current_user_optional),
     maybe_participant: User | None = Depends(get_optional_participant),
 ) -> TeamSignupOut:
-    """Self-signup only, mirroring `responsibilities.create_signup`'s
-    self-signup branch exactly: a bearer member, an existing anonymous
-    participant, or a brand-new one minted right here
-    (`resolve_or_mint_actor`), gated by `authorize_page_write_actor` the
-    same way every other guest-writable page is. A non-null `text_value` is
-    only accepted for a role with `has_text_field` set, a 400 otherwise
-    (silently ignoring it would hide a client bug)."""
+    """Two shapes, mirroring `responsibilities.create_signup`'s own split:
+    an admin assignment (`payload.user_id` or `payload.name` present) is
+    only valid on a `roster`-mode role, bearer-only, admin-only; the plain
+    self-signup shape (neither present) is only valid on an `interest`-mode
+    role, and goes through `resolve_or_mint_actor`/`authorize_page_write_actor`
+    exactly as before. A client can't cross the two (self-signing up on a
+    roster role, or admin-assigning onto an interest role) regardless of
+    what the Frontend renders."""
     role = _get_role_or_404(role_id, db)
     team = _get_team_or_404(role.team_id, db)
     group_id = team.group_id
+
+    guest_name = (payload.name or "").strip() or None
+
+    if payload.user_id or payload.name:
+        # Admin assignment onto a roster-mode role: an existing member by
+        # `user_id`, or a name-only entry (`guest_name`) for someone with no
+        # Divisi account at all. Bearer-only.
+        if maybe_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        current_user = maybe_user
+        require_member(group_id, current_user, db)
+        require_member_page_access(group_id, GroupPage.teams, current_user.id, db)
+        if not is_group_admin(group_id, current_user, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required to assign a roster member"
+            )
+        if role.mode != TeamRoleMode.roster:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only roster roles support assigning members directly",
+            )
+
+        contact = (payload.contact or "").strip() or None
+
+        if guest_name is not None:
+            if payload.user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Provide a member or a name, not both"
+                )
+            signup = TeamSignup(role_id=role_id, user_id=None, guest_name=guest_name, contact=contact)
+            db.add(signup)
+            db.commit()
+            db.refresh(signup)
+            return signup_out(signup, None)
+
+        if group_role(group_id, payload.user_id, db) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="That user is not a member of this group"
+            )
+        signup = TeamSignup(role_id=role_id, user_id=payload.user_id, contact=contact)
+        db.add(signup)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Already signed up for this role"
+            ) from exc
+        db.refresh(signup)
+        target_user = db.query(User).filter(User.id == payload.user_id).first()
+        return signup_out(signup, target_user)
+
+    # Plain self-signup, only valid on an interest-mode role.
+    if role.mode != TeamRoleMode.interest:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This role isn't self-signup, ask an admin to add you",
+        )
 
     if payload.text_value is not None and not role.has_text_field:
         raise HTTPException(

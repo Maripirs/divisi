@@ -310,26 +310,43 @@ export interface CarpoolPostOut {
 	updated_at: string;
 }
 
-/** A group's standing list of teams/committees a member can express
- * interest in helping with (see `Backend/app/db/models.py`'s `Team`/
- * `TeamRole`/`TeamSignup` and `Backend/app/api/schemas/teams.py`). */
+/** A group's standing list of teams/committees, each with a list of roles
+ * (see `Backend/app/db/models.py`'s `Team`/`TeamRole`/`TeamRoleMode`/
+ * `TeamSignup` and `Backend/app/api/schemas/teams.py`).
+ *
+ * One row under a `TeamRoleOut`: either a member's own expressed interest
+ * (on an `interest`-mode role, `user_id` set, `name` resolved from the
+ * account) or an admin-listed roster entry (on a `roster`-mode role,
+ * `user_id` set for an actual member or `null` for someone with no Divisi
+ * account at all; either way the Backend already resolved `name` for
+ * display). `contact` is only ever meaningful on a roster entry (an
+ * admin's optional free-text email/phone for that person); always `null`
+ * on a plain interest-mode signup. */
 export interface TeamSignupOut {
 	id: string;
-	user_id: string;
+	user_id: string | null;
 	name: string;
+	contact: string | null;
 	text_value: string | null;
 	created_at: string;
 }
 
-/** One team's role/task. `signup_count`/`my_signup` are safe for any
- * caller; `signups` (the full roster) is only ever populated for an admin
- * caller — the same member-vs-admin split `TeamOut`/`TeamAdminOut` draw for
- * a team overall, just at the role level (`Backend/app/api/routes/
- * teams.py`'s `list_teams`). */
+/** One team's role/task. `mode` (`'interest'` | `'roster'`) decides how the
+ * member view renders this role: `interest` is the toggleable self-signup
+ * chip (unchanged, today's only pre-redesign behavior); `roster` is a
+ * fixed, admin-maintained list of names with no self-signup, shown to
+ * members read-only when `roster_visible_to_members` is true and skipped
+ * entirely when it's false. `signup_count`/`my_signup` are safe for any
+ * caller; `signups` (the full roster) is populated for an admin caller, or
+ * for any caller on a `roster`-mode role with `roster_visible_to_members`
+ * true. The Backend decides that (`Backend/app/services/teams.py`'s
+ * `role_out`), not the Frontend. */
 export interface TeamRoleOut {
 	id: string;
 	name: string;
 	has_text_field: boolean;
+	mode: 'interest' | 'roster';
+	roster_visible_to_members: boolean;
 	sort_order: number;
 	signup_count: number;
 	my_signup: TeamSignupOut | null;
@@ -337,7 +354,7 @@ export interface TeamRoleOut {
 }
 
 /** Member/guest-facing team shape: `contact_email`/`contact_phone` are
- * already `null` unless the admin opted to show that one to members — the
+ * already `null` unless the admin opted to show that one to members. The
  * Backend redacts, never the Frontend. See `TeamAdminOut` for the admin's
  * own always-raw view of the same two fields. */
 export interface TeamOut {
@@ -353,7 +370,7 @@ export interface TeamOut {
 /** Admin-facing team shape: `contact_email`/`contact_phone` are always the
  * true stored values (never redacted), plus the two show-flags themselves
  * so the admin UI can render/edit the toggles. `GET .../teams` returns this
- * shape for an admin caller, `TeamOut` for a plain member — same route,
+ * shape for an admin caller, `TeamOut` for a plain member, same route,
  * picked server-side. */
 export interface TeamAdminOut {
 	id: string;

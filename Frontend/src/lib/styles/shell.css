@@ -28,21 +28,21 @@
 	gap: 1.1rem;
 }
 
-/* Plain 2-column grid (document order, not masonry) for flat lists of
-   roughly-uniform cards inside a wide `.shell` page. Same breakpoint as
-   below so it never activates without the extra width to fill. */
+/* Plain grid (document order, not masonry) for flat lists of roughly-uniform
+   cards inside a wide `.shell` page. `auto-fit`/`minmax` instead of a fixed
+   `1fr 1fr` behind a `min-width: 1024px` breakpoint: that fixed breakpoint
+   keyed off the *viewport*, not `.shell`'s own (capped-at-1040px) width, so
+   at just past 1024px each column was still only ~half of a not-yet-fully-
+   grown shell -- narrower than the single full-width column it replaced,
+   the instant the window crossed that width. Widening the window made cards
+   shrink. `auto-fit` only ever adds a column once there's room for every
+   column to be at least `minmax`'s floor, so a column is never narrower
+   than that floor regardless of how the window is resized. */
 .card-grid {
-	display: flex;
-	flex-direction: column;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+	align-items: start;
 	gap: 1.1rem;
-}
-
-@media (min-width: 1024px) {
-	.card-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		align-items: start;
-	}
 }
 
 .shell-header {

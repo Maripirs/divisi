@@ -20,6 +20,17 @@ function teamContactBody(form: FormData) {
 	};
 }
 
+/** Shared by `addTeamRole`/`updateTeamRole`: a role's `mode` (`'interest'`
+ * self-signup or `'roster'` admin-maintained) plus `roster_visible_to_members`
+ * (only meaningful in `roster` mode, but always sent, same "one form,
+ * submit everything together" shape `teamContactBody` above uses). The
+ * radio group defaults to `'interest'` server-side too (`TeamRoleCreate`'s
+ * own default), so a missing/unexpected value falls back the same way. */
+function teamRoleModeBody(form: FormData) {
+	const mode = form.get('mode') === 'roster' ? 'roster' : 'interest';
+	return { mode, roster_visible_to_members: form.get('rosterVisible') === 'on' };
+}
+
 export const teamActions = {
 	// Admin-only. `params.id` (the group id), not a form field — same
 	// convention `createResponsibilitySchedule` uses for its own group-scoped
@@ -75,9 +86,11 @@ export const teamActions = {
 
 	// Admin-only. `has_text_field` isn't exposed in the add-role form (every
 	// admin-created role defaults to a plain checkbox, `has_text_field:
-	// false` is the Backend's own default) — no UI regression from the
+	// false` is the Backend's own default), no UI regression from the
 	// prototype, which never had a way to create an "Other"-style role
-	// either, only the seeded ones had it.
+	// either, only the seeded ones had it. `mode`/`roster_visible_to_members`
+	// (`teamRoleModeBody`) are exposed: a fresh role is `interest` unless the
+	// admin picks `roster` in the same form.
 	addTeamRole: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const teamId = String(form.get('teamId') ?? '');
@@ -85,12 +98,17 @@ export const teamActions = {
 		if (!teamId || !name) return fail(400, { error: m.groups_missing_role(), form: 'editTeam' });
 
 		return runAction('editTeam', () =>
-			backendFetch(locals.token, `/teams/${teamId}/roles`, { method: 'POST', body: JSON.stringify({ name }) }, fetch)
+			backendFetch(
+				locals.token,
+				`/teams/${teamId}/roles`,
+				{ method: 'POST', body: JSON.stringify({ name, ...teamRoleModeBody(form) }) },
+				fetch
+			)
 		);
 	},
 
-	// Admin-only, name only (matches the prototype's own role-rename, which
-	// never touched `has_text_field` either).
+	// Admin-only. Name plus `mode`/`roster_visible_to_members` (`has_text_field`
+	// still untouched here, matching the prototype's own role-rename scope).
 	updateTeamRole: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const roleId = String(form.get('roleId') ?? '');
@@ -98,7 +116,12 @@ export const teamActions = {
 		if (!roleId || !name) return fail(400, { error: m.groups_missing_role(), form: 'editTeam' });
 
 		return runAction('editTeam', () =>
-			backendFetch(locals.token, `/teams/roles/${roleId}`, { method: 'PATCH', body: JSON.stringify({ name }) }, fetch)
+			backendFetch(
+				locals.token,
+				`/teams/roles/${roleId}`,
+				{ method: 'PATCH', body: JSON.stringify({ name, ...teamRoleModeBody(form) }) },
+				fetch
+			)
 		);
 	},
 
@@ -139,8 +162,34 @@ export const teamActions = {
 		);
 	},
 
+	// Admin-only: adds a named entry (with an optional free-text `contact`,
+	// e.g. an email or phone) to a `roster`-mode role's roster. Reuses the
+	// same `POST .../signups` endpoint `signUpTeamRole` posts to, just with
+	// the admin-assignment payload shape (`name`/`contact` instead of a
+	// self-signup's fields). The Backend tells the two apart by which
+	// fields are present, and 400s this shape against a non-roster role or
+	// a non-admin caller regardless of what this action sends.
+	addTeamRosterEntry: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const roleId = String(form.get('roleId') ?? '');
+		const name = String(form.get('name') ?? '').trim();
+		if (!roleId || !name) return fail(400, { error: m.groups_enter_name(), form: 'editTeam' });
+		const contact = String(form.get('contact') ?? '').trim();
+
+		return runAction('editTeam', () =>
+			backendFetch(
+				locals.token,
+				`/teams/roles/${roleId}/signups`,
+				{ method: 'POST', body: JSON.stringify({ name, contact: contact || undefined }) },
+				fetch
+			)
+		);
+	},
+
 	// The signup's own actor or a group admin can withdraw it (enforced on
-	// the Backend); this action itself doesn't need to know which.
+	// the Backend); this action itself doesn't need to know which. Also
+	// doubles as the admin's "remove roster entry" action: same DELETE, no
+	// mode-specific behavior needed.
 	removeTeamSignup: async ({ request, locals, fetch }) => {
 		const form = await request.formData();
 		const signupId = String(form.get('signupId') ?? '');

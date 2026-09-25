@@ -988,11 +988,35 @@ class Team(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class TeamRoleMode(str, enum.Enum):
+    """Per-role, not per-team: a team can freely mix both kinds of roles
+    side by side (e.g. "Publicity Team" has a self-signup "Submit to media
+    outlets" role alongside a roster-only "Team Lead" role). `interest`
+    (the default, every pre-existing role's behavior) is today's
+    member-self-signup checklist item. `roster` is a fixed, already-set
+    slot (e.g. "President") an admin maintains by hand via named
+    `TeamSignup` rows (see that model's own docstring), no self-signup at
+    all for that role, gated server-side in `app/api/routes/teams.py`'s
+    `create_signup`, not just hidden client-side."""
+
+    interest = "interest"
+    roster = "roster"
+
+
 class TeamRole(Base):
     """One role/task under a `Team` (e.g. "Submit publicity to media
     outlets") a member signs up for. `has_text_field` is a per-role flag,
     not hardcoded to one role name, so any role (e.g. an "Other, tell us
-    more" role) can optionally carry a free-text value on its signups."""
+    more" role) can optionally carry a free-text value on its signups.
+
+    `mode` (see `TeamRoleMode`) splits an `interest` role (self-signup,
+    today's only behavior) from a `roster` role (admin-maintained, no
+    self-signup). `roster_visible_to_members` only matters for a `roster`
+    role: `True` shows its `TeamSignup` roster to members read-only,
+    `False` skips rendering that role for members entirely (not shown, not
+    a placeholder). Irrelevant for an `interest` role, which is always
+    visible to members as the interactive checklist item it's always
+    been."""
 
     __tablename__ = "team_roles"
 
@@ -1000,26 +1024,50 @@ class TeamRole(Base):
     team_id: Mapped[str] = mapped_column(String, ForeignKey("teams.id"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     has_text_field: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
+    mode: Mapped[TeamRoleMode] = mapped_column(
+        SAEnum(TeamRoleMode, native_enum=False),
+        nullable=False,
+        default=TeamRoleMode.interest,
+        server_default="interest",
+    )
+    roster_visible_to_members: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class TeamSignup(Base):
-    """One member expressing interest in one `TeamRole`. Unlike
-    `ResponsibilitySignup`, there's no name-only/no-account guest path here:
-    `user_id` is always a real row, either a real member or an anonymous
-    participant minted by `resolve_page_write_actor` (see
-    `app/api/routes/teams.py`). Unique per (role, user) so re-signing up is
-    a no-op collision, not a duplicate row, same shape as
-    `ResponsibilitySignup.uq_responsibility_signup`. `text_value` is only
-    ever set when the role's `has_text_field` is true; toggling that flag
-    off nulls out any existing values (see `update_role` in the routes)."""
+    """One row under a `TeamRole`, either a member's own expressed interest
+    (on an `interest`-mode role, self-signed-up) or one admin-listed name on
+    a fixed roster (on a `roster`-mode role), a legitimate dual use of the
+    same table, same conceptual shape `ResponsibilitySignup` already has for
+    its own two write-paths (self-signup vs. admin-assigned).
+
+    `user_id`/`guest_name` are mutually exclusive, same precedent as
+    `ResponsibilitySignup.guest_name`: an interest-mode self-signup, or a
+    roster entry for an actual group member, has `user_id` set and
+    `guest_name` null; a roster entry for someone with no Divisi account at
+    all (e.g. a board member who never joined the group) has `user_id` null
+    and `guest_name` set instead. The `(role_id, user_id)` unique constraint
+    only ever fires for the `user_id` case (Postgres treats NULLs as
+    distinct), so nothing stops two identical `guest_name`s on the same
+    role, the same accepted gap `ResponsibilitySignup`'s own docstring
+    already documents for itself.
+
+    `text_value` is only ever set when the role's `has_text_field` is true
+    (an `interest`-mode-only concept); toggling that flag off nulls out any
+    existing values (see `update_role` in the routes). `contact` is the
+    roster mirror: a single free-text field (e.g. an email or phone number)
+    an admin can attach to a roster entry, shown alongside its name when the
+    role is member-visible. Never set by any self-signup path, only ever
+    meaningful on a `roster`-mode role's entries."""
 
     __tablename__ = "team_signups"
     __table_args__ = (UniqueConstraint("role_id", "user_id", name="uq_team_signup"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     role_id: Mapped[str] = mapped_column(String, ForeignKey("team_roles.id"), index=True, nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
+    guest_name: Mapped[str | None] = mapped_column(String, nullable=True)
     text_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
