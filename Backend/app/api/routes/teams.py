@@ -28,8 +28,10 @@ from app.api.deps import get_current_user, get_current_user_optional, get_option
 from app.api.schemas import (
     TeamAdminOut,
     TeamCreate,
+    TeamMove,
     TeamOut,
     TeamRoleCreate,
+    TeamRoleMove,
     TeamRoleOut,
     TeamRoleUpdate,
     TeamSignupCreate,
@@ -134,6 +136,39 @@ def update_team(
     return team_admin_out(team, current_user, db)
 
 
+@router.post("/teams/{team_id}/move", response_model=TeamAdminOut)
+def move_team(
+    team_id: str,
+    payload: TeamMove,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TeamAdminOut:
+    """Swaps this team's `sort_order` with its neighbor's, `up` toward the
+    front of the group's team list or `down` toward the back, a no-op (200,
+    unchanged) at either end. Loads every team in the group in the exact
+    same order `list_teams`/`sort_order.asc(), created_at.asc()` uses, so
+    "the adjacent team" always means the one actually next to it on
+    screen. Swapping the two rows' `sort_order` values (rather than
+    renumbering the whole list) keeps every other team's position
+    untouched."""
+    team = _get_team_or_404(team_id, db)
+    require_admin(team.group_id, current_user, db)
+    ordered = (
+        db.query(Team)
+        .filter(Team.group_id == team.group_id)
+        .order_by(Team.sort_order.asc(), Team.created_at.asc())
+        .all()
+    )
+    index = next(i for i, t in enumerate(ordered) if t.id == team_id)
+    neighbor_index = index - 1 if payload.direction == "up" else index + 1
+    if 0 <= neighbor_index < len(ordered):
+        neighbor = ordered[neighbor_index]
+        team.sort_order, neighbor.sort_order = neighbor.sort_order, team.sort_order
+        db.commit()
+        db.refresh(team)
+    return team_admin_out(team, current_user, db)
+
+
 @router.delete("/teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_team(
     team_id: str,
@@ -206,6 +241,31 @@ def update_role(
         role.roster_visible_to_members = payload.roster_visible_to_members
     db.commit()
     db.refresh(role)
+    return role_out(role, current_user, is_admin=True, db=db)
+
+
+@router.post("/teams/roles/{role_id}/move", response_model=TeamRoleOut)
+def move_role(
+    role_id: str,
+    payload: TeamRoleMove,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TeamRoleOut:
+    """The role-level mirror of `move_team`, scoped to the roles within this
+    role's own team (not the whole group), same neighbor-swap, same no-op
+    at either end, same "load in the exact order the list route uses"
+    reasoning."""
+    role = _get_role_or_404(role_id, db)
+    team = _get_team_or_404(role.team_id, db)
+    require_admin(team.group_id, current_user, db)
+    ordered = roles_for_team(role.team_id, db)
+    index = next(i for i, r in enumerate(ordered) if r.id == role_id)
+    neighbor_index = index - 1 if payload.direction == "up" else index + 1
+    if 0 <= neighbor_index < len(ordered):
+        neighbor = ordered[neighbor_index]
+        role.sort_order, neighbor.sort_order = neighbor.sort_order, role.sort_order
+        db.commit()
+        db.refresh(role)
     return role_out(role, current_user, is_admin=True, db=db)
 
 

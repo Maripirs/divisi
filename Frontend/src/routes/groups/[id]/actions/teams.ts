@@ -73,6 +73,24 @@ export const teamActions = {
 		);
 	},
 
+	// Admin-only. Swaps this team's `sort_order` with its neighbor's on the
+	// Backend (`POST /teams/{id}/move`); a no-op at either end of the list.
+	// A plain `use:enhance` submit (no custom callback) already re-runs this
+	// page's `load` on success, so the reordered list shows up with no
+	// extra `invalidateAll()` needed here.
+	moveTeam: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const teamId = String(form.get('teamId') ?? '');
+		const direction = String(form.get('direction') ?? '');
+		if (!teamId || (direction !== 'up' && direction !== 'down')) {
+			return fail(400, { error: m.groups_missing_team(), form: 'editTeam' });
+		}
+
+		return runAction('editTeam', () =>
+			backendFetch(locals.token, `/teams/${teamId}/move`, { method: 'POST', body: JSON.stringify({ direction }) }, fetch)
+		);
+	},
+
 	// Admin-only. Cascades on the Backend (the team's roles and their
 	// signups go with it) — the confirm step lives entirely in the UI
 	// (`ConfirmButton`), same as every other destructive action on this page.
@@ -120,6 +138,26 @@ export const teamActions = {
 				locals.token,
 				`/teams/roles/${roleId}`,
 				{ method: 'PATCH', body: JSON.stringify({ name, ...teamRoleModeBody(form) }) },
+				fetch
+			)
+		);
+	},
+
+	// Admin-only. The role-level mirror of `moveTeam`, scoped to roles
+	// within one team on the Backend (`POST /teams/roles/{id}/move`).
+	moveTeamRole: async ({ request, locals, fetch }) => {
+		const form = await request.formData();
+		const roleId = String(form.get('roleId') ?? '');
+		const direction = String(form.get('direction') ?? '');
+		if (!roleId || (direction !== 'up' && direction !== 'down')) {
+			return fail(400, { error: m.groups_missing_role(), form: 'editTeam' });
+		}
+
+		return runAction('editTeam', () =>
+			backendFetch(
+				locals.token,
+				`/teams/roles/${roleId}/move`,
+				{ method: 'POST', body: JSON.stringify({ direction }) },
 				fetch
 			)
 		);

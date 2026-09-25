@@ -9,10 +9,16 @@ callers get which, and for how `TeamRoleOut.signups` is populated
 differently per caller and per role's `mode`/`roster_visible_to_members`."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 from app.db.models import TeamRoleMode
+
+# Plain `Literal`, same convention `app/api/schemas/piece_markup.py`'s
+# `MarkKind`/`MarkScope` already use for a small fixed string set that
+# doesn't need its own DB-backed enum.
+MoveDirection = Literal["up", "down"]
 
 
 class TeamSignupCreate(BaseModel):
@@ -106,6 +112,22 @@ class TeamUpdate(BaseModel):
     contact_phone: str | None = None
     contact_show_email: bool | None = None
     contact_show_phone: bool | None = None
+
+
+class TeamMove(BaseModel):
+    """Swaps `Team.sort_order` with the adjacent team's, `up` toward the
+    front of the list or `down` toward the back. See
+    `app/api/routes/teams.py`'s `move_team` for the actual swap; a no-op
+    (200, unchanged) at either end of the list."""
+
+    direction: MoveDirection
+
+
+class TeamRoleMove(BaseModel):
+    """The role-level mirror of `TeamMove`, scoped to roles within one
+    team (see `move_role`)."""
+
+    direction: MoveDirection
 
 
 class TeamOut(BaseModel):

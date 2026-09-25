@@ -746,6 +746,10 @@
 	"teams_roster_contact_placeholder": "Contact (optional)",
 	"teams_roster_add_button": "+ Add",
 	"teams_roster_entry_with_contact": "{name} ({contact})",
+	"teams_move_team_up": "Move team up",
+	"teams_move_team_down": "Move team down",
+	"teams_move_role_up": "Move role up",
+	"teams_move_role_down": "Move role down",
 
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",

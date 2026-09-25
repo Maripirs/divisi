@@ -746,6 +746,10 @@
 	"teams_roster_contact_placeholder": "Contacto (opcional)",
 	"teams_roster_add_button": "+ Añadir",
 	"teams_roster_entry_with_contact": "{name} ({contact})",
+	"teams_move_team_up": "Subir equipo",
+	"teams_move_team_down": "Bajar equipo",
+	"teams_move_role_up": "Subir tarea",
+	"teams_move_role_down": "Bajar tarea",
 
 	"error_404_title": "Página no encontrada",
 	"error_403_title": "No permitido",

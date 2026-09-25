@@ -50,6 +50,17 @@ def _add_role(client, admin_headers, team_id, name="Submit to media outlets", ha
     ).json()
 
 
+def _team_order(client, admin_headers, group_id):
+    listing = client.get("/groups/" + group_id + "/teams", headers=admin_headers).json()
+    return [t["id"] for t in listing]
+
+
+def _role_order(client, admin_headers, group_id, team_id):
+    listing = client.get("/groups/" + group_id + "/teams", headers=admin_headers).json()
+    team = next(t for t in listing if t["id"] == team_id)
+    return [r["id"] for r in team["roles"]]
+
+
 def test_admin_can_create_team_with_contact_and_roles(client):
     admin_headers = _register_and_login(client, "team-admin1@example.com")
     group = _make_group(client, admin_headers)
@@ -468,3 +479,123 @@ def test_member_can_self_remove_own_roster_entry_admin_only_removes_guest_name_e
     # The admin can remove it.
     admin_remove = client.delete("/teams/signups/" + guest_entry["id"], headers=admin_headers)
     assert admin_remove.status_code == 204
+
+
+def test_move_team_up_and_down_swaps_only_the_neighbor(client):
+    admin_headers = _register_and_login(client, "team-admin21@example.com")
+    group = _make_group(client, admin_headers)
+    a = _make_team(client, admin_headers, group["id"], name="A")
+    b = _make_team(client, admin_headers, group["id"], name="B")
+    c = _make_team(client, admin_headers, group["id"], name="C")
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"], c["id"]]
+
+    # Moving the middle team up swaps it with its predecessor; the third
+    # team's position is untouched.
+    move_up = client.post("/teams/" + b["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+    assert move_up.status_code == 200
+    assert _team_order(client, admin_headers, group["id"]) == [b["id"], a["id"], c["id"]]
+
+    # Moving it back down restores the original order.
+    move_down = client.post("/teams/" + b["id"] + "/move", json={"direction": "down"}, headers=admin_headers)
+    assert move_down.status_code == 200
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"], c["id"]]
+
+    # Moving the last team up swaps it with the middle one; the first
+    # team's position is untouched.
+    move_c_up = client.post("/teams/" + c["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+    assert move_c_up.status_code == 200
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], c["id"], b["id"]]
+
+
+def test_move_team_is_noop_at_either_end(client):
+    admin_headers = _register_and_login(client, "team-admin22@example.com")
+    group = _make_group(client, admin_headers)
+    a = _make_team(client, admin_headers, group["id"], name="A")
+    b = _make_team(client, admin_headers, group["id"], name="B")
+
+    no_op_up = client.post("/teams/" + a["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+    assert no_op_up.status_code == 200
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"]]
+
+    no_op_down = client.post("/teams/" + b["id"] + "/move", json={"direction": "down"}, headers=admin_headers)
+    assert no_op_down.status_code == 200
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"]]
+
+
+def test_move_role_up_and_down_swaps_only_the_neighbor(client):
+    admin_headers = _register_and_login(client, "team-admin24@example.com")
+    group = _make_group(client, admin_headers)
+    team = _make_team(client, admin_headers, group["id"])
+    r1 = _add_role(client, admin_headers, team["id"], name="R1")
+    r2 = _add_role(client, admin_headers, team["id"], name="R2")
+    r3 = _add_role(client, admin_headers, team["id"], name="R3")
+    assert _role_order(client, admin_headers, group["id"], team["id"]) == [r1["id"], r2["id"], r3["id"]]
+
+    move_up = client.post("/teams/roles/" + r2["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+    assert move_up.status_code == 200
+    assert _role_order(client, admin_headers, group["id"], team["id"]) == [r2["id"], r1["id"], r3["id"]]
+
+    move_down = client.post("/teams/roles/" + r2["id"] + "/move", json={"direction": "down"}, headers=admin_headers)
+    assert move_down.status_code == 200
+    assert _role_order(client, admin_headers, group["id"], team["id"]) == [r1["id"], r2["id"], r3["id"]]
+
+
+def test_move_role_is_noop_at_either_end(client):
+    admin_headers = _register_and_login(client, "team-admin25@example.com")
+    group = _make_group(client, admin_headers)
+    team = _make_team(client, admin_headers, group["id"])
+    r1 = _add_role(client, admin_headers, team["id"], name="R1")
+    r2 = _add_role(client, admin_headers, team["id"], name="R2")
+
+    no_op_up = client.post("/teams/roles/" + r1["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+    assert no_op_up.status_code == 200
+    assert _role_order(client, admin_headers, group["id"], team["id"]) == [r1["id"], r2["id"]]
+
+    no_op_down = client.post("/teams/roles/" + r2["id"] + "/move", json={"direction": "down"}, headers=admin_headers)
+    assert no_op_down.status_code == 200
+    assert _role_order(client, admin_headers, group["id"], team["id"]) == [r1["id"], r2["id"]]
+
+
+def test_move_role_only_reorders_within_its_own_team(client):
+    """There's no `team_id` in `TeamRoleMove`'s payload (just `direction`);
+    a role's move is always scoped to `roles_for_team(role.team_id, ...)`,
+    so a role can never be swapped against another team's role even though
+    the route only takes a bare role id. Verified here by moving a role on
+    a second team and confirming the first team's own role order (and role
+    count) is untouched."""
+    admin_headers = _register_and_login(client, "team-admin26@example.com")
+    group = _make_group(client, admin_headers)
+    team_a = _make_team(client, admin_headers, group["id"], name="Team A")
+    team_b = _make_team(client, admin_headers, group["id"], name="Team B")
+    a1 = _add_role(client, admin_headers, team_a["id"], name="A1")
+    a2 = _add_role(client, admin_headers, team_a["id"], name="A2")
+    b1 = _add_role(client, admin_headers, team_b["id"], name="B1")
+    b2 = _add_role(client, admin_headers, team_b["id"], name="B2")
+
+    client.post("/teams/roles/" + b2["id"] + "/move", json={"direction": "up"}, headers=admin_headers)
+
+    assert _role_order(client, admin_headers, group["id"], team_a["id"]) == [a1["id"], a2["id"]]
+    assert _role_order(client, admin_headers, group["id"], team_b["id"]) == [b2["id"], b1["id"]]
+
+
+def test_non_admin_cannot_move_team_or_role(client):
+    admin_headers = _register_and_login(client, "team-admin27@example.com")
+    member_headers = _register_and_login(client, "team-member27@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "team-member27@example.com")
+    a = _make_team(client, admin_headers, group["id"], name="A")
+    b = _make_team(client, admin_headers, group["id"], name="B")
+    role = _add_role(client, admin_headers, a["id"])
+
+    forbidden_team = client.post(
+        "/teams/" + b["id"] + "/move", json={"direction": "up"}, headers=member_headers
+    )
+    assert forbidden_team.status_code == 403
+
+    forbidden_role = client.post(
+        "/teams/roles/" + role["id"] + "/move", json={"direction": "down"}, headers=member_headers
+    )
+    assert forbidden_role.status_code == 403
+
+    # Nothing moved.
+    assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"]]

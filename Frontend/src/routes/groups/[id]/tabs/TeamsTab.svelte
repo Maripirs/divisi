@@ -248,6 +248,52 @@
 		return knownContacts.find((c) => c.name.toLowerCase() === key);
 	}
 
+	interface KnownRosterContact {
+		name: string;
+		contact: string;
+	}
+
+	// Same convenience for a roster entry's single free-text "contact" field:
+	// deduped by name across both a team's own contact (email/phone joined
+	// into one string, matching the roster field's own shape) and every
+	// roster entry's own `contact` already typed in anywhere in this group,
+	// so naming someone who's already a team contact or an existing roster
+	// member elsewhere fills their contact in instead of retyping it.
+	let knownRosterContacts = $derived.by((): KnownRosterContact[] => {
+		if (mode !== 'admin') return [];
+		const byName = new Map<string, string>();
+		for (const t of teams as TeamAdminOut[]) {
+			if (t.contact_name) {
+				const joined = [t.contact_email, t.contact_phone].filter((v) => !!v).join(' · ');
+				if (joined) byName.set(t.contact_name.toLowerCase(), joined);
+			}
+			for (const r of t.roles) {
+				for (const s of r.signups) {
+					if (s.name && s.contact) byName.set(s.name.toLowerCase(), s.contact);
+				}
+			}
+		}
+		return [...byName.entries()].map(([key, contact]) => {
+			const original =
+				(teams as TeamAdminOut[])
+					.flatMap((t) => [t.contact_name, ...t.roles.flatMap((r) => r.signups.map((s) => s.name))])
+					.find((n) => n?.toLowerCase() === key) ?? key;
+			return { name: original, contact };
+		});
+	});
+
+	function findKnownRosterContact(name: string): KnownRosterContact | undefined {
+		const key = name.trim().toLowerCase();
+		if (!key) return undefined;
+		return knownRosterContacts.find((c) => c.name.toLowerCase() === key);
+	}
+
+	function onRosterEntryNameInput(roleId: string, value: string) {
+		newRosterEntryName[roleId] = value;
+		const known = findKnownRosterContact(value);
+		if (known) newRosterEntryContact[roleId] = known.contact;
+	}
+
 	let showAddTeam = $state(false);
 	let creatingTeam = $state(false);
 	let newTeamName = $state('');
@@ -388,11 +434,18 @@
 	</div>
 
 	{#if mode === 'admin'}
-		<!-- Backs both contact-name inputs' `list="team-known-contacts"` --
-		     picking (or matching) a name here reuses that contact's
-		     email/phone, see `onNewContactNameInput`/`onEditContactNameInput`. -->
+		<!-- Backs the team contact-name inputs' and the roster entry name
+		     inputs' shared `list="team-known-contacts"` -- picking (or
+		     matching) a name here reuses that person's contact info instead
+		     of retyping it, see `onNewContactNameInput`/
+		     `onEditContactNameInput`/`onRosterEntryNameInput`. Options from
+		     both sources (team contacts and existing roster entries) so
+		     either kind of field can suggest a name known from the other. -->
 		<datalist id="team-known-contacts">
 			{#each knownContacts as c (c.name)}
+				<option value={c.name}></option>
+			{/each}
+			{#each knownRosterContacts as c (c.name)}
 				<option value={c.name}></option>
 			{/each}
 		</datalist>
@@ -533,7 +586,7 @@
 		     screens, since this one isn't that: a data table/roster, not the
 		     survey-style flow the member view above avoids. -->
 		<div class="card-grid">
-			{#each teams as t (t.id)}
+			{#each teams as t, tIndex (t.id)}
 				{@const contactText = contactDisplayText(t.contact_name, t.contact_email, t.contact_phone)}
 				<section class="card team-card">
 				<button
@@ -613,6 +666,25 @@
 				{:else}
 					{@const admin = t as TeamAdminOut}
 					<div class="btn-row">
+						<form method="POST" action="?/moveTeam" use:enhance>
+							<input type="hidden" name="teamId" value={t.id} />
+							<input type="hidden" name="direction" value="up" />
+							<button type="submit" class="text-link" disabled={tIndex === 0} aria-label={m.teams_move_team_up()}>
+								↑
+							</button>
+						</form>
+						<form method="POST" action="?/moveTeam" use:enhance>
+							<input type="hidden" name="teamId" value={t.id} />
+							<input type="hidden" name="direction" value="down" />
+							<button
+								type="submit"
+								class="text-link"
+								disabled={tIndex === teams.length - 1}
+								aria-label={m.teams_move_team_down()}
+							>
+								↓
+							</button>
+						</form>
 						<button type="button" class="text-link" onclick={() => startEditTeam(admin)}>{m.drawer_edit()}</button>
 						<ConfirmButton>
 							{#snippet trigger(start)}
@@ -636,7 +708,7 @@
 							<p class="card-note">{m.teams_no_roles_yet()}</p>
 						{/if}
 
-						{#each t.roles as r (r.id)}
+						{#each t.roles as r, rIndex (r.id)}
 							<div class="team-role-admin">
 								{#if editingRoleId === r.id}
 									<form
@@ -676,6 +748,30 @@
 												>{/if}</span
 										>
 										<div class="btn-row">
+											<form method="POST" action="?/moveTeamRole" use:enhance>
+												<input type="hidden" name="roleId" value={r.id} />
+												<input type="hidden" name="direction" value="up" />
+												<button
+													type="submit"
+													class="text-link"
+													disabled={rIndex === 0}
+													aria-label={m.teams_move_role_up()}
+												>
+													↑
+												</button>
+											</form>
+											<form method="POST" action="?/moveTeamRole" use:enhance>
+												<input type="hidden" name="roleId" value={r.id} />
+												<input type="hidden" name="direction" value="down" />
+												<button
+													type="submit"
+													class="text-link"
+													disabled={rIndex === t.roles.length - 1}
+													aria-label={m.teams_move_role_down()}
+												>
+													↓
+												</button>
+											</form>
 											<button type="button" class="text-link" onclick={() => startEditRole(r)}>{m.drawer_edit()}</button>
 											<form method="POST" action="?/deleteTeamRole" use:enhance>
 												<input type="hidden" name="roleId" value={r.id} />
@@ -717,8 +813,10 @@
 										<div class="field">
 											<input
 												name="name"
-												bind:value={newRosterEntryName[r.id]}
+												value={newRosterEntryName[r.id] ?? ''}
+												oninput={(e) => onRosterEntryNameInput(r.id, e.currentTarget.value)}
 												placeholder={m.teams_roster_name_placeholder()}
+												list="team-known-contacts"
 												required
 											/>
 										</div>
@@ -934,9 +1032,15 @@
 
 	/* The add-role row grows a mode picker (and, for roster mode, a
 	   visibility checkbox) alongside the name field: wrap instead of
-	   squeezing everything onto one line once there's no room. */
+	   squeezing everything onto one line once there's no room.
+	   `align-items: flex-end` (overriding `.role-row`'s own `center`): the
+	   mode picker's `<label class="field">` stacks a "Sign-up type" span
+	   above its `<select>`, taller than the plain, label-less "Role" input
+	   beside it -- centering the two against those mismatched heights left
+	   the role input floating above the select instead of lined up with it. */
 	.role-row-with-mode {
 		flex-wrap: wrap;
+		align-items: flex-end;
 	}
 
 	/* One bordered box per role, holding both the toggle button and (for a
