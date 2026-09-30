@@ -59,7 +59,7 @@
 		<div class="carpool-interests">
 			{#each post.interests as interest (interest.id)}
 				<div class="carpool-interest">
-					<p class="card-meta carpool-post-status">{interest.display_name}</p>
+					<p class="card-meta carpool-post-status">{m.carpool_interest_offer({ name: interest.display_name })}</p>
 					<!-- B34: same gated, render-as-is contact info as the seat claims
 					     above. -->
 					{@render contactInfo(interest.contact_phone, interest.contact_email)}

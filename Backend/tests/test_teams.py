@@ -599,3 +599,109 @@ def test_non_admin_cannot_move_team_or_role(client):
 
     # Nothing moved.
     assert _team_order(client, admin_headers, group["id"]) == [a["id"], b["id"]]
+
+
+def _team_out_for(client, headers, group_id, team_id):
+    listing = client.get("/groups/" + group_id + "/teams", headers=headers).json()
+    return next(t for t in listing if t["id"] == team_id)
+
+
+def test_visible_roster_count_counts_distinct_people_across_visible_roster_roles(client):
+    admin_headers = _register_and_login(client, "team-admin28@example.com")
+    member_headers = _register_and_login(client, "team-member28@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "team-member28@example.com")
+    team = _make_team(client, admin_headers, group["id"])
+    president = _add_role(
+        client, admin_headers, team["id"], name="President", mode="roster", roster_visible_to_members=True
+    )
+    treasurer = _add_role(
+        client, admin_headers, team["id"], name="Treasurer", mode="roster", roster_visible_to_members=True
+    )
+    client.post(
+        "/teams/roles/" + president["id"] + "/signups", json={"name": "Jane Doe"}, headers=admin_headers
+    )
+    client.post(
+        "/teams/roles/" + treasurer["id"] + "/signups", json={"name": "John Smith"}, headers=admin_headers
+    )
+
+    member_view = _team_out_for(client, member_headers, group["id"], team["id"])
+    assert member_view["visible_roster_count"] == 2
+
+
+def test_hidden_roster_role_never_contributes_to_visible_roster_count(client):
+    admin_headers = _register_and_login(client, "team-admin29@example.com")
+    member_headers = _register_and_login(client, "team-member29@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "team-member29@example.com")
+    team = _make_team(client, admin_headers, group["id"])
+    hidden_role = _add_role(
+        client, admin_headers, team["id"], name="Board Member", mode="roster", roster_visible_to_members=False
+    )
+    client.post(
+        "/teams/roles/" + hidden_role["id"] + "/signups", json={"name": "Secret Sam"}, headers=admin_headers
+    )
+
+    member_view = _team_out_for(client, member_headers, group["id"], team["id"])
+    assert member_view["visible_roster_count"] == 0
+
+    # The admin's own view of the same public aggregate agrees: a hidden
+    # role's entries don't count even for the admin, this is a genuine
+    # "nothing visible here" count, not a caller-dependent one.
+    admin_view = _team_out_for(client, admin_headers, group["id"], team["id"])
+    assert admin_view["visible_roster_count"] == 0
+
+
+def test_one_person_holding_two_visible_roster_roles_counts_once(client):
+    admin_headers = _register_and_login(client, "team-admin30@example.com")
+    member_headers = _register_and_login(client, "team-member30@example.com", name="Same Person")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "team-member30@example.com")
+    team = _make_team(client, admin_headers, group["id"])
+    role_1 = _add_role(
+        client, admin_headers, team["id"], name="President", mode="roster", roster_visible_to_members=True
+    )
+    role_2 = _add_role(
+        client, admin_headers, team["id"], name="Treasurer", mode="roster", roster_visible_to_members=True
+    )
+
+    members = client.get("/groups/" + group["id"] + "/members", headers=admin_headers).json()
+    member_id = next(m["user_id"] for m in members if m["email"] == "team-member30@example.com")
+    client.post("/teams/roles/" + role_1["id"] + "/signups", json={"user_id": member_id}, headers=admin_headers)
+    client.post("/teams/roles/" + role_2["id"] + "/signups", json={"user_id": member_id}, headers=admin_headers)
+
+    member_view = _team_out_for(client, member_headers, group["id"], team["id"])
+    assert member_view["visible_roster_count"] == 1
+
+
+def test_interested_count_on_team_out_counts_distinct_interested_people(client):
+    admin_headers = _register_and_login(client, "team-admin31@example.com")
+    member_a = _register_and_login(client, "team-a31@example.com", name="Alice")
+    member_b = _register_and_login(client, "team-b31@example.com", name="Bob")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "team-a31@example.com")
+    _add_member(client, admin_headers, group["id"], "team-b31@example.com")
+    team = _make_team(client, admin_headers, group["id"])
+    role_1 = _add_role(client, admin_headers, team["id"], name="Role One")
+    role_2 = _add_role(client, admin_headers, team["id"], name="Role Two")
+
+    # Alice signs up for both roles; Bob signs up for one. Two distinct
+    # people, three total signups.
+    client.post("/teams/roles/" + role_1["id"] + "/signups", json={}, headers=member_a)
+    client.post("/teams/roles/" + role_2["id"] + "/signups", json={}, headers=member_a)
+    client.post("/teams/roles/" + role_1["id"] + "/signups", json={}, headers=member_b)
+
+    # `interested_count` now lives on the plain member-facing `TeamOut`, not
+    # just the admin shape.
+    member_view = _team_out_for(client, member_a, group["id"], team["id"])
+    assert member_view["interested_count"] == 2
+
+
+def test_team_with_no_roster_roles_reports_zero_visible_roster_count(client):
+    admin_headers = _register_and_login(client, "team-admin32@example.com")
+    group = _make_group(client, admin_headers)
+    team = _make_team(client, admin_headers, group["id"])
+    _add_role(client, admin_headers, team["id"], mode="interest")
+
+    listing = client.get("/groups/" + group["id"] + "/teams", headers=admin_headers).json()
+    assert listing[0]["visible_roster_count"] == 0

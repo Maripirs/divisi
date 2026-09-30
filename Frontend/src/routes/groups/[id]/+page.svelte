@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import RoleSwitch from '$lib/components/RoleSwitch.svelte';
 	import GroupGuestGate from '$lib/components/GroupGuestGate.svelte';
@@ -30,6 +31,25 @@
 	// view even for an admin, per the human's call on this doc's own open
 	// question ("member or admin view by default?").
 	let mode = $state<'member' | 'admin'>(page.url.searchParams.get('view') === 'admin' ? 'admin' : 'member');
+
+	// B35: the role switch used to be pure client state — it flipped `mode`
+	// (driving tab visibility, `groupTabs.ts`) but never touched the URL, so
+	// the already-fetched page data (carpool posts, in particular — see
+	// `+page.server.ts`) kept whatever redaction the *real* admin's initial
+	// fetch got, regardless of which mode the toggle showed. Writing `view`
+	// back into the URL makes `goto` re-run this page's (and its layout's)
+	// `load` functions — they already read `url.searchParams`, so no
+	// `invalidate()` call is needed — which is what makes admin-only data
+	// actually follow the toggle instead of just the tab strip. `mode` is
+	// still updated locally too, for instant tab-strip feedback while the
+	// (brief) navigation is in flight.
+	function switchMode() {
+		const next = mode === 'admin' ? 'member' : 'admin';
+		mode = next;
+		const url = new URL(page.url);
+		url.searchParams.set('view', next);
+		goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
 	// `data.gate`: a logged-out visitor on a password-gated group's bare link
 	// (`+layout.server.ts`'s `resolveGroupGuestGate`), where the
 	// `<GroupGuestGate>` card in the markup is the entire page. A truthiness
@@ -123,7 +143,7 @@
 	{/if}
 
 	{#if isAdmin}
-		<RoleSwitch {mode} onSwitch={() => (mode = mode === 'admin' ? 'member' : 'admin')} />
+		<RoleSwitch {mode} onSwitch={switchMode} />
 	{/if}
 
 	<!-- F38: `.tab-strip` keeps this one row on mobile (horizontal scroll)

@@ -3,8 +3,7 @@
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
-	import { groupByLabel } from '$lib/components/groupCards';
-	import { formatCalendarDate, isPastDueDate } from '$lib/utils/dates';
+	import { groupHomeworkByDueDate } from '$lib/components/groupCards';
 	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
 
@@ -61,25 +60,14 @@
 		if (typeof id === 'string') homework = homework.filter((hw) => hw.id !== id);
 	}
 
-	// Past due date -> collapsed below the active list, same current/past
-	// split ResponsibilitiesTab already does for dates (`isUpcoming`/
-	// `pastDates` there). No due date at all reads as "still relevant"
-	// (open-ended), so only a due date that's actually passed counts as
-	// past; the Home page's own feed (`routes/home/+page.server.ts`) takes
-	// the same stance to decide what still surfaces there at all.
-	const isPastDue = (hw: { due_date: string | null }) => hw.due_date !== null && isPastDueDate(hw.due_date);
-	let currentHomework = $derived(homework.filter((hw) => !isPastDue(hw)));
-	// Reversed so the most recently due item leads, same convention
-	// `partitionDatesByUpcoming` uses for past responsibility dates.
-	let pastHomework = $derived(homework.filter(isPastDue).reverse());
-
-	// One header per run of same-due-date homework, same treatment Home's
-	// own "For next rehearsal" card uses (`groupByLabel` in `groupCards.ts`)
-	// — `currentHomework` keeps the Backend's oldest-first order, `pastHomework`
-	// is reversed to newest-first above.
-	const dueDateLabel = (hw: { due_date: string | null }) => formatCalendarDate(hw.due_date, m.home_no_due_date());
-	let currentHomeworkGroups = $derived(groupByLabel(currentHomework, dueDateLabel));
-	let pastHomeworkGroups = $derived(groupByLabel(pastHomework, dueDateLabel));
+	// Past due date -> collapsed below the active list, current/past split +
+	// one-header-per-due-date grouping both shared with the guest join
+	// page's identical treatment (`groupHomeworkByDueDate` in
+	// `groupCards.ts` — see its own doc comment for the "no due date reads
+	// as still relevant" stance and why `past` comes back reversed).
+	let { current: currentHomework, past: pastHomework, currentGroups: currentHomeworkGroups, pastGroups: pastHomeworkGroups } = $derived(
+		groupHomeworkByDueDate(homework, (hw) => hw.due_date, m.home_no_due_date())
+	);
 </script>
 
 {#snippet homeworkRow(hw: (typeof data.homework)[number])}

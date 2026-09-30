@@ -29,6 +29,11 @@ driver (see `app.services.carpool.serialize_post`).
 B32: `direction` (there/back/round_trip) is a plain content field on
 `CarpoolPost` handled the same way `leave_time_text`/`notes` are; `list_posts`
 gains an optional `direction` query param filter (see that function).
+
+B35: `list_posts` also takes an optional `as_member` flag so a real admin
+can preview the board exactly as a plain member would (same posts, same
+contact redaction), backing the frontend's "preview as member" role
+switch. See that function's own docstring.
 """
 
 from __future__ import annotations
@@ -345,19 +350,33 @@ def create_post(
 def list_posts(
     event_id: str,
     direction: CarpoolPostDirection | None = None,
+    as_member: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[CarpoolPostOut]:
     """B32: `direction` is an optional filter for splitting the board into
     "on the way there" / "on the way back" views. A `round_trip` post
     always matches either filter, alongside the exact-direction match; no
-    `direction` param at all means no filtering, unchanged behavior."""
+    `direction` param at all means no filtering, unchanged behavior.
+
+    B35: `as_member` lets a real admin ask for exactly what a plain member
+    would see -- the frontend's "preview as member" role switch
+    (`+page.svelte`'s `mode`) needs the *data* to actually follow that
+    toggle, not just which tabs/buttons render. It only ever narrows access:
+    real gating (`require_member`/`require_member_page_access` above) is
+    still based on the caller's actual role, and `effective_is_admin` is
+    used everywhere `is_admin` previously was -- both the hidden-post
+    filter and the contact-info redaction `serialize_posts` applies -- so an
+    admin passing `as_member=True` gets byte-for-byte the same shape a
+    genuine non-admin member's request would. A non-admin passing
+    `as_member=True` is a no-op, they're already not admin."""
     event = _get_event_or_404(event_id, db)
     require_member(event.group_id, current_user, db)
     require_member_page_access(event.group_id, GroupPage.carpool, current_user.id, db)
     is_admin = is_group_admin(event.group_id, current_user, db)
+    effective_is_admin = is_admin and not as_member
     query = db.query(CarpoolPost).filter(CarpoolPost.event_id == event_id)
-    if not is_admin:
+    if not effective_is_admin:
         # Hidden/cancelled posts are moderated-out or withdrawn: a regular
         # member sees only the active list, same "moderation is invisible
         # to those it's not for" shape as elsewhere in this codebase. An
@@ -367,7 +386,7 @@ def list_posts(
     if direction is not None:
         query = query.filter(CarpoolPost.direction.in_([direction, CarpoolPostDirection.round_trip]))
     posts = query.order_by(CarpoolPost.created_at.asc()).all()
-    return serialize_posts(posts, db, viewer_user_id=current_user.id, viewer_is_admin=is_admin)
+    return serialize_posts(posts, db, viewer_user_id=current_user.id, viewer_is_admin=effective_is_admin)
 
 
 @router.patch("/carpool/posts/{post_id}", response_model=CarpoolPostOut)

@@ -9,10 +9,56 @@ entry has no `user_id` at all, and an inner join would silently drop it."""
 
 from __future__ import annotations
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.schemas.teams import TeamAdminOut, TeamOut, TeamRoleOut, TeamSignupOut
 from app.db.models import Team, TeamRole, TeamRoleMode, TeamSignup, User
+
+
+def _distinct_people_count(team_id: str, db: Session, role_filter) -> int:
+    """The count of distinct people signed up across this team's roles
+    matching `role_filter` (an extra SQLAlchemy filter clause on `TeamRole`,
+    e.g. `TeamRole.mode == TeamRoleMode.interest`). Identity is `user_id`
+    when set (so the same real member holding two matching roles on this
+    team only counts once), falling back to the signup's own row id for a
+    `guest_name`-only roster entry (no `user_id` at all): `COUNT(DISTINCT
+    user_id)` alone would silently collapse every such entry into at most
+    one, since SQL's `DISTINCT` folds every `NULL` together. Using the row
+    id as a per-row fallback identity means two different guest-name
+    entries still count as two different people (the same "no name-
+    collision check" gap `TeamSignup`'s own docstring already accepts, just
+    not an undercount)."""
+    identity = func.coalesce(TeamSignup.user_id, TeamSignup.id)
+    return (
+        db.query(identity)
+        .join(TeamRole, TeamSignup.role_id == TeamRole.id)
+        .filter(TeamRole.team_id == team_id, role_filter)
+        .distinct()
+        .count()
+    )
+
+
+def interested_count_for_team(team_id: str, db: Session) -> int:
+    """Distinct people across this team's `interest`-mode roles' signups.
+    A public aggregate (see `TeamOut.interested_count`): safe for any
+    caller, individual identities/which-role-each-person-picked stay
+    exactly as private as they already are."""
+    return _distinct_people_count(team_id, db, TeamRole.mode == TeamRoleMode.interest)
+
+
+def visible_roster_count_for_team(team_id: str, db: Session) -> int:
+    """Distinct people across this team's roster-mode roles that are
+    actually visible to members (`roster_visible_to_members` true). A
+    *hidden* roster role's entries must never contribute here, even to a
+    plain count with no names attached: a member seeing a nonzero count
+    derived from a role they can't otherwise see at all would leak that
+    role's existence."""
+    return _distinct_people_count(
+        team_id,
+        db,
+        (TeamRole.mode == TeamRoleMode.roster) & (TeamRole.roster_visible_to_members.is_(True)),
+    )
 
 
 def roles_for_team(team_id: str, db: Session) -> list[TeamRole]:
@@ -103,6 +149,8 @@ def team_out(team: Team, actor: User | None, db: Session) -> TeamOut:
         contact_name=team.contact_name,
         contact_email=team.contact_email if team.contact_show_email else None,
         contact_phone=team.contact_phone if team.contact_show_phone else None,
+        visible_roster_count=visible_roster_count_for_team(team.id, db),
+        interested_count=interested_count_for_team(team.id, db),
         roles=[role_out(r, actor, is_admin=False, db=db) for r in roles_for_team(team.id, db)],
     )
 
@@ -119,5 +167,7 @@ def team_admin_out(team: Team, actor: User | None, db: Session) -> TeamAdminOut:
         contact_phone=team.contact_phone,
         contact_show_email=team.contact_show_email,
         contact_show_phone=team.contact_show_phone,
+        visible_roster_count=visible_roster_count_for_team(team.id, db),
+        interested_count=interested_count_for_team(team.id, db),
         roles=[role_out(r, actor, is_admin=True, db=db) for r in roles_for_team(team.id, db)],
     )

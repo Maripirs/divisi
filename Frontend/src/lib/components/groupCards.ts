@@ -4,6 +4,8 @@
 // snake_case member DTOs and camelCase guest DTOs respectively; each call
 // site maps its rows to these shapes so the card sees one thing.
 
+import { formatCalendarDate, isPastDueDate } from '$lib/utils/dates';
+
 export interface HomeworkCardItem {
 	id: string;
 	title: string;
@@ -119,6 +121,45 @@ export function groupByLabel<T>(
 		}
 	}
 	return groups;
+}
+
+/** Homework's current/past split + one-header-per-due-date grouping, in one
+ * call — the guest join page used to skip this entirely (a flat, ungrouped
+ * list) while the member Homework tab reimplemented it inline, so the two
+ * quietly drifted apart; this is the single shared version both now call,
+ * matching `partitionDatesByUpcoming`'s "one implementation, not two" shape
+ * for Responsibilities. `dueDateOf` reads each item's own due-date field
+ * (the member tab's raw Backend rows are still snake_case `due_date`, the
+ * guest DTO is already the normalized `HomeworkCardItem.dueDate` — same
+ * "caller's job to read its own shape" split `groupByLabel`'s `labelOf`
+ * already uses). No due date at all reads as "still relevant" (open-ended),
+ * so only a homework item whose due date has actually passed counts as
+ * past — same stance `routes/home/+page.server.ts`'s own feed takes on what
+ * still surfaces there. `current` stays oldest-first (the Backend's own
+ * order); `past` is reversed so the most recently due item leads. */
+export function groupHomeworkByDueDate<T>(
+	items: readonly T[],
+	dueDateOf: (item: T) => string | null,
+	noDueDateLabel: string
+): {
+	current: T[];
+	past: T[];
+	currentGroups: { label: string; items: T[] }[];
+	pastGroups: { label: string; items: T[] }[];
+} {
+	const isPast = (hw: T) => {
+		const due = dueDateOf(hw);
+		return due !== null && isPastDueDate(due);
+	};
+	const current = items.filter((hw) => !isPast(hw));
+	const past = items.filter(isPast).reverse();
+	const labelOf = (hw: T) => formatCalendarDate(dueDateOf(hw), noDueDateLabel);
+	return {
+		current,
+		past,
+		currentGroups: groupByLabel(current, labelOf),
+		pastGroups: groupByLabel(past, labelOf)
+	};
 }
 
 export function coverageTotals(

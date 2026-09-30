@@ -87,8 +87,21 @@ export const load: PageServerLoad = async ({ parent, locals, fetch, url }) => {
 		// `pages/[slug]/+page.server.ts` used (defaulting to the standing
 		// event via `selectDefaultCarpoolEventId`, not "first by `starts_at`").
 		const carpoolSelectedEventId = selectDefaultCarpoolEventId(carpoolEvents, url.searchParams.get('event'));
+		// B35: mirrors `+page.svelte`'s own `mode` default exactly (admin or
+		// not, `?view=admin` is the only thing that puts *either* of them into
+		// admin mode) — so a real admin's very first load (no `?view=` at all)
+		// gets the same contact-redacted "member" shape a plain member would,
+		// and only sees the unredacted admin shape once they've explicitly
+		// switched (or landed via a direct `?view=admin` link). A non-admin's
+		// `as_member=true` is a no-op on the Backend either way.
+		const asMember = url.searchParams.get('view') !== 'admin';
 		const carpoolPosts: CarpoolPostOut[] = carpoolSelectedEventId
-			? await backendJson<CarpoolPostOut[]>(locals.token, `/carpool/events/${carpoolSelectedEventId}/posts`, undefined, fetch)
+			? await backendJson<CarpoolPostOut[]>(
+					locals.token,
+					`/carpool/events/${carpoolSelectedEventId}/posts?as_member=${asMember}`,
+					undefined,
+					fetch
+				)
 			: [];
 
 		const tracks = library.filter((entry) => entry.owner_type === 'group' && entry.owner_id === group.id);

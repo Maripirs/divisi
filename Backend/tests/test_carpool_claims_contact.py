@@ -304,6 +304,51 @@ def test_rider_who_claims_seat_sees_driver_contact_phone_but_others_dont(client)
     assert post_other["contact_phone"] is None
 
 
+def test_admin_as_member_gets_same_contact_redaction_as_a_real_member(client):
+    """B35: `?as_member=true` extends past hidden-post filtering into
+    `serialize_posts`'s own contact redaction -- an admin previewing as a
+    member for an unmatched post sees `contact_phone`/`contact_email` as
+    `None`, exactly what `test_unmatched_member_never_sees_contact_phone`
+    asserts for a genuine non-admin."""
+    admin_headers = _register_and_login(client, "cp-asmemph1-admin@example.com")
+    owner_headers = _register_and_login(client, "cp-asmemph1-owner@example.com")
+    other_headers = _register_and_login(client, "cp-asmemph1-other@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-asmemph1-owner@example.com")
+    _add_member(client, admin_headers, group["id"], "cp-asmemph1-other@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    driver_post = client.post(
+        "/carpool/events/" + event["id"] + "/posts",
+        json=_driver_post(contact_phone="415-555-0400"),
+        headers=owner_headers,
+    ).json()
+    driver_post = client.patch(
+        "/carpool/posts/" + driver_post["id"],
+        json={"contact_email": "owner@example.com"},
+        headers=owner_headers,
+    ).json()
+
+    # Without the flag, the admin sees the real contact info (working as
+    # designed, per B30/moderation).
+    admin_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers).json()
+    admin_post = next(p for p in admin_view if p["id"] == driver_post["id"])
+    assert admin_post["contact_phone"] == "415-555-0400"
+    assert admin_post["contact_email"] == "owner@example.com"
+
+    # With the flag, the admin sees exactly what an unmatched real member sees.
+    admin_as_member_view = client.get(
+        "/carpool/events/" + event["id"] + "/posts?as_member=true", headers=admin_headers
+    ).json()
+    admin_as_member_post = next(p for p in admin_as_member_view if p["id"] == driver_post["id"])
+    assert admin_as_member_post["contact_phone"] is None
+    assert admin_as_member_post["contact_email"] is None
+
+    other_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=other_headers).json()
+    other_post = next(p for p in other_view if p["id"] == driver_post["id"])
+    assert other_post["contact_phone"] is None
+    assert other_post["contact_email"] is None
+
+
 def test_admin_always_sees_contact_phone(client):
     admin_headers, driver_headers, group, event, driver_post = _setup_driver_post(client, "cp-ph5")
     client.patch(

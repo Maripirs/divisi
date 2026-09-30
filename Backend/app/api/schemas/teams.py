@@ -134,7 +134,19 @@ class TeamOut(BaseModel):
     """Member/guest-facing shape: `contact_email`/`contact_phone` are only
     ever the raw stored values when their respective `contact_show_*` flag
     is true, `None` otherwise. Never the raw column regardless of who's
-    asking, that's `TeamAdminOut`'s job."""
+    asking, that's `TeamAdminOut`'s job.
+
+    `visible_roster_count`/`interested_count` are deliberately public
+    aggregates (a "3 people in this team, 5 interested" social-proof line),
+    counts only, never who: `visible_roster_count` is distinct people across
+    this team's roster-mode roles that are actually `roster_visible_to_members`
+    (a hidden roster role's entries never contribute, so a nonzero count
+    can't leak a hidden role's existence); `interested_count` is distinct
+    people across every `interest`-mode role's signups, no visibility gate
+    needed since it carries no identity. Always real numbers; deciding
+    whether either half of the line is even applicable (a team with no
+    roster roles at all, or none `interest`-mode) is the Frontend's job,
+    not this schema's."""
 
     id: str
     name: str
@@ -142,6 +154,8 @@ class TeamOut(BaseModel):
     contact_name: str | None
     contact_email: str | None
     contact_phone: str | None
+    visible_roster_count: int
+    interested_count: int
     roles: list[TeamRoleOut]
 
 
@@ -149,7 +163,8 @@ class TeamAdminOut(BaseModel):
     """Admin-facing shape: the true stored contact fields regardless of the
     show flags (an admin managing the team needs to see what's actually
     stored), plus the two show-booleans themselves so the admin UI can
-    render/edit the toggles."""
+    render/edit the toggles. `visible_roster_count`/`interested_count` are
+    the same public aggregates `TeamOut` carries, see its own docstring."""
 
     id: str
     name: str
@@ -159,4 +174,6 @@ class TeamAdminOut(BaseModel):
     contact_phone: str | None
     contact_show_email: bool
     contact_show_phone: bool
+    visible_roster_count: int
+    interested_count: int
     roles: list[TeamRoleOut]

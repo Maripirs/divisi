@@ -706,6 +706,7 @@
 	"carpool_expressing_interest": "Sending…",
 	"carpool_withdraw_interest": "Withdraw interest",
 	"carpool_interested_by": "Interested: {names}",
+	"carpool_interest_offer": "Offered a ride: {name}",
 	"carpool_share_exact_location": "Share exact location instead of approximate area",
 	"carpool_map_destination_label": "Destination",
 	"carpool_map_no_pins": "No pins on the map yet.",
@@ -750,6 +751,10 @@
 	"teams_move_team_down": "Move team down",
 	"teams_move_role_up": "Move role up",
 	"teams_move_role_down": "Move role down",
+	"teams_roster_headcount_one": "1 person is on this team.",
+	"teams_roster_headcount_other": "{count} people are on this team.",
+	"teams_interest_headcount_one": "1 person is interested in helping.",
+	"teams_interest_headcount_other": "{count} people are interested in helping.",
 
 	"error_404_title": "Page not found",
 	"error_403_title": "Not allowed",

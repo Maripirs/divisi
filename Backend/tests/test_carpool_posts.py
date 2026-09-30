@@ -213,6 +213,75 @@ def test_list_posts_hides_non_open_from_members_but_not_admin(client):
     assert len(admin_view.json()) == 1
 
 
+def test_list_posts_as_member_hides_non_open_post_from_admin(client):
+    """B35: `?as_member=true` makes a real admin's listing match a plain
+    member's exactly -- same hidden-post exclusion `is_admin=False` gets,
+    even though the caller's actual role is still admin."""
+    admin_headers = _register_and_login(client, "cp-asmem-admin1@example.com")
+    member_headers = _register_and_login(client, "cp-asmem-member1@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-asmem-member1@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
+    ).json()
+    client.patch("/carpool/posts/" + post["id"], json={"status": "hidden"}, headers=admin_headers)
+
+    # Without the flag, the admin still sees the hidden post (unchanged).
+    admin_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers)
+    assert admin_view.status_code == 200
+    assert len(admin_view.json()) == 1
+
+    # With the flag, the admin's listing matches a real member's exactly.
+    admin_as_member_view = client.get(
+        "/carpool/events/" + event["id"] + "/posts?as_member=true", headers=admin_headers
+    )
+    assert admin_as_member_view.status_code == 200
+    assert admin_as_member_view.json() == []
+
+    member_view = client.get("/carpool/events/" + event["id"] + "/posts", headers=member_headers)
+    assert member_view.status_code == 200
+    assert member_view.json() == admin_as_member_view.json()
+
+
+def test_list_posts_as_member_false_is_unchanged(client):
+    """`?as_member=false` (the default) behaves identically to omitting the
+    param entirely -- an admin still sees a hidden post."""
+    admin_headers = _register_and_login(client, "cp-asmem-admin2@example.com")
+    member_headers = _register_and_login(client, "cp-asmem-member2@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-asmem-member2@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    post = client.post(
+        "/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=member_headers
+    ).json()
+    client.patch("/carpool/posts/" + post["id"], json={"status": "hidden"}, headers=admin_headers)
+
+    no_param = client.get("/carpool/events/" + event["id"] + "/posts", headers=admin_headers).json()
+    explicit_false = client.get(
+        "/carpool/events/" + event["id"] + "/posts?as_member=false", headers=admin_headers
+    ).json()
+    assert no_param == explicit_false
+    assert len(no_param) == 1
+
+
+def test_list_posts_as_member_is_a_noop_for_a_real_member(client):
+    """A non-admin caller passing `as_member=true` changes nothing -- they
+    were never going to see a hidden post or unmatched contact info anyway."""
+    admin_headers = _register_and_login(client, "cp-asmem-admin3@example.com")
+    member_headers = _register_and_login(client, "cp-asmem-member3@example.com")
+    group = _make_group(client, admin_headers)
+    _add_member(client, admin_headers, group["id"], "cp-asmem-member3@example.com")
+    event = _make_event(client, admin_headers, group["id"]).json()
+    client.post("/carpool/events/" + event["id"] + "/posts", json=_rider_post(), headers=admin_headers)
+
+    plain = client.get("/carpool/events/" + event["id"] + "/posts", headers=member_headers).json()
+    as_member = client.get(
+        "/carpool/events/" + event["id"] + "/posts?as_member=true", headers=member_headers
+    ).json()
+    assert plain == as_member
+
+
 def test_locked_event_rejects_new_post(client):
     admin_headers = _register_and_login(client, "cp-lock-admin1@example.com")
     member_headers = _register_and_login(client, "cp-lock-member1@example.com")

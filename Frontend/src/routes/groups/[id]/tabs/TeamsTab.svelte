@@ -114,6 +114,35 @@
 		return parts.join(' · ');
 	}
 
+	/** The public "N people in this team. K people interested in helping."
+	 * social-proof line: `null` when neither half applies (nothing
+	 * roster-shaped and nothing interest-shaped to summarize at all). Each
+	 * half is independently omitted, not just zeroed, when there's nothing
+	 * of that shape on the team: `t.visible_roster_count`/`interested_count`
+	 * alone can't tell "genuinely empty" apart from "not applicable" (both
+	 * are `0`), so this checks `t.roles` for whether a matching role exists
+	 * at all before deciding whether to show that half's count. */
+	function headcountLine(t: TeamOut | TeamAdminOut): string | null {
+		const hasVisibleRosterRoles = t.roles.some((r) => r.mode === 'roster' && r.roster_visible_to_members);
+		const hasInterestRoles = t.roles.some((r) => r.mode === 'interest');
+		const parts: string[] = [];
+		if (hasVisibleRosterRoles) {
+			parts.push(
+				t.visible_roster_count === 1
+					? m.teams_roster_headcount_one({ count: t.visible_roster_count })
+					: m.teams_roster_headcount_other({ count: t.visible_roster_count })
+			);
+		}
+		if (hasInterestRoles) {
+			parts.push(
+				t.interested_count === 1
+					? m.teams_interest_headcount_one({ count: t.interested_count })
+					: m.teams_interest_headcount_other({ count: t.interested_count })
+			);
+		}
+		return parts.length > 0 ? parts.join(' ') : null;
+	}
+
 	// Checklist draft state — reseeded fresh from each role's own
 	// `my_signup` every time a card expands (`seedDraftsForTeam`, called
 	// from `toggleExpanded` above), not carried across a close/reopen. Keyed
@@ -344,6 +373,12 @@
 	}
 	function startEditTeam(t: TeamAdminOut) {
 		editingTeamId = t.id;
+		// The edit form and the roles/roster section below it are two
+		// separate `{#if}` blocks (`editingTeamId`/`expandedTeamIds`), so
+		// editing a still-collapsed card would show the name/description/
+		// contact form but hide its roles entirely -- expand it too, so an
+		// admin can manage roles in the same view they're editing the team.
+		expandedTeamIds[t.id] = true;
 		teamNameDraft = t.name;
 		teamDescriptionDraft = t.description;
 		teamContactNameDraft = t.contact_name ?? '';
@@ -371,6 +406,59 @@
 		roleNameDraft = r.name;
 		roleModeDraft = r.mode;
 		roleRosterVisibleDraft = r.roster_visible_to_members;
+	}
+
+	// ---- Admin: optimistic reordering ----
+	//
+	// A move button swaps its team/role with its neighbor in the local
+	// `teams` array the instant it's clicked -- same "update local state
+	// first, let the request confirm in the background" shape
+	// `saveTeamInterests` already uses -- rather than waiting on the
+	// `POST .../move` round trip (`use:enhance`'s default behavior re-runs
+	// `load`, which would otherwise show the reordered list only once the
+	// response comes back). Reverts the swap if the request didn't succeed;
+	// skips the default `update()` call entirely on success since the
+	// optimistic swap already matches what the reload would show anyway.
+
+	function swapTeams(i: number, j: number) {
+		const copy = [...teams];
+		[copy[i], copy[j]] = [copy[j], copy[i]];
+		teams = copy;
+	}
+
+	function moveTeamEnhance(teamId: string, direction: 'up' | 'down') {
+		return () => {
+			const i = teams.findIndex((t) => t.id === teamId);
+			const j = direction === 'up' ? i - 1 : i + 1;
+			if (i === -1 || j < 0 || j >= teams.length) return;
+			swapTeams(i, j);
+			return ({ result }: { result: ActionResult }) => {
+				if (result.type !== 'success') swapTeams(i, j);
+			};
+		};
+	}
+
+	function swapTeamRoles(teamId: string, i: number, j: number) {
+		teams = teams.map((t) => {
+			if (t.id !== teamId) return t;
+			const roles = [...t.roles];
+			[roles[i], roles[j]] = [roles[j], roles[i]];
+			return { ...t, roles };
+		});
+	}
+
+	function moveTeamRoleEnhance(teamId: string, roleId: string, direction: 'up' | 'down') {
+		return () => {
+			const t = teams.find((x) => x.id === teamId);
+			if (!t) return;
+			const i = t.roles.findIndex((r) => r.id === roleId);
+			const j = direction === 'up' ? i - 1 : i + 1;
+			if (i === -1 || j < 0 || j >= t.roles.length) return;
+			swapTeamRoles(teamId, i, j);
+			return ({ result }: { result: ActionResult }) => {
+				if (result.type !== 'success') swapTeamRoles(teamId, i, j);
+			};
+		};
 	}
 
 	// ---- Admin: roster-mode role management (add/remove a named entry) ----
@@ -529,6 +617,7 @@
 			{#each teams as t (t.id)}
 				{@const interested = hasInterestInTeam(t)}
 				{@const contactText = contactDisplayText(t.contact_name, t.contact_email, t.contact_phone)}
+				{@const headcount = headcountLine(t)}
 				<section class="card team-card">
 					<button
 						type="button"
@@ -542,6 +631,7 @@
 								{#if interested}<span class="badge-interested">{m.teams_interest_badge()}</span>{/if}
 							</span>
 							{#if t.description}<span class="card-meta">{t.description}</span>{/if}
+							{#if headcount}<span class="card-meta">{headcount}</span>{/if}
 						</span>
 						<span class="chevron" class:is-open={!!expandedTeamIds[t.id]} aria-hidden="true"></span>
 					</button>
@@ -588,6 +678,7 @@
 		<div class="card-grid">
 			{#each teams as t, tIndex (t.id)}
 				{@const contactText = contactDisplayText(t.contact_name, t.contact_email, t.contact_phone)}
+				{@const headcount = headcountLine(t)}
 				<section class="card team-card">
 				<button
 					type="button"
@@ -602,6 +693,7 @@
 								? m.teams_role_count_one({ count: t.roles.length })
 								: m.teams_role_count_other({ count: t.roles.length })}
 						</span>
+						{#if headcount}<span class="card-meta">{headcount}</span>{/if}
 						{#if contactText}<span class="card-meta">{m.teams_contact_label({ contact: contactText })}</span>{/if}
 					</span>
 					<span class="chevron" class:is-open={!!expandedTeamIds[t.id]} aria-hidden="true"></span>
@@ -666,14 +758,14 @@
 				{:else}
 					{@const admin = t as TeamAdminOut}
 					<div class="btn-row">
-						<form method="POST" action="?/moveTeam" use:enhance>
+						<form method="POST" action="?/moveTeam" use:enhance={moveTeamEnhance(t.id, 'up')}>
 							<input type="hidden" name="teamId" value={t.id} />
 							<input type="hidden" name="direction" value="up" />
 							<button type="submit" class="text-link" disabled={tIndex === 0} aria-label={m.teams_move_team_up()}>
 								↑
 							</button>
 						</form>
-						<form method="POST" action="?/moveTeam" use:enhance>
+						<form method="POST" action="?/moveTeam" use:enhance={moveTeamEnhance(t.id, 'down')}>
 							<input type="hidden" name="teamId" value={t.id} />
 							<input type="hidden" name="direction" value="down" />
 							<button
@@ -748,7 +840,7 @@
 												>{/if}</span
 										>
 										<div class="btn-row">
-											<form method="POST" action="?/moveTeamRole" use:enhance>
+											<form method="POST" action="?/moveTeamRole" use:enhance={moveTeamRoleEnhance(t.id, r.id, 'up')}>
 												<input type="hidden" name="roleId" value={r.id} />
 												<input type="hidden" name="direction" value="up" />
 												<button
@@ -760,7 +852,7 @@
 													↑
 												</button>
 											</form>
-											<form method="POST" action="?/moveTeamRole" use:enhance>
+											<form method="POST" action="?/moveTeamRole" use:enhance={moveTeamRoleEnhance(t.id, r.id, 'down')}>
 												<input type="hidden" name="roleId" value={r.id} />
 												<input type="hidden" name="direction" value="down" />
 												<button

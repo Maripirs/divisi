@@ -30,6 +30,7 @@
 	import type { PageData } from './$types';
 	import {
 		collectKnownNames,
+		groupHomeworkByDueDate,
 		partitionDatesByUpcoming,
 		type ResponsibilityRole
 	} from '$lib/components/groupCards';
@@ -340,11 +341,46 @@
 				{#if result.homework.length === 0}
 					<p class="empty">{m.join_no_homework()}</p>
 				{:else}
-					<div class="card-grid">
-					{#each result.homework as hw (hw.id)}
-						<HomeworkCard item={hw} />
-					{/each}
-					</div>
+					<!-- Same current/past split + one-header-per-due-date grouping
+					     as the member Homework tab, via the shared
+					     `groupHomeworkByDueDate` helper (`groupCards.ts`) — this
+					     page used to just dump every item into one flat, ungrouped
+					     list, the one place guest and member homework had quietly
+					     drifted apart. -->
+					{@const {
+						current: currentHomework,
+						past: pastHomework,
+						currentGroups: currentHomeworkGroups,
+						pastGroups: pastHomeworkGroups
+					} = groupHomeworkByDueDate(result.homework, (hw) => hw.dueDate, m.home_no_due_date())}
+					{#snippet homeworkDateGroup(group: (typeof currentHomeworkGroups)[number])}
+						<details class="card date-group" open>
+							<summary class="card-eyebrow">
+								<span>{group.label}</span>
+								<span class="chevron" aria-hidden="true"></span>
+							</summary>
+							{#each group.items as hw (hw.id)}
+								<HomeworkCard item={hw} />
+							{/each}
+						</details>
+					{/snippet}
+					{#if currentHomework.length === 0}
+						<p class="empty">{m.join_no_homework()}</p>
+					{:else}
+						<div class="card-grid">
+							{#each currentHomeworkGroups as group (group.label)}
+								{@render homeworkDateGroup(group)}
+							{/each}
+						</div>
+					{/if}
+					{#if pastHomework.length > 0}
+						<details class="past-dates">
+							<summary>{m.homework_past_heading({ count: pastHomework.length })}</summary>
+							{#each pastHomeworkGroups as group (group.label)}
+								{@render homeworkDateGroup(group)}
+							{/each}
+						</details>
+					{/if}
 				{/if}
 			{:else if tab === 'weeklyNotes' && result.weeklyNotesVisible}
 				{#if result.weeklyNotes.length === 0}
@@ -729,6 +765,29 @@
 		color: var(--text-muted);
 		font-size: 0.8125rem;
 		padding: 0.35rem 0;
+	}
+
+	/* Homework's per-due-date collapsible card, same shape as
+	   `HomeworkTab.svelte`'s own `.date-group` (not shared -- this file
+	   keeps its own copy, same convention as `.past-dates` above). The
+	   eyebrow doubles as the tappable summary; `.chevron`'s base look lives
+	   in the shared `shell.css` already imported here, only the open-state
+	   rotation needs restating per file. */
+	.date-group summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.date-group summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.date-group[open] > summary .chevron {
+		transform: rotate(225deg);
 	}
 
 	/* F23: the per-role local-only signup control, sitting under a role's

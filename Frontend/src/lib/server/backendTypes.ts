@@ -356,7 +356,18 @@ export interface TeamRoleOut {
 /** Member/guest-facing team shape: `contact_email`/`contact_phone` are
  * already `null` unless the admin opted to show that one to members. The
  * Backend redacts, never the Frontend. See `TeamAdminOut` for the admin's
- * own always-raw view of the same two fields. */
+ * own always-raw view of the same two fields.
+ *
+ * `visible_roster_count`/`interested_count` are deliberately public
+ * aggregates (a "3 people in this team, 5 interested" social-proof line on
+ * the member card), counts only, never who. `visible_roster_count` is
+ * distinct people across this team's roster-mode roles that are actually
+ * `roster_visible_to_members` (a hidden roster role's entries never
+ * contribute); `interested_count` is distinct people across every
+ * `interest`-mode role's signups. Both are always real numbers from the
+ * Backend; whether either half of the line is even applicable (no roster
+ * roles at all, or none `interest`-mode) is decided client-side, see
+ * `TeamsTab.svelte`'s own use of these two fields. */
 export interface TeamOut {
 	id: string;
 	name: string;
@@ -364,6 +375,8 @@ export interface TeamOut {
 	contact_name: string | null;
 	contact_email: string | null;
 	contact_phone: string | null;
+	visible_roster_count: number;
+	interested_count: number;
 	roles: TeamRoleOut[];
 }
 
@@ -371,7 +384,8 @@ export interface TeamOut {
  * true stored values (never redacted), plus the two show-flags themselves
  * so the admin UI can render/edit the toggles. `GET .../teams` returns this
  * shape for an admin caller, `TeamOut` for a plain member, same route,
- * picked server-side. */
+ * picked server-side. `visible_roster_count`/`interested_count` are the
+ * same public aggregates `TeamOut` carries, see its own doc comment. */
 export interface TeamAdminOut {
 	id: string;
 	name: string;
@@ -381,6 +395,8 @@ export interface TeamAdminOut {
 	contact_phone: string | null;
 	contact_show_email: boolean;
 	contact_show_phone: boolean;
+	visible_roster_count: number;
+	interested_count: number;
 	roles: TeamRoleOut[];
 }
 

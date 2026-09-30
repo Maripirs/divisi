@@ -1398,7 +1398,7 @@
 						     (`canAnnotate`); a bundled demo/guest session never
 						     reaches the Backend's annotation endpoints at all. -->
 						<button
-							class="icon-btn"
+							class="icon-btn annotate-btn"
 							class:icon-btn--active={ann.annotateMode}
 							onclick={ann.toggleAnnotateMode}
 							aria-label={ann.annotateMode ? m.piece_cancel_add_annotation() : m.piece_add_annotation()}
@@ -1794,6 +1794,16 @@
 
 	.icon-btn--active:hover:not(:disabled) {
 		background: var(--accent-hover);
+	}
+
+	/* F4's annotation toggle needs a precise tap on a specific note/beat to
+	   place a marker -- fiddly on a phone-sized touch target, so it's
+	   desktop/tablet only; mobile keeps the bottom bar to the controls that
+	   work well at that size (cursor scroll, play, scrubber). */
+	@media (max-width: 640px) {
+		.annotate-btn {
+			display: none;
+		}
 	}
 
 	.icon-btn svg {
