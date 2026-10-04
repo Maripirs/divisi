@@ -3,6 +3,7 @@ import { backendJson, BackendApiError } from '$lib/server/backend';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import { isPastDueDate } from '$lib/utils/dates';
+import { findAnyGuestJoinCode } from '$lib/server/guestSession';
 import type { GroupOut, HomeworkOut, ResponsibilityDateOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
 
@@ -28,9 +29,18 @@ async function groupJsonOrEmpty<T>(
  * (see `+layout.server.ts`) and this just needs "is there a session". The
  * actual Home data is returned as an unawaited promise so the shell +
  * loading state paint immediately instead of blocking on a fan-out of
- * per-group Backend calls while the Backend is still waking. */
-export const load: PageServerLoad = async ({ parent, locals, fetch }) => {
-	if (!locals.token) throw redirect(303, lh('/login?redirectTo=/home'));
+ * per-group Backend calls while the Backend is still waking.
+ *
+ * A visitor with no real session but an active guest-password cookie for
+ * some group (see `findAnyGuestJoinCode`) has no real "Home" (there's no
+ * Backend concept of "this guest's groups", just whichever one group they
+ * unlocked) — their own closest equivalent, `/join/{code}`, is where this
+ * sends them instead of a login wall they have no account to clear. */
+export const load: PageServerLoad = async ({ parent, locals, cookies, fetch }) => {
+	if (!locals.token) {
+		const guestCode = findAnyGuestJoinCode(cookies);
+		throw redirect(303, guestCode ? lh(`/join/${guestCode}`) : lh('/login?redirectTo=/home'));
+	}
 	const { user } = await parent();
 	// `user` may be the layout's cold-start stub, but its `id` is real
 	// (decoded from the session JWT), which is all the `reason` calc needs.

@@ -47,3 +47,21 @@ export function clearGuestCookie(cookies: Cookies, code: string): void {
 export function readGuestCookie(cookies: Cookies, code: string): string | null {
 	return cookies.get(guestCookieName(code)) ?? null;
 }
+
+/** For an entry point that doesn't already know which group it's dealing
+ * with (the bare `/` root, `/home`) -- `readGuestCookie` needs the join
+ * code up front, which those routes don't have. Scans every cookie on the
+ * request for the `divisi_guest_<CODE>` shape and returns the first code
+ * found, so a visitor who already cleared a group's guest-password gate
+ * lands back in that group instead of the generic logged-out `/welcome`/
+ * `/login` redirect. A device holding more than one group's guest cookie
+ * (joined two choirs, say) just gets routed to whichever one the browser
+ * happens to list first -- better than neither, and the common case is one
+ * guest group per device anyway. */
+export function findAnyGuestJoinCode(cookies: Cookies): string | null {
+	const prefix = 'divisi_guest_';
+	for (const { name } of cookies.getAll()) {
+		if (name.startsWith(prefix)) return name.slice(prefix.length);
+	}
+	return null;
+}
