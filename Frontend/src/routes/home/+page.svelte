@@ -168,7 +168,6 @@
 			{#each home.groups as group (group.id)}
 				<a class="list-row-link" href={lh(`/groups/${group.id}`)}>
 					<span>{group.name}</span>
-					<span class="dim">{m.home_active_count({ count: group.homeworkCount })}</span>
 				</a>
 			{/each}
 		{/if}

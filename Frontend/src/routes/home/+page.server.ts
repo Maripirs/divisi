@@ -122,10 +122,7 @@ async function loadHome(token: string, userId: string, fetch: typeof globalThis.
 		.slice(0, 3);
 
 	return {
-		groups: groups.map((g, i) => ({
-			...g,
-			homeworkCount: homeworkByGroup[i].filter(isActiveHomework).length
-		})),
+		groups,
 		homework,
 		responsibilities
 	};
