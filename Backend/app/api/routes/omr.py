@@ -20,7 +20,7 @@ from app.api.schemas import (
     OmrPageRerunOut,
 )
 from app.core.config import get_settings
-from app.db.models import OmrJob, OmrJobStatus, OwnerType, Piece, User, VersionSource
+from app.db.models import DraftKind, OmrJob, OmrJobStatus, OwnerType, Piece, User, VersionSource
 from app.db.session import get_db
 from app.jobs.omr_jobs import _job_output_dir, run_omr_job
 from app.omr.paged import _PAGE_XML_NAME, _page_len, rerun_page
@@ -218,6 +218,10 @@ def import_job_result(
             created_by=current_user.id,
             file_path=file_path,
             source=VersionSource.modification,
+            # Deliberately the job's derived MIDI, not its MusicXML (see
+            # this route's own doc comment) -- MIDI never carries lyrics.
+            has_lyrics=False,
+            draft_kind=DraftKind.omr,
             db=db,
         )
         return OmrImportOut(piece=piece, version=version, created_new_piece=False)
@@ -231,6 +235,9 @@ def import_job_result(
         owner_id=owner_id,
         created_by=current_user.id,
         file_path=file_path,
+        # Same reasoning as the existing-piece import path above: this is
+        # the job's derived MIDI, never MusicXML, so never lyric-bearing.
+        has_lyrics=False,
         db=db,
     )
     return OmrImportOut(piece=piece, version=version, created_new_piece=True)

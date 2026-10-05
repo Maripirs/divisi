@@ -161,6 +161,14 @@ class LibraryEntryOut(BaseModel):
     # used on this track.
     latest_omr_job: LibraryEntryOmrJobOut | None = None
     pending_generated_version_id: str | None = None
+    # Lyrics-status indicator (Tracks tab, admin-only): `has_lyrics` is the
+    # piece's *live* version's `PieceVersion.has_lyrics`; `lyrics_pending_review`
+    # is `True` only when `pending_generated_version_id` is set *and* that
+    # draft's `draft_kind` is specifically `lyrics_generation` -- a pending
+    # AI-edit or OMR draft must not flip this on. See
+    # `app.db.models.DraftKind` / `_omr_fields_batch` below.
+    has_lyrics: bool = False
+    lyrics_pending_review: bool = False
 
 
 class GuestPieceOut(BaseModel):

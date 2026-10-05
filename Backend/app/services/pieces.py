@@ -19,6 +19,7 @@ from app.db.models import (
     Annotation,
     AnnotationShare,
     Distribution,
+    DraftKind,
     Group,
     GroupRole,
     Homework,
@@ -31,10 +32,46 @@ from app.db.models import (
     VersionStatus,
 )
 
+from app.lyrics.inject import has_any_lyrics
 from app.rendering.pipeline import discard_render_cache
 from app.services.common import get_or_404
 from app.services.groups import group_role  # noqa: F401  (re-exported for existing `from app.services.pieces import group_role` call sites; home is now app/services/groups.py)
 from app.storage.files import delete_file, load_file, save_file
+
+# Lyric text only exists as a MusicXML construct in this codebase -- a
+# MIDI file (or anything else) never carries `has_lyrics=True`.
+_MUSICXML_SUFFIXES = (".musicxml", ".xml", ".mxl")
+
+
+def detect_has_lyrics(file_bytes: bytes | None, file_name: str | None) -> bool:
+    """Best-effort "does this uploaded music file already carry lyric
+    text" check for a plain upload/replace (`upload_piece`/
+    `upload_version`), where -- unlike the three generator call sites
+    below, which already hold a parsed in-memory `music21.stream.Score`
+    and pass their own computed `has_lyrics` straight through -- nothing
+    has parsed the file yet at the point `add_version`/
+    `create_piece_with_version` is called. Anything that isn't a
+    MusicXML-family file (MIDI, or no file at all) is always `False`. A
+    file that fails to parse is treated as lyric-less rather than
+    raising: this is a cosmetic status signal, not something an upload
+    should ever fail over."""
+    if not file_bytes or not file_name or "." not in file_name:
+        return False
+    suffix = "." + file_name.rsplit(".", 1)[-1].lower()
+    if suffix not in _MUSICXML_SUFFIXES:
+        return False
+    import tempfile
+
+    from music21 import converter
+
+    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp.flush()
+        try:
+            score = converter.parse(tmp.name)
+        except Exception:  # noqa: BLE001 - unparsable upload just means "can't tell, assume no lyrics"
+            return False
+    return has_any_lyrics(score)
 
 
 def get_piece_or_404(piece_id: str, db: Session) -> Piece:
@@ -86,6 +123,7 @@ def create_piece_with_version(
     pdf_file_path: str | None = None,
     file_name: str | None = None,
     pdf_file_name: str | None = None,
+    has_lyrics: bool = False,
 ) -> tuple[Piece, PieceVersion]:
     piece = Piece(
         title=title,
@@ -107,6 +145,7 @@ def create_piece_with_version(
         pdf_file_path=pdf_file_path,
         file_name=file_name,
         pdf_file_name=pdf_file_name,
+        has_lyrics=has_lyrics,
     )
     db.add(version)
     db.commit()
@@ -122,9 +161,11 @@ def add_version(
     file_path: str | None,
     source: VersionSource,
     db: Session,
+    has_lyrics: bool,
     pdf_file_path: str | None = None,
     file_name: str | None = None,
     pdf_file_name: str | None = None,
+    draft_kind: DraftKind | None = None,
 ) -> PieceVersion:
     version = PieceVersion(
         piece_id=piece.id,
@@ -135,6 +176,8 @@ def add_version(
         pdf_file_path=pdf_file_path,
         file_name=file_name,
         pdf_file_name=pdf_file_name,
+        has_lyrics=has_lyrics,
+        draft_kind=draft_kind,
     )
     db.add(version)
     db.commit()
@@ -254,6 +297,10 @@ def get_or_create_working_draft(piece: Piece, user, db: Session) -> PieceVersion
         file_name=live.file_name if live is not None else None,
         pdf_file_name=live.pdf_file_name if live is not None else None,
         source=VersionSource.modification,
+        # A content copy of the live version's bytes, not a reparse -- its
+        # lyric content (or lack of it) carries forward unchanged.
+        has_lyrics=live.has_lyrics if live is not None else False,
+        draft_kind=None,
         db=db,
     )
 

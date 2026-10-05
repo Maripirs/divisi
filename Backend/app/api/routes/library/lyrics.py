@@ -52,11 +52,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.schemas import PieceVersionOut
 from app.db import session as db_session
-from app.db.models import Piece, User, VersionSource, VersionStatus
+from app.db.models import DraftKind, Piece, User, VersionSource, VersionStatus
 from app.db.session import get_db
 from app.lyrics.extract import NoTextLayerError, extract_word_tokens
 from app.lyrics.groq_client import LyricExtractionError, classify_lyric_tokens
-from app.lyrics.inject import count_singable_onsets, inject_lyrics
+from app.lyrics.inject import count_singable_onsets, has_any_lyrics, inject_lyrics
 from app.services.common import get_or_404
 from app.services.pieces import add_version, live_version, working_draft
 from app.storage.files import resolve_existing_source_path, save_file
@@ -190,6 +190,11 @@ def generate_lyrics(
             file_name=f"{stem}-lyrics.musicxml",
             pdf_file_name=version_pdf_file_name,
             source=VersionSource.modification,
+            # `written == 0` already raised above, so this is really just
+            # confirming what `inject_lyrics` just wrote, straight off the
+            # same in-memory score rather than reparsing from disk.
+            has_lyrics=has_any_lyrics(score),
+            draft_kind=DraftKind.lyrics_generation,
             db=db,
         )
     finally:

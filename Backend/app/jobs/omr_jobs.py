@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 from app.core.config import get_settings
 from app.db import session as db_session
-from app.db.models import OmrJob, OmrJobStatus, PieceVersion, VersionSource, VersionStatus
+from app.db.models import DraftKind, OmrJob, OmrJobStatus, PieceVersion, VersionSource, VersionStatus
 from app.omr.paged import run_omr_paged
 from app.omr.pipeline import OmrEngineUnavailable, run_omr
 from app.services.pieces import add_version, get_piece_or_404, working_draft
@@ -152,6 +152,9 @@ def _import_draft_version(job: OmrJob, db) -> None:
         created_by=job.user_id,
         file_path=midi_path,
         source=VersionSource.modification,
+        # The job's derived MIDI, never MusicXML -- never lyric-bearing.
+        has_lyrics=False,
+        draft_kind=DraftKind.omr,
         db=db,
         pdf_file_path=latest.pdf_file_path if latest is not None else None,
         pdf_file_name=latest.pdf_file_name if latest is not None else None,

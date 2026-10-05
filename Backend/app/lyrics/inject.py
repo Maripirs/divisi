@@ -97,6 +97,19 @@ def count_singable_onsets(score: stream.Score) -> dict[str, int]:
     }
 
 
+def has_any_lyrics(score: stream.Score) -> bool:
+    """True if any note anywhere in `score` already carries non-empty
+    lyric text -- independent of this module's own voice-matching, so it
+    works equally well on a score this module just injected into and on
+    one that arrived with lyrics already baked into its MusicXML (e.g. a
+    plain upload). Used to compute `PieceVersion.has_lyrics`."""
+    for note in score.flatten().notes:
+        for lyric in getattr(note, "lyrics", None) or []:
+            if getattr(lyric, "text", None):
+                return True
+    return False
+
+
 def inject_lyrics(score: stream.Score, voices: list[dict]) -> int:
     """Mutates `score` in place, adding a `Lyric` to each matched voice
     part's note onsets in sequence. `voices` is

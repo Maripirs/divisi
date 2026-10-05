@@ -22,6 +22,7 @@ export function baseOsmdOptions(colors: OsmdColors) {
 		autoResize: true,
 		drawTitle: false,
 		followCursor: false,
+		useXMLMeasureNumbers: true,
 		coloringEnabled: true,
 		colorStemsLikeNoteheads: true,
 		defaultColorMusic: colors.ink,

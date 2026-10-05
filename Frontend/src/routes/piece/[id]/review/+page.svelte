@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
 	import AppHeader from '$lib/components/AppHeader.svelte';
+	import { MidiPlayer } from '$lib/audio/player';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import ConfirmPartsPanel, { type PartChoice } from '$lib/components/ConfirmPartsPanel.svelte';
 	import PdfView from '$lib/components/PdfView.svelte';
@@ -90,12 +92,11 @@
 		scoreZoom = clampZoom(scoreZoom + delta);
 	}
 
-	// Where the edit panel (approve/discard, or the AI-edit form) docks --
-	// a simple two-position toggle, not free dragging (deliberately: this
-	// is an occasional admin tool, not worth the real complexity of
-	// position persistence/collision/touch support a draggable panel
-	// would need). 'top' matches this page's original layout.
-	let dock = $state<'top' | 'side'>('top');
+	// Whether the floating AI-edit chat panel is expanded. Independent of
+	// the measure-range state below -- a click on the score while this is
+	// closed still populates `measureStartInput`/`measureEndInput`, so
+	// opening the panel afterward shows the range already filled in.
+	let chatOpen = $state(false);
 
 	// AI-edit measure-range picker state -- only relevant/shown while
 	// `data.draftId` is null (no pending draft to review instead). Auto-filled
@@ -126,9 +127,76 @@
 	}
 
 	let canSubmitEdit = $derived(!!measureStartInput && !!measureEndInput && !!message.trim());
+
+	// Playback: this page already re-parses the draft/live version's own
+	// MusicXML into `parsed` above (for the ambiguous-parts panel), which is
+	// exactly the `ParsedMIDI` shape `MidiPlayer` needs -- no mixer/tempo
+	// control or cursor-follow here, this is the same bottom playback bar
+	// the main piece page uses (play/pause + scrubber), just "let an admin
+	// hear the piece while reviewing it", same synth.
+	let player: MidiPlayer | undefined = $state();
+	let isPlaying = $state(false);
+	let positionMs = $state(0);
+	let durationMs = $state(0);
+	let rafHandle: number;
+
+	function tick() {
+		if (player) {
+			positionMs = player.positionMs;
+			isPlaying = player.isPlaying;
+		}
+		rafHandle = requestAnimationFrame(tick);
+	}
+
+	onMount(() => {
+		let destroyed = false;
+		MidiPlayer.create().then((created) => {
+			if (destroyed) {
+				created.destroy();
+				return;
+			}
+			player = created;
+		});
+		rafHandle = requestAnimationFrame(tick);
+		return () => {
+			destroyed = true;
+			cancelAnimationFrame(rafHandle);
+			player?.destroy();
+		};
+	});
+
+	// Loads (or reloads) whenever either becomes available/changes -- covers
+	// the ordinary case (player finishes initializing after `parsed` is
+	// already there) and a client-side nav to a different piece reusing this
+	// same component instance.
+	$effect(() => {
+		if (!player || !parsed) return;
+		void player.load(parsed).then(() => {
+			durationMs = player?.duration ?? 0;
+		});
+	});
+
+	async function togglePlay() {
+		if (!player) return;
+		if (player.isPlaying) player.pause();
+		else await player.play();
+	}
+
+	function seek(ms: number) {
+		player?.seek(ms);
+	}
+
+	function formatTime(ms: number): string {
+		const totalSeconds = Math.floor(ms / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+	}
+
+	let seekPct = $derived(durationMs > 0 ? (positionMs / durationMs) * 100 : 0);
 </script>
 
-<AppHeader title={m.review_page_title()} />
+<AppHeader title={data.pieceTitle} />
 
 <!-- Deliberately not `<main class="shell">` (every other page's normal-flow,
      scrolls-with-the-document container) -- this page must fill exactly the
@@ -139,107 +207,168 @@
      lines up with every other page), rather than a normal-flow box the
      document could still grow past. -->
 <main class="review-shell">
-	<div class="review-body" data-dock={dock}>
-		<div class="edit-panel">
-			<div class="edit-panel-head">
-				<div class="review-toolbar-text">
-					<h2 class="piece-title">{data.pieceTitle}</h2>
-					<p class="hint">{data.draftId ? m.review_hint_with_draft() : m.ai_edit_hint()}</p>
-				</div>
-				<button
-					type="button"
-					class="dock-toggle"
-					onclick={() => (dock = dock === 'top' ? 'side' : 'top')}
-					aria-label={m.review_dock_toggle()}
-					title={m.review_dock_toggle()}
-				>
-					{dock === 'top' ? '⬒' : '⬓'}
-				</button>
-			</div>
+	<!-- Only rendered while a draft is actually pending -- sized to its own
+	     content (`flex: 0 0 auto`), not a fixed-height docked panel, and
+	     simply absent otherwise so the compare panes below get the room. -->
+	{#if data.draftId}
+		<div class="draft-bar">
 			{#if form?.error}<p class="error">{form.error}</p>{/if}
-
-			{#if data.draftId}
-				{#if parsed?.ambiguousParts?.length}
-					<ConfirmPartsPanel
-						ambiguousParts={parsed.ambiguousParts}
-						existingParts={realExistingParts}
-						{assignments}
-						onchange={(partId, choice) => {
-							if (choice === undefined) {
-								const next = { ...assignments };
-								delete next[partId];
-								assignments = next;
-							} else {
-								assignments = { ...assignments, [partId]: choice };
-							}
-						}}
-					/>
-					<form method="POST" action="?/resolveParts" use:enhance={withSubmitting((v) => (confirmingParts = v))}>
-						<input type="hidden" name="draftId" value={data.draftId} />
-						<input type="hidden" name="correctedXml" value={correctedXml} />
-						<div class="btn-row">
-							<button type="submit" class="btn btn-outline" disabled={confirmingParts || !allResolved}>
-								{confirmingParts ? m.confirm_parts_confirming() : m.confirm_parts_confirm_button()}
-							</button>
-						</div>
-					</form>
-					<hr class="edit-panel-divider" />
-				{/if}
-				<div class="btn-row">
-					<a class="text-link" href={lh(`/groups/${data.groupId}?tab=tracks&view=admin`)}>
-						{m.action_cancel()}
-					</a>
-					<ConfirmButton>
-						{#snippet trigger(start)}
-							<button type="button" class="btn btn-danger" onclick={start} disabled={approving || discarding}>
-								{m.review_draft_discard()}
-							</button>
-						{/snippet}
-						{#snippet confirm(cancel)}
-							<p class="confirm-note">{m.review_draft_discard_confirm()}</p>
-							<form method="POST" action="?/discard" use:enhance={withSubmitting((v) => (discarding = v))}>
-								<input type="hidden" name="draftId" value={data.draftId} />
-								<button type="submit" class="text-link text-link--danger" disabled={discarding}>
-									{m.review_draft_discard()}
-								</button>
-								<button type="button" class="text-link" onclick={cancel} disabled={discarding}>
-									{m.action_cancel()}
-								</button>
-							</form>
-						{/snippet}
-					</ConfirmButton>
-					<form method="POST" action="?/approve" use:enhance={withSubmitting((v) => (approving = v))}>
-						<input type="hidden" name="draftId" value={data.draftId} />
-						<input type="hidden" name="groupId" value={data.groupId} />
-						<button type="submit" class="btn btn-primary" disabled={approving || discarding || !allResolved}>
-							{approving ? m.groups_uploading() : m.review_draft_approve()}
-						</button>
-					</form>
-				</div>
-				{#if !allResolved}
-					<p class="hint">{m.confirm_parts_all_resolved_hint()}</p>
-				{/if}
-				<hr class="edit-panel-divider" />
-			{/if}
-
-			<!-- Same trigger as the Tracks tab's own "Generate lyrics from PDF"
-			     button -- hidden once a draft is already pending, same as
-			     there, since this always creates a fresh draft rather than
-			     touching a pending one (see `+page.server.ts`'s own
-			     `generateLyrics` action). -->
-			{#if !data.draftId}
-				<form
-					method="POST"
-					action="?/generateLyrics"
-					use:enhance={withSubmitting((v) => (generatingLyrics = v))}
-				>
+			<p class="hint">{m.review_hint_with_draft()}</p>
+			{#if parsed?.ambiguousParts?.length}
+				<ConfirmPartsPanel
+					ambiguousParts={parsed.ambiguousParts}
+					existingParts={realExistingParts}
+					{assignments}
+					onchange={(partId, choice) => {
+						if (choice === undefined) {
+							const next = { ...assignments };
+							delete next[partId];
+							assignments = next;
+						} else {
+							assignments = { ...assignments, [partId]: choice };
+						}
+					}}
+				/>
+				<form method="POST" action="?/resolveParts" use:enhance={withSubmitting((v) => (confirmingParts = v))}>
+					<input type="hidden" name="draftId" value={data.draftId} />
+					<input type="hidden" name="correctedXml" value={correctedXml} />
 					<div class="btn-row">
-						<button type="submit" class="btn btn-outline" disabled={generatingLyrics}>
-							{generatingLyrics ? m.groups_uploading() : m.groups_generate_lyrics_button()}
+						<button type="submit" class="btn btn-outline" disabled={confirmingParts || !allResolved}>
+							{confirmingParts ? m.confirm_parts_confirming() : m.confirm_parts_confirm_button()}
 						</button>
 					</div>
 				</form>
 				<hr class="edit-panel-divider" />
+			{/if}
+			<div class="btn-row">
+				<a class="text-link" href={lh(`/groups/${data.groupId}?tab=tracks&view=admin`)}>
+					{m.action_cancel()}
+				</a>
+				<ConfirmButton>
+					{#snippet trigger(start)}
+						<button type="button" class="btn btn-danger" onclick={start} disabled={approving || discarding}>
+							{m.review_draft_discard()}
+						</button>
+					{/snippet}
+					{#snippet confirm(cancel)}
+						<p class="confirm-note">{m.review_draft_discard_confirm()}</p>
+						<form method="POST" action="?/discard" use:enhance={withSubmitting((v) => (discarding = v))}>
+							<input type="hidden" name="draftId" value={data.draftId} />
+							<button type="submit" class="text-link text-link--danger" disabled={discarding}>
+								{m.review_draft_discard()}
+							</button>
+							<button type="button" class="text-link" onclick={cancel} disabled={discarding}>
+								{m.action_cancel()}
+							</button>
+						</form>
+					{/snippet}
+				</ConfirmButton>
+				<form method="POST" action="?/approve" use:enhance={withSubmitting((v) => (approving = v))}>
+					<input type="hidden" name="draftId" value={data.draftId} />
+					<input type="hidden" name="groupId" value={data.groupId} />
+					<button type="submit" class="btn btn-primary" disabled={approving || discarding || !allResolved}>
+						{approving ? m.groups_uploading() : m.review_draft_approve()}
+					</button>
+				</form>
+			</div>
+			{#if !allResolved}
+				<p class="hint">{m.confirm_parts_all_resolved_hint()}</p>
+			{/if}
+		</div>
+	{/if}
+
+	<div class="compare-panes" class:single-pane={!data.hasPdf}>
+		<!-- A Tracks-tab upload with ambiguous parts can reach this page
+		     with a music file but no PDF yet (Part A's own producers --
+		     "Generate lyrics from PDF", AI edit -- never run PDF-less, so
+		     this only ever applies to that new path). Skipping the pane
+		     outright rather than handing `PdfView` an empty/failing URL
+		     -- `single-pane` above hands the score the full width instead
+		     of a broken half-empty layout. -->
+		{#if data.hasPdf}
+			<div class="pane">
+				<PdfView pdfUrl={data.pdfUrl} pieceId={data.pieceId} canMarkup={false} />
+			</div>
+		{/if}
+		<!-- `pane-score`: unlike `PdfView` (which scrolls its own content
+		     internally and keeps its zoom pill fixed outside that scroll),
+		     `ScoreView` relies on an ancestor to scroll (see its own
+		     `nearestScrollable` doc comment) and renders its zoom controls
+		     as part of that same scrolling content, sticky-top by default.
+		     `.pane-score-scroll` is that scrolling ancestor; `.pane-score`
+		     itself stays non-scrolling so the zoom pill (repositioned
+		     bottom-right in the style block below, to match `PdfView`'s)
+		     can anchor to it and float free of the score's own scroll,
+		     the same "non-positioned scroll wrapper, positioned parent"
+		     escape `PdfView` gets for free from its own internal structure. -->
+		<div class="pane pane-score">
+			<div class="pane-score-scroll">
+				<ScoreView
+					xml={data.xml}
+					positionWholeNotes={0}
+					scoreTheme={$resolvedTheme}
+					showBadge={false}
+					onMeasureClick={handleMeasureClick}
+					bind:zoom={scoreZoom}
+				/>
+			</div>
+			<!-- Sibling of `.pane-score-scroll`, not inside it -- see this
+			     component's own script-block comment on why this exists
+			     instead of `ScoreView`'s built-in one, and why it has to
+			     live outside the scrolling wrapper to float free of it,
+			     same reasoning as `.pane-score`'s own doc comment above. -->
+			<div class="zoom-pill">
+				<button onclick={() => scoreZoomBy(-ZOOM_STEP)} disabled={scoreZoom <= MIN_ZOOM} aria-label={m.zoom_out()}>
+					−
+				</button>
+				<button onclick={() => (scoreZoom = 1)} class="zoom-level">{Math.round(scoreZoom * 100)}%</button>
+				<button onclick={() => scoreZoomBy(ZOOM_STEP)} disabled={scoreZoom >= MAX_ZOOM} aria-label={m.zoom_in()}>
+					+
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Floating AI-edit entry point -- replaces the old docked edit panel.
+	     `position: absolute` within `.review-shell` (itself `position: fixed`),
+	     so this anchors to the viewport-sized shell rather than scrolling
+	     with either pane. Always rendered, draft or not -- see the panel's
+	     own doc comment below for why the AI-edit form stays available
+	     regardless of draft state. -->
+	<button
+		type="button"
+		class="chat-fab"
+		onclick={() => (chatOpen = !chatOpen)}
+		aria-label={m.review_chat_toggle()}
+		title={m.review_chat_toggle()}
+	>
+		<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+			<path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+		</svg>
+	</button>
+
+	{#if chatOpen}
+		<div class="chat-panel">
+			<div class="chat-panel-head">
+				<p class="hint">{m.ai_edit_hint()}</p>
+				<button type="button" class="icon-btn" onclick={() => (chatOpen = false)} aria-label={m.review_chat_close()}>
+					<svg viewBox="0 0 24 24" aria-hidden="true">
+						<path d="M18 6 6 18M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<!-- Same trigger as the Tracks tab's own "Generate lyrics from
+			     PDF" button -- hidden once a draft is already pending, same
+			     as there, since this always creates a fresh draft rather
+			     than touching a pending one (see `+page.server.ts`'s own
+			     `generateLyrics` action). -->
+			{#if !data.draftId}
+				<form method="POST" action="?/generateLyrics" use:enhance={withSubmitting((v) => (generatingLyrics = v))}>
+					<button type="submit" class="btn btn-outline" disabled={generatingLyrics}>
+						{generatingLyrics ? m.groups_uploading() : m.groups_generate_lyrics_button()}
+					</button>
+				</form>
 			{/if}
 
 			<!-- Always available, draft or not -- it complements whatever's on
@@ -253,87 +382,80 @@
 			<form
 				method="POST"
 				action="?/submitEdit"
-				class="edit-form"
+				class="chat-composer"
 				use:enhance={withSubmitting((v) => (submittingEdit = v))}
 			>
-				<label class="field">
-					<span>{m.ai_edit_start_label()}</span>
-					<input type="number" name="measure_start" min="1" bind:value={measureStartInput} required />
-				</label>
-				<label class="field">
-					<span>{m.ai_edit_end_label()}</span>
-					<input type="number" name="measure_end" min="1" bind:value={measureEndInput} required />
-				</label>
-				<label class="field field-message">
-					<span>{m.ai_edit_message_label()}</span>
+				<div class="measure-fields">
+					<label class="field">
+						<span>{m.ai_edit_start_label()}</span>
+						<input type="number" name="measure_start" min="1" bind:value={measureStartInput} required />
+					</label>
+					<label class="field">
+						<span>{m.ai_edit_end_label()}</span>
+						<input type="number" name="measure_end" min="1" bind:value={measureEndInput} required />
+					</label>
+				</div>
+				<div class="composer-row">
 					<textarea
 						name="message"
 						bind:value={message}
+						aria-label={m.ai_edit_message_label()}
 						placeholder={m.ai_edit_message_placeholder()}
 						rows="2"
 						required
 					></textarea>
-				</label>
-				<div class="btn-row edit-form-submit-row">
-					<button type="submit" class="btn btn-primary" disabled={submittingEdit || !canSubmitEdit}>
-						{submittingEdit ? m.ai_edit_submitting() : m.ai_edit_submit()}
+					<button
+						type="submit"
+						class="send-btn"
+						disabled={submittingEdit || !canSubmitEdit}
+						aria-label={submittingEdit ? m.ai_edit_submitting() : m.ai_edit_submit()}
+						title={submittingEdit ? m.ai_edit_submitting() : m.ai_edit_submit()}
+					>
+						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+							<path d="M3 11.5 20.5 3l-5 17.5-4-7-7-1.5z" />
+						</svg>
 					</button>
 				</div>
 			</form>
+			{#if form?.error}<p class="error">{form.error}</p>{/if}
 		</div>
+	{/if}
 
-		<div class="compare-panes" class:single-pane={!data.hasPdf}>
-			<!-- A Tracks-tab upload with ambiguous parts can reach this page
-			     with a music file but no PDF yet (Part A's own producers --
-			     "Generate lyrics from PDF", AI edit -- never run PDF-less, so
-			     this only ever applies to that new path). Skipping the pane
-			     outright rather than handing `PdfView` an empty/failing URL
-			     -- `single-pane` above hands the score the full width instead
-			     of a broken half-empty layout. -->
-			{#if data.hasPdf}
-				<div class="pane">
-					<PdfView pdfUrl={data.pdfUrl} pieceId={data.pieceId} canMarkup={false} />
-				</div>
+	<footer class="review-playbar">
+		<button
+			type="button"
+			class="play-btn"
+			onclick={togglePlay}
+			disabled={!player || !parsed}
+			aria-label={isPlaying ? m.piece_pause() : m.piece_play()}
+		>
+			{#if isPlaying}
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+				</svg>
+			{:else}
+				<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M8 5v14l11-7z" />
+				</svg>
 			{/if}
-			<!-- `pane-score`: unlike `PdfView` (which scrolls its own content
-			     internally and keeps its zoom pill fixed outside that scroll),
-			     `ScoreView` relies on an ancestor to scroll (see its own
-			     `nearestScrollable` doc comment) and renders its zoom controls
-			     as part of that same scrolling content, sticky-top by default.
-			     `.pane-score-scroll` is that scrolling ancestor; `.pane-score`
-			     itself stays non-scrolling so the zoom pill (repositioned
-			     bottom-right in the style block below, to match `PdfView`'s)
-			     can anchor to it and float free of the score's own scroll,
-			     the same "non-positioned scroll wrapper, positioned parent"
-			     escape `PdfView` gets for free from its own internal structure. -->
-			<div class="pane pane-score">
-				<div class="pane-score-scroll">
-					<ScoreView
-						xml={data.xml}
-						positionWholeNotes={0}
-						scoreTheme={$resolvedTheme}
-						showBadge={false}
-						onMeasureClick={handleMeasureClick}
-						bind:zoom={scoreZoom}
-					/>
-				</div>
-				<!-- Sibling of `.pane-score-scroll`, not inside it -- see this
-				     component's own script-block comment on why this exists
-				     instead of `ScoreView`'s built-in one, and why it has to
-				     live outside the scrolling wrapper to float free of it,
-				     same reasoning as `.pane-score`'s own doc comment above. -->
-				<div class="zoom-pill">
-					<button onclick={() => scoreZoomBy(-ZOOM_STEP)} disabled={scoreZoom <= MIN_ZOOM} aria-label={m.zoom_out()}>
-						−
-					</button>
-					<button onclick={() => (scoreZoom = 1)} class="zoom-level">{Math.round(scoreZoom * 100)}%</button>
-					<button onclick={() => scoreZoomBy(ZOOM_STEP)} disabled={scoreZoom >= MAX_ZOOM} aria-label={m.zoom_in()}>
-						+
-					</button>
-				</div>
+		</button>
+		<div class="scrubber">
+			<input
+				type="range"
+				class="seek-slider"
+				style:--fill="{seekPct}%"
+				min="0"
+				max={durationMs}
+				value={positionMs}
+				aria-label={m.piece_seek()}
+				oninput={(e) => seek(Number((e.target as HTMLInputElement).value))}
+			/>
+			<div class="time-row">
+				<span>{formatTime(positionMs)}</span>
+				<span>{formatTime(durationMs)}</span>
 			</div>
 		</div>
-	</div>
+	</footer>
 </main>
 
 <style>
@@ -353,81 +475,99 @@
 		left: 0;
 		right: 0;
 		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
 		padding: 0 1.1rem 0.75rem;
 	}
 
-	.review-body {
+	/* Same play/pause + scrubber bar as the main piece page's bottom-bar
+	   (`piece/[id]/+page.svelte`) -- reusing its exact look rather than the
+	   small icon-only control this replaced, so playback reads the same
+	   way everywhere in the app. Its own bordered card, not edge-to-edge,
+	   since this page's other regions (`.draft-bar`/`.compare-panes`) are
+	   already cards floating inside `.review-shell`'s padding. */
+	.review-playbar {
+		flex: 0 0 auto;
 		display: flex;
-		flex-direction: column;
+		align-items: center;
 		gap: 0.75rem;
-		height: 100%;
-		min-height: 0;
-	}
-
-	/* Side dock only actually goes side-by-side once there's real width for
-	   it -- below that, forcing a row would squeeze the panes into nothing
-	   useful, so it falls back to stacking (same as top dock) regardless of
-	   the toggle. */
-	@media (min-width: 700px) {
-		.review-body[data-dock='side'] {
-			flex-direction: row;
-		}
-	}
-
-	.edit-panel {
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		flex-shrink: 0;
-		padding: 0.75rem;
+		padding: 0.6rem 0.9rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--surface);
-		overflow-y: auto;
 	}
 
-	@media (min-width: 700px) {
-		.review-body[data-dock='side'] .edit-panel {
-			width: 18rem;
-			height: 100%;
-		}
-	}
-
-	.edit-panel-head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 0.6rem;
-	}
-
-	.dock-toggle {
+	.play-btn {
 		flex-shrink: 0;
-		min-width: 2rem;
-		min-height: 2rem;
-		border: 1px solid var(--border);
-		background: var(--surface-2, transparent);
-		color: var(--text);
-		border-radius: var(--radius-md);
-		font-size: 1rem;
-		line-height: 1;
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		border: none;
+		background: var(--accent);
+		color: var(--accent-contrast);
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		cursor: pointer;
+		transition: background-color 0.15s ease;
 	}
 
-	.dock-toggle:hover {
-		border-color: var(--accent);
-		color: var(--accent);
+	.play-btn:hover {
+		background: var(--accent-hover);
 	}
 
-	.review-toolbar-text {
+	.play-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.play-btn svg {
+		width: 20px;
+		height: 20px;
+	}
+
+	.scrubber {
+		flex: 1;
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
 		min-width: 0;
 	}
 
-	.piece-title {
-		margin: 0;
-		font-size: 1.05rem;
+	.seek-slider {
+		background: linear-gradient(
+			to right,
+			var(--accent) 0%,
+			var(--accent) var(--fill),
+			var(--surface-2) var(--fill),
+			var(--surface-2) 100%
+		);
+	}
+
+	.time-row {
+		display: flex;
+		justify-content: space-between;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+
+	/* The slim draft-decision bar -- only rendered while `data.draftId` is
+	   set (see the template), so this never needs to account for a "no
+	   draft" state itself. Sized to its own content (`flex: 0 0 auto`),
+	   same card look as `.pane`/`.review-playbar`, not a fixed-height
+	   docked panel. */
+	.draft-bar {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		flex: 0 0 auto;
+		padding: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--surface);
+		overflow-y: auto;
 	}
 
 	.hint {
@@ -476,33 +616,6 @@
 		color: var(--danger);
 	}
 
-	/* Grid, not flex-wrap -- explicit columns instead of trusting wrap
-	   heuristics to lay 3 differently-sized fields out sensibly on a wide
-	   row, which in practice left the two narrow measure fields and the
-	   message field each wrapping onto their own line with a large empty
-	   gap beside them. Two fixed narrow columns for the measure numbers,
-	   the message field taking all remaining width; the submit row spans
-	   both. */
-	.edit-form {
-		display: grid;
-		grid-template-columns: 6rem 6rem 1fr;
-		align-items: end;
-		gap: 0.6rem 0.75rem;
-	}
-
-	.edit-form-submit-row {
-		grid-column: 1 / -1;
-	}
-
-	/* Side dock is a narrow (18rem) column -- the 3-across grid above has
-	   no room there, so it collapses to one field per row instead, same
-	   breakpoint as the rest of the side-dock rules. */
-	@media (min-width: 700px) {
-		.review-body[data-dock='side'] .edit-form {
-			grid-template-columns: 1fr;
-		}
-	}
-
 	.field {
 		display: flex;
 		flex-direction: column;
@@ -515,9 +628,168 @@
 		width: 100%;
 	}
 
-	.field-message textarea {
+	/* The floating AI-edit entry point. `position: absolute` within
+	   `.review-shell` (itself `position: fixed`), bottom-right, sitting
+	   just above `.review-playbar` -- that bar is ~4.1rem tall (its 44px
+	   `.play-btn` plus 0.6rem top/bottom padding plus its 1px border), so
+	   `bottom` clears it with a bit of room to spare. */
+	.chat-fab {
+		position: absolute;
+		right: 1.25rem;
+		bottom: calc(4.1rem + 1rem);
+		width: 3.25rem;
+		height: 3.25rem;
+		border-radius: 50%;
+		border: none;
+		background: var(--accent);
+		color: var(--accent-contrast);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		box-shadow: var(--shadow);
+		z-index: 3;
+		transition: background-color 0.15s ease;
+	}
+
+	.chat-fab:hover {
+		background: var(--accent-hover);
+	}
+
+	.chat-fab svg {
+		width: 22px;
+		height: 22px;
+	}
+
+	/* Anchored just above the FAB (its own 3.25rem height plus a small
+	   gap), same card treatment as `.draft-bar`/`.pane`. Fixed-ish width,
+	   capped height with internal scroll so a long error/hint never pushes
+	   it off the top of `.review-shell`. */
+	.chat-panel {
+		position: absolute;
+		right: 1.25rem;
+		bottom: calc(4.1rem + 1rem + 3.25rem + 0.75rem);
+		width: 21rem;
+		max-width: calc(100vw - 2.5rem);
+		max-height: min(32rem, calc(100% - 2rem));
+		overflow-y: auto;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		padding: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--surface);
+		box-shadow: var(--shadow);
+		z-index: 3;
+	}
+
+	.chat-panel-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+
+	.chat-panel-head .hint {
+		flex: 1;
+	}
+
+	/* Same icon-button look `SettingsDrawer.svelte`'s own close button
+	   uses -- a plain stroke glyph on a transparent, circular hover
+	   target, not this page's filled-icon convention (`.play-btn`/
+	   `.chat-fab`/`.send-btn`), since this is a close affordance tucked
+	   into a corner rather than a primary action. */
+	.icon-btn {
+		flex-shrink: 0;
+		width: 1.75rem;
+		height: 1.75rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--text);
+		cursor: pointer;
+	}
+
+	.icon-btn:hover {
+		background: var(--surface-2);
+	}
+
+	.icon-btn svg {
+		width: 16px;
+		height: 16px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	.chat-composer {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	/* The two measure-range fields side by side, compact -- this panel is
+	   ~21rem wide, with no room for the old wide page's 4-across grid. */
+	.measure-fields {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.measure-fields .field {
+		flex: 1;
+	}
+
+	/* The chat-style composer row: a rounded textarea with the submit
+	   button as a small circular send icon at its trailing edge, instead
+	   of a separate full-width pill button below it. */
+	.composer-row {
+		position: relative;
+		display: flex;
+	}
+
+	.composer-row textarea {
+		flex: 1;
 		width: 100%;
 		resize: vertical;
+		padding: 0.55rem 2.5rem 0.55rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--surface-2, transparent);
+		color: var(--text);
+		font: inherit;
+	}
+
+	.send-btn {
+		position: absolute;
+		right: 0.35rem;
+		bottom: 0.35rem;
+		width: 1.9rem;
+		height: 1.9rem;
+		flex-shrink: 0;
+		border: none;
+		border-radius: 50%;
+		background: var(--accent);
+		color: var(--accent-contrast);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+
+	.send-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.send-btn svg {
+		width: 15px;
+		height: 15px;
 	}
 
 	.compare-panes {
@@ -529,12 +801,10 @@
 		min-width: 0;
 	}
 
-	/* Same 700px breakpoint as the dock-related rules above, not the 900px
-	   this started at -- lowered after finding the panes only ever went
-	   side-by-side on a nearly-maximized wide window in practice, which
-	   read as "eats half the screen" on anything more modest. One
-	   consistent threshold everywhere on this page is also just easier to
-	   reason about than two nearby-but-different ones. */
+	/* 700px, not the 900px this started at -- lowered after finding the
+	   panes only ever went side-by-side on a nearly-maximized wide window
+	   in practice, which read as "eats half the screen" on anything more
+	   modest. */
 	@media (min-width: 700px) {
 		.compare-panes {
 			grid-template-columns: 1fr 1fr;

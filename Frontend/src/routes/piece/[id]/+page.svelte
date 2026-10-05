@@ -324,6 +324,10 @@
 		!piece ? 'player' : !hasPlayer ? 'pdf' : !hasPdfPane ? 'player' : initialDefaults.viewMode
 	);
 	let zoomLevel = $state(1);
+	// Set true in `bootstrap()` only when this piece has no persisted zoom —
+	// `ScoreView` consumes it once (fitting a measure to screen) and flips
+	// it back off itself.
+	let autoFitZoom = $state(false);
 	let pdfZoomLevel = $state(1);
 	// F21: two independent, session-local PDF-markup visibility toggles, both
 	// default off and additive. Driven from the Practice Setup drawer below
@@ -566,6 +570,10 @@
 		// (now) has no PDF, and vice versa.
 		if (stored.viewMode && availableViewModes.includes(stored.viewMode)) viewMode = stored.viewMode;
 		if (stored.zoomLevel !== undefined) zoomLevel = Math.min(2, Math.max(0.5, stored.zoomLevel));
+		// No persisted zoom at all == a genuinely first-ever open of this
+		// piece — let `ScoreView` pick a default that fits a measure on
+		// screen instead of always starting at a flat 100%.
+		else autoFitZoom = true;
 		if (stored.pdfZoomLevel !== undefined) pdfZoomLevel = Math.min(2, Math.max(0.5, stored.pdfZoomLevel));
 		// F21: restore the markup layer toggles (the persisted visibility
 		// state, not the transient armed-pencil/tool state).
@@ -1303,6 +1311,7 @@
 						<ScoreView
 							bind:this={scoreView}
 							bind:zoom={zoomLevel}
+							bind:autoFitZoom
 							bind:rendering={scoreRendering}
 							showBadge={!menuOpen}
 							{xml}

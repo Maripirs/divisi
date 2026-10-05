@@ -51,8 +51,8 @@
 	 * with its timestamp instead of `onNoteClick` seeking there.
 	 *
 	 * `onMeasureClick`, if given, is called alongside whichever of the above
-	 * two fires, with the clicked note's real MusicXML measure number
-	 * (`note.sourceNote.SourceMeasure.MeasureNumber`) -- built for the "AI
+	 * two fires, with the clicked note's printed MusicXML measure number
+	 * (`note.sourceNote.SourceMeasure.MeasureNumberXML`) -- built for the "AI
 	 * edit" feature's measure-range picker (`piece/[id]/review`), which
 	 * needs the actual measure number a click landed on, not a playback
 	 * timestamp. Purely additive: every other caller of this component
@@ -71,6 +71,7 @@
 		onAnnotationMarkerClick,
 		onMeasureClick,
 		zoom = $bindable(1),
+		autoFitZoom = $bindable(false),
 		rendering = $bindable(false),
 		showBadge = true
 	}: {
@@ -89,6 +90,13 @@
 		// gesture in here and the parent's persisted-settings restore on
 		// load need to drive the same value.
 		zoom?: number;
+		// Set by the parent when this piece has no persisted zoom yet (a
+		// genuinely first-ever open). Consumed once, right after the next
+		// render finishes: `fitZoomToMeasure` picks a `zoom` that fits the
+		// first measure on screen, then flips this back to `false` so a
+		// later xml reload (e.g. a voice-part switch) can't clobber a zoom
+		// the human has since chosen by hand.
+		autoFitZoom?: boolean;
 		// Bindable out: true while OSMD is (re-)engraving a new score, so the
 		// parent can dim/disable whatever control triggered the change and
 		// show its own "updating" hint next to it.
@@ -220,7 +228,7 @@
 		else onNoteClick?.(timestamp);
 		// Additive, alongside whichever of the above just fired -- see this
 		// prop's own doc comment above the component's props block.
-		onMeasureClick?.(note.sourceNote.SourceMeasure.MeasureNumber);
+		onMeasureClick?.(note.sourceNote.SourceMeasure.MeasureNumberXML);
 	}
 
 	// Resolves only after the browser has painted at least once. A single
@@ -255,6 +263,10 @@
 				osmdRef.render();
 				applyScoreTreatments();
 				cursorReady = true;
+				if (autoFitZoom) {
+					autoFitZoom = false;
+					fitZoomToMeasure();
+				}
 			})
 			.catch((e: unknown) => {
 				loadError = String(e);
@@ -589,6 +601,25 @@
 		following = true;
 		jumpToCursor();
 		lastCursorSystemTop = currentCursorSystemTop();
+	}
+
+	/** Zooms out (never in) just enough that the first measure's rendered
+	 * width fits within the container — the first measure usually carries
+	 * the clef/key/time signature, so it's typically the widest one on the
+	 * page, making it a conservative stand-in for "a measure" in general.
+	 * Same `10 * Zoom` units-per-pixel conversion as `handleContainerClick`
+	 * above. Skipped if the container isn't actually visible/measurable
+	 * (e.g. the player pane is `display: none` behind the PDF tab) — a
+	 * zero-width container would otherwise read as "nothing fits" and floor
+	 * the zoom to `MIN_ZOOM` for no real reason. */
+	function fitZoomToMeasure(): void {
+		if (!osmd || !container) return;
+		const measure = osmd.GraphicSheet.MusicPages[0]?.MusicSystems[0]?.GraphicalMeasures[0]?.[0];
+		if (!measure) return;
+		const measureWidthPx = measure.PositionAndShape.Size.width * 10 * zoom;
+		const available = container.clientWidth * 0.96;
+		if (available <= 0 || measureWidthPx <= available) return;
+		zoom = clampZoom(zoom * (available / measureWidthPx));
 	}
 
 	function zoomBy(delta: number): void {

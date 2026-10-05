@@ -431,6 +431,14 @@ export interface LibraryEntryOut {
 	 * Null when nothing's pending. See `working_draft`/
 	 * `pending_generated_version_id` in `Backend/app/services/pieces.py`. */
 	pending_generated_version_id: string | null;
+	/** Lyrics-status indicator (Tracks tab, admin-only). `has_lyrics` is
+	 * the piece's *live* version's `PieceVersion.has_lyrics`.
+	 * `lyrics_pending_review` is true only when `pending_generated_version_id`
+	 * is set *and* that draft's `draft_kind` is specifically
+	 * `lyrics_generation` -- a pending AI-edit or OMR draft leaves this
+	 * false. See `Backend/app/api/schemas/library.py`'s `LibraryEntryOut`. */
+	has_lyrics: boolean;
+	lyrics_pending_review: boolean;
 }
 
 /** One `PieceVersion`, as returned by version-lifecycle routes

@@ -3,3 +3,11 @@
 # Demo choir source scores pulled in by hand for scripts/seed_demo.py —
 # third-party CPDL editions, not repo fixtures. Only the README is tracked.
 fixtures/demo/*/
+
+# SFCC source scores pulled in by hand for the lyrics-alignment scripts —
+# third-party editions, not repo fixtures, same reasoning as fixtures/demo/.
+fixtures/SFCC/
+
+# Scratch output from the lyrics-alignment scripts (lane/manifest/report
+# JSON, draft MusicXML) — working data, not something the app reads.
+lyric_runs/

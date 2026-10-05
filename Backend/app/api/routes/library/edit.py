@@ -53,8 +53,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.schemas import EditMeasuresRequest, PieceVersionOut
 from app.db import session as db_session
-from app.db.models import Piece, User, VersionSource, VersionStatus
+from app.db.models import DraftKind, Piece, User, VersionSource, VersionStatus
 from app.db.session import get_db
+from app.lyrics.inject import has_any_lyrics
 from app.scoreedit.apply import SpliceValidationError, extract_range, splice_range
 from app.scoreedit.client import ScoreEditError, edit_measures
 from app.services.common import get_or_404
@@ -189,6 +190,11 @@ def edit_measures_route(
             file_name=f"{stem}-edit.musicxml",
             pdf_file_name=version_pdf_file_name,
             source=VersionSource.modification,
+            # Off the same in-memory `score` the splice just landed in --
+            # the edit may or may not have touched a lyric-bearing measure,
+            # so this isn't assumed either way.
+            has_lyrics=has_any_lyrics(score),
+            draft_kind=DraftKind.ai_edit,
             db=db,
         )
     finally:

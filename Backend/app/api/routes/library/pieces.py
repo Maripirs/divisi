@@ -14,6 +14,7 @@ from app.api.schemas import (
 from app.api.schemas.library import LibraryEntryOmrJobOut
 from app.db.models import (
     Distribution,
+    DraftKind,
     GroupMembership,
     GroupRole,
     OmrJob,
@@ -28,6 +29,7 @@ from app.db.session import get_db
 from app.services.pieces import (
     create_piece_with_version,
     delete_piece,
+    detect_has_lyrics,
     resolve_new_piece_owner_id,
 )
 
@@ -124,7 +126,8 @@ async def upload_piece(
         )
     owner_id = resolve_new_piece_owner_id(owner_type, group_id, current_user.id, db)
 
-    file_path = _save_upload(file, await file.read()) if file is not None else None
+    file_data = await file.read() if file is not None else None
+    file_path = _save_upload(file, file_data) if file is not None else None
     pdf_file_path = _save_upload(pdf_file, await pdf_file.read()) if pdf_file is not None else None
 
     piece, version = create_piece_with_version(
@@ -140,6 +143,7 @@ async def upload_piece(
         youtube_url=youtube_url,
         default_tempo_bpm=default_tempo_bpm,
         presentation=presentation or None,
+        has_lyrics=detect_has_lyrics(file_data, file.filename if file is not None else None),
         db=db,
     )
     return PieceUploadOut(piece=piece, version=version)
@@ -195,9 +199,9 @@ def _omr_fields_batch(piece_ids: list[str], db: Session) -> dict[str, dict]:
         .order_by(PieceVersion.piece_id, PieceVersion.created_at.desc())
         .all()
     )
-    pending_by_piece: dict[str, str] = {}
+    pending_by_piece: dict[str, PieceVersion] = {}
     for d in drafts:
-        pending_by_piece.setdefault(d.piece_id, d.id)
+        pending_by_piece.setdefault(d.piece_id, d)
 
     return {
         piece_id: {
@@ -206,7 +210,13 @@ def _omr_fields_batch(piece_ids: list[str], db: Session) -> dict[str, dict]:
                 if piece_id in latest_job_by_piece
                 else None
             ),
-            "pending_generated_version_id": pending_by_piece.get(piece_id),
+            "pending_generated_version_id": (
+                pending_by_piece[piece_id].id if piece_id in pending_by_piece else None
+            ),
+            "lyrics_pending_review": (
+                piece_id in pending_by_piece
+                and pending_by_piece[piece_id].draft_kind == DraftKind.lyrics_generation
+            ),
         }
         for piece_id in piece_ids
     }
@@ -304,6 +314,7 @@ def list_my_library(
                 has_pdf=latest.pdf_file_path is not None,
                 music_file_name=latest.file_name,
                 pdf_file_name=latest.pdf_file_name,
+                has_lyrics=latest.has_lyrics,
                 **omr_fields_by_piece[piece.id],
             )
         )
@@ -332,6 +343,7 @@ def list_my_library(
                     has_pdf=version.pdf_file_path is not None,
                     music_file_name=version.file_name,
                     pdf_file_name=version.pdf_file_name,
+                    has_lyrics=version.has_lyrics,
                     **omr_fields_by_piece[piece.id],
                 )
             )
@@ -358,6 +370,7 @@ def list_my_library(
                 has_pdf=latest.pdf_file_path is not None,
                 music_file_name=latest.file_name,
                 pdf_file_name=latest.pdf_file_name,
+                has_lyrics=latest.has_lyrics,
                 **omr_fields_by_piece[piece.id],
             )
         )

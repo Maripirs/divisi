@@ -24,6 +24,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.services.pieces import (
     add_version,
+    detect_has_lyrics,
     get_or_create_working_draft,
     publish_version,
     replace_version_file as svc_replace_version_file,
@@ -63,10 +64,15 @@ async def upload_version(
     piece = _get_piece_or_404(piece_id, db)
     _require_piece_access(piece, current_user, db)
 
-    file_path = _save_upload(file, await file.read()) if file is not None else None
+    file_data = await file.read() if file is not None else None
+    file_path = _save_upload(file, file_data) if file is not None else None
     pdf_file_path = _save_upload(pdf_file, await pdf_file.read()) if pdf_file is not None else None
     file_name = file.filename if file is not None else None
     pdf_file_name = pdf_file.filename if pdf_file is not None else None
+    # A freshly uploaded music file is parsed right here (nothing else in
+    # this route reads it); a carried-forward or removed one is handled
+    # below alongside the rest of the carry-forward logic.
+    has_lyrics = detect_has_lyrics(file_data, file_name) if file is not None else False
 
     # A version only replaces the file slot(s) actually given here — carry
     # the other slot (path and display filename alike) forward from the
@@ -85,6 +91,7 @@ async def upload_version(
             if file is None and not remove_file:
                 file_path = latest.file_path
                 file_name = latest.file_name
+                has_lyrics = latest.has_lyrics
             if pdf_file is None and not remove_pdf_file:
                 pdf_file_path = latest.pdf_file_path
                 pdf_file_name = latest.pdf_file_name
@@ -103,6 +110,8 @@ async def upload_version(
         file_name=file_name,
         pdf_file_name=pdf_file_name,
         source=VersionSource.modification,
+        has_lyrics=has_lyrics,
+        draft_kind=None,
         db=db,
     )
     return version

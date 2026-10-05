@@ -56,11 +56,6 @@
 	// only take effect on Save), deleting a track is its own explicit
 	// click-to-confirm step (see the `ConfirmButton` in the edit panel).
 	let deletingTrack = $state(false);
-	// Tracks tab edit panel (admin only): "Generate lyrics from PDF" — its
-	// own click, own loading state, separate from the Save button above
-	// (it doesn't touch the title/composer/tempo/file fields at all, it
-	// only reads the track's existing PDF and music file server-side).
-	let generatingLyrics = $state(false);
 
 	// Admin sees every distributed track, including ones with no practice
 	// file wired up yet (so they know what still needs fixing) — a member
@@ -182,140 +177,126 @@
 						use:enhance={withUploadGate((v) => (savingDetails = v), () => (editingDetailsPieceId = null))}
 					>
 						<input type="hidden" name="pieceId" value={track.piece_id} />
-						<label class="field">
-							<span>{m.groups_upload_name()}</span>
-							<input name="title" required bind:value={titleEditDraft} />
-						</label>
-						<label class="field">
-							<span>{m.groups_upload_author()}</span>
-							<input name="composer" bind:value={composerEditDraft} placeholder={m.groups_optional()} />
-						</label>
-						<label class="field">
-							<span>{m.groups_upload_youtube()}</span>
-							<input
-								name="youtube_url"
-								type="url"
-								bind:value={youtubeEditDraft}
-								placeholder={m.groups_optional()}
-							/>
-						</label>
-						<label class="field">
-							<span>{m.groups_upload_default_tempo()}</span>
-							<input name="defaultTempoBpm" type="number" min="1" bind:value={tempoEditDraft} placeholder="e.g. 96" />
-						</label>
-						<label class="field">
-							<span>{m.groups_presentation_label()}</span>
-							<select name="presentation" bind:value={presentationEditDraft}>
-								<option value="">{m.groups_presentation_auto()}</option>
-								<option value="score_reference">{m.groups_presentation_score_reference()}</option>
-								<option value="play_along">{m.groups_presentation_play_along()}</option>
-							</select>
-						</label>
+						<div class="edit-details-grid">
+							<p class="card-eyebrow">{m.groups_edit_details_section()}</p>
+							<label class="field edit-field-full">
+								<span>{m.groups_upload_name()}</span>
+								<input name="title" required bind:value={titleEditDraft} />
+							</label>
+							<label class="field">
+								<span>{m.groups_upload_author()}</span>
+								<input name="composer" bind:value={composerEditDraft} placeholder={m.groups_optional()} />
+							</label>
+							<label class="field">
+								<span>{m.groups_upload_youtube()}</span>
+								<input
+									name="youtube_url"
+									type="url"
+									bind:value={youtubeEditDraft}
+									placeholder={m.groups_optional()}
+								/>
+							</label>
+							<label class="field">
+								<span>{m.groups_upload_default_tempo()}</span>
+								<input name="defaultTempoBpm" type="number" min="1" bind:value={tempoEditDraft} placeholder="e.g. 96" />
+							</label>
+							<label class="field">
+								<span>{m.groups_presentation_label()}</span>
+								<select name="presentation" bind:value={presentationEditDraft}>
+									<option value="">{m.groups_presentation_auto()}</option>
+									<option value="score_reference">{m.groups_presentation_score_reference()}</option>
+									<option value="play_along">{m.groups_presentation_play_along()}</option>
+								</select>
+							</label>
+						</div>
 
-						<p class="card-eyebrow">{m.groups_edit_attachments()}</p>
+						<div class="edit-section">
+							<p class="card-eyebrow">{m.groups_edit_attachments()}</p>
 
-						<FileSlot
-							label={m.groups_edit_music_file_label()}
-							hasCurrent={track.has_music}
-							currentName={track.music_file_name ?? m.groups_edit_unnamed_file()}
-							currentCaption={m.groups_edit_current_music_file()}
-							emptyTitle={m.groups_edit_no_music_added()}
-							emptyHint={m.groups_edit_music_hint()}
-							addLabel={m.groups_edit_add_music_file_button()}
-							inputName="file"
-							accept=".mid,.midi,.musicxml,.xml,.mxl"
-							removeInputName="remove_file"
-						/>
+							<div class="edit-attachments-grid">
+								<FileSlot
+									label={m.groups_edit_music_file_label()}
+									hasCurrent={track.has_music}
+									currentName={track.music_file_name ?? m.groups_edit_unnamed_file()}
+									currentCaption={m.groups_edit_current_music_file()}
+									emptyTitle={m.groups_edit_no_music_added()}
+									emptyHint={m.groups_edit_music_hint()}
+									addLabel={m.groups_edit_add_music_file_button()}
+									inputName="file"
+									accept=".mid,.midi,.musicxml,.xml,.mxl"
+									removeInputName="remove_file"
+								/>
 
-						<FileSlot
-							label={m.groups_edit_pdf_file_label()}
-							hasCurrent={track.has_pdf}
-							currentName={track.pdf_file_name ?? m.groups_edit_unnamed_file()}
-							currentCaption={m.groups_edit_current_pdf()}
-							emptyTitle={m.groups_edit_no_pdf_added()}
-							emptyHint={m.groups_edit_pdf_hint()}
-							addLabel={m.groups_edit_add_pdf_button()}
-							inputName="pdf_file"
-							accept="application/pdf"
-							removeInputName="remove_pdf_file"
-						/>
+								<FileSlot
+									label={m.groups_edit_pdf_file_label()}
+									hasCurrent={track.has_pdf}
+									currentName={track.pdf_file_name ?? m.groups_edit_unnamed_file()}
+									currentCaption={m.groups_edit_current_pdf()}
+									emptyTitle={m.groups_edit_no_pdf_added()}
+									emptyHint={m.groups_edit_pdf_hint()}
+									addLabel={m.groups_edit_add_pdf_button()}
+									inputName="pdf_file"
+									accept="application/pdf"
+									removeInputName="remove_pdf_file"
+								/>
+							</div>
+						</div>
 
 						{#if form?.form === 'pieceDetails' && form?.error}
 							<p class="error">{form.error}</p>
 						{/if}
-						<div class="btn-row">
-							<button type="submit" class="btn btn-outline" disabled={savingDetails}>
-								{savingDetails ? m.groups_uploading() : m.action_save()}
-							</button>
-							<button
-								type="button"
-								class="text-link"
-								onclick={() => (editingDetailsPieceId = null)}
-								disabled={savingDetails}
-							>
-								{m.action_cancel()}
-							</button>
-						</div>
-					</form>
 
-					<!-- "Generate lyrics from PDF": needs both files already on this
-					     track's live version, so it's hidden until both are present
-					     rather than 400ing on click. Its own `<form>` (can't nest
-					     inside the edit form above) — this doesn't touch any of that
-					     form's fields, it only reads the track's existing PDF/music
-					     file server-side and lands the result as an unpublished draft
-					     (see `Backend/app/api/routes/library/lyrics.py`'s own doc
-					     comment) rather than a live version directly -- hidden here
-					     once a draft is already pending, below, since only one can be
-					     open at a time. -->
-					{#if track.has_music && track.has_pdf && !track.pending_generated_version_id}
-						<form
-							method="POST"
-							action="?/generateLyrics"
-							use:enhance={withSubmitting((v) => (generatingLyrics = v))}
-						>
-							<input type="hidden" name="pieceId" value={track.piece_id} />
-							{#if form?.form === 'generateLyrics' && form?.error}
-								<p class="error">{form.error}</p>
-							{/if}
+						<div class="edit-section">
 							<div class="btn-row">
-								<button type="submit" class="btn btn-outline" disabled={generatingLyrics}>
-									{generatingLyrics ? m.groups_uploading() : m.groups_generate_lyrics_button()}
+								<button type="submit" class="btn btn-primary" disabled={savingDetails}>
+									{savingDetails ? m.groups_uploading() : m.action_save()}
+								</button>
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => (editingDetailsPieceId = null)}
+									disabled={savingDetails}
+								>
+									{m.action_cancel()}
 								</button>
 							</div>
-						</form>
-					{/if}
 
-					<!-- "Review & edit": the side-by-side PDF/score page
-					     (`piece/[id]/review/+page.server.ts`), always reachable
-					     once a track has both files -- not gated on anything
-					     having been generated first, unlike "Generate lyrics
-					     from PDF" above. It's where an admin picks a measure
-					     range and describes an AI edit
-					     (`Backend/app/api/routes/library/edit.py`), and also
-					     where either AI-assisted producer's pending draft
-					     (lyrics or AI edit -- both share the one-working-draft
-					     slot per piece) shows up for Approve/Discard, so this
-					     one link covers both states; the eyebrow below only
-					     appears to flag that a draft is actually waiting.
-					     Also reachable with music but no PDF yet whenever
-					     `pending_generated_version_id` is set -- a
-					     Tracks-tab upload with ambiguous parts and no PDF
-					     (see `groups/[id]/actions/tracks.ts`'s
-					     `skip_publish` redirect) needs this link to stay
-					     reachable if the admin navigates away before
-					     resolving it, same "pending draft" id either
-					     producer sets. -->
-					{#if (track.has_music && track.has_pdf) || track.pending_generated_version_id}
-						<div class="btn-row">
-							{#if track.pending_generated_version_id}
-								<p class="card-eyebrow">{m.groups_draft_ready_to_review()}</p>
+							<!-- "Review & edit": the side-by-side PDF/score page
+							     (`piece/[id]/review/+page.server.ts`), always reachable
+							     once a track has both files -- not gated on anything
+							     having been generated first. It's where an admin picks
+							     a measure range and describes an AI edit
+							     (`Backend/app/api/routes/library/edit.py`), and also
+							     where either AI-assisted producer's pending draft
+							     (lyrics or AI edit -- both share the one-working-draft
+							     slot per piece) shows up for Approve/Discard, so this
+							     one link covers both states; the eyebrow below only
+							     appears to flag that a draft is actually waiting.
+							     Also reachable with music but no PDF yet whenever
+							     `pending_generated_version_id` is set -- a
+							     Tracks-tab upload with ambiguous parts and no PDF
+							     (see `groups/[id]/actions/tracks.ts`'s
+							     `skip_publish` redirect) needs this link to stay
+							     reachable if the admin navigates away before
+							     resolving it, same "pending draft" id either
+							     producer sets. A plain link, not a submit, so it
+							     lives inside this form without being a nested
+							     `<form>` -- "Generate lyrics from PDF" used to sit
+							     here too but needed its own `<form>` and has since
+							     moved to the piece review page (reachable from this
+							     same link) instead. -->
+							{#if (track.has_music && track.has_pdf) || track.pending_generated_version_id}
+								<div class="btn-row">
+									{#if track.pending_generated_version_id}
+										<p class="card-eyebrow">{m.groups_draft_ready_to_review()}</p>
+									{/if}
+									<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/review`)}>
+										{m.groups_review_draft()}
+									</a>
+								</div>
 							{/if}
-							<a class="btn btn-outline" href={lh(`/piece/${track.piece_id}/review`)}>
-								{m.groups_review_draft()}
-							</a>
 						</div>
-					{/if}
+					</form>
 
 					<!-- Delete-the-whole-track: a minimal trash icon pinned to the
 					     card's top-right corner rather than a button sitting next to
@@ -392,6 +373,22 @@
 							<span class:present={track.has_pdf}>{track.has_pdf ? '✓' : '–'} {m.groups_track_has_pdf()}</span>
 							<span class:present={!!track.youtube_url}>
 								{track.youtube_url ? '✓' : '–'} {m.groups_track_has_reference()}
+							</span>
+							<!-- Three states, not the binary present/absent the three
+							     spans above use: a pending lyrics-generation draft gets
+							     its own accent-colored look, distinct from both solid
+							     "approved" and muted "no lyrics". -->
+							<span
+								class:present={track.has_lyrics && !track.lyrics_pending_review}
+								class:pending={track.lyrics_pending_review}
+							>
+								{#if track.lyrics_pending_review}
+									~ {m.groups_track_lyrics_pending()}
+								{:else if track.has_lyrics}
+									✓ {m.groups_track_lyrics_approved()}
+								{:else}
+									– {m.groups_track_lyrics_none()}
+								{/if}
 							</span>
 						</p>
 						<p class="card-meta">
@@ -570,6 +567,14 @@
 		color: var(--text);
 	}
 
+	/* Lyrics indicator's third state: a pending draft isn't "present" (not
+	   live yet) or plain "absent" (something's actually waiting on an
+	   admin) -- accent color sets it apart from both. */
+	.track-contents span.pending {
+		color: var(--accent);
+		font-weight: 600;
+	}
+
 	/* Base `.track-card` layout + `.track-info` + `.piece-action*` live in
 	   shell.css as a flex row. F20 made the card a column — the original
 	   info+play row (`.track-card-row`), then an optional "Piece Notes"
@@ -591,6 +596,45 @@
 	/* The track-card "Piece Notes" disclosure is `Disclosure.svelte`
 	   (`variant="inline"`) — divider, chevron, and marker reset all live
 	   there now. */
+
+	/* Edit-track panel hierarchy pass: Details/Attachments/Actions read as
+	   three distinct groups instead of one flat stack of fields and
+	   buttons. `.edit-section` is the divider between a section and the
+	   one before it (same weight as `Disclosure.svelte`'s
+	   `.disclosure--inline` divider). The first section (the fields grid
+	   below) never gets one since there's nothing above it to separate
+	   from. */
+	.edit-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		border-top: 1px solid var(--border);
+		padding-top: 0.5rem;
+	}
+
+	/* The fields grid is the Details section -- always first, so it never
+	   needs `.edit-section`'s divider. Two-up on anything wide enough for
+	   it, Name always full-width since it's the piece's primary
+	   identifier. */
+	.edit-details-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+		gap: 0.6rem 0.8rem;
+	}
+
+	.edit-details-grid > .card-eyebrow,
+	.edit-field-full {
+		grid-column: 1 / -1;
+	}
+
+	/* Music file and PDF side by side -- each FileSlot is a single row
+	   now (see FileSlot.svelte), so there's no reason to stack them when
+	   the card has width to spare. */
+	.edit-attachments-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+		gap: 0.6rem 0.8rem;
+	}
 
 	.track-delete-corner {
 		position: absolute;

@@ -10,5 +10,18 @@ explicit `BCRYPT_ROUNDS=...` in the environment still wins.
 """
 
 import os
+import tempfile
+from pathlib import Path
 
 os.environ.setdefault("BCRYPT_ROUNDS", "4")
+
+# The developer .env may point at the production database and object store.
+# Test imports happen after this file loads, so override those destinations
+# before Settings can read .env. Keep every worker's files in its own temp
+# directory, including tests that bypass the usual SQLite fixture.
+_test_root = Path(tempfile.mkdtemp(prefix="divisi-pytest-"))
+os.environ["DATABASE_URL"] = f"sqlite:///{_test_root / 'test.db'}"
+os.environ["STORAGE_DIR"] = str(_test_root / "storage")
+os.environ["AWS_ENDPOINT_URL_S3"] = ""
+os.environ["AWS_ACCESS_KEY_ID"] = ""
+os.environ["AWS_SECRET_ACCESS_KEY"] = ""

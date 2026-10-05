@@ -172,13 +172,14 @@ export const actions: Actions = {
 		throw redirect(303, lh(`/piece/${params.id}/review`));
 	},
 
-	// Same trigger as the Tracks tab's own "Generate lyrics from PDF"
-	// button (`groups/[id]/actions/tracks.ts`'s `generateLyrics` action),
-	// exposed here too so an admin already on this page doesn't have to
-	// leave it to kick off a (re)generation. Only shown in the template
-	// while `!data.draftId`, same as Tracks tab hides its own button once
-	// a draft is already pending -- this endpoint always creates a new
-	// unpublished draft, never touches a pending one.
+	// "Generate lyrics from PDF" used to also live on the Tracks tab's own
+	// edit panel (`groups/[id]/actions/tracks.ts`), with its own identical
+	// action -- removed from there since this page's link is always
+	// reachable once a track has both files, making that a redundant
+	// second entry point to the exact same endpoint. This is the only
+	// trigger for it now. Only shown in the template while `!data.draftId`
+	// -- this endpoint always creates a new unpublished draft, never
+	// touches a pending one.
 	generateLyrics: async ({ params, locals, fetch }) => {
 		try {
 			await backendFetch(
@@ -186,11 +187,12 @@ export const actions: Actions = {
 				`/library/pieces/${params.id}/generate-lyrics`,
 				{
 					method: 'POST',
-					// Same generous timeout as the Tracks tab's own trigger for
-					// this endpoint -- see `groups/[id]/actions/tracks.ts`'s
-					// `generateLyrics` action for the full reasoning (Groq's
-					// per-page rate-limit pacing, NVIDIA fallback's own longer
-					// per-chunk timeout on a bad day).
+					// Generous timeout: the Backend paces its Groq calls per
+					// page against the account's real free-tier rate limit,
+					// which measured ~130s end to end for a 15-page piece and
+					// scales with page count; the NVIDIA fallback (for when
+					// Groq's rate limit or daily quota blocks it) adds its own
+					// longer per-chunk timeout on top of that on a bad day.
 					signal: AbortSignal.timeout(15 * 60 * 1000)
 				},
 				fetch

@@ -113,65 +113,6 @@ export const trackActions = {
 		});
 	},
 
-	// Admin-only: generates sung-lyric data from the track's PDF text
-	// layer and injects it into its music file's MusicXML, immediately
-	// publishing the result as the track's new live version — same
-	// submit -> approve -> distribute-in-one-step shape as the Backend's
-	// other "admin clicks a button, gets an improved version" actions
-	// above, since this only ever adds `<lyric>` elements on top of
-	// already-approved note/rhythm data (see the Backend route's own doc
-	// comment, `app/api/routes/library/lyrics.py`). MusicXML-sourced
-	// pieces with a real PDF text layer only; the Backend 400s with a
-	// specific message otherwise (MIDI-sourced, no PDF, scanned PDF, ...)
-	// which surfaces here exactly like any other `form?.error`.
-	generateLyrics: async ({ request, locals, fetch }) => {
-		const form = await request.formData();
-		const pieceId = String(form.get('pieceId') ?? '');
-		if (!pieceId) return fail(400, { error: m.groups_missing_track(), form: 'generateLyrics' });
-
-		return runAction('generateLyrics', () =>
-			backendFetch(
-				locals.token,
-				`/library/pieces/${pieceId}/generate-lyrics`,
-				{
-					method: 'POST',
-					// `backendFetch`'s default 20s timeout (right for every other
-					// call in this file) is far too short here: the Backend
-					// paces its Groq calls per page against the account's real
-					// free-tier rate limit, which measured ~130s end to end for
-					// a 15-page piece and scales with page count. Hit the
-					// default timeout for real testing this against a real
-					// multi-page piece ("Couldn't reach the server" even though
-					// the Backend was still working) before adding this.
-					// Widened from 5 to 12 to 15 minutes as the Backend's
-					// NVIDIA fallback (for when Groq's rate limit or daily
-					// quota blocks it) grew its own per-chunk timeout: once
-					// Groq's confirmed down (a ~35s retry cost paid once,
-					// not per chunk), every remaining chunk goes to NVIDIA
-					// individually, each up to `_NVIDIA_TIMEOUT_SECONDS`
-					// (groq_client.py, 220s as of 2026-09-16, raised from
-					// 180 after two real ReadTimeouts in production) plus
-					// one retry. A 6-chunk piece needing NVIDIA for
-					// everything realistically lands around 10-12 minutes
-					// total; 15 leaves margin above that without chasing
-					// the absolute worst case (every chunk hitting its own
-					// timeout ceiling twice), which this project's other
-					// timeouts don't fully guard against either. Even this
-					// is not a full fix -- a request this long is
-					// fundamentally a poor fit for a synchronous
-					// browser-initiated HTTP call (Cloudflare Workers/Pages
-					// impose their own wall-clock limits this can't see or
-					// extend); a background-job-with-polling redesign is
-					// the real fix if NVIDIA-fallback runs keep being
-					// common, tracked as a follow-up rather than solved
-					// here.
-					signal: AbortSignal.timeout(15 * 60 * 1000)
-				},
-				fetch
-			)
-		);
-	},
-
 	// Admin-only, `DELETE /library/pieces/{id}` — the whole track, not just
 	// one of its files (that's the `remove_file`/`remove_pdf_file` flags on
 	// `updatePieceDetails` above). Every version, distribution, annotation,

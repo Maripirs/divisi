@@ -62,23 +62,25 @@
 	<span class="file-slot-label">{label}</span>
 	{#if pending}
 		<div class="file-card file-card--pending">
-			{#if showCurrent}
-				<p class="file-card-meta">{currentCaption}</p>
-				<p class="file-card-name file-card-name--muted">{currentName}</p>
-				<hr class="file-card-divider" />
-			{/if}
-			<p class="file-card-meta">
-				{showCurrent ? m.groups_edit_replacement_selected() : m.groups_edit_selected()}
-			</p>
-			<p class="file-card-name">{pending.name}</p>
-		</div>
-		<div class="btn-row">
-			<button type="button" class="btn btn-primary" onclick={() => inputEl?.click()}>
-				{m.groups_edit_choose_different()}
-			</button>
-			<button type="button" class="btn btn-outline" onclick={() => (files = null)}>
-				{showCurrent ? m.groups_edit_keep_current() : m.groups_remove()}
-			</button>
+			<div class="file-card-body">
+				{#if showCurrent}
+					<p class="file-card-meta">{currentCaption}</p>
+					<p class="file-card-name file-card-name--muted">{currentName}</p>
+					<hr class="file-card-divider" />
+				{/if}
+				<p class="file-card-meta">
+					{showCurrent ? m.groups_edit_replacement_selected() : m.groups_edit_selected()}
+				</p>
+				<p class="file-card-name">{pending.name}</p>
+			</div>
+			<div class="file-card-actions">
+				<button type="button" class="btn btn-primary" onclick={() => inputEl?.click()}>
+					{m.groups_edit_choose_different()}
+				</button>
+				<button type="button" class="btn btn-outline" onclick={() => (files = null)}>
+					{showCurrent ? m.groups_edit_keep_current() : m.groups_remove()}
+				</button>
+			</div>
 		</div>
 	{:else if showCurrent}
 		<div class="file-card">
@@ -87,25 +89,29 @@
 				<p class="file-card-name">{currentName}</p>
 				<p class="file-card-meta">{currentCaption}</p>
 			</div>
-		</div>
-		<div class="btn-row">
-			<button type="button" class="btn btn-outline" onclick={() => inputEl?.click()}>
-				{m.groups_replace()}
-			</button>
-			{#if removeInputName}
-				<button type="button" class="btn btn-danger" onclick={() => (removed = true)}>
-					{m.groups_remove()}
+			<div class="file-card-actions">
+				<button type="button" class="btn btn-outline" onclick={() => inputEl?.click()}>
+					{m.groups_replace()}
 				</button>
-			{/if}
+				{#if removeInputName}
+					<button type="button" class="btn btn-danger" onclick={() => (removed = true)}>
+						{m.groups_remove()}
+					</button>
+				{/if}
+			</div>
 		</div>
 	{:else}
 		<div class="file-card file-card--empty">
-			<p class="file-card-name">{emptyTitle}</p>
-			<p class="file-card-meta">{emptyHint}</p>
+			<div class="file-card-body">
+				<p class="file-card-name">{emptyTitle}</p>
+				<p class="file-card-meta">{emptyHint}</p>
+			</div>
+			<div class="file-card-actions">
+				<button type="button" class="btn btn-primary" onclick={() => inputEl?.click()}>
+					{addLabel}
+				</button>
+			</div>
 		</div>
-		<button type="button" class="btn btn-primary" onclick={() => inputEl?.click()}>
-			{addLabel}
-		</button>
 	{/if}
 	<input
 		bind:this={inputEl}
@@ -139,6 +145,7 @@
 	.file-card {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 0.6rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
@@ -151,11 +158,25 @@
 	}
 
 	.file-card--pending {
-		flex-direction: column;
 		align-items: flex-start;
-		gap: 0.15rem;
 		border-color: var(--accent);
 		background: color-mix(in srgb, var(--accent) 8%, var(--surface) 92%);
+	}
+
+	.file-card--pending .file-card-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+
+	/* Pushed to the row's end via margin-left: auto on the row's last
+	   flex child, buttons wrap below the text once the row runs out of
+	   width rather than squeezing the filename. */
+	.file-card-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-left: auto;
 	}
 
 	.file-chip {

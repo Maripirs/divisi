@@ -237,6 +237,20 @@ class VersionStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class DraftKind(str, enum.Enum):
+    """Which generator produced a `draft`/`modification` `PieceVersion`,
+    if any -- distinguishes the three unrelated producers that all share
+    the single "one open working draft per piece" slot (`working_draft`
+    below), so a caller can tell e.g. a pending lyrics-generation draft
+    apart from a pending AI-edit or OMR one instead of just seeing "some
+    draft is pending". `None` (the column stays nullable, no member for
+    it) means a plain user upload/replace -- not a generator draft at all."""
+
+    lyrics_generation = "lyrics_generation"
+    ai_edit = "ai_edit"
+    omr = "omr"
+
+
 class Piece(Base):
     __tablename__ = "pieces"
 
@@ -292,6 +306,20 @@ class PieceVersion(Base):
     # never the name a human recognizes.
     file_name: Mapped[str | None] = mapped_column(String, nullable=True)
     pdf_file_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # True when `file_path` is a MusicXML-family file (not MIDI, not
+    # PDF-only) that actually carries non-empty lyric text on at least one
+    # note -- see `app.lyrics.inject.has_any_lyrics`. Drives the Tracks
+    # tab's lyrics-status indicator (`LibraryEntryOut.has_lyrics`, the
+    # *live* version's value). Not nullable: every `add_version()`/
+    # `create_piece_with_version()` call site computes this explicitly
+    # rather than leaving it to silently default.
+    has_lyrics: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    # Which generator produced this version, when it's a generator draft
+    # -- see `DraftKind`. `None` for a plain user upload/replace, or for
+    # any version predating this column.
+    draft_kind: Mapped[DraftKind | None] = mapped_column(
+        SAEnum(DraftKind, native_enum=False), nullable=True
+    )
     reviewed_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # B17: the editor's "Publish as live version" gate is client-side (every
