@@ -34,6 +34,12 @@ interface RemoteResolution {
 	 * back-compat alias of the same value. */
 	isOwningGroupAdmin?: boolean;
 	canManagePieceNotes?: boolean;
+	/** True when a logged-in caller's piece came from the join-code guest
+	 * listing instead of their own library (see `GET` below). `+page.svelte`
+	 * then treats the session like a guest's for the member-only extras
+	 * (annotations, member notes), since the Backend wouldn't serve those
+	 * for a group the caller isn't in. */
+	viaJoinCode?: boolean;
 }
 
 /** The caller's role in this piece's owning group, or `null` for a
@@ -148,10 +154,46 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 		return json(await resolveGuestRemote(params.id, code, token, fetch));
 	}
 
+	// A logged-in account holding a join code for a group it isn't in yet
+	// (a piece link carrying `?code=`, opened directly rather than through
+	// `/join/[code]`). This used to dead-end on "No piece found with that
+	// id" while the very same link worked logged out. Same rule as
+	// `/join/[code]/+page.server.ts`: the code self-joins the account
+	// (`POST /groups/join`), after which the piece is simply in its library.
+	// If that's refused (the demo group, say), the code is still the guest
+	// credential, so resolve through it exactly as a guest would.
+	const code = url.searchParams.get('code');
+	const token = locals.token;
+	const selfJoin = async (joinCode: string): Promise<boolean> => {
+		try {
+			await backendJson<GroupOut>(
+				token,
+				'/groups/join',
+				{ method: 'POST', body: JSON.stringify({ join_code: joinCode.toUpperCase() }) },
+				fetch
+			);
+			return true;
+		} catch (err) {
+			if (err instanceof BackendApiError) return false;
+			throw err;
+		}
+	};
+	const resolveViaJoinCode = async (joinCode: string): Promise<RemoteResolution> => {
+		const resolution = await resolveGuestRemote(params.id, joinCode, readGuestCookie(cookies, joinCode), fetch);
+		return resolution.remote ? { ...resolution, viaJoinCode: true } : resolution;
+	};
+	const findInLibrary = async (): Promise<LibraryEntryOut | undefined> => {
+		const entries = await backendJson<LibraryEntryOut[]>(token, '/library/pieces', undefined, fetch);
+		return entries.find((e) => e.piece_id === params.id);
+	};
+
 	try {
-		const entries = await backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch);
-		const entry = entries.find((e) => e.piece_id === params.id);
-		if (!entry) return json({ remote: null, unreachable: false } satisfies RemoteResolution);
+		let entry = await findInLibrary();
+		if (!entry && code && (await selfJoin(code))) entry = await findInLibrary();
+		if (!entry) {
+			if (code) return json(await resolveViaJoinCode(code));
+			return json({ remote: null, unreachable: false } satisfies RemoteResolution);
+		}
 
 		const remote: RemotePieceMeta = {
 			pieceId: entry.piece_id,
@@ -177,7 +219,9 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 			// A synthetic 503 (network failure) or a real 5xx/429/408 off a
 			// cold-starting Backend both mean "no answer yet", not "this
 			// piece isn't yours" (see isTransientBackendStatus). A 403/404 is
-			// a real answer and still lands on the notFound card.
+			// a real answer and still lands on the notFound card, unless a
+			// join code can still vouch for the piece.
+			if (!isTransientBackendStatus(err.status) && code) return json(await resolveViaJoinCode(code));
 			return json({
 				remote: null,
 				unreachable: isTransientBackendStatus(err.status)

@@ -26,6 +26,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { authHref } from '$lib/authLinks';
 	import { formatEventDate } from '$lib/utils/dates';
 	import type { PageData } from './$types';
 	import {
@@ -511,7 +512,7 @@
 									{#if saveRequiredKey === key}
 										<p class="signup-save-required">
 											{m.responsibilities_save_required()}
-											<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
+											<a class="text-link" href={lh(authHref('register', page.url.pathname + page.url.search))}>{m.settings_create_account()}</a>
 										</p>
 									{/if}
 									{#if errorByKey[key]}

@@ -15,6 +15,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { authHref } from '$lib/authLinks';
 
 	// Same account-wide screen `/settings` used to be as its own page — now a
 	// slide-in drawer over whatever page it was opened from (triggered by
@@ -367,8 +368,8 @@
 				{/if}
 				<p class="card-meta">{m.settings_guest_local_note()}</p>
 				<div class="btn-row">
-					<a class="btn btn-outline" href={lh('/login?mode=register')} onclick={close}>{m.settings_create_account()}</a>
-					<a class="btn btn-outline" href={lh('/login')} onclick={close}>{m.login_title()}</a>
+					<a class="btn btn-outline" href={lh(authHref('register', page.url.pathname + page.url.search))} onclick={close}>{m.settings_create_account()}</a>
+					<a class="btn btn-outline" href={lh(authHref('login', page.url.pathname + page.url.search))} onclick={close}>{m.login_title()}</a>
 				</div>
 
 				{#if showAdminPreview}

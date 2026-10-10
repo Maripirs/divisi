@@ -83,6 +83,12 @@
 	let isOwningGroupAdmin = $state(false);
 	// Kept as the name the Piece Notes panel already binds to.
 	const canManagePieceNotes = $derived(isOwningGroupAdmin);
+	// A logged-in caller who isn't in this piece's group and couldn't be
+	// self-joined into it (e.g. the demo group) but opened it with a join
+	// code (`resolve/+server.ts`'s `viaJoinCode`): they get the guest view, so the member-only extras below (annotations, member
+	// notes) stay off, since the Backend would refuse them anyway.
+	let resolvedViaJoinCode = $state(false);
+	const actsAsGuest = $derived(!page.data.user || resolvedViaJoinCode);
 	// F5: a piece can carry a music file, a PDF, or both — the player adapts
 	// to whichever subset this piece actually has. Every bundled fixture has
 	// both today, so this is a no-op for them (both stay true, exactly like
@@ -352,7 +358,7 @@
 	// — there's no guest annotation path at all, unlike homework/tracks).
 	// `canAnnotate` stays here (not in the controller) because it also gates
 	// the PDF markup UI, which is not annotation-specific.
-	const canAnnotate = $derived(!!remoteMeta && !!page.data.user);
+	const canAnnotate = $derived(!!remoteMeta && !actsAsGuest);
 	// F4: the whole annotation feature (list/sheet/shares state + CRUD/share
 	// calls) lives in this composable now (round-2 cleanup step 4). The three
 	// external reads it needs are threaded in as getters: `remoteMeta`/`parsed`
@@ -513,6 +519,7 @@
 				unreachable: boolean;
 				isOwningGroupAdmin?: boolean;
 				canManagePieceNotes?: boolean;
+				viaJoinCode?: boolean;
 			};
 			if (!body.remote) {
 				if (body.unreachable) {
@@ -527,6 +534,7 @@
 			clearTimeout(wakeRetryTimer);
 			remoteMeta = body.remote;
 			isOwningGroupAdmin = body.isOwningGroupAdmin ?? body.canManagePieceNotes ?? false;
+			resolvedViaJoinCode = body.viaJoinCode ?? false;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode`/`audioSource` were seeded assuming no piece at all.
 			// Now that `hasPlayer`/`hasPdfPane` are known, apply the pane-shape
@@ -1245,7 +1253,7 @@
 			</button>
 		</header>
 
-		{#if remoteMeta?.groupId && page.data.user}
+		{#if remoteMeta?.groupId && !actsAsGuest}
 			<!-- F20: short text notes pinned to this piece (Backend B16 group
 			     notes; personal notes pending). Read-only for members; group
 			     admins get authoring controls. The panel hides itself when

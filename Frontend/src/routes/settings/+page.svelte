@@ -8,6 +8,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { authHref } from '$lib/authLinks';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -18,6 +19,10 @@
 	// its brand link sends a guest back to their group instead of the
 	// login-gated `/home`.
 	let guestJoinCode = $derived(page.url.searchParams.get('code'));
+	// Signing up from here returns to that group's join link (which then
+	// self-joins the new account into it) rather than back to this page.
+	// No known group: no `redirectTo`, so the login page's `/home` default.
+	let authReturnTo = $derived(guestJoinCode ? `/join/${encodeURIComponent(guestJoinCode)}` : null);
 
 	// This is the "applies to the whole account" screen (see
 	// UX_WIREFRAME.md's Track Settings vs App Settings section). Every field
@@ -95,8 +100,8 @@
 				{m.settings_guest_note()}
 			</p>
 			<div class="btn-row">
-				<a class="btn btn-primary" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
-				<a class="btn btn-outline" href={lh('/login')}>{m.login_title()}</a>
+				<a class="btn btn-primary" href={lh(authHref('register', authReturnTo))}>{m.settings_create_account()}</a>
+				<a class="btn btn-outline" href={lh(authHref('login', authReturnTo))}>{m.login_title()}</a>
 			</div>
 		{/if}
 	</section>

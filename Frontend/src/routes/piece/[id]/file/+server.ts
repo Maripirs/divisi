@@ -14,26 +14,37 @@ import type { RequestHandler } from './$types';
  * no version lookup needed. */
 export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
 	try {
-		if (!locals.token) {
-			const code = url.searchParams.get('code');
-			if (!code) return new Response(null, { status: 401 });
+		const code = url.searchParams.get('code');
+		// The guest proxy, keyed only by the join code. Used by a guest, and
+		// as a fallback for a logged-in caller whose library doesn't have
+		// this piece but who holds a join code for it (see
+		// `../resolve/+server.ts`'s `viaJoinCode`), so the player never
+		// resolves a piece it then can't load.
+		const proxyGuest = async (joinCode: string): Promise<Response> => {
 			// A valid guest-token cookie (set once the browser cleared the
 			// group's password gate) is what lets a password-protected group's
 			// file proxy through; a group with no guest password ignores it.
-			const guestUrl = new URL(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(code)}/pieces/${params.id}/file`);
-			const token = readGuestCookie(cookies, code);
+			const guestUrl = new URL(`${PUBLIC_API_BASE_URL}/guest/${encodeURIComponent(joinCode)}/pieces/${params.id}/file`);
+			const token = readGuestCookie(cookies, joinCode);
 			if (token) guestUrl.searchParams.set('token', token);
 			const res = await fetch(guestUrl.toString());
 			return new Response(res.body, { status: res.status, headers: res.headers });
+		};
+		if (!locals.token) {
+			if (!code) return new Response(null, { status: 401 });
+			return await proxyGuest(code);
 		}
 
 		const library = await fetch(`${PUBLIC_API_BASE_URL}/library/pieces`, {
 			headers: { Authorization: `Bearer ${locals.token}` }
 		});
-		if (!library.ok) return new Response(null, { status: library.status });
+		if (!library.ok) {
+			if (code && library.status < 500) return await proxyGuest(code);
+			return new Response(null, { status: library.status });
+		}
 		const entries = (await library.json()) as Array<{ piece_id: string; version_id: string }>;
 		const entry = entries.find((e) => e.piece_id === params.id);
-		if (!entry) return new Response(null, { status: 404 });
+		if (!entry) return code ? await proxyGuest(code) : new Response(null, { status: 404 });
 
 		const res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${entry.version_id}/file`, {
 			headers: { Authorization: `Bearer ${locals.token}` }

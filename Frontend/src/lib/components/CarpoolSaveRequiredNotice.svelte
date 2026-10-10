@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { lh } from '$lib/i18n';
+	import { authHref } from '$lib/authLinks';
 	import { m } from '$lib/paraglide/messages';
 </script>
 
 <p class="signup-save-required">
 	{m.carpool_save_required()}
-	<a class="text-link" href={lh('/login?mode=register')}>{m.settings_create_account()}</a>
+	<a class="text-link" href={lh(authHref('register', page.url.pathname + page.url.search))}>{m.settings_create_account()}</a>
 </p>
 
 <style>
