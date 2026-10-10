@@ -441,3 +441,127 @@ def test_update_role_for_non_member_404s(client):
         headers=admin_headers,
     )
     assert missing.status_code == 404
+
+
+# --- Self-join by join code (`POST /groups/join`) ---------------------------
+
+
+def _group_with_code(client, admin_email="joinadmin@example.com"):
+    admin_headers = _register_and_login(client, admin_email)
+    group = client.post("/groups", json={"name": "Join Me"}, headers=admin_headers).json()
+    return admin_headers, group
+
+
+def test_join_by_code_adds_a_member(client):
+    admin_headers, group = _group_with_code(client)
+    headers = _register_and_login(client, "bob@example.com", name="Bob")
+
+    join = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=headers)
+    assert join.status_code == 200
+    body = join.json()
+    assert body["id"] == group["id"]
+    assert body["role"] == "member"
+    assert body["join_code"] == group["join_code"]
+
+    assert [g["id"] for g in client.get("/groups", headers=headers).json()] == [group["id"]]
+    members = client.get(f"/groups/{group['id']}/members", headers=admin_headers).json()
+    assert {m["email"] for m in members} == {"joinadmin@example.com", "bob@example.com"}
+
+
+def test_join_by_code_is_case_insensitive_and_trims(client):
+    _, group = _group_with_code(client)
+    headers = _register_and_login(client, "bob2@example.com")
+
+    join = client.post(
+        "/groups/join", json={"join_code": f"  {group['join_code'].lower()} "}, headers=headers
+    )
+    assert join.status_code == 200
+    assert join.json()["id"] == group["id"]
+
+
+def test_join_by_code_is_idempotent_and_keeps_existing_role(client):
+    admin_headers, group = _group_with_code(client)
+    headers = _register_and_login(client, "bob3@example.com")
+
+    first = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=headers)
+    second = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=headers)
+    assert first.status_code == second.status_code == 200
+    members = client.get(f"/groups/{group['id']}/members", headers=admin_headers).json()
+    assert len(members) == 2
+
+    # An admin following their own group's link gets their admin role back,
+    # never a downgrade to member.
+    again = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=admin_headers)
+    assert again.status_code == 200
+    assert again.json()["role"] == "admin"
+
+
+def test_join_by_code_clears_a_leftover_guest_flag(client, db_session):
+    from app.db.models import GroupMembership, User
+
+    _, group = _group_with_code(client)
+    headers = _register_and_login(client, "saved@example.com")
+    user = db_session.query(User).filter(User.email == "saved@example.com").one()
+    db_session.add(
+        GroupMembership(group_id=group["id"], user_id=user.id, role="member", is_guest=True)
+    )
+    db_session.commit()
+
+    join = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=headers)
+    assert join.status_code == 200
+    db_session.expire_all()
+    membership = (
+        db_session.query(GroupMembership)
+        .filter(GroupMembership.group_id == group["id"], GroupMembership.user_id == user.id)
+        .one()
+    )
+    assert membership.is_guest is False
+
+
+def test_join_by_code_unknown_code_404(client):
+    headers = _register_and_login(client, "lost@example.com")
+    missing = client.post("/groups/join", json={"join_code": "NOPE1234"}, headers=headers)
+    assert missing.status_code == 404
+    blank = client.post("/groups/join", json={"join_code": "   "}, headers=headers)
+    assert blank.status_code == 404
+
+
+def test_join_by_code_requires_login(client):
+    _, group = _group_with_code(client)
+    anon = client.post("/groups/join", json={"join_code": group["join_code"]})
+    assert anon.status_code == 401
+
+
+def test_join_by_code_refuses_anonymous_participants(client, db_session):
+    from app.core.security import create_access_token
+    from app.db.models import User
+
+    _, group = _group_with_code(client)
+    participant = User(
+        email="anon-x@participants.divisi.invalid",
+        name="Guest",
+        hashed_password="x",
+        is_anonymous=True,
+    )
+    db_session.add(participant)
+    db_session.commit()
+    token = create_access_token(participant.id, participant.password_changed_at)
+
+    join = client.post(
+        "/groups/join",
+        json={"join_code": group["join_code"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert join.status_code == 403
+
+
+def test_join_by_code_refuses_the_demo_group(client, monkeypatch):
+    from app.core.config import get_settings
+
+    _, group = _group_with_code(client)
+    monkeypatch.setattr(get_settings(), "demo_join_code", group["join_code"].lower())
+    headers = _register_and_login(client, "visitor@example.com")
+
+    join = client.post("/groups/join", json={"join_code": group["join_code"]}, headers=headers)
+    assert join.status_code == 403
+    assert client.get("/groups", headers=headers).json() == []

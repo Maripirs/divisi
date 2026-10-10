@@ -15,6 +15,7 @@ from app.api.schemas import (
     GroupCreate,
     GroupDescriptionUpdate,
     GroupGuestSettingsUpdate,
+    GroupJoinIn,
     GroupMemberAdd,
     GroupMemberOut,
     GroupMemberRoleUpdate,
@@ -26,7 +27,9 @@ from app.api.schemas import (
     KnownNameOut,
     KnownNameRenameIn,
 )
+from app.core.config import get_settings
 from app.core.join_codes import generate_join_code
+from app.core.rate_limit import rate_limit_guest
 from app.core.security import hash_password
 from app.db.models import Group, GroupMembership, GroupPage, GroupPageSettings, GroupRole, User
 from app.db.session import get_db
@@ -131,6 +134,56 @@ def list_my_groups(
         .all()
     )
     return [_group_out(group, role) for group, role in rows]
+
+
+@router.post("/join", response_model=GroupOut)
+def join_group_by_code(
+    payload: GroupJoinIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    _rl: None = Depends(rate_limit_guest),
+) -> GroupOut:
+    """Self-join by join code for a signed-in account: the path a member
+    takes after following a group's join link and then registering or
+    logging in. Without it the only way into a group was an admin adding
+    you by email, so a fresh account holding a perfectly valid join code
+    could see the guest view but never become a member.
+
+    Consistent with `guest.py`'s model, where holding the join code is
+    already the guest credential on its own: the code alone authorizes a
+    plain `member` membership here too, and it shares the guest routes'
+    per-IP rate limit since it's the same code-guessing surface.
+
+    Idempotent: an existing membership comes back unchanged (200, not a
+    409), except that a leftover `is_guest` flag is cleared now that the
+    account is a real one. Anonymous participants are refused (they join
+    through the guest routes, flagged `is_guest`), and so is the public
+    demo group (`Settings.demo_join_code`): signed-in visitors browse it
+    as guests and must never be silently added to it."""
+    if current_user.is_anonymous:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Create an account or log in to join a group",
+        )
+    code = payload.join_code.strip().upper()
+    settings = get_settings()
+    if settings.demo_join_code and code == settings.demo_join_code.strip().upper():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The demo group can't be joined")
+    # Codes are generated uppercase (`app/core/join_codes.py`), so
+    # uppercasing the input is all case-insensitivity needs, and it keeps
+    # the lookup on the unique index.
+    group = db.query(Group).filter(Group.join_code == code).first() if code else None
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join code not found")
+    membership = _get_membership(group.id, current_user.id, db)
+    if membership is None:
+        membership = GroupMembership(group_id=group.id, user_id=current_user.id, role=GroupRole.member)
+        db.add(membership)
+        db.commit()
+    elif membership.is_guest:
+        membership.is_guest = False
+        db.commit()
+    return _group_out(group, membership.role)
 
 
 @router.put("/{group_id}/guest-settings", response_model=GroupOut)

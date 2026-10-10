@@ -12,6 +12,13 @@ class GroupCreate(BaseModel):
     guest_password: str | None = None
 
 
+class GroupJoinIn(BaseModel):
+    """Self-join by join code (`POST /groups/join`): the same code a guest
+    link carries. Matched case-insensitively."""
+
+    join_code: str
+
+
 class GroupOut(BaseModel):
     id: str
     name: str
