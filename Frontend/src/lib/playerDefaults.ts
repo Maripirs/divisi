@@ -48,6 +48,13 @@ export interface MixDefaults {
 
 export interface PlayerDefaults {
 	voicePart: VoicePart;
+	/** Whether the singer actually picked `voicePart` (Settings' Voice, the
+	 * player's first-time "Which part do you sing?" card, or promoting a
+	 * piece's display as the default), as opposed to it just being the
+	 * Soprano fallback. A first-time visitor used to get Soprano silently,
+	 * and a bass reasonably took that to mean the app was only for
+	 * sopranos; the player asks while this is false. */
+	voicePartChosen: boolean;
 	/** Which desk of `voicePart` you sing, when a piece happens to split it
 	 * (e.g. "Soprano 2") — `null` means no preference (sing the whole
 	 * section). Unlike a piece's own `subPart` (`routes/piece/[id]`'s
@@ -74,6 +81,7 @@ const DEFAULT_MIX: MixDefaults = {
 
 export const DEFAULT_PLAYER_DEFAULTS: PlayerDefaults = {
 	voicePart: 'soprano',
+	voicePartChosen: false,
 	voiceDesk: null,
 	displayMode: 'solo',
 	mixMode: 'mostlyMe',
@@ -133,14 +141,19 @@ function sanitizeMix(value: unknown): MixDefaults {
 	};
 }
 
-function loadDefaults(): PlayerDefaults {
-	if (!browser) return DEFAULT_PLAYER_DEFAULTS;
-	const raw = window.localStorage.getItem(STORAGE_KEY);
-	if (!raw) return firstTimeDefaults();
+/** Parses the stored JSON, field by field, falling back to the defaults
+ * for anything missing or invalid. Exported for tests. */
+export function parseStoredDefaults(raw: string): PlayerDefaults {
 	try {
 		const parsed = JSON.parse(raw) as Partial<Record<keyof PlayerDefaults, unknown>>;
+		const hasVoicePart = isVoicePart(parsed.voicePart);
 		return {
 			voicePart: isVoicePart(parsed.voicePart) ? parsed.voicePart : DEFAULT_PLAYER_DEFAULTS.voicePart,
+			// Stored before this flag existed: a saved `voicePart` counts as
+			// chosen, so nobody who already set up their defaults gets asked
+			// again. Once the flag is written it's the only thing that counts.
+			voicePartChosen:
+				typeof parsed.voicePartChosen === 'boolean' ? parsed.voicePartChosen && hasVoicePart : hasVoicePart,
 			voiceDesk: isVoiceDesk(parsed.voiceDesk) ? parsed.voiceDesk : DEFAULT_PLAYER_DEFAULTS.voiceDesk,
 			displayMode: isNonCustomDisplayMode(parsed.displayMode) ? parsed.displayMode : DEFAULT_PLAYER_DEFAULTS.displayMode,
 			mixMode: isNonCustomMixMode(parsed.mixMode) ? parsed.mixMode : DEFAULT_PLAYER_DEFAULTS.mixMode,
@@ -152,9 +165,23 @@ function loadDefaults(): PlayerDefaults {
 	}
 }
 
+function loadDefaults(): PlayerDefaults {
+	if (!browser) return DEFAULT_PLAYER_DEFAULTS;
+	const raw = window.localStorage.getItem(STORAGE_KEY);
+	if (!raw) return firstTimeDefaults();
+	return parseStoredDefaults(raw);
+}
+
 export const playerDefaults = writable<PlayerDefaults>(loadDefaults());
 
 export function setPlayerDefaults(next: PlayerDefaults): void {
 	if (browser) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 	playerDefaults.set(next);
+}
+
+/** Saves `voicePart` as the singer's own choice (marks it chosen), keeping
+ * every other default as is. Settings' Voice picker and the player's
+ * first-time voice card both go through this. */
+export function chooseDefaultVoicePart(current: PlayerDefaults, voicePart: VoicePart): void {
+	setPlayerDefaults({ ...current, voicePart, voicePartChosen: true });
 }

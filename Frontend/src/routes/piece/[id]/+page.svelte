@@ -6,7 +6,7 @@
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { extractYoutubeVideoId, YoutubeAudioPlayer } from '$lib/audio/youtubeAudioPlayer';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
-	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type ViewMode } from '$lib/playerDefaults';
+	import { chooseDefaultVoicePart, playerDefaults, setPlayerDefaults, VIEW_MODES, type ViewMode } from '$lib/playerDefaults';
 	import {
 		DISPLAY_MODES,
 		MIX_MODES,
@@ -293,6 +293,14 @@
 	// and isn't seeded from `playerDefaults` — every piece starts at `null`
 	// until `bootstrap()` restores its own saved pick, if any.
 	let subPart = $state<MixPart | null>(null);
+	// First-time "Which part do you sing?" card: shown while the singer has
+	// never picked a voice (`voicePartChosen`), so nobody silently lands on
+	// the Soprano fallback thinking that's all the app is for. Only for a
+	// piece with at least two of the SATB voices (set in `bootstrap()`,
+	// since `parsed` isn't reactive); dismissing only hides it for this
+	// view, so the next piece asks again until a voice is actually chosen.
+	let pieceVoiceParts = $state<VoicePart[]>([]);
+	let voicePromptDismissed = $state(false);
 	let displayMode = $state<DisplayMode>(initialDefaults.displayMode);
 	let mixMode = $state<MixMode>(initialDefaults.mixMode);
 	let visualStates = $state<Record<MixPart, VisualState>>(initialDefaults.mix.visualStates);
@@ -610,6 +618,7 @@
 			}
 			player = fetchedPlayer;
 			parsed = loadedPiece;
+			pieceVoiceParts = VOICE_PARTS.filter((v) => loadedPiece.parts.some((p) => p.base === v));
 			// A stored desk pick only means something if this piece still
 			// splits `voicePart` into that exact desk — stale otherwise (the
 			// file changed, or `voicePart` itself was restored to something
@@ -843,6 +852,20 @@
 		}
 	}
 
+	let showVoicePrompt = $derived(
+		!$playerDefaults.voicePartChosen &&
+			!voicePromptDismissed &&
+			pieceVoiceParts.length >= 2 &&
+			(loadState.kind === 'ready' || loadState.kind === 'noNotesForVoicePart' || loadState.kind === 'noVisibleTracks')
+	);
+
+	/** The first-time voice card's answer: saved as the account-wide default
+	 * (same as picking it in Settings) and applied to this piece right away. */
+	function chooseVoiceFromPrompt(part: VoicePart) {
+		chooseDefaultVoicePart(get(playerDefaults), part);
+		if (part !== voicePart) setFocus(part);
+	}
+
 	function setFocus(part: VoicePart) {
 		voicePart = part;
 		// A desk pick only makes sense for the voice it was made under.
@@ -907,7 +930,7 @@
 
 	function saveDisplayAsDefault() {
 		if (displayMode === 'custom') return;
-		setPlayerDefaults({ ...get(playerDefaults), voicePart, displayMode });
+		setPlayerDefaults({ ...get(playerDefaults), voicePart, voicePartChosen: true, displayMode });
 		flashDefault('display');
 	}
 
@@ -1294,6 +1317,23 @@
 			</details>
 		{/if}
 
+		{#if showVoicePrompt}
+			<section class="voice-prompt" aria-labelledby="voice-prompt-title">
+				<div class="voice-prompt-head">
+					<h2 id="voice-prompt-title">{m.piece_voice_prompt_title()}</h2>
+					<button type="button" class="text-link" onclick={() => (voicePromptDismissed = true)}>
+						{m.piece_voice_prompt_dismiss()}
+					</button>
+				</div>
+				<div class="segmented" role="group" aria-labelledby="voice-prompt-title">
+					{#each VOICE_PARTS as part (part)}
+						<button type="button" onclick={() => chooseVoiceFromPrompt(part)}>{VOICE_PART_LABELS[part]()}</button>
+					{/each}
+				</div>
+				<p class="voice-prompt-note">{m.piece_voice_prompt_body()}</p>
+			</section>
+		{/if}
+
 		<main class="score-area">
 			<!-- Both panes stay mounted once shown, toggling only via `hidden` —
 			     switching view modes used to swap them with an {#if}, which tore
@@ -1522,7 +1562,10 @@
 						class="your-part-select"
 						aria-label={m.piece_your_part()}
 						value={voicePart}
-						onchange={(e) => setFocus((e.target as HTMLSelectElement).value as VoicePart)}
+						onchange={(e) => {
+							setFocus((e.target as HTMLSelectElement).value as VoicePart);
+							voicePromptDismissed = true;
+						}}
 					>
 						{#each VOICE_PARTS as part (part)}
 							<option value={part}>{VOICE_PART_LABELS[part]()}</option>
@@ -1850,6 +1893,53 @@
 		stroke-width: 2;
 		stroke-linecap: round;
 		stroke-linejoin: round;
+	}
+
+	/* First-time "Which part do you sing?" card. Same surface/border/shadow
+	   as `.status-card`, but compact and above the score rather than in
+	   place of it, so the piece stays usable while it's up. */
+	.voice-prompt {
+		flex: 0 0 auto;
+		width: calc(100% - 2rem);
+		max-width: 520px;
+		margin: 0.5rem auto;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow);
+		padding: 0.875rem 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.625rem;
+	}
+
+	.voice-prompt-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.voice-prompt h2 {
+		margin: 0;
+		font-size: 1rem;
+		color: var(--text);
+	}
+
+	.voice-prompt .text-link {
+		flex: 0 0 auto;
+		font-size: 0.8125rem;
+	}
+
+	.voice-prompt .segmented button {
+		color: var(--text);
+		padding: 0.55rem 0.5rem;
+	}
+
+	.voice-prompt-note {
+		margin: 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
 	}
 
 	.youtube-disclosure {

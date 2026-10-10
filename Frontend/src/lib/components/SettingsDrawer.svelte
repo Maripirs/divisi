@@ -6,7 +6,7 @@
 	import { demoPreviewGuest, shouldShowAdminPreview } from '$lib/demoPreview';
 	import { localProfile, ensureLocalId, setDisplayName } from '$lib/localProfile';
 	import { themeMode, setThemeMode, type ThemeMode } from '$lib/theme';
-	import { playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
+	import { chooseDefaultVoicePart, playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
 	import { VOICE_PARTS as PLAYER_VOICE_PARTS, type DisplayMode, type MixMode, type VoicePart } from '$lib/midi/types';
 	import { DEFAULT_SETTINGS } from '$lib/fixtures/appData';
 	// Mounted once in the root layout, so it can be opened from any page
@@ -410,9 +410,15 @@
 			<label class="field">
 				<span>{m.settings_voice()}</span>
 				<select
-					value={$playerDefaults.voicePart}
-					onchange={(e) => updatePlayerDefaults({ voicePart: (e.currentTarget as HTMLSelectElement).value as VoicePart })}
+					value={$playerDefaults.voicePartChosen ? $playerDefaults.voicePart : ''}
+					onchange={(e) =>
+						chooseDefaultVoicePart($playerDefaults, (e.currentTarget as HTMLSelectElement).value as VoicePart)}
 				>
+					<!-- Until the singer picks one, show that rather than the Soprano
+					     fallback, which read as "this app is for sopranos". -->
+					{#if !$playerDefaults.voicePartChosen}
+						<option value="" disabled>{m.settings_voice_not_chosen()}</option>
+					{/if}
 					{#each PLAYER_VOICE_PARTS as part (part)}
 						<option value={part}>{VOICE_PART_LABELS[part]()}</option>
 					{/each}
