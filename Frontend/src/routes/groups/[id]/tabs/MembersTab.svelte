@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import { withSubmitting } from '$lib/utils/enhance';
+	import { mergeCandidates, possibleDuplicates } from '$lib/utils/memberMerge';
 	import { m } from '$lib/paraglide/messages';
 	import { assertUngated } from '../groupTabs';
 	import type { PageData, ActionData } from '../$types';
@@ -22,6 +23,13 @@
 	let savingTitle = $state(false);
 	let addingMember = $state(false);
 	let memberEmail = $state('');
+
+	// Merge: which unverified participant's row (by id) has the inline
+	// "merge into a real member" panel open, at most one at a time, and the
+	// member picked in it. Defaults to the first same-name suggestion.
+	let mergingUserId = $state<string | null>(null);
+	let mergeTargetId = $state('');
+	let merging = $state(false);
 
 	// Known names: admin-only rename-that-merges-history for the free-text
 	// guest names typed into Responsibilities/Carpool. Keyed by the name
@@ -44,6 +52,9 @@
 <div class="content-narrow">
 <section class="card">
 	{#each members as member (member.user_id)}
+		{@const duplicates = mode === 'admin' ? possibleDuplicates(member, members) : []}
+		{@const candidates = mode === 'admin' && member.is_anonymous ? mergeCandidates(member, members) : []}
+		<div class="member-item">
 		<div class="member-row">
 			<div class="member-identity">
 				<span class="member-name-line">
@@ -53,6 +64,11 @@
 						<span class="badge-unverified" title={m.roster_unverified_hint()}>{m.roster_unverified_badge()}</span>
 					{/if}
 				</span>
+				{#if duplicates.length > 0}
+					<span class="duplicate-hint">
+						{m.groups_possible_duplicate({ names: duplicates.map((d) => d.name).join(', ') })}
+					</span>
+				{/if}
 				{#if editingTitleUserId === member.user_id}
 					<form
 						method="POST"
@@ -102,6 +118,18 @@
 									{member.role === 'admin' ? m.groups_remove_admin() : m.groups_make_admin()}
 								</button>
 							</form>
+							{#if candidates.length > 0}
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => {
+										mergeTargetId = candidates.find((c) => c.suggested)?.member.user_id ?? '';
+										mergingUserId = member.user_id;
+									}}
+								>
+									{m.groups_merge_into()}
+								</button>
+							{/if}
 							<button type="button" class="text-link" onclick={start}>
 								{m.groups_remove()}
 							</button>
@@ -133,6 +161,75 @@
 					{/snippet}
 				</ConfirmButton>
 			{/if}
+		</div>
+		{#if mergingUserId === member.user_id && candidates.length > 0}
+			{@const target = candidates.find((c) => c.member.user_id === mergeTargetId)?.member}
+			<div class="merge-panel">
+				<p class="merge-title">{m.groups_merge_title({ name: member.name })}</p>
+				<ConfirmButton>
+					{#snippet trigger(start)}
+						<p class="card-note">{m.groups_merge_note()}</p>
+						<label class="field">
+							<span>{m.groups_merge_target_label()}</span>
+							<select bind:value={mergeTargetId}>
+								<option value="" disabled>{m.groups_merge_choose()}</option>
+								{#if candidates.some((c) => c.suggested)}
+									<optgroup label={m.groups_merge_suggested_group()}>
+										{#each candidates.filter((c) => c.suggested) as c (c.member.user_id)}
+											<option value={c.member.user_id}>{c.member.name} ({c.member.email})</option>
+										{/each}
+									</optgroup>
+								{/if}
+								<optgroup label={m.groups_merge_others_group()}>
+									{#each candidates.filter((c) => !c.suggested) as c (c.member.user_id)}
+										<option value={c.member.user_id}>{c.member.name} ({c.member.email})</option>
+									{/each}
+								</optgroup>
+							</select>
+						</label>
+						<div class="btn-row">
+							<button type="button" class="btn btn-outline" onclick={() => (mergingUserId = null)}>
+								{m.action_cancel()}
+							</button>
+							<button type="button" class="btn btn-primary" disabled={!target} onclick={start}>
+								{m.groups_merge_continue()}
+							</button>
+						</div>
+					{/snippet}
+					{#snippet confirm(cancel)}
+						{#if target}
+							<p class="merge-confirm">
+								{m.groups_merge_confirm({ guest: member.name, target: target.name, email: target.email })}
+							</p>
+						{/if}
+						{#if form?.form === 'mergeMember' && form?.error}
+							<p class="error">{form.error}</p>
+						{/if}
+						<form
+							method="POST"
+							action="?/mergeMember"
+							use:enhance={() => {
+								merging = true;
+								return async ({ result, update }) => {
+									merging = false;
+									// Only close on success: a refusal (e.g. the participant is
+									// also in another group) stays open with its error shown.
+									if (result.type === 'success') mergingUserId = null;
+									await update();
+								};
+							}}
+						>
+							<input type="hidden" name="userId" value={member.user_id} />
+							<input type="hidden" name="targetUserId" value={mergeTargetId} />
+							<div class="btn-row">
+								<button type="button" class="btn btn-outline" onclick={cancel}>{m.action_cancel()}</button>
+								<button type="submit" class="btn btn-danger" disabled={merging || !target}>{m.groups_merge_do()}</button>
+							</div>
+						</form>
+					{/snippet}
+				</ConfirmButton>
+			</div>
+		{/if}
 		</div>
 	{/each}
 	{#if form?.form === 'removeMember' && form?.error}
@@ -242,7 +339,7 @@
 		gap: 0.75rem;
 	}
 
-	.member-row + .member-row {
+	.member-item + .member-item {
 		margin-top: 0.6rem;
 		padding-top: 0.6rem;
 		border-top: 1px solid var(--border);
@@ -277,7 +374,37 @@
 	.member-actions {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		justify-content: flex-end;
+		flex-wrap: wrap;
+		column-gap: 0.75rem;
+		row-gap: 0.25rem;
+	}
+
+	.duplicate-hint {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		font-style: italic;
+	}
+
+	.merge-panel {
+		margin-top: 0.6rem;
+		padding: 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background: var(--surface-2);
+	}
+
+	.merge-title {
+		margin: 0 0 0.25rem;
+		font-weight: 600;
+	}
+
+	.merge-confirm {
+		margin: 0 0 0.75rem;
+	}
+
+	.merge-panel select {
+		max-width: 100%;
 	}
 
 	.inline-edit-row {

@@ -50,6 +50,27 @@ export const memberActions = {
 		);
 	},
 
+	// Admin-only: fold an unverified participant into a real member of this
+	// group (moving everything they did as a guest). The Backend owns every
+	// rule (real target, same group, no other groups) and its refusal detail
+	// lands inline as a normal form error.
+	mergeMember: async ({ request, locals, fetch, params }) => {
+		const form = await request.formData();
+		const userId = String(form.get('userId') ?? '');
+		const targetUserId = String(form.get('targetUserId') ?? '');
+		if (!userId) return fail(400, { error: m.groups_missing_member(), form: 'mergeMember' });
+		if (!targetUserId) return fail(400, { error: m.groups_merge_pick_target(), form: 'mergeMember' });
+
+		return runAction('mergeMember', () =>
+			backendFetch(
+				locals.token,
+				`/groups/${params.id}/members/${userId}/merge`,
+				{ method: 'POST', body: JSON.stringify({ target_user_id: targetUserId }) },
+				fetch
+			)
+		);
+	},
+
 	// Admin-only, full replace — free-text context next to a member on the
 	// Members page (e.g. "Soprano 2 — Section leader").
 	updateMemberTitle: async ({ request, locals, fetch, params }) => {
