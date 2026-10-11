@@ -290,15 +290,25 @@ def test_delete_account_removes_one_of_everything_with_fks_enforced(client, db_s
 def test_prune_removes_a_stale_guest_with_one_of_everything_with_fks_enforced(db_session):
     db = db_session
     _fk_on(db)
-    # The prune keeps a guest with signups or annotations, so this one has
-    # neither but still owns everything else.
+    # The prune keeps a guest with any real activity (responsibility or team
+    # signups, annotations, carpool posts/claims/interests), so this one has
+    # none of that but still owns everything else.
     guest = _user(db, "Stale Guest", anonymous=True, created_at=datetime.now(timezone.utc) - timedelta(days=90))
     deleted, nulled, surviving = _seed_one_of_everything(db, guest)
     db.query(ResponsibilitySignup).filter(ResponsibilitySignup.user_id == guest.id).delete()
+    db.query(TeamSignup).filter(TeamSignup.user_id == guest.id).delete()
     db.query(AnnotationShare).filter(
         AnnotationShare.annotation_id.in_(db.query(Annotation.id).filter(Annotation.user_id == guest.id))
     ).delete(synchronize_session=False)
     db.query(Annotation).filter(Annotation.user_id == guest.id).delete()
+    guest_post_ids = db.query(CarpoolPost.id).filter(CarpoolPost.user_id == guest.id)
+    db.query(CarpoolSeatClaim).filter(
+        (CarpoolSeatClaim.user_id == guest.id) | CarpoolSeatClaim.driver_post_id.in_(guest_post_ids)
+    ).delete(synchronize_session=False)
+    db.query(CarpoolRiderInterest).filter(
+        (CarpoolRiderInterest.user_id == guest.id) | CarpoolRiderInterest.rider_post_id.in_(guest_post_ids)
+    ).delete(synchronize_session=False)
+    db.query(CarpoolPost).filter(CarpoolPost.user_id == guest.id).delete(synchronize_session=False)
     db.commit()
     guest_id = guest.id
 

@@ -10,9 +10,21 @@ drive that route. Helpers mirror `tests/test_responsibilities.py`.
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.core import rate_limit
 from app.core.security import create_participant_token
-from app.db.models import Annotation, GroupMembership, ResponsibilitySignup, User
+from app.db.models import (
+    Annotation,
+    CarpoolPost,
+    CarpoolPostKind,
+    CarpoolRiderInterest,
+    CarpoolSeatClaim,
+    GroupMembership,
+    ResponsibilitySignup,
+    TeamSignup,
+    User,
+)
 from app.services.participants import find_guest_matches
 from scripts.prune_anonymous_participants import prune_anonymous_participants
 
@@ -448,6 +460,39 @@ def test_prune_keeps_a_participant_with_a_signup_and_deletes_a_bare_one(db_sessi
     assert db_session.get(User, keep.id) is not None
     assert db_session.get(User, bare.id) is None
     assert db_session.get(User, real.id) is not None
+
+
+@pytest.mark.parametrize(
+    "make_activity",
+    [
+        lambda uid: Annotation(user_id=uid, piece_id="p1", position="p", content="x"),
+        lambda uid: TeamSignup(role_id="tr1", user_id=uid),
+        lambda uid: CarpoolPost(
+            event_id="e1", user_id=uid, display_name="G", kind=CarpoolPostKind.rider, origin_label="Here"
+        ),
+        lambda uid: CarpoolSeatClaim(driver_post_id="dp1", user_id=uid, display_name="G"),
+        lambda uid: CarpoolRiderInterest(rider_post_id="rp1", user_id=uid, display_name="G"),
+    ],
+    ids=["annotation", "team_signup", "carpool_post", "seat_claim", "rider_interest"],
+)
+def test_prune_keeps_a_participant_with_any_real_activity(db_session, make_activity):
+    guest = User(
+        email=f"active-{datetime.now().timestamp()}@participants.divisi.invalid",
+        name="Active",
+        hashed_password="x",
+        is_anonymous=True,
+        created_at=datetime.now(timezone.utc) - timedelta(days=90),
+    )
+    db_session.add(guest)
+    db_session.commit()
+    db_session.add(make_activity(guest.id))
+    db_session.commit()
+
+    result = prune_anonymous_participants(db_session, days=0, dry_run=False)
+    assert result["kept"] == 1
+    assert result["deleted"] == 0
+    db_session.rollback()
+    assert db_session.get(User, guest.id) is not None
 
 
 # --- B22: sync a guest's local display name onto the participant row ---

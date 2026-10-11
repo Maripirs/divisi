@@ -8,10 +8,13 @@ get promoted and never accumulate anything worth keeping. This command
 deletes the ones that are:
 
   - older than `--days` (default 30), and
-  - carry zero `ResponsibilitySignup` rows and zero `Annotation` rows.
+  - carry no real activity: zero `ResponsibilitySignup`, `Annotation`,
+    `TeamSignup`, `CarpoolPost`, `CarpoolSeatClaim`, or
+    `CarpoolRiderInterest` rows.
 
-A participant with either is kept untouched (that is real work attached to
-the row). A deletable one goes through
+A participant with any of those is kept untouched (that is real work
+attached to the row, and other singers may be counting on a carpool seat
+or team signup). A deletable one goes through
 `app.services.accounts.delete_user_and_owned_data`, the same cleanup
 `DELETE /auth/me` uses (no FK-level cascade in this codebase), so every
 row that references it (memberships, markup, carpool posts and claims,
@@ -45,12 +48,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.models import (  # noqa: E402
     Annotation,
+    CarpoolPost,
+    CarpoolRiderInterest,
+    CarpoolSeatClaim,
     ResponsibilitySignup,
+    TeamSignup,
     User,
 )
 from app.db.session import SessionLocal  # noqa: E402
 from app.services.accounts import delete_user_and_owned_data  # noqa: E402
 from app.services.common import as_utc  # noqa: E402
+
+
+# Rows that count as "real activity" and keep a stale participant alive.
+# Each model has a `user_id` column pointing at the participant.
+ACTIVITY_MODELS = (
+    ResponsibilitySignup,
+    Annotation,
+    TeamSignup,
+    CarpoolPost,
+    CarpoolSeatClaim,
+    CarpoolRiderInterest,
+)
+
+
+def has_activity(db, user) -> bool:
+    return any(
+        db.query(model.id).filter(model.user_id == user.id).first() is not None
+        for model in ACTIVITY_MODELS
+    )
 
 
 def prune_anonymous_participants(db, days: int, dry_run: bool) -> dict:
@@ -66,16 +92,7 @@ def prune_anonymous_participants(db, days: int, dry_run: bool) -> dict:
         if as_utc(user.created_at) >= cutoff:
             continue
         scanned += 1
-        has_signup = (
-            db.query(ResponsibilitySignup)
-            .filter(ResponsibilitySignup.user_id == user.id)
-            .first()
-            is not None
-        )
-        has_annotation = (
-            db.query(Annotation).filter(Annotation.user_id == user.id).first() is not None
-        )
-        if has_signup or has_annotation:
+        if has_activity(db, user):
             kept += 1
             continue
         deleted += 1
