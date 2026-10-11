@@ -34,25 +34,16 @@ from app.core.security import (
     verify_password,
 )
 from app.db.models import (
-    Annotation,
-    AnnotationShare,
-    Distribution,
     Group,
     GroupMembership,
     GroupRole,
-    Homework,
     OAuthAccount,
     OAuthProvider,
-    OmrJob,
-    OwnerType,
     PasswordResetToken,
-    Piece,
-    PieceVersion,
-    ResponsibilitySchedule,
-    ResponsibilitySignup,
     User,
 )
 from app.db.session import get_db
+from app.services.accounts import delete_user_and_owned_data
 from app.services.common import as_utc
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
 from app.services.participants import resolve_participant
@@ -149,9 +140,11 @@ def delete_account(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Deletes the account and everything that's genuinely the user's own
-    (annotations, their group memberships, their own responsibility
-    signups, personally-owned pieces, password-reset tokens, OAuth
-    links). Content shared with a group survives — a piece version,
+    (annotations, their group memberships, their own responsibility and
+    team signups, their carpool posts/claims/interests, personal markup,
+    personally-owned pieces, password-reset tokens, OAuth links; see
+    `app.services.accounts.delete_user_and_owned_data` for the full
+    inventory). Content shared with a group survives: a piece version,
     homework assignment, or responsibility schedule they created just
     loses its `created_by` attribution (now nullable specifically for
     this) rather than vanishing out from under everyone else. Blocked
@@ -189,56 +182,7 @@ def delete_account(
             ),
         )
 
-    # Personally-owned pieces (not group-owned) are deleted outright:
-    # their versions, those versions' distributions, then the piece.
-    personal_pieces = (
-        db.query(Piece).filter(Piece.owner_type == OwnerType.user, Piece.owner_id == user_id).all()
-    )
-    for piece in personal_pieces:
-        version_ids = [v.id for v in db.query(PieceVersion).filter(PieceVersion.piece_id == piece.id).all()]
-        if version_ids:
-            db.query(Distribution).filter(Distribution.piece_version_id.in_(version_ids)).delete(
-                synchronize_session=False
-            )
-            db.query(PieceVersion).filter(PieceVersion.id.in_(version_ids)).delete(synchronize_session=False)
-        db.delete(piece)
-
-    # Null out attribution on content that belongs to a group, not to them.
-    db.query(PieceVersion).filter(PieceVersion.created_by == user_id).update(
-        {"created_by": None}, synchronize_session=False
-    )
-    db.query(PieceVersion).filter(PieceVersion.reviewed_by == user_id).update(
-        {"reviewed_by": None}, synchronize_session=False
-    )
-    db.query(Homework).filter(Homework.created_by == user_id).update(
-        {"created_by": None}, synchronize_session=False
-    )
-    db.query(ResponsibilitySchedule).filter(ResponsibilitySchedule.created_by == user_id).update(
-        {"created_by": None}, synchronize_session=False
-    )
-
-    # Delete what's genuinely theirs: private notes (and any shares of
-    # them), shares granted *to* them, their own group memberships, their
-    # own responsibility signups, their own OMR jobs, and any outstanding
-    # reset tokens / OAuth links.
-    own_annotation_ids = [a.id for a in db.query(Annotation).filter(Annotation.user_id == user_id).all()]
-    if own_annotation_ids:
-        db.query(AnnotationShare).filter(AnnotationShare.annotation_id.in_(own_annotation_ids)).delete(
-            synchronize_session=False
-        )
-        db.query(Annotation).filter(Annotation.id.in_(own_annotation_ids)).delete(synchronize_session=False)
-    db.query(AnnotationShare).filter(AnnotationShare.shared_with_user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(ResponsibilitySignup).filter(ResponsibilitySignup.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(OmrJob).filter(OmrJob.user_id == user_id).delete(synchronize_session=False)
-    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
-    db.query(OAuthAccount).filter(OAuthAccount.user_id == user_id).delete(synchronize_session=False)
-    db.query(GroupMembership).filter(GroupMembership.user_id == user_id).delete(synchronize_session=False)
-
-    db.delete(current_user)
+    delete_user_and_owned_data(db, current_user)
     db.commit()
 
 

@@ -11,9 +11,11 @@ deletes the ones that are:
   - carry zero `ResponsibilitySignup` rows and zero `Annotation` rows.
 
 A participant with either is kept untouched (that is real work attached to
-the row). For a deletable one, its `GroupMembership` rows and personal
-`PieceMarkupMark` rows go first (no FK-level cascade in this codebase),
-then the `User`.
+the row). A deletable one goes through
+`app.services.accounts.delete_user_and_owned_data`, the same cleanup
+`DELETE /auth/me` uses (no FK-level cascade in this codebase), so every
+row that references it (memberships, markup, carpool posts and claims,
+team signups, created_by attribution, ...) is deleted or detached first.
 
 This is manual / host-cron only: there is no scheduled-job runner in this
 backend yet (see `Backend/plan.md`'s Backlog). It reads `DATABASE_URL`
@@ -43,12 +45,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.models import (  # noqa: E402
     Annotation,
-    GroupMembership,
-    PieceMarkupMark,
     ResponsibilitySignup,
     User,
 )
 from app.db.session import SessionLocal  # noqa: E402
+from app.services.accounts import delete_user_and_owned_data  # noqa: E402
 from app.services.common import as_utc  # noqa: E402
 
 
@@ -80,13 +81,7 @@ def prune_anonymous_participants(db, days: int, dry_run: bool) -> dict:
         deleted += 1
         if dry_run:
             continue
-        db.query(GroupMembership).filter(GroupMembership.user_id == user.id).delete(
-            synchronize_session=False
-        )
-        db.query(PieceMarkupMark).filter(PieceMarkupMark.user_id == user.id).delete(
-            synchronize_session=False
-        )
-        db.delete(user)
+        delete_user_and_owned_data(db, user)
     if not dry_run:
         db.commit()
     return {"scanned": scanned, "kept": kept, "deleted": deleted, "dry_run": dry_run}
