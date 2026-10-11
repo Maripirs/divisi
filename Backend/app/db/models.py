@@ -460,6 +460,10 @@ class WeeklyNote(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(String, nullable=False, default="")
     note_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Which sections this note is for, same canonical "tenor,bass" format as
+    # `PieceRehearsalNote.part_scope` (see `app/services/part_scope.py`).
+    # `None` = everyone.
+    part_scope: Mapped[str | None] = mapped_column(String, nullable=True)
     # Nullable so deleting the creator's account can null this out rather
     # than deleting the note out from under the rest of the group.
     created_by: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=True)

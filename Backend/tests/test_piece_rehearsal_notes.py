@@ -41,7 +41,7 @@ def test_admin_can_create_note_all_fields_round_trip(client):
             "body": "Watch the conductor, come in a hair late",
             "page_number": 4,
             "measure_label": "m. 52",
-            "part_scope": "Tenor 1",
+            "part_scope": "tenor",
         },
         headers=admin_headers,
     )
@@ -54,7 +54,7 @@ def test_admin_can_create_note_all_fields_round_trip(client):
     assert body["body"] == "Watch the conductor, come in a hair late"
     assert body["page_number"] == 4
     assert body["measure_label"] == "m. 52"
-    assert body["part_scope"] == "Tenor 1"
+    assert body["part_scope"] == "tenor"
     assert body["created_by"] is not None
     assert "created_at" in body
 

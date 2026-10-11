@@ -48,6 +48,7 @@ def create_weekly_note(
         title=payload.title,
         body=payload.body,
         note_date=payload.note_date,
+        part_scope=payload.part_scope,
         created_by=current_user.id,
     )
     db.add(note)
@@ -87,6 +88,7 @@ def update_weekly_note(
     note.title = payload.title
     note.body = payload.body
     note.note_date = payload.note_date
+    note.part_scope = payload.part_scope
     db.commit()
     db.refresh(note)
     return note
@@ -143,7 +145,10 @@ def promote_weekly_note(
         body=payload.body if payload.body is not None else note.body,
         page_number=payload.page_number,
         measure_label=payload.measure_label,
-        part_scope=payload.part_scope,
+        # Checked via `model_fields_set` rather than `is not None` (unlike
+        # title/body above): an explicit `null`/`""` is a real choice ("for
+        # everyone") that must win over a tagged source note.
+        part_scope=payload.part_scope if "part_scope" in payload.model_fields_set else note.part_scope,
         created_by=current_user.id,
         source_weekly_note_id=note.id,
     )

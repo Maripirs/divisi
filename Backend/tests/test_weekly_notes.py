@@ -201,7 +201,7 @@ def test_promote_overrides_win_over_source_note(client):
             "body": "Watch the conductor",
             "page_number": 4,
             "measure_label": "m. 52",
-            "part_scope": "Tenor 1",
+            "part_scope": "tenor",
         },
         headers=admin_headers,
     ).json()
@@ -210,7 +210,7 @@ def test_promote_overrides_win_over_source_note(client):
     assert promoted["body"] == "Watch the conductor"
     assert promoted["page_number"] == 4
     assert promoted["measure_label"] == "m. 52"
-    assert promoted["part_scope"] == "Tenor 1"
+    assert promoted["part_scope"] == "tenor"
 
     # The source weekly note itself is untouched by the promotion.
     still_there = client.get("/groups/" + group_id + "/weekly-notes", headers=admin_headers).json()

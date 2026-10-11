@@ -4,9 +4,10 @@ Notes section that stays next to the music, not a dated bulletin (see
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.db.models import PieceRehearsalNoteKind
+from app.services.part_scope import normalize_part_scope
 
 
 class PieceRehearsalNoteCreate(BaseModel):
@@ -15,7 +16,13 @@ class PieceRehearsalNoteCreate(BaseModel):
     body: str = ""
     page_number: int | None = None
     measure_label: str | None = None
+    # Section tag (`app/services/part_scope.py`): `None` = everyone.
     part_scope: str | None = None
+
+    @field_validator("part_scope")
+    @classmethod
+    def _normalize_part_scope(cls, value: str | None) -> str | None:
+        return normalize_part_scope(value)
 
 
 class PieceRehearsalNoteUpdate(BaseModel):
@@ -24,7 +31,13 @@ class PieceRehearsalNoteUpdate(BaseModel):
     body: str = ""
     page_number: int | None = None
     measure_label: str | None = None
+    # Section tag (`app/services/part_scope.py`): `None` = everyone.
     part_scope: str | None = None
+
+    @field_validator("part_scope")
+    @classmethod
+    def _normalize_part_scope(cls, value: str | None) -> str | None:
+        return normalize_part_scope(value)
 
 
 class PieceRehearsalNoteOut(BaseModel):
