@@ -109,6 +109,13 @@ class GroupMemberTitleUpdate(BaseModel):
     title: str | None = None
 
 
+class GroupMemberMergeIn(BaseModel):
+    """Admin-only: the real member an unverified (anonymous) participant
+    is folded into by `POST /groups/{id}/members/{user_id}/merge`."""
+
+    target_user_id: str
+
+
 class KnownNameOut(BaseModel):
     """One distinct free-text guest name from `app.services.known_names.
     list_known_names`, with how many signup/post/claim/interest rows across

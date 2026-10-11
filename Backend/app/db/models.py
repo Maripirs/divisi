@@ -38,7 +38,8 @@ class User(Base):
     # anonymous row into another *guest* row in the same group when a typed
     # name matches (`find_guest_matches` / `merge_participant`); it never
     # promotes to a real account in place (that only happens by
-    # registering a separate, ordinary `User` row).
+    # registering a separate, ordinary `User` row, which a group admin can
+    # then fold this row into via `POST /groups/{id}/members/{id}/merge`).
     is_anonymous: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     # The acting client's own local id (Frontend F23's localStorage profile),
     # a fallback resolver for when the `divisi_participant` cookie is lost but

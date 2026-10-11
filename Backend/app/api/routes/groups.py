@@ -17,6 +17,7 @@ from app.api.schemas import (
     GroupGuestSettingsUpdate,
     GroupJoinIn,
     GroupMemberAdd,
+    GroupMemberMergeIn,
     GroupMemberOut,
     GroupMemberRoleUpdate,
     GroupMemberTitleUpdate,
@@ -37,6 +38,7 @@ from app.services.actors import is_group_admin
 from app.services.groups import get_group_or_404
 from app.services.known_names import list_known_names, rename_known_name
 from app.services.pages import require_member_page_access, seed_default_page_settings
+from app.services.participants import merge_participant
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -430,6 +432,82 @@ def update_member_title(
     user = db.get(User, user_id)
     assert user is not None
     return GroupMemberOut(user_id=user.id, email=user.email, name=user.name, role=membership.role, title=membership.title)
+
+
+@router.post("/{group_id}/members/{user_id}/merge", response_model=GroupMemberOut)
+def merge_member(
+    group_id: str,
+    user_id: str,
+    payload: GroupMemberMergeIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GroupMemberOut:
+    """Admin-only: fold an unverified participant (`user_id`, an anonymous
+    guest row) into a real member of this group, e.g. a guest who later
+    registered and joined, leaving the roster with two of them. Everything
+    the guest did moves via `merge_participant`, then the guest row is
+    gone.
+
+    `merge_participant` moves the participant's data across *every* group,
+    so this refuses a participant who also belongs to some other group:
+    this admin only speaks for this one. The target keeps its own
+    membership, ending with the higher of the two roles (merging an
+    unverified admin never silently drops admin rights, and since the
+    target then holds them, the group can't lose its last admin this way)
+    and picking up the guest's title if it had none."""
+    get_group_or_404(group_id, db)
+    _require_admin(group_id, current_user, db)
+    source_membership = _get_membership(group_id, user_id, db)
+    if source_membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a member")
+    source = db.get(User, user_id)
+    assert source is not None
+    if not source.is_anonymous:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only an unverified participant can be merged into another member",
+        )
+    if payload.target_user_id == user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Can't merge a member into itself")
+    target_membership = _get_membership(group_id, payload.target_user_id, db)
+    if target_membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target is not a member of this group")
+    target = db.get(User, payload.target_user_id)
+    assert target is not None
+    if target.is_anonymous:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Merge into a member with a real account, not another unverified participant",
+        )
+    other_groups = (
+        db.query(GroupMembership)
+        .filter(GroupMembership.user_id == source.id, GroupMembership.group_id != group_id)
+        .count()
+    )
+    if other_groups:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This participant also belongs to another group, so merging here would move "
+                "their activity there too. Ask that group's admin, or remove them there first."
+            ),
+        )
+
+    if source_membership.role == GroupRole.admin:
+        target_membership.role = GroupRole.admin
+    if not target_membership.title and source_membership.title:
+        target_membership.title = source_membership.title
+    merge_participant(db, source=source, target=target)
+    db.commit()
+    db.refresh(target_membership)
+    return GroupMemberOut(
+        user_id=target.id,
+        email=target.email,
+        name=target.name,
+        role=target_membership.role,
+        title=target_membership.title,
+        is_anonymous=target.is_anonymous,
+    )
 
 
 @router.get("/{group_id}/known-names", response_model=list[KnownNameOut])
