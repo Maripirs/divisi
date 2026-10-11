@@ -4,6 +4,7 @@
 	import '$lib/styles/shell.css';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { normalizeJoinCode } from '$lib/joinCode';
 	import type { PageData } from './$types';
 
 	// No dedicated load here — `data.user` comes straight from the root
@@ -16,9 +17,9 @@
 
 	function submit(e: SubmitEvent) {
 		e.preventDefault();
-		const trimmed = code.trim();
-		if (!trimmed) return;
-		goto(lh(`/join/${encodeURIComponent(trimmed)}`));
+		const normalized = normalizeJoinCode(code);
+		if (!normalized) return;
+		goto(lh(`/join/${encodeURIComponent(normalized)}`));
 	}
 </script>
 
@@ -38,14 +39,14 @@
 			<input
 				id="join-code"
 				type="text"
-				placeholder="ABCD-1234"
+				placeholder={m.join_code_placeholder()}
 				autocomplete="off"
 				autocapitalize="characters"
 				spellcheck="false"
 				bind:value={code}
 			/>
 		</div>
-		<button class="btn btn-primary btn-block" type="submit" disabled={!code.trim()}>{m.join_continue()}</button
+		<button class="btn btn-primary btn-block" type="submit" disabled={!normalizeJoinCode(code)}>{m.join_continue()}</button
 		>
 	</form>
 

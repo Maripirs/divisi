@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { normalizeJoinCode } from '$lib/joinCode';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { setGuestCookie } from '$lib/server/guestSession';
 import type { RequestHandler } from './$types';
@@ -17,7 +18,7 @@ import type { RequestHandler } from './$types';
  * reads a boolean rather than having to catch: `ok: false` means wrong
  * password, `ok: false, error: 'server'` means the Backend itself failed. */
 export const POST: RequestHandler = async ({ params, request, cookies, fetch }) => {
-	const code = params.code.toUpperCase();
+	const code = normalizeJoinCode(params.code);
 
 	let password: string | null = null;
 	try {

@@ -84,6 +84,7 @@
 	"join_title": "Join a group",
 	"join_pitch": "Enter the join code your choir admin shared with you. No account needed to view and practice a group's rehearsal tracks.",
 	"join_code_label": "Join code",
+	"join_code_placeholder": "e.g. 9CJM7VRU",
 	"join_continue": "Continue",
 	"join_back": "Back",
 

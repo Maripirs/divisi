@@ -1,3 +1,4 @@
+import { normalizeJoinCode } from '$lib/joinCode';
 import type { GuestJoinResult } from './guestJoin';
 import type { PageLoad } from './$types';
 
@@ -8,9 +9,11 @@ import type { PageLoad } from './$types';
 export type { GuestJoinResult };
 
 export const load: PageLoad = ({ params, fetch, url }) => {
-	// Join codes are generated uppercase (see Backend's join_codes.py) but
-	// people typing/reading one aloud shouldn't have to get the case right.
-	const code = params.code.toUpperCase();
+	// Join codes are generated uppercase with no separator (see Backend's
+	// join_codes.py) but people typing/reading one aloud shouldn't have to
+	// get the case or the chunking right (`+page.server.ts` also redirects
+	// to the canonical URL).
+	const code = normalizeJoinCode(params.code);
 	// B31/F36: carpool's event switcher (`CarpoolBoard.svelte`'s event chips)
 	// links to `?event=<id>` on this same page — forwarded to the `data`
 	// endpoint below so a clicked event actually changes which one's posts

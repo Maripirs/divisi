@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { normalizeJoinCode } from '$lib/joinCode';
 import { readGuestCookie } from '$lib/server/guestSession';
 import { loadGuestJoin } from '../guestJoin';
 import type { RequestHandler } from './$types';
@@ -12,7 +13,7 @@ import type { RequestHandler } from './$types';
  * cold-start streaming behavior is preserved) and hands the promise to the
  * component. */
 export const GET: RequestHandler = async ({ params, cookies, fetch, url }) => {
-	const code = params.code.toUpperCase();
+	const code = normalizeJoinCode(params.code);
 	const token = readGuestCookie(cookies, code) ?? undefined;
 	try {
 		return json(await loadGuestJoin(code, token, fetch, url.searchParams.get('event')));

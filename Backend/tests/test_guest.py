@@ -81,6 +81,17 @@ def test_resolve_join_code_lists_distributed_pieces_no_auth(client):
     ]
 
 
+def test_resolve_join_code_accepts_the_code_however_it_was_typed(client):
+    admin_headers = _register_and_login(client, "admin-typed@example.com")
+    group, _, _ = _create_group_with_distributed_midi_piece(client, admin_headers)
+    code = group["join_code"]
+
+    for typed in (code.lower(), f"{code[:4].lower()}-{code[4:].lower()}", f"{code[:4]}%20{code[4:]}"):
+        response = client.get(f"/guest/{typed}")
+        assert response.status_code == 200, typed
+        assert response.json()["group_name"] == "Choir"
+
+
 def test_resolve_join_code_surfaces_the_admin_presentation_hint(client):
     admin_headers = _register_and_login(client, "presentationadmin@example.com")
     group, piece_id, _version_id = _create_group_with_distributed_midi_piece(client, admin_headers)

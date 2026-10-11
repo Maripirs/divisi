@@ -6,6 +6,7 @@
 	import AuthShell from '$lib/components/AuthShell.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { normalizeJoinCode } from '$lib/joinCode';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -36,9 +37,9 @@
 	let groupCode = $state('');
 	function submitGroupCode(e: SubmitEvent) {
 		e.preventDefault();
-		const trimmed = groupCode.trim();
-		if (!trimmed) return;
-		goto(lh(`/join/${encodeURIComponent(trimmed)}`));
+		const normalized = normalizeJoinCode(groupCode);
+		if (!normalized) return;
+		goto(lh(`/join/${encodeURIComponent(normalized)}`));
 	}
 </script>
 
@@ -147,14 +148,14 @@
 			<span>{m.join_code_label()}</span>
 			<input
 				type="text"
-				placeholder="ABCD-1234"
+				placeholder={m.join_code_placeholder()}
 				autocomplete="off"
 				autocapitalize="characters"
 				spellcheck="false"
 				bind:value={groupCode}
 			/>
 		</label>
-		<button class="btn btn-outline btn-block" type="submit" disabled={!groupCode.trim()}>
+		<button class="btn btn-outline btn-block" type="submit" disabled={!normalizeJoinCode(groupCode)}>
 			{m.join_continue()}
 		</button>
 	</form>

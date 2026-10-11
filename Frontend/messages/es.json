@@ -84,6 +84,7 @@
 	"join_title": "Unirse a un grupo",
 	"join_pitch": "Ingresa el código que te compartió el/la director/a de tu coro. No necesitas cuenta para ver y practicar las pistas de ensayo de un grupo.",
 	"join_code_label": "Código de grupo",
+	"join_code_placeholder": "p. ej. 9CJM7VRU",
 	"join_continue": "Continuar",
 	"join_back": "Volver",
 

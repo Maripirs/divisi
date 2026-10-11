@@ -15,5 +15,20 @@ _ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _LENGTH = 8
 
 
+# ASCII hyphen plus the Unicode hyphen/dash block (U+2010..U+2015) a code
+# pasted from a chat or email might arrive with.
+_DASHES = frozenset("-" + "".join(chr(c) for c in range(0x2010, 0x2016)))
+
+
 def generate_join_code() -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(_LENGTH))
+
+
+def normalize_join_code(raw: str) -> str:
+    """The canonical form of a code as a person typed or read it aloud:
+    whitespace and dashes stripped, uppercased, so "9cjm-7vru" and
+    "9CJM 7VRU" both find the group whose code is "9CJM7VRU". Generated
+    codes never contain either (see `_ALPHABET`), so this can't make two
+    codes collide. The Frontend applies the same rule
+    (`Frontend/src/lib/joinCode.ts`)."""
+    return "".join(ch for ch in raw if not ch.isspace() and ch not in _DASHES).upper()

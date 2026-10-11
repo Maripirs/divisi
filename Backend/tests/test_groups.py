@@ -479,6 +479,17 @@ def test_join_by_code_is_case_insensitive_and_trims(client):
     assert join.json()["id"] == group["id"]
 
 
+def test_join_by_code_ignores_dashes_and_spaces_people_type(client):
+    _, group = _group_with_code(client)
+    headers = _register_and_login(client, "bob3@example.com")
+    code = group["join_code"]
+
+    for typed in (f"{code[:4].lower()}-{code[4:].lower()}", f"{code[:4]} {code[4:]}"):
+        join = client.post("/groups/join", json={"join_code": typed}, headers=headers)
+        assert join.status_code == 200, typed
+        assert join.json()["id"] == group["id"]
+
+
 def test_join_by_code_is_idempotent_and_keeps_existing_role(client):
     admin_headers, group = _group_with_code(client)
     headers = _register_and_login(client, "bob3@example.com")

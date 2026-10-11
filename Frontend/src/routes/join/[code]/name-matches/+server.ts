@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { normalizeJoinCode } from '$lib/joinCode';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import type { RequestHandler } from './$types';
 
@@ -27,7 +28,7 @@ export interface NameMatchCandidate {
  *   { ok: false, error: 'server' }
  */
 export const GET: RequestHandler = async ({ params, url, fetch }) => {
-	const code = params.code.toUpperCase();
+	const code = normalizeJoinCode(params.code);
 	const name = (url.searchParams.get('name') ?? '').trim();
 	if (!name) return json({ ok: true as const, matches: [] as NameMatchCandidate[] });
 

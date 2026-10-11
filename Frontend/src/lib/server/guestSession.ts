@@ -1,4 +1,5 @@
 import type { Cookies } from '@sveltejs/kit';
+import { normalizeJoinCode } from '$lib/joinCode';
 
 /** The guest counterpart to `$lib/server/session.ts`. A visitor who clears
  * a group's guest-password gate on `/join/[code]` gets an opaque signed
@@ -15,10 +16,11 @@ import type { Cookies } from '@sveltejs/kit';
  * reads its own group's cookie explicitly via `readGuestCookie`. */
 
 /** Join codes are generated as `[A-Z0-9]{8}` (see Backend's
- * `app/core/join_codes.py`); callers may pass a lowercased/mixed-case code
- * from a URL, so every helper here uppercases before building the name. */
+ * `app/core/join_codes.py`); callers may pass a lowercased/mixed-case or
+ * dash-chunked code from a URL, so every helper here normalizes it
+ * (`normalizeJoinCode`) before building the name. */
 export function guestCookieName(code: string): string {
-	return `divisi_guest_${code.toUpperCase()}`;
+	return `divisi_guest_${normalizeJoinCode(code)}`;
 }
 
 /** Must track the Backend's `guest_token_expire_minutes` (30 days at time

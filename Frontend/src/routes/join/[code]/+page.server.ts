@@ -1,5 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { backendJson, BackendApiError } from '$lib/server/backend';
+import { selfJoinGroup } from '$lib/server/groupJoin';
+import { normalizeJoinCode } from '$lib/joinCode';
 import { lh } from '$lib/i18n';
 import type { GroupOut } from '$lib/server/backendTypes';
 import type { PageServerLoad } from './$types';
@@ -15,22 +17,18 @@ import type { PageServerLoad } from './$types';
  * Skipped entirely for anonymous visitors, who fall through to that guest
  * load, and any Backend refusal (the demo group, an unknown code, a cold
  * Backend) falls through to the same guest view. */
-export const load: PageServerLoad = async ({ params, locals, fetch }) => {
+export const load: PageServerLoad = async ({ params, locals, fetch, url }) => {
+	// A code typed or pasted the way people write it ("9cjm-7vru", "9CJM
+	// 7VRU") lands on its canonical URL first, so every link, cookie name,
+	// and sub-route under this page sees the one spelling.
+	const code = normalizeJoinCode(params.code);
+	if (code && code !== params.code) redirect(308, lh(`/join/${code}${url.search}`));
 	if (!locals.token) return {};
-	const code = params.code.toUpperCase();
 	let groupId: string | null = null;
 	try {
 		const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
 		groupId = groups.find((g) => g.join_code === code)?.id ?? null;
-		if (!groupId) {
-			const joined = await backendJson<GroupOut>(
-				locals.token,
-				'/groups/join',
-				{ method: 'POST', body: JSON.stringify({ join_code: code }) },
-				fetch
-			);
-			groupId = joined.id;
-		}
+		if (!groupId) groupId = (await selfJoinGroup(locals.token, code, fetch))?.id ?? null;
 	} catch (err) {
 		// An expired/invalid token here just means "treat as logged out" —
 		// the root layout load already handles clearing the cookie; this

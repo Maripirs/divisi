@@ -50,6 +50,7 @@ from app.api.schemas import (
 )
 from app.api.deps import get_optional_participant
 from app.core.config import get_settings
+from app.core.join_codes import normalize_join_code
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import create_admin_preview_token, create_guest_token, verify_password
 from app.db.models import (
@@ -101,7 +102,9 @@ def _source_path_or_404(file_path: str, what: str):
 
 
 def _get_group_by_join_code_or_404(join_code: str, db: Session) -> Group:
-    group = db.query(Group).filter(Group.join_code == join_code).first()
+    # Typed codes arrive however people write them ("9cjm-7vru"); codes are
+    # stored canonical, so normalizing keeps the lookup on the unique index.
+    group = db.query(Group).filter(Group.join_code == normalize_join_code(join_code)).first()
     if group is None:
         # Deliberately the same generic message an unauthenticated caller
         # would see for any other bad code — nothing here should help
@@ -261,7 +264,7 @@ def start_admin_preview(join_code: str, db: Session = Depends(get_db)) -> AdminP
     shouldn't reveal which codes are real. `group_id` rides along so the
     Frontend can navigate straight into it."""
     settings = get_settings()
-    if not settings.demo_join_code or join_code.upper() != settings.demo_join_code.upper():
+    if not settings.demo_join_code or normalize_join_code(join_code) != normalize_join_code(settings.demo_join_code):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     group = _get_group_by_join_code_or_404(join_code, db)
     admin_membership = (
@@ -350,7 +353,9 @@ def resolve_join_code(
         )
 
     settings = get_settings()
-    admin_preview_available = bool(settings.demo_join_code) and join_code.upper() == settings.demo_join_code.upper()
+    admin_preview_available = bool(settings.demo_join_code) and normalize_join_code(join_code) == normalize_join_code(
+        settings.demo_join_code
+    )
     return GuestGroupOut(group_name=group.name, pieces=pieces, admin_preview_available=admin_preview_available)
 
 

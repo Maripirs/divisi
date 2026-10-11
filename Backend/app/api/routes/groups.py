@@ -29,7 +29,7 @@ from app.api.schemas import (
     KnownNameRenameIn,
 )
 from app.core.config import get_settings
-from app.core.join_codes import generate_join_code
+from app.core.join_codes import generate_join_code, normalize_join_code
 from app.core.rate_limit import rate_limit_guest
 from app.core.security import hash_password
 from app.db.models import Group, GroupMembership, GroupPage, GroupPageSettings, GroupRole, User
@@ -167,13 +167,14 @@ def join_group_by_code(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Create an account or log in to join a group",
         )
-    code = payload.join_code.strip().upper()
+    code = normalize_join_code(payload.join_code)
     settings = get_settings()
-    if settings.demo_join_code and code == settings.demo_join_code.strip().upper():
+    if settings.demo_join_code and code == normalize_join_code(settings.demo_join_code):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The demo group can't be joined")
-    # Codes are generated uppercase (`app/core/join_codes.py`), so
-    # uppercasing the input is all case-insensitivity needs, and it keeps
-    # the lookup on the unique index.
+    # Codes are generated uppercase with no separator
+    # (`app/core/join_codes.py`), so normalizing the input is all
+    # case/chunking-insensitivity needs, and it keeps the lookup on the
+    # unique index.
     group = db.query(Group).filter(Group.join_code == code).first() if code else None
     if group is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join code not found")

@@ -1,4 +1,5 @@
 import type { Cookies } from '@sveltejs/kit';
+import { normalizeJoinCode } from '$lib/joinCode';
 
 /** F24 / Backend B20: the demo "Preview Admin" marker cookie.
  *
@@ -43,10 +44,9 @@ export function readDemoPreviewCookie(cookies: Cookies): string | null {
 }
 
 /** Normalizes a join code the same way every guest route already does
- * (`params.code.toUpperCase()` in `join/[code]/+page.ts` and
- * `guestJoin.ts`), so the marker cookie's value always matches what
+ * (`normalizeJoinCode` in `join/[code]/+page.ts` and its sub-routes), so the marker cookie's value always matches what
  * `/join/[code]` expects on the way back out of a preview. Pure so it is
  * directly unit-testable without a `Cookies` mock. */
 export function normalizeJoinCodeForPreview(code: string): string {
-	return code.trim().toUpperCase();
+	return normalizeJoinCode(code);
 }
