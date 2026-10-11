@@ -73,3 +73,45 @@ export function readSetCookie(res: Response): string[] {
 export function backendCookieHeader(token: string | null): string | undefined {
 	return token ? `${PARTICIPANT_COOKIE}=${encodeURIComponent(token)}` : undefined;
 }
+
+/** Bounds the post-login claim below. The Backend just answered the login
+ * itself, so it's warm; this only stops a hiccup from stalling sign-in. */
+const CLAIM_TIMEOUT_MS = 5_000;
+
+/** Right after a register/login/OAuth sign-in on this browser: if a
+ * `divisi_participant` cookie is here (this device acted as a guest, e.g.
+ * posted in carpool or signed up for a responsibility), ask the Backend to
+ * fold that anonymous participant into the account that just signed in
+ * (`POST /auth/claim-participant`), so the group doesn't end up with an
+ * "unverified" duplicate of the same person. Same browser is treated as
+ * same person.
+ *
+ * Strictly best-effort: never throws, never blocks sign-in for longer than
+ * `CLAIM_TIMEOUT_MS`. Any 200 (merged, or a no-op like an already-merged or
+ * pruned participant) means the cookie is spent, so it's cleared; a failure
+ * (network, 5xx) leaves it for the next sign-in to retry. Note the guest
+ * view's own "this one is mine" memory (`carpoolOwnership.ts`,
+ * `responsibilitySignupOwnership.ts`, keyed by row id in localStorage) is
+ * left alone: signed in, ownership is the account's `user_id` compare. */
+export async function claimDeviceParticipant(
+	cookies: Cookies,
+	accessToken: string,
+	fetchFn: typeof fetch,
+	apiBaseUrl: string
+): Promise<void> {
+	const participant = readParticipantCookie(cookies);
+	if (!participant) return;
+	try {
+		const res = await fetchFn(`${apiBaseUrl}/auth/claim-participant`, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				Cookie: backendCookieHeader(participant) ?? ''
+			},
+			signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS)
+		});
+		if (res.ok) clearParticipantCookie(cookies);
+	} catch {
+		// Best-effort: sign-in proceeds regardless.
+	}
+}

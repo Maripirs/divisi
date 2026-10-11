@@ -105,3 +105,21 @@ class ChangePasswordRequest(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ParticipantClaimOut(BaseModel):
+    """`POST /auth/claim-participant`: whether this device's anonymous
+    participant was folded into the signed-in account, and what came with
+    it. `reason` explains a no-op (`no_participant`, `same_user`,
+    `not_anonymous`) so the Frontend knows the cookie is spent either way."""
+
+    merged: bool
+    reason: str | None = None
+    participant_id: str | None = None
+    group_ids: list[str] = []
+    responsibility_signups: int = 0
+    team_signups: int = 0
+    carpool_posts: int = 0
+    carpool_seat_claims: int = 0
+    carpool_rider_interests: int = 0
+    annotations: int = 0

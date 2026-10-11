@@ -16,6 +16,7 @@ from app.api.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     OAuthProviderStatusOut,
+    ParticipantClaimOut,
     ParticipantNameUpdate,
     ResetPasswordRequest,
     Token,
@@ -35,19 +36,25 @@ from app.core.security import (
     verify_password,
 )
 from app.db.models import (
+    Annotation,
+    CarpoolPost,
+    CarpoolRiderInterest,
+    CarpoolSeatClaim,
     Group,
     GroupMembership,
     GroupRole,
     OAuthAccount,
     OAuthProvider,
     PasswordResetToken,
+    ResponsibilitySignup,
+    TeamSignup,
     User,
 )
 from app.db.session import get_db
 from app.services.accounts import delete_user_and_owned_data
 from app.services.common import as_utc
 from app.services.oauth import OAuthError, google_authorization_url, google_exchange_code
-from app.services.participants import resolve_participant
+from app.services.participants import merge_participant, resolve_participant
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger("divisi.auth")
@@ -116,6 +123,58 @@ def update_participant_name(
     actor.name = normalized
     db.commit()
     return {"updated": True}
+
+
+@router.post("/claim-participant", response_model=ParticipantClaimOut)
+def claim_participant(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    maybe_participant: User | None = Depends(get_optional_participant),
+) -> ParticipantClaimOut:
+    """Fold this device's anonymous participant (its `divisi_participant`
+    cookie, forwarded by the Frontend right after a register or login) into
+    the account that just signed in, so a guest who posted in carpool or
+    signed up for something and then made an account doesn't leave an
+    "unverified" duplicate of themselves in the group.
+
+    Same browser is treated as same person: unlike the admin Members-tab
+    merge, this doesn't require the participant to be in a group the
+    account is in (it's the caller's own data, proven by holding the
+    device token). Best-effort and idempotent by design: no cookie, a bad
+    or expired token, a participant already merged or pruned, a token for
+    the caller itself, or one for a real (non-anonymous) account are all a
+    200 no-op with a `reason`, never an error the login flow would trip
+    on."""
+    if current_user.is_anonymous:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sign in to a real account first")
+    source = maybe_participant
+    if source is None:
+        return ParticipantClaimOut(merged=False, reason="no_participant")
+    if source.id == current_user.id:
+        return ParticipantClaimOut(merged=False, reason="same_user")
+    if not source.is_anonymous:
+        return ParticipantClaimOut(merged=False, reason="not_anonymous")
+
+    def count(model) -> int:
+        return db.query(model).filter(model.user_id == source.id).count()
+
+    summary = ParticipantClaimOut(
+        merged=True,
+        participant_id=source.id,
+        group_ids=[
+            m.group_id for m in db.query(GroupMembership).filter(GroupMembership.user_id == source.id).all()
+        ],
+        responsibility_signups=count(ResponsibilitySignup),
+        team_signups=count(TeamSignup),
+        carpool_posts=count(CarpoolPost),
+        carpool_seat_claims=count(CarpoolSeatClaim),
+        carpool_rider_interests=count(CarpoolRiderInterest),
+        annotations=count(Annotation),
+    )
+    merge_participant(db, source, current_user)
+    db.commit()
+    logger.info("Merged anonymous participant %s into user %s", source.id, current_user.id)
+    return summary
 
 
 @router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)

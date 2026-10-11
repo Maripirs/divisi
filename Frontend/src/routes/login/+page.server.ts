@@ -1,6 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { setSessionCookie } from '$lib/server/session';
+import { claimDeviceParticipant } from '$lib/server/participantSession';
+import { safeRedirectTarget } from '$lib/redirectTarget';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type { Actions, PageServerLoad } from './$types';
@@ -60,15 +62,6 @@ async function login(
 	return { token: body.access_token };
 }
 
-/** Only ever redirect back to a same-site path — `redirectTo` rides in a
- * hidden form field (ultimately from a URL query param), so without this
- * check a crafted `?redirectTo=https://evil.example` link could turn a
- * normal login into an open redirect. */
-function safeRedirectTarget(value: FormDataEntryValue | null): string {
-	const target = String(value ?? '');
-	return target.startsWith('/') && !target.startsWith('//') ? target : '/home';
-}
-
 export const actions: Actions = {
 	login: async ({ request, cookies, fetch }) => {
 		const form = await request.formData();
@@ -80,6 +73,9 @@ export const actions: Actions = {
 		if ('error' in result) return fail(401, { error: result.error, mode: 'login' as const });
 
 		setSessionCookie(cookies, result.token);
+		// A guest who acted on this browser before signing in: fold that
+		// anonymous participant into this account (best-effort, see helper).
+		await claimDeviceParticipant(cookies, result.token, fetch, PUBLIC_API_BASE_URL);
 		throw redirect(303, lh(redirectTo));
 	},
 
@@ -117,6 +113,7 @@ export const actions: Actions = {
 		if ('error' in result) return fail(401, { error: result.error, mode: 'register' as const });
 
 		setSessionCookie(cookies, result.token);
+		await claimDeviceParticipant(cookies, result.token, fetch, PUBLIC_API_BASE_URL);
 		throw redirect(303, lh(redirectTo));
 	}
 };
