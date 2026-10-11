@@ -2,10 +2,17 @@ import { fail, redirect } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
+import { withReturnTo } from '$lib/authLinks';
+import { safeRedirectTarget } from '$lib/redirectTarget';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url }) => {
-	return { token: url.searchParams.get('token') ?? '' };
+	// `redirectTo` arrives on the emailed link when the reset started from a
+	// login page that had one (see `forgot-password`).
+	return {
+		token: url.searchParams.get('token') ?? '',
+		redirectTo: safeRedirectTarget(url.searchParams.get('redirectTo'), '')
+	};
 };
 
 async function errorDetail(res: Response): Promise<string> {
@@ -39,6 +46,6 @@ export const actions: Actions = {
 		}
 		if (!res.ok) return fail(res.status, { error: await errorDetail(res) });
 
-		throw redirect(303, lh('/login?reset=1'));
+		throw redirect(303, lh(withReturnTo('/login?reset=1', String(form.get('redirectTo') ?? ''))));
 	}
 };

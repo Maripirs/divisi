@@ -16,6 +16,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import { authHref } from '$lib/authLinks';
+	import { deLocalizeHref } from '$lib/paraglide/runtime';
 
 	// Same account-wide screen `/settings` used to be as its own page — now a
 	// slide-in drawer over whatever page it was opened from (triggered by
@@ -505,6 +506,9 @@
 
 		{#if user}
 			<form method="POST" action="/logout">
+				<!-- The page this drawer is open over: logging out from inside a
+				     group or piece lands on its guest view (see routes/logout). -->
+				<input type="hidden" name="redirectTo" value={deLocalizeHref(page.url.pathname + page.url.search)} />
 				<button class="btn btn-danger btn-block" type="submit">{m.settings_log_out()}</button>
 			</form>
 

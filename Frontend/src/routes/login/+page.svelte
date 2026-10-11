@@ -7,6 +7,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
 	import { normalizeJoinCode } from '$lib/joinCode';
+	import { withReturnTo } from '$lib/authLinks';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -29,6 +30,9 @@
 	// so logging in from a deep link doesn't strand the user back at
 	// `/home` instead of where they were headed.
 	const redirectTo = page.url.searchParams.get('redirectTo') ?? '/home';
+	// Only an explicit return target is threaded through forgot-password
+	// and OAuth; the `/home` default needs no carrying.
+	const returnTo = page.url.searchParams.get('redirectTo');
 
 	// Guest path: joining a group by code needs no account, so it lives on
 	// this same page rather than sending the visitor off to `/welcome` and
@@ -103,7 +107,7 @@
 		{/if}
 
 		{#if mode === 'login'}
-			<p class="forgot-link"><a href={lh('/forgot-password')}>{m.login_forgot_password()}</a></p>
+			<p class="forgot-link"><a href={lh(withReturnTo('/forgot-password', returnTo))}>{m.login_forgot_password()}</a></p>
 		{/if}
 
 		{#if form?.error}
@@ -123,12 +127,12 @@
 		<div class="card">
 			<span class="oauth-divider">{m.login_or()}</span>
 			{#if data.oauthProviders.google}
-				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/google/start">
+				<a class="btn btn-outline btn-block" href={lh(withReturnTo('/login/oauth/google', returnTo))} data-sveltekit-reload>
 					{m.login_continue_with_google()}
 				</a>
 			{/if}
 			{#if data.oauthProviders.apple}
-				<a class="btn btn-outline btn-block" href="{data.apiBaseUrl}/auth/oauth/apple/start">
+				<a class="btn btn-outline btn-block" href={lh(withReturnTo('/login/oauth/apple', returnTo))} data-sveltekit-reload>
 					{m.login_continue_with_apple()}
 				</a>
 			{/if}

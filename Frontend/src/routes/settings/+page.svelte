@@ -222,6 +222,7 @@
 
 	{#if data.user}
 		<form method="POST" action="/logout">
+			{#if authReturnTo}<input type="hidden" name="redirectTo" value={authReturnTo} />{/if}
 			<button class="btn btn-danger btn-block" type="submit">{m.settings_log_out()}</button>
 		</form>
 	{/if}

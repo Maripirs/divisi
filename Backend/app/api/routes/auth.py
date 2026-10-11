@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -266,6 +267,8 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
         )
         db.commit()
         reset_link = f"{get_settings().frontend_base_url}/reset-password?token={raw_token}"
+        if payload.redirect_to:
+            reset_link += f"&redirectTo={quote(payload.redirect_to, safe='')}"
         logger.warning("Password reset requested for %s -- link (valid 1h): %s", user.email, reset_link)
     return {"detail": "If that email has an account, a reset link has been sent."}
 

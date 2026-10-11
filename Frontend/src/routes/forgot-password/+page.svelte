@@ -4,12 +4,17 @@
 	import AuthShell from '$lib/components/AuthShell.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { page } from '$app/state';
+	import { withReturnTo } from '$lib/authLinks';
 	import type { ActionData } from './$types';
 
 	let { form }: { form: ActionData } = $props();
 
 	let email = $state('');
 	let submitting = $state(false);
+	// Carried from the login page so the reset link (and the way back to
+	// login) still returns the member to where they were headed.
+	const returnTo = page.url.searchParams.get('redirectTo');
 </script>
 
 <AuthShell title={m.forgot_password_title()}>
@@ -19,7 +24,7 @@
 			<p class="card-meta">
 				{m.forgot_password_check_email_body()}
 			</p>
-			<a class="btn btn-outline btn-block" href={lh('/login')}>{m.forgot_password_back_to_login()}</a>
+			<a class="btn btn-outline btn-block" href={lh(withReturnTo('/login', returnTo))}>{m.forgot_password_back_to_login()}</a>
 		</section>
 	{:else}
 		<form
@@ -28,6 +33,7 @@
 			use:enhance={withSubmitting((v) => (submitting = v))}
 		>
 			<p class="card-note">{m.forgot_password_instructions()}</p>
+			{#if returnTo}<input type="hidden" name="redirectTo" value={returnTo} />{/if}
 			<label class="field">
 				<span>{m.login_email()}</span>
 				<input type="email" name="email" bind:value={email} required autocomplete="email" />

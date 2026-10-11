@@ -1,4 +1,5 @@
 import { deLocalizeHref } from '$lib/paraglide/runtime';
+import { safeRedirectTarget } from '$lib/redirectTarget';
 
 /** The `/login` link for a Create account / Log in button that should bring
  * the visitor back to where they were once they're signed in, via the login
@@ -23,4 +24,16 @@ export function authHref(mode: 'login' | 'register', returnTo: string | null): s
 	}
 	const query = params.toString();
 	return query ? `/login?${query}` : '/login';
+}
+
+/** `path` with `?redirectTo=` carried along when there is a same-site
+ * place to return to: threads a login page's `redirectTo` through the
+ * forgot-password and reset-password screens (and back to login), so a
+ * member who forgot their password mid-way still ends up where they were
+ * headed. `null`, `''`, or an unsafe value just returns `path`. Returns an
+ * unlocalized path: wrap it in `lh`. */
+export function withReturnTo(path: string, returnTo: string | null): string {
+	const safe = safeRedirectTarget(returnTo, '');
+	if (!safe) return path;
+	return `${path}${path.includes('?') ? '&' : '?'}redirectTo=${encodeURIComponent(safe)}`;
 }

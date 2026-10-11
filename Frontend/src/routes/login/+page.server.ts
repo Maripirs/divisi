@@ -25,7 +25,7 @@ export const load: PageServerLoad = async ({ fetch }) => {
 	} catch {
 		// Backend unreachable — same fallback as a clean "not configured".
 	}
-	return { oauthProviders, apiBaseUrl: PUBLIC_API_BASE_URL };
+	return { oauthProviders };
 };
 
 async function errorDetail(res: Response): Promise<string> {

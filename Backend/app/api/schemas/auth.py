@@ -31,6 +31,23 @@ class UserLogin(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email: NormalizedEmail
+    # Optional Frontend path to return to once the reset is done (the page
+    # whose login prompt started this), threaded into the emailed link.
+    # Anything but a plain same-site path is dropped rather than rejected,
+    # so a bad value can never turn the reset link into an open redirect
+    # or fail the request.
+    redirect_to: str | None = None
+
+    @field_validator("redirect_to")
+    @classmethod
+    def _same_site_path_only(cls, value: str | None) -> str | None:
+        if not value or len(value) > 1000:
+            return None
+        if not value.startswith("/") or value.startswith("//") or "\\" in value:
+            return None
+        if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
+            return None
+        return value
 
 
 class ResetPasswordRequest(BaseModel):

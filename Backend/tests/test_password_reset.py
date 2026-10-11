@@ -146,3 +146,24 @@ def test_oauth_google_links_to_an_existing_account_regardless_of_email_case(clie
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
     assert me["email"] == "oauth-case@example.com"
     assert me["name"] == "Existing"
+
+
+def test_forgot_password_threads_a_same_site_redirect_into_the_reset_link(client, caplog):
+    _register_and_login(client, "return@example.com", name="Return")
+    with caplog.at_level(logging.WARNING, logger="divisi.auth"):
+        res = client.post(
+            "/auth/forgot-password", json={"email": "return@example.com", "redirect_to": "/piece/p1?code=9CJM7VRU"}
+        )
+    assert res.status_code == 202
+    assert "&redirectTo=%2Fpiece%2Fp1%3Fcode%3D9CJM7VRU" in caplog.text
+
+
+def test_forgot_password_drops_an_unsafe_redirect(client, caplog):
+    _register_and_login(client, "evil-return@example.com", name="Evil")
+    for bad in ("https://evil.example/x", "//evil.example/x", "/\\evil.example"):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="divisi.auth"):
+            res = client.post("/auth/forgot-password", json={"email": "evil-return@example.com", "redirect_to": bad})
+        assert res.status_code == 202
+        assert "token=" in caplog.text
+        assert "redirectTo" not in caplog.text

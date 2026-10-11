@@ -4,6 +4,7 @@
 	import AuthShell from '$lib/components/AuthShell.svelte';
 	import { m } from '$lib/paraglide/messages';
 	import { lh } from '$lib/i18n';
+	import { withReturnTo } from '$lib/authLinks';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -19,7 +20,7 @@
 		<section class="card">
 			<p class="card-eyebrow">{m.reset_password_link_missing()}</p>
 			<p class="card-meta">
-				{m.reset_password_link_missing_body()} <a href={lh('/forgot-password')}>{m.reset_password_request_new()}</a>.
+				{m.reset_password_link_missing_body()} <a href={lh(withReturnTo('/forgot-password', data.redirectTo))}>{m.reset_password_request_new()}</a>.
 			</p>
 		</section>
 	{:else}
@@ -29,6 +30,7 @@
 			use:enhance={withSubmitting((v) => (submitting = v))}
 		>
 			<input type="hidden" name="token" value={data.token} />
+			{#if data.redirectTo}<input type="hidden" name="redirectTo" value={data.redirectTo} />{/if}
 			<label class="field">
 				<span>{m.reset_password_new_password()}</span>
 				<input type="password" name="password" bind:value={password} required minlength="8" autocomplete="new-password" />

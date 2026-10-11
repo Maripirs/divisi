@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authHref } from './authLinks';
+import { authHref, withReturnTo } from './authLinks';
 
 describe('authHref', () => {
 	it('carries the current path and search back through redirectTo', () => {
@@ -20,5 +20,18 @@ describe('authHref', () => {
 		expect(authHref('login', 'https://evil.example/x')).toBe('/login');
 		expect(authHref('login', '//evil.example/x')).toBe('/login');
 		expect(authHref('register', '/login?mode=register')).toBe('/login?mode=register');
+	});
+});
+
+describe('withReturnTo', () => {
+	it('carries a same-site return path along', () => {
+		expect(withReturnTo('/forgot-password', '/join/9CJM7VRU')).toBe('/forgot-password?redirectTo=%2Fjoin%2F9CJM7VRU');
+		expect(withReturnTo('/login?reset=1', '/piece/p?code=X')).toBe('/login?reset=1&redirectTo=%2Fpiece%2Fp%3Fcode%3DX');
+	});
+
+	it('drops a missing or unsafe return path', () => {
+		expect(withReturnTo('/forgot-password', null)).toBe('/forgot-password');
+		expect(withReturnTo('/forgot-password', '')).toBe('/forgot-password');
+		expect(withReturnTo('/forgot-password', 'https://evil.example')).toBe('/forgot-password');
 	});
 });
