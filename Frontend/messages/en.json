@@ -604,6 +604,12 @@
 
 	"piece_notes_title": "Piece Notes",
 	"piece_notes_empty": "No notes for this piece yet.",
+	"notes_sections_everyone": "Everyone",
+	"notes_sections_all": "All sections",
+	"notes_sections_field": "For",
+	"notes_sections_filter_label": "Show notes for",
+	"notes_sections_for": "For {sections}",
+	"notes_sections_empty": "No notes for {section}.",
 	"piece_notes_loading": "Loading notes…",
 	"piece_notes_load_error": "Couldn't load notes.",
 	"piece_notes_from_director": "From the director",

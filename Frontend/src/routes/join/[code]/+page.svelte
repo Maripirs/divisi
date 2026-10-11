@@ -4,6 +4,9 @@
 	import LoadingBlock from '$lib/components/LoadingBlock.svelte';
 	import HomeworkCard from '$lib/components/HomeworkCard.svelte';
 	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
+	import SectionChips from '$lib/components/SectionChips.svelte';
+	import { filterBySection, hasSectionTags, type SectionFilter } from '$lib/notes/sections';
+	import { sectionFilterLabel } from '$lib/notes/sectionLabels';
 	import ResponsibilityDateCard from '$lib/components/ResponsibilityDateCard.svelte';
 	import Disclosure from '$lib/components/Disclosure.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
@@ -37,6 +40,10 @@
 	} from '$lib/components/groupCards';
 
 	let { data }: { data: PageData } = $props();
+
+	// Weekly notes' section chips, same behavior as the member tab
+	// (`groups/[id]/tabs/WeeklyNotesTab.svelte`).
+	let weeklySectionFilter = $state<SectionFilter>('everyone');
 
 	// F43: same bundled-fallback rule as the piece-card block's own filter
 	// below, reused so a piece's sort position matches what its F42 display
@@ -387,8 +394,18 @@
 				{#if result.weeklyNotes.length === 0}
 					<p class="empty">{m.join_no_weekly_notes()}</p>
 				{:else}
+					{@const showSectionChips = hasSectionTags(result.weeklyNotes)}
+					{@const visibleNotes = showSectionChips
+						? filterBySection(result.weeklyNotes, weeklySectionFilter)
+						: result.weeklyNotes}
+					{#if showSectionChips}
+						<SectionChips bind:value={weeklySectionFilter} />
+					{/if}
+					{#if visibleNotes.length === 0}
+						<p class="empty">{m.notes_sections_empty({ section: sectionFilterLabel(weeklySectionFilter) })}</p>
+					{/if}
 					<div class="card-grid">
-					{#each result.weeklyNotes as n (n.id)}
+					{#each visibleNotes as n (n.id)}
 						<WeeklyNoteCard item={n} />
 					{/each}
 					</div>

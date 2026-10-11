@@ -3,6 +3,7 @@
 	import { formatCalendarDate } from '$lib/utils/dates';
 	import { renderNoteMarkdown } from '$lib/utils/noteMarkdown';
 	import { m } from '$lib/paraglide/messages';
+	import SectionBadges from './SectionBadges.svelte';
 	import type { WeeklyNoteCardItem } from './groupCards';
 
 	/** A1: one weekly-note card, shared between the member group page and
@@ -29,9 +30,12 @@
 	{#if editing && edit}
 		{@render edit()}
 	{:else}
-		<p class="card-eyebrow">
-			{m.join_week_of({ date: formatCalendarDate(item.noteDate, m.home_no_due_date()) })}
-		</p>
+		<div class="wn-head">
+			<p class="card-eyebrow">
+				{m.join_week_of({ date: formatCalendarDate(item.noteDate, m.home_no_due_date()) })}
+			</p>
+			<SectionBadges sections={item.sections} />
+		</div>
 		<p class="card-title">{item.title}</p>
 		{#if item.body}
 			<div class="card-note note-markdown">{@html renderNoteMarkdown(item.body)}</div>
@@ -39,3 +43,14 @@
 		{@render children?.()}
 	{/if}
 </section>
+
+<style>
+	/* Eyebrow + section badge on one line, wrapping under it when narrow. */
+	.wn-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.25rem 0.5rem;
+	}
+</style>

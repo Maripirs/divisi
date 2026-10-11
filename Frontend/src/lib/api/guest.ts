@@ -1,6 +1,8 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { m } from '$lib/paraglide/messages';
 import { ApiError, fetchOr503 } from './client';
+import type { VoicePart } from '$lib/midi/types';
+import { parsePartScope } from '$lib/notes/sections';
 
 /** Mirrors the Backend's `GuestPieceOut`/`GuestGroupOut` (B6) — one of a
  * group's currently-distributed pieces, as seen by an unauthenticated guest
@@ -95,6 +97,8 @@ export interface GuestWeeklyNote {
 	title: string;
 	body: string;
 	noteDate: string;
+	/** Parsed `part_scope` section tag; `[]` = everyone. */
+	sections: VoicePart[];
 }
 
 /** Mirrors the Backend's `PieceRehearsalNoteOut` (B16), as seen via the
@@ -220,6 +224,7 @@ interface GuestWeeklyNoteResponse {
 	title: string;
 	body: string;
 	note_date: string;
+	part_scope: string | null;
 }
 
 interface GuestPieceRehearsalNoteResponse {
@@ -394,7 +399,8 @@ export async function listGuestWeeklyNotes(
 		id: n.id,
 		title: n.title,
 		body: n.body,
-		noteDate: n.note_date
+		noteDate: n.note_date,
+		sections: parsePartScope(n.part_scope)
 	}));
 }
 

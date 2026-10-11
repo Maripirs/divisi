@@ -2,6 +2,17 @@
 	import { enhance } from '$app/forms';
 	import EditableCard from '$lib/components/EditableCard.svelte';
 	import WeeklyNoteCard from '$lib/components/WeeklyNoteCard.svelte';
+	import SectionChips from '$lib/components/SectionChips.svelte';
+	import SectionPicker from '$lib/components/SectionPicker.svelte';
+	import {
+		filterBySection,
+		hasSectionTags,
+		parsePartScope,
+		type SectionFilter
+	} from '$lib/notes/sections';
+	import { sectionFilterLabel } from '$lib/notes/sectionLabels';
+	import type { VoicePart } from '$lib/midi/types';
+	import type { WeeklyNoteCardItem } from '$lib/components/groupCards';
 	import { toDateInputValue } from '$lib/utils/dates';
 	import { withSubmitting } from '$lib/utils/enhance';
 	import { m } from '$lib/paraglide/messages';
@@ -17,7 +28,27 @@
 	let weeklyNoteTitleDraft = $state('');
 	let weeklyNoteDateDraft = $state('');
 	let weeklyNoteBodyDraft = $state('');
+	let weeklyNoteSectionsDraft = $state<VoicePart[]>([]);
+	let newWeeklyNoteSections = $state<VoicePart[]>([]);
 	let savingWeeklyNoteEdit = $state(false);
+
+	// Section chips: shown only once some note is tagged; a section shows
+	// its own notes plus the everyone ones (`$lib/notes/sections.ts`).
+	let sectionFilter = $state<SectionFilter>('everyone');
+	const noteItems = $derived(
+		data.weeklyNotes.map(
+			(n): WeeklyNoteCardItem & { raw: (typeof data.weeklyNotes)[number] } => ({
+				id: n.id,
+				title: n.title,
+				body: n.body,
+				noteDate: n.note_date,
+				sections: parsePartScope(n.part_scope),
+				raw: n
+			})
+		)
+	);
+	const showSectionChips = $derived(hasSectionTags(noteItems));
+	const visibleNotes = $derived(showSectionChips ? filterBySection(noteItems, sectionFilter) : noteItems);
 
 	// Backlog: "Promote to rehearsal note" — same click-to-reveal pattern as
 	// the edit form above, just a one-field piece picker instead of a full
@@ -34,7 +65,16 @@
 		<form
 			method="POST"
 			action="?/createWeeklyNote"
-			use:enhance={withSubmitting((v) => (creatingWeeklyNote = v))}
+			use:enhance={() => {
+				creatingWeeklyNote = true;
+				return async ({ result, update }) => {
+					creatingWeeklyNote = false;
+					// The inputs reset themselves on success; the section picker
+					// is state, so clear it too (but keep it on a failed post).
+					if (result.type === 'success') newWeeklyNoteSections = [];
+					await update();
+				};
+			}}
 		>
 			<label class="field">
 				<span>{m.new_homework_title_field()}</span>
@@ -48,6 +88,7 @@
 				<span>{m.groups_note()}</span>
 				<textarea name="body" placeholder={m.groups_optional()}></textarea>
 			</label>
+			<SectionPicker name="partScope" bind:value={newWeeklyNoteSections} />
 			{#if form?.form === 'createWeeklyNote' && form?.error}
 				<p class="error">{form.error}</p>
 			{/if}
@@ -61,9 +102,15 @@
 {#if data.weeklyNotes.length === 0}
 	<p class="empty">{m.join_no_weekly_notes()}</p>
 {:else}
+	{#if showSectionChips}
+		<SectionChips bind:value={sectionFilter} defaultToVoice={mode !== 'admin'} />
+	{/if}
+	{#if visibleNotes.length === 0}
+		<p class="empty">{m.notes_sections_empty({ section: sectionFilterLabel(sectionFilter) })}</p>
+	{/if}
 	<div class="card-grid">
-	{#each data.weeklyNotes as n (n.id)}
-		{@const noteItem = { id: n.id, title: n.title, body: n.body, noteDate: n.note_date }}
+	{#each visibleNotes as noteItem (noteItem.id)}
+		{@const n = noteItem.raw}
 		<WeeklyNoteCard
 			item={noteItem}
 			editing={mode === 'admin' && editingWeeklyNoteId === n.id}
@@ -93,6 +140,7 @@
 							<span>{m.groups_note()}</span>
 							<textarea name="body" bind:value={weeklyNoteBodyDraft}></textarea>
 						</label>
+						<SectionPicker name="partScope" bind:value={weeklyNoteSectionsDraft} />
 					{/snippet}
 				</EditableCard>
 			{/snippet}
@@ -106,6 +154,7 @@
 							weeklyNoteTitleDraft = n.title;
 							weeklyNoteDateDraft = toDateInputValue(n.note_date);
 							weeklyNoteBodyDraft = n.body;
+							weeklyNoteSectionsDraft = noteItem.sections;
 							editingWeeklyNoteId = n.id;
 						}}
 					>

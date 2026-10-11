@@ -4,6 +4,7 @@
 // snake_case member DTOs and camelCase guest DTOs respectively; each call
 // site maps its rows to these shapes so the card sees one thing.
 
+import type { VoicePart } from '$lib/midi/types';
 import { formatCalendarDate, isPastDueDate } from '$lib/utils/dates';
 
 export interface HomeworkCardItem {
@@ -24,6 +25,8 @@ export interface WeeklyNoteCardItem {
 	title: string;
 	body: string;
 	noteDate: string;
+	/** Parsed section tag (`$lib/notes/sections.ts`); `[]` = everyone. */
+	sections: VoicePart[];
 }
 
 export interface ResponsibilityRoleSignup {

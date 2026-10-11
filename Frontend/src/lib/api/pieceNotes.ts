@@ -1,4 +1,6 @@
 import { ApiError, jsonInit, makeCall } from './client';
+import type { VoicePart } from '$lib/midi/types';
+import { parsePartScope, serializePartScope } from '$lib/notes/sections';
 
 /** F20: "Piece Notes" — short text notes pinned to a piece, shown next to
  * the music on the piece page and inside an expanded track card on a
@@ -18,7 +20,8 @@ import { ApiError, jsonInit, makeCall } from './client';
  * `routes/piece/[id]/annotations/**` for the personal one), never the
  * Backend directly.
  *
- * B16's optional kind/title/page/measure/part fields are not used — a piece
+ * Of B16's optional kind/title/page/measure/part fields, only `part_scope`
+ * (the section tag, see `$lib/notes/sections.ts`) is used; otherwise a piece
  * note is just a line of text. */
 
 export type PieceNoteSource = 'group' | 'personal';
@@ -28,6 +31,9 @@ export interface PieceNote {
 	source: PieceNoteSource;
 	body: string;
 	createdAt: string;
+	/** Section tag of a director note; `[]` = everyone (and always `[]` for
+	 * a personal note, which has no audience but its author). */
+	sections: VoicePart[];
 }
 
 /** Reserved `Annotation.position` for a personal note that isn't tied to a
@@ -38,6 +44,7 @@ export const PERSONAL_NOTE_POSITION = -1;
 interface GroupNoteResponse {
 	id: string;
 	body: string;
+	part_scope: string | null;
 	created_at: string;
 }
 
@@ -58,11 +65,17 @@ export class PieceNoteApiError extends ApiError {
 const call = makeCall(PieceNoteApiError);
 
 function toGroupNote(body: GroupNoteResponse): PieceNote {
-	return { id: body.id, source: 'group', body: body.body, createdAt: body.created_at };
+	return {
+		id: body.id,
+		source: 'group',
+		body: body.body,
+		createdAt: body.created_at,
+		sections: parsePartScope(body.part_scope)
+	};
 }
 
 function toPersonalNote(body: AnnotationResponse): PieceNote {
-	return { id: body.id, source: 'personal', body: body.content, createdAt: body.created_at };
+	return { id: body.id, source: 'personal', body: body.content, createdAt: body.created_at, sections: [] };
 }
 
 /* ---- Group source (Backend B16) --------------------------------------- */
@@ -80,11 +93,12 @@ export async function listGroupNotes(pieceId: string, groupId: string): Promise<
 export async function createGroupNote(
 	pieceId: string,
 	groupId: string,
-	text: string
+	text: string,
+	sections: readonly VoicePart[] = []
 ): Promise<PieceNote> {
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/notes`,
-		jsonInit('POST', { groupId, body: text })
+		jsonInit('POST', { groupId, body: text, part_scope: serializePartScope(sections) })
 	);
 	return toGroupNote(await res.json());
 }
@@ -92,11 +106,14 @@ export async function createGroupNote(
 export async function updateGroupNote(
 	pieceId: string,
 	noteId: string,
-	text: string
+	text: string,
+	sections: readonly VoicePart[] = []
 ): Promise<PieceNote> {
+	// The Backend's PUT is a full replace, so the tag always goes along
+	// (omitting it would quietly reset the note to everyone).
 	const res = await call(
 		`/piece/${encodeURIComponent(pieceId)}/notes/${encodeURIComponent(noteId)}`,
-		jsonInit('PUT', { body: text })
+		jsonInit('PUT', { body: text, part_scope: serializePartScope(sections) })
 	);
 	return toGroupNote(await res.json());
 }
@@ -110,6 +127,7 @@ export async function deleteGroupNote(pieceId: string, noteId: string): Promise<
 interface GuestGroupNoteResponse {
 	id: string;
 	body: string;
+	part_scope: string | null;
 	created_at: string;
 }
 
@@ -128,7 +146,13 @@ export async function listGuestGroupNotes(code: string, pieceId: string): Promis
 		`/piece/${encodeURIComponent(pieceId)}/notes?code=${encodeURIComponent(code)}`
 	);
 	const body = (await res.json()) as GuestGroupNoteResponse[];
-	return body.map((n) => ({ id: n.id, source: 'group', body: n.body, createdAt: n.created_at }));
+	return body.map((n) => ({
+		id: n.id,
+		source: 'group',
+		body: n.body,
+		createdAt: n.created_at,
+		sections: parsePartScope(n.part_scope)
+	}));
 }
 
 /* ---- Personal source (Backend B5 annotations, position-less) ---------- */

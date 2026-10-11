@@ -155,6 +155,9 @@ export interface WeeklyNoteOut {
 	title: string;
 	body: string;
 	note_date: string;
+	/** Section tag, e.g. "tenor,bass"; `null` = everyone (see
+	 * `$lib/notes/sections.ts`). */
+	part_scope: string | null;
 	created_by: string | null;
 	created_at: string;
 }

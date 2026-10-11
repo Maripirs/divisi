@@ -5,6 +5,12 @@
 	import { formatDateTime } from '$lib/utils/dates';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import Disclosure from '$lib/components/Disclosure.svelte';
+	import SectionBadges from '$lib/components/SectionBadges.svelte';
+	import SectionChips from '$lib/components/SectionChips.svelte';
+	import SectionPicker from '$lib/components/SectionPicker.svelte';
+	import { filterBySection, hasSectionTags, type SectionFilter } from '$lib/notes/sections';
+	import { sectionFilterLabel } from '$lib/notes/sectionLabels';
+	import type { VoicePart } from '$lib/midi/types';
 	import {
 		createGroupNote,
 		createPersonalNote,
@@ -72,6 +78,8 @@
 	 * for the add form). */
 	let editing = $state<{ scope: PieceNoteSource; id: string | 'new' } | null>(null);
 	let draft = $state('');
+	/** Section tag being authored; only shown for a director note. */
+	let draftSections = $state<VoicePart[]>([]);
 	let saving = $state(false);
 	let saveError = $state<string | null>(null);
 
@@ -132,12 +140,14 @@
 
 	function startEdit(scope: PieceNoteSource, note: PieceNote) {
 		draft = note.body;
+		draftSections = [...note.sections];
 		saveError = null;
 		editing = { scope, id: note.id };
 	}
 
 	function startAdd(scope: PieceNoteSource) {
 		draft = '';
+		draftSections = [];
 		saveError = null;
 		editing = { scope, id: 'new' };
 	}
@@ -159,9 +169,10 @@
 		saveError = null;
 		try {
 			if (scope === 'group') {
-				if (id === 'new') groupNotes = [...groupNotes, await createGroupNote(pieceId, groupId, text)];
+				if (id === 'new')
+					groupNotes = [...groupNotes, await createGroupNote(pieceId, groupId, text, draftSections)];
 				else {
-					const u = await updateGroupNote(pieceId, id, text);
+					const u = await updateGroupNote(pieceId, id, text, draftSections);
 					groupNotes = groupNotes.map((n) => (n.id === u.id ? u : n));
 				}
 			} else {
@@ -195,6 +206,16 @@
 	}
 
 	const total = $derived(groupNotes.length + personalNotes.length);
+
+	// Section chips over the director notes only (personal notes are the
+	// reader's own, so they're never filtered). Hidden until some director
+	// note is tagged. An admin who can author here starts on Everyone, so a
+	// note they just tagged for another section doesn't vanish on save.
+	let sectionFilter = $state<SectionFilter>('everyone');
+	const showSectionChips = $derived(hasSectionTags(groupNotes));
+	const visibleGroupNotes = $derived(
+		showSectionChips ? filterBySection(groupNotes, sectionFilter) : groupNotes
+	);
 </script>
 
 {#if chrome === 'details'}
@@ -218,7 +239,7 @@
 				{@render section(
 					'group',
 					m.piece_notes_from_director(),
-					groupNotes,
+					visibleGroupNotes,
 					groupFailed,
 					directorOnly ? false : canManage
 				)}
@@ -251,6 +272,10 @@
 			{/if}
 		</div>
 
+		{#if scope === 'group' && showSectionChips && !failed}
+			<SectionChips bind:value={sectionFilter} defaultToVoice={directorOnly || !canManage} compact />
+		{/if}
+
 		{#if isEditing(scope, 'new')}
 			{@render editor()}
 		{/if}
@@ -258,7 +283,11 @@
 		{#if failed}
 			<p class="pn-muted">{m.piece_notes_load_error()}</p>
 		{:else if list.length === 0 && !isEditing(scope, 'new')}
-			<p class="pn-muted">{m.piece_notes_empty()}</p>
+			<p class="pn-muted">
+				{scope === 'group' && showSectionChips
+					? m.notes_sections_empty({ section: sectionFilterLabel(sectionFilter) })
+					: m.piece_notes_empty()}
+			</p>
 		{/if}
 
 		{#if list.length > 0}
@@ -272,6 +301,7 @@
 						{#if isEditing(scope, note.id)}
 							{@render editor()}
 						{:else}
+							<SectionBadges sections={note.sections} />
 							<div class="pn-md" class:pn-md--clamp={long && !expanded[note.id]}>
 								{@html renderNoteMarkdown(note.body)}
 							</div>
@@ -333,6 +363,9 @@
 			placeholder={m.piece_notes_placeholder()}
 			aria-label={m.piece_notes_title()}
 		></textarea>
+		{#if editing?.scope === 'group'}
+			<SectionPicker bind:value={draftSections} compact />
+		{/if}
 		{#if saveError}<p class="pn-err">{saveError}</p>{/if}
 		<div class="pn-form-acts">
 			<button type="button" class="pn-link" onclick={cancel}>{m.piece_notes_cancel()}</button>
