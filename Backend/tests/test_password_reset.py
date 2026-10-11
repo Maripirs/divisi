@@ -113,3 +113,36 @@ def test_oauth_apple_start_always_501s(client):
 def test_oauth_unknown_provider_404s(client):
     res = client.get("/auth/oauth/facebook/start", follow_redirects=False)
     assert res.status_code == 404
+
+
+def test_forgot_password_finds_the_account_whatever_case_is_typed(client, caplog):
+    _register_and_login(client, "Mixed.Case@Example.com", name="Mixed")
+    with caplog.at_level(logging.WARNING, logger="divisi.auth"):
+        res = client.post("/auth/forgot-password", json={"email": "MIXED.case@example.COM"})
+    assert res.status_code == 202
+    token = _logged_reset_token(caplog)
+    reset = client.post("/auth/reset-password", json={"token": token, "new_password": "newpassword123"})
+    assert reset.status_code == 200
+    login = client.post("/auth/login", json={"email": "mixed.case@example.com", "password": "newpassword123"})
+    assert login.status_code == 200
+
+
+def test_oauth_google_links_to_an_existing_account_regardless_of_email_case(client, monkeypatch):
+    from app.api.routes import auth as auth_routes
+    from app.core.config import get_settings
+
+    _register_and_login(client, "oauth-case@example.com", name="Existing")
+    monkeypatch.setattr(get_settings(), "google_client_id", "cid")
+    monkeypatch.setattr(get_settings(), "google_client_secret", "secret")
+    monkeypatch.setattr(
+        auth_routes,
+        "google_exchange_code",
+        lambda *_args: {"provider_user_id": "g-case", "email": "OAuth-Case@Example.com", "name": "Google Name"},
+    )
+    client.cookies.set(auth_routes.OAUTH_STATE_COOKIE, "st")
+    res = client.get("/auth/oauth/google/callback?code=c&state=st", follow_redirects=False)
+    assert res.status_code in (302, 307), res.text
+    token = re.search(r"token=([^&]+)", res.headers["location"]).group(1)
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+    assert me["email"] == "oauth-case@example.com"
+    assert me["name"] == "Existing"

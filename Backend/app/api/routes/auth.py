@@ -25,6 +25,7 @@ from app.api.schemas import (
     UserUpdate,
 )
 from app.core.config import get_settings
+from app.core.emails import normalize_email
 from app.core.rate_limit import rate_limit_auth
 from app.core.security import (
     create_access_token,
@@ -314,7 +315,8 @@ def oauth_callback(
         # than creating a duplicate: otherwise someone who registered
         # with a password and later tries "Continue with Google" on the
         # same address ends up with two unrelated accounts.
-        user = db.query(User).filter(User.email == profile["email"]).first()
+        email = normalize_email(profile["email"])
+        user = db.query(User).filter(User.email == email).first()
         if user is None:
             # A real, unguessable password the user will never need: the
             # account is only ever unlocked via OAuth from here on, but
@@ -322,7 +324,7 @@ def oauth_callback(
             # value (never told to anyone) is simpler and safer than
             # making the whole column nullable for this one case.
             user = User(
-                email=profile["email"],
+                email=email,
                 name=profile["name"],
                 hashed_password=hash_password(secrets.token_urlsafe(32)),
             )

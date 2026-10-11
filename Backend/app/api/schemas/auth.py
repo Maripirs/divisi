@@ -1,6 +1,8 @@
 """Registration, login, password reset, and OAuth-status shapes."""
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
+
+from app.core.emails import NormalizedEmail
 
 # Shared by registration and password reset — deliberately just a length
 # floor, not a composition rule (no forced digit/symbol/etc.), matching
@@ -10,7 +12,7 @@ MIN_PASSWORD_LENGTH = 8
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     name: str
     password: str
 
@@ -23,12 +25,12 @@ class UserCreate(BaseModel):
 
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
 
 
 class ResetPasswordRequest(BaseModel):

@@ -1,7 +1,8 @@
 """Group, group-page-settings, and membership shapes."""
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
+from app.core.emails import NormalizedEmail
 from app.db.models import GroupPage, GroupRole, PageAudience, PageMinIdentity
 
 
@@ -93,7 +94,7 @@ class GroupPageSettingsUpdate(BaseModel):
 
 
 class GroupMemberAdd(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
     role: GroupRole = GroupRole.member
 
 

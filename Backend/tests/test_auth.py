@@ -228,3 +228,37 @@ def test_login_endpoint_is_rate_limited(client):
         "/auth/login", json={"email": "ratelimited@example.com", "password": "wrong"}
     )
     assert throttled.status_code == 429
+
+
+# --- Emails are case-insensitive: stored and looked up lowercased ---
+
+
+def test_register_mixed_case_email_then_login_lowercase(client):
+    register = client.post(
+        "/auth/register", json={"email": " Bob@Example.com ", "name": "Bob", "password": "hunter22"}
+    )
+    assert register.status_code == 201
+    assert register.json()["email"] == "bob@example.com"
+
+    for typed in ("bob@example.com", "BOB@EXAMPLE.COM", "Bob@Example.com"):
+        login = client.post("/auth/login", json={"email": typed, "password": "hunter22"})
+        assert login.status_code == 200, typed
+
+
+def test_registering_a_case_variant_of_an_existing_email_is_a_duplicate(client):
+    first = client.post("/auth/register", json={"email": "Bob@Example.com", "name": "Bob", "password": "hunter22"})
+    assert first.status_code == 201
+    second = client.post("/auth/register", json={"email": "bob@example.com", "name": "Bob 2", "password": "hunter22"})
+    assert second.status_code == 409
+
+
+def test_admin_add_member_finds_a_user_by_any_case(client):
+    client.post("/auth/register", json={"email": "Carol@Example.com", "name": "Carol", "password": "hunter22"})
+    client.post("/auth/register", json={"email": "admin-case@example.com", "name": "Admin", "password": "hunter22"})
+    login = client.post("/auth/login", json={"email": "admin-case@example.com", "password": "hunter22"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    group_id = client.post("/groups", json={"name": "G"}, headers=headers).json()["id"]
+
+    added = client.post(f"/groups/{group_id}/members", json={"email": "CAROL@example.COM"}, headers=headers)
+    assert added.status_code in (200, 201), added.text
+    assert added.json()["email"] == "carol@example.com"

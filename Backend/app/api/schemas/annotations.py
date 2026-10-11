@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr
 
+from app.core.emails import NormalizedEmail
+
 
 class AnnotationCreate(BaseModel):
     piece_id: str
@@ -28,7 +30,7 @@ class AnnotationOut(BaseModel):
 
 
 class AnnotationShareCreate(BaseModel):
-    email: EmailStr
+    email: NormalizedEmail
 
 
 class AnnotationShareOut(BaseModel):
