@@ -103,8 +103,11 @@
 	// nothing Backend-bound to restrict for a guest). Only set for a guest
 	// who came from a specific group's join link (as opposed to the
 	// guest-accessible demo library), so "back" can return there instead of
-	// the generic library.
-	const guestJoinCode = page.url.searchParams.get('code');
+	// the generic library. Also set after the fact for a signed-in caller on
+	// a bare `/piece/{id}` link who resolved through the owning group's code
+	// (`resolve/+server.ts`'s `joinCode`), so the file/PDF/notes proxies get
+	// the same code a `?code=` link would have carried.
+	let guestJoinCode = $state(page.url.searchParams.get('code'));
 
 	/** F20 guest expansion: the "From the director" notes for a guest
 	 * viewing this piece via a join code. Read-only; the "My notes" section
@@ -388,7 +391,8 @@
 	const cueLoader = $derived(() => {
 		if (!remoteMeta || !piece?.youtubeUrl) return null;
 		if (canAnnotate) return () => listGroupCues(remoteMeta!.pieceId);
-		if (guestJoinCode) return () => listGroupCues(remoteMeta!.pieceId, guestJoinCode);
+		const cueCode = guestJoinCode;
+		if (cueCode) return () => listGroupCues(remoteMeta!.pieceId, cueCode);
 		return null;
 	});
 
@@ -528,6 +532,7 @@
 				isOwningGroupAdmin?: boolean;
 				canManagePieceNotes?: boolean;
 				viaJoinCode?: boolean;
+				joinCode?: string;
 			};
 			if (!body.remote) {
 				if (body.unreachable) {
@@ -543,6 +548,7 @@
 			remoteMeta = body.remote;
 			isOwningGroupAdmin = body.isOwningGroupAdmin ?? body.canManagePieceNotes ?? false;
 			resolvedViaJoinCode = body.viaJoinCode ?? false;
+			if (body.viaJoinCode && body.joinCode && !guestJoinCode) guestJoinCode = body.joinCode;
 			piece = buildRemotePiece(body.remote, guestJoinCode);
 			// `viewMode`/`audioSource` were seeded assuming no piece at all.
 			// Now that `hasPlayer`/`hasPdfPane` are known, apply the pane-shape

@@ -1,5 +1,7 @@
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { readGuestCookie } from '$lib/server/guestSession';
+import { fetchPieceOwner } from '$lib/server/groupJoin';
+import { normalizeJoinCode } from '$lib/joinCode';
 import type { RequestHandler } from './$types';
 
 /** F5: proxies the Backend's `GET /library/versions/{id}/file` — `id` here
@@ -14,7 +16,8 @@ import type { RequestHandler } from './$types';
  * no version lookup needed. */
 export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
 	try {
-		const code = url.searchParams.get('code');
+		const rawCode = url.searchParams.get('code');
+		const code = rawCode ? normalizeJoinCode(rawCode) : null;
 		// The guest proxy, keyed only by the join code. Used by a guest, and
 		// as a fallback for a logged-in caller whose library doesn't have
 		// this piece but who holds a join code for it (see
@@ -44,7 +47,15 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 		}
 		const entries = (await library.json()) as Array<{ piece_id: string; version_id: string }>;
 		const entry = entries.find((e) => e.piece_id === params.id);
-		if (!entry) return code ? await proxyGuest(code) : new Response(null, { status: 404 });
+		if (!entry) {
+			if (code) return await proxyGuest(code);
+			// A bare piece link (no `?code=`) for a group this account isn't
+			// in and couldn't self-join (`../resolve/+server.ts` already tried,
+			// and handed `+page.svelte` the code it then puts on this URL; this
+			// covers a caller that skipped that step). Same owner lookup.
+			const { owner } = await fetchPieceOwner(params.id, fetch);
+			return owner ? await proxyGuest(owner.join_code) : new Response(null, { status: 404 });
+		}
 
 		const res = await fetch(`${PUBLIC_API_BASE_URL}/library/versions/${entry.version_id}/file`, {
 			headers: { Authorization: `Bearer ${locals.token}` }

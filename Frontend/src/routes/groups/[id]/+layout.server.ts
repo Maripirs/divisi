@@ -1,8 +1,8 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { Cookies } from '@sveltejs/kit';
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { readGuestCookie } from '$lib/server/guestSession';
+import { fetchGroupInfo, selfJoinGroup } from '$lib/server/groupJoin';
 import { m } from '$lib/paraglide/messages';
 import { lh } from '$lib/i18n';
 import type {
@@ -64,14 +64,7 @@ async function resolveGroupGuestGate(
 	cookies: Cookies,
 	fetchFn: typeof fetch
 ): Promise<{ groupName: string; code: string; targetSuffix: string } | null> {
-	type GroupInfo = { group_name: string; join_code: string; guest_password_required: boolean };
-	let info: GroupInfo | null = null;
-	try {
-		const res = await fetchFn(`${PUBLIC_API_BASE_URL}/guest/groups/${encodeURIComponent(groupId)}/info`);
-		if (res.ok) info = (await res.json()) as GroupInfo;
-	} catch {
-		info = null;
-	}
+	const info = await fetchGroupInfo(groupId, fetchFn);
 	if (!info) return null;
 
 	if (!info.guest_password_required || readGuestCookie(cookies, info.join_code)) {
@@ -161,11 +154,24 @@ export const load: LayoutServerLoad = async ({ parent, locals, fetch, params, ur
 		throw redirect(303, lh(`/login?redirectTo=${url.pathname}`));
 	}
 
-	// No single-group GET exists on the Backend — `/groups` only lists the
-	// caller's own groups, so a group this user isn't in 404s here exactly
-	// like an unknown id would, which is the right behavior either way.
+	// No single-group GET exists on the Backend: `/groups` only lists the
+	// caller's own groups. A group this account isn't in yet (a shared
+	// `/groups/{id}` link, opened signed in) gets the same treatment as a
+	// `/join/{code}` link: look up its join code through the public
+	// `/guest/groups/{id}/info` lookup and self-join with it, then carry on
+	// as a member at this very URL (subpath and query intact). A refused
+	// self-join (the demo group) sends the bare group page to its guest
+	// view; anything else, or an unknown id, still 404s.
 	const groups = await backendJson<GroupOut[]>(locals.token, '/groups', undefined, fetch);
-	const group = groups.find((g) => g.id === params.id);
+	let group = groups.find((g) => g.id === params.id);
+	if (!group) {
+		const info = await fetchGroupInfo(params.id, fetch);
+		if (info) {
+			const joined = await selfJoinGroup(locals.token, info.join_code, fetch);
+			if (joined?.id === params.id) group = joined;
+			else if (route.id === '/groups/[id]') throw redirect(303, lh(`/join/${info.join_code}${url.search}`));
+		}
+	}
 	if (!group) throw error(404, m.errors_group_not_found());
 	const isAdmin = group.role === 'admin';
 

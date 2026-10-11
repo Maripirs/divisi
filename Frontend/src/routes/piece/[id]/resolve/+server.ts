@@ -2,6 +2,8 @@ import { json } from '@sveltejs/kit';
 import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import { backendJson, BackendApiError } from '$lib/server/backend';
 import { readGuestCookie } from '$lib/server/guestSession';
+import { fetchPieceOwner, selfJoinGroup } from '$lib/server/groupJoin';
+import { normalizeJoinCode } from '$lib/joinCode';
 import type { GroupOut, GroupRole, LibraryEntryOut } from '$lib/server/backendTypes';
 import type { RemotePieceMeta } from '$lib/pieces/remotePiece';
 import type { PiecePresentation } from '$lib/pieces/types';
@@ -40,6 +42,12 @@ interface RemoteResolution {
 	 * (annotations, member notes), since the Backend wouldn't serve those
 	 * for a group the caller isn't in. */
 	viaJoinCode?: boolean;
+	/** With `viaJoinCode`: the join code the guest view resolved through.
+	 * Only interesting when the URL carried no `?code=` (a bare piece link
+	 * whose owning group was looked up, see `GET` below), so `+page.svelte`
+	 * can hand it to the `file`/`pdf`/notes proxies the same way a
+	 * `?code=` link would. */
+	joinCode?: string;
 }
 
 /** The caller's role in this piece's owning group, or `null` for a
@@ -147,51 +155,47 @@ async function resolveGuestRemote(
  * became the bug this route fixes. Called from `+page.svelte`'s
  * `onMount`, well after a "loading" status card is already on screen. */
 export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies }) => {
+	const rawCode = url.searchParams.get('code');
+	const code = rawCode ? normalizeJoinCode(rawCode) : null;
 	if (!locals.token) {
-		const code = url.searchParams.get('code');
 		if (!code) return json({ remote: null, unreachable: false } satisfies RemoteResolution);
 		const token = readGuestCookie(cookies, code);
 		return json(await resolveGuestRemote(params.id, code, token, fetch));
 	}
 
-	// A logged-in account holding a join code for a group it isn't in yet
-	// (a piece link carrying `?code=`, opened directly rather than through
-	// `/join/[code]`). This used to dead-end on "No piece found with that
-	// id" while the very same link worked logged out. Same rule as
-	// `/join/[code]/+page.server.ts`: the code self-joins the account
-	// (`POST /groups/join`), after which the piece is simply in its library.
-	// If that's refused (the demo group, say), the code is still the guest
-	// credential, so resolve through it exactly as a guest would.
-	const code = url.searchParams.get('code');
+	// A logged-in account opening a piece from a group it isn't in yet. This
+	// used to dead-end on "No piece found with that id" while the very same
+	// link worked logged out. Same rule as `/join/[code]/+page.server.ts`:
+	// a join code self-joins the account (`selfJoinGroup`, `POST
+	// /groups/join`), after which the piece is simply in its library. The
+	// code comes from the URL's `?code=` when there is one; a bare
+	// `/piece/{id}` link instead looks up the owning group (the same public
+	// `/guest/pieces/{id}/owner` lookup `+page.server.ts` uses for a
+	// logged-out visitor), here rather than there so it never blocks first
+	// paint. If the self-join is refused (the demo group, say), the code is
+	// still the guest credential, so resolve through it exactly as a guest
+	// would.
 	const token = locals.token;
-	const selfJoin = async (joinCode: string): Promise<boolean> => {
-		try {
-			await backendJson<GroupOut>(
-				token,
-				'/groups/join',
-				{ method: 'POST', body: JSON.stringify({ join_code: joinCode.toUpperCase() }) },
-				fetch
-			);
-			return true;
-		} catch (err) {
-			if (err instanceof BackendApiError) return false;
-			throw err;
-		}
-	};
 	const resolveViaJoinCode = async (joinCode: string): Promise<RemoteResolution> => {
 		const resolution = await resolveGuestRemote(params.id, joinCode, readGuestCookie(cookies, joinCode), fetch);
-		return resolution.remote ? { ...resolution, viaJoinCode: true } : resolution;
+		return resolution.remote ? { ...resolution, viaJoinCode: true, joinCode } : resolution;
 	};
 	const findInLibrary = async (): Promise<LibraryEntryOut | undefined> => {
 		const entries = await backendJson<LibraryEntryOut[]>(token, '/library/pieces', undefined, fetch);
 		return entries.find((e) => e.piece_id === params.id);
 	};
+	let joinCode = code;
 
 	try {
 		let entry = await findInLibrary();
-		if (!entry && code && (await selfJoin(code))) entry = await findInLibrary();
+		if (!entry && !joinCode) {
+			const lookup = await fetchPieceOwner(params.id, fetch, AbortSignal.timeout(BACKEND_FETCH_TIMEOUT_MS));
+			if (lookup.transient) return json({ remote: null, unreachable: true } satisfies RemoteResolution);
+			joinCode = lookup.owner?.join_code ?? null;
+		}
+		if (!entry && joinCode && (await selfJoinGroup(token, joinCode, fetch))) entry = await findInLibrary();
 		if (!entry) {
-			if (code) return json(await resolveViaJoinCode(code));
+			if (joinCode) return json(await resolveViaJoinCode(joinCode));
 			return json({ remote: null, unreachable: false } satisfies RemoteResolution);
 		}
 
@@ -221,7 +225,7 @@ export const GET: RequestHandler = async ({ params, locals, fetch, url, cookies 
 			// piece isn't yours" (see isTransientBackendStatus). A 403/404 is
 			// a real answer and still lands on the notFound card, unless a
 			// join code can still vouch for the piece.
-			if (!isTransientBackendStatus(err.status) && code) return json(await resolveViaJoinCode(code));
+			if (!isTransientBackendStatus(err.status) && joinCode) return json(await resolveViaJoinCode(joinCode));
 			return json({
 				remote: null,
 				unreachable: isTransientBackendStatus(err.status)
