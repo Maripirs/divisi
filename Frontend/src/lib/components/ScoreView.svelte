@@ -8,7 +8,9 @@
 		paintSymbolsInMutedBands
 	} from '$lib/components/score/scoreTreatments';
 	import { baseOsmdOptions, quietOsmdLogging } from '$lib/components/score/osmd';
-	import { pinchZoom, clampZoom, MIN_ZOOM, MAX_ZOOM, ZOOM_STEP } from '$lib/actions/pinchZoom';
+	import { pinchZoom, clampZoom } from '$lib/actions/pinchZoom';
+	import ScoreZoomControls from '$lib/components/score/ScoreZoomControls.svelte';
+	import ScoreRenderBadge from '$lib/components/score/ScoreRenderBadge.svelte';
 	import { m } from '$lib/paraglide/messages';
 	// Type-only import: erased at compile time, so it can't trigger a
 	// runtime module resolution during SSR. OSMD manipulates the DOM
@@ -70,10 +72,12 @@
 		onAnnotationPlace,
 		onAnnotationMarkerClick,
 		onMeasureClick,
+		cursorActive = true,
 		zoom = $bindable(1),
 		autoFitZoom = $bindable(false),
 		rendering = $bindable(false),
-		showBadge = true
+		showBadge = true,
+		showZoomControls = true
 	}: {
 		xml: string;
 		positionWholeNotes: number;
@@ -86,6 +90,8 @@
 		onAnnotationPlace?: (wholeNotes: number) => void;
 		onAnnotationMarkerClick?: (id: string) => void;
 		onMeasureClick?: (measureNumber: number) => void;
+		/** False for a section outside the current playback position. */
+		cursorActive?: boolean;
 		// Bindable rather than a plain prop — both the +/− buttons/pinch
 		// gesture in here and the parent's persisted-settings restore on
 		// load need to drive the same value.
@@ -105,6 +111,9 @@
 		// it's showing that feedback somewhere better placed (e.g. right in
 		// the Practice Setup drawer).
 		showBadge?: boolean;
+		// False when a parent draws one shared zoom pill over several of
+		// these (`AdaptiveScoreView`). Pinch zoom still works either way.
+		showZoomControls?: boolean;
 	} = $props();
 
 	let container: HTMLDivElement;
@@ -278,7 +287,19 @@
 
 	$effect(() => {
 		if (!cursorReady) return;
+		if (!cursorActive) return;
 		setCursorTimestamp(positionWholeNotes);
+	});
+
+	$effect(() => {
+		const active = cursorActive;
+		if (!cursorReady || !osmd?.cursor) return;
+		if (active) showCursor();
+		else {
+			osmd.cursor.hide();
+			for (const element of currentNoteElements) element.classList.remove('current-note');
+			currentNoteElements = [];
+		}
 	});
 
 	/** OSMD's `render()` rebuilds the whole graphical sheet from scratch —
@@ -343,6 +364,10 @@
 
 	function showCursor(): void {
 		if (!osmd) return;
+		if (!cursorActive) {
+			osmd.cursor.hide();
+			return;
+		}
 		osmd.cursor.CursorOptions = cursorOptions(displayMode, scoreTheme);
 		osmd.cursor.show();
 		requestAnimationFrame(applyCursorTreatment);
@@ -385,7 +410,7 @@
 	function applyCurrentNoteTreatment(): void {
 		for (const element of currentNoteElements) element.classList.remove('current-note');
 		currentNoteElements = [];
-		if (!osmd?.cursor) return;
+		if (!osmd?.cursor || !cursorActive) return;
 		const notes = osmd.cursor.GNotesUnderCursor() as unknown as Array<{
 			getNoteheadSVGs?: () => HTMLElement[];
 			getStemSVG?: () => HTMLElement | undefined;
@@ -622,14 +647,6 @@
 		zoom = clampZoom(zoom * (available / measureWidthPx));
 	}
 
-	function zoomBy(delta: number): void {
-		zoom = clampZoom(zoom + delta);
-	}
-
-	function resetZoom(): void {
-		zoom = 1;
-	}
-
 	/** Steps `cursor` forward one note at a time until it reaches (or just
 	 * passes, then backs off one) `target` — shared by the playback
 	 * cursor's `setCursorTimestamp` and the annotation markers'
@@ -706,14 +723,10 @@
 	}
 </script>
 
-<div class="score-view" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'} data-annotate={annotateMode}>
-	<div class="zoom-controls-anchor">
-		<div class="zoom-controls">
-			<button onclick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label={m.zoom_out()}>−</button>
-			<button onclick={resetZoom} class="zoom-level">{Math.round(zoom * 100)}%</button>
-			<button onclick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label={m.zoom_in()}>+</button>
-		</div>
-	</div>
+<div class="score-view score-tokens" data-mode={displayMode ?? 'solo'} data-theme={scoreTheme ?? 'light'} data-annotate={annotateMode}>
+	{#if showZoomControls}
+		<ScoreZoomControls bind:zoom />
+	{/if}
 	<div
 		class="score-container"
 		class:annotate-mode={annotateMode}
@@ -721,10 +734,7 @@
 		use:pinchZoom={{ zoom, onZoom: (z) => (zoom = z), onPan: cancelFollow }}
 	></div>
 	{#if rendering && showBadge}
-		<div class="render-status" role="status" aria-live="polite">
-			<span class="render-status__dot" aria-hidden="true"></span>
-			{m.piece_updating_score()}
-		</div>
+		<ScoreRenderBadge />
 	{/if}
 	{#if loadError}
 		<p class="error">{loadError}</p>
@@ -734,136 +744,8 @@
 <style>
 	.score-view {
 		position: relative;
-		--score-page: var(--surface);
-		--score-chrome: var(--surface-2);
-		--score-chrome-border: var(--border);
-		--score-button: var(--surface);
-		--score-button-hover: color-mix(in srgb, var(--accent) 15%, var(--surface));
-		--score-button-active: var(--accent);
-		--score-button-active-text: var(--accent-contrast);
-		--score-button-text: var(--text);
 	}
 
-	/* This pill used to be `position: absolute` inside `.score-view`, whose
-	   own box is exactly as tall as the full rendered score (every system,
-	   not just one page) -- for anything longer than a single screen, that
-	   put it many thousands of pixels below the fold, visible only once
-	   scrolled all the way past the entire piece (the actual bug report
-	   this fixes: the controls read as "missing" because they were never
-	   within reach of a normal scroll).
-
-	   `position: sticky; bottom: ...` looks like the fix, but doesn't behave
-	   the way `sticky; top: ...` does for an element that starts anywhere
-	   other than the *bottom* of a tall container: a bottom-sticky element
-	   only starts sticking once its container's own bottom edge nears the
-	   viewport, i.e. only in the final screenful of a long score, not
-	   throughout it (confirmed empirically, not just from docs -- Chromium
-	   scrolled a `bottom`-sticky pill 1:1 with the content for the first
-	   ~95% of this score before it ever caught). `top: 100%` sticks using
-	   top's (correctly-behaving) semantics instead, targeting 100% of the
-	   nearest scrolling ancestor's height -- the visual bottom edge of the
-	   viewport -- and `height: 0` keeps this anchor from adding real layout
-	   space now that it's a normal-flow box instead of one taken out of
-	   flow. The actual visible pill sits inside it, pulled up into view by
-	   `translateY` since the anchor's own (zero-height) box would otherwise
-	   place it just below the fold. */
-	.zoom-controls-anchor {
-		position: sticky;
-		top: 100%;
-		height: 0;
-		/* `z-index: auto` on a sticky element doesn't reliably paint above a
-		   static sibling in every engine (confirmed empirically: without
-		   this, OSMD's SVG -- a plain static, in-flow sibling -- was still
-		   winning hit-testing/paint over this anchor's own sticky content).
-		   An explicit value forces a real stacking context. */
-		z-index: 2;
-	}
-
-	.zoom-controls {
-		transform: translateY(calc(-100% - 0.75rem));
-		margin-left: auto;
-		margin-right: 0.75rem;
-		display: flex;
-		justify-content: flex-end;
-		gap: 2px;
-		padding: 3px;
-		width: fit-content;
-		background: var(--score-page);
-		border: 1px solid var(--score-chrome-border);
-		border-radius: var(--radius-full);
-		box-shadow: var(--shadow);
-		z-index: 1;
-	}
-	.zoom-controls button {
-		min-width: 2.125rem;
-		border: none;
-		background: transparent;
-		color: var(--score-button-text);
-		padding: 0.4rem 0.6rem;
-		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 700;
-		cursor: pointer;
-	}
-	.zoom-controls button:hover:not(:disabled) {
-		background: var(--score-button-hover);
-	}
-	.zoom-controls button:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-	.zoom-level {
-		font-variant-numeric: tabular-nums;
-		font-weight: 600;
-	}
-	/* Pinned near the top of the viewport, not just the score — so the badge
-	   is still visible when a Practice Setup change is made with the drawer
-	   open over the score (on mobile the drawer covers it entirely). Offset
-	   down far enough to clear the player's own top bar (back button +
-	   title). `pointer-events: none` so it never eats a tap underneath it. */
-	.render-status {
-		position: fixed;
-		top: calc(3.5rem + env(safe-area-inset-top, 0px));
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 5;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.4rem 0.85rem;
-		border: 1px solid var(--score-chrome-border);
-		border-radius: var(--radius-full);
-		background: var(--score-chrome);
-		box-shadow: var(--shadow);
-		color: var(--score-button-text);
-		font-size: 0.8125rem;
-		font-weight: 650;
-		pointer-events: none;
-	}
-	.render-status__dot {
-		width: 0.6rem;
-		height: 0.6rem;
-		border-radius: 50%;
-		background: var(--score-button-active);
-		animation: render-status-pulse 0.9s ease-in-out infinite;
-	}
-	@keyframes render-status-pulse {
-		0%,
-		100% {
-			opacity: 0.35;
-			transform: scale(0.75);
-		}
-		50% {
-			opacity: 1;
-			transform: scale(1);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.render-status__dot {
-			animation: none;
-			opacity: 0.8;
-		}
-	}
 	.score-container {
 		width: 100%;
 		overflow-x: auto;

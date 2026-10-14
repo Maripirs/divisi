@@ -125,6 +125,7 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	const tempoBPM = scoreTempoBPM;
 
 	return {
+		sourceMusicXml: xmlText,
 		notes: split.notes,
 		backingNotes,
 		lyrics: split.lyrics,

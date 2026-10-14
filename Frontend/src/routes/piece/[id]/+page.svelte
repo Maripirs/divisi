@@ -6,6 +6,7 @@
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
 	import { extractYoutubeVideoId, YoutubeAudioPlayer } from '$lib/audio/youtubeAudioPlayer';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
+	import { buildAdaptiveStaffSections, type StaffLayoutSection } from '$lib/musicxml/adaptiveStaffLayout';
 	import { chooseDefaultVoicePart, playerDefaults, setPlayerDefaults, VIEW_MODES, type ViewMode } from '$lib/playerDefaults';
 	import {
 		DISPLAY_MODES,
@@ -39,6 +40,7 @@
 	import { getLogoArtworkDataUrl } from '$lib/media/nowPlayingArtwork';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
+	import AdaptiveScoreView from '$lib/components/AdaptiveScoreView.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes, type PieceNote } from '$lib/api/pieceNotes';
@@ -308,6 +310,7 @@
 	let mixMode = $state<MixMode>(initialDefaults.mixMode);
 	let visualStates = $state<Record<MixPart, VisualState>>(initialDefaults.mix.visualStates);
 	let xml = $state('');
+	let adaptiveSections = $state<StaffLayoutSection[] | null>(null);
 	let msPerWholeNote = $state(0);
 	// One entry per rendered staff, same order as the `<part>`s in `xml` —
 	// tracked separately from `visualStates` because auto-split chordal
@@ -360,7 +363,7 @@
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
 
-	let scoreView: ScoreView | undefined = $state();
+	let scoreView: ScoreView | AdaptiveScoreView | undefined = $state();
 	let pdfView: PdfView | undefined = $state();
 
 	// F4: annotations only ever exist for a real Backend piece (Backend's
@@ -699,12 +702,14 @@
 		if (!parsed) return;
 		if (visibleMixParts.length === 0) {
 			xml = '';
+			adaptiveSections = null;
 			visibleStaffStates = [];
 			loadState = { kind: 'noVisibleTracks' };
 			return;
 		}
 		if (visibleMixParts.length === 1 && !hasNotesForPart(parsed, visibleMixParts[0])) {
 			xml = '';
+			adaptiveSections = null;
 			visibleStaffStates = [];
 			loadState = { kind: 'noNotesForVoicePart', part: visibleMixParts[0] };
 			return;
@@ -712,12 +717,20 @@
 		try {
 			const mutedNoteColor = highlightedMutedInk($resolvedTheme);
 			const result = convertVisualParts(parsed, visualStates, mutedNoteColor);
+			// Fails soft: a broken layout declaration falls back to the
+			// ordinary single-score render instead of the empty state.
+			try {
+				adaptiveSections = buildAdaptiveStaffSections(parsed, visualStates, mutedNoteColor);
+			} catch {
+				adaptiveSections = null;
+			}
 			xml = result.xml;
 			msPerWholeNote = result.msPerWholeNote;
 			visibleStaffStates = result.staffVisualStates;
 			loadState = { kind: 'ready' };
 		} catch {
 			xml = '';
+			adaptiveSections = null;
 			visibleStaffStates = [];
 			loadState = { kind: 'noNotesForVoicePart', part: voicePart };
 		}
@@ -1381,6 +1394,24 @@
 					<p class="empty-note">{m.piece_no_visible_tracks()}</p>
 				{:else}
 					<div class="score-card">
+						{#if adaptiveSections}
+							<AdaptiveScoreView
+								bind:this={scoreView}
+								bind:zoom={zoomLevel}
+								bind:autoFitZoom
+								bind:rendering={scoreRendering}
+								showBadge={!menuOpen}
+								sections={adaptiveSections}
+								{displayMode}
+								scoreTheme={$resolvedTheme}
+								positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
+								onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
+								annotations={ann.annotations}
+								annotateMode={ann.annotateMode}
+								onAnnotationPlace={ann.openCreate}
+								onAnnotationMarkerClick={ann.openMarker}
+							/>
+						{:else}
 						<ScoreView
 							bind:this={scoreView}
 							bind:zoom={zoomLevel}
@@ -1398,6 +1429,7 @@
 							onAnnotationPlace={ann.openCreate}
 							onAnnotationMarkerClick={ann.openMarker}
 						/>
+						{/if}
 					</div>
 				{/if}
 			</div>

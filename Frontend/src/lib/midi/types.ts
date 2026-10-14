@@ -138,6 +138,9 @@ export const DEFAULT_TIME_SIGNATURE: MIDITimeSignature = { numerator: 4, denomin
  * pieces with meter/tempo changes.
  */
 export interface ParsedMIDI {
+	/** Original notation, when the source was MusicXML. The player uses this
+	 * for scores that declare changing staff layouts; audio still uses notes. */
+	sourceMusicXml?: string;
 	notes: MIDINote[];
 	backingNotes: BackingNote[];
 	lyrics: MIDILyricEvent[];
