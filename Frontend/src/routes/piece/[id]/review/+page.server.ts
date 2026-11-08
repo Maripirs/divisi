@@ -36,7 +36,13 @@ export const load: PageServerLoad = async ({ params, locals, url, fetch }) => {
 	const entries = await backendJson<LibraryEntryOut[]>(locals.token, '/library/pieces', undefined, fetch);
 	const entry = entries.find((e) => e.piece_id === params.id);
 	if (!entry) throw error(404, m.piece_not_found());
-	if (!entry.has_music) {
+	// `has_music`/`has_pdf` describe the *live* version, not a pending
+	// draft. A track whose live version is PDF-only and that just got a
+	// music file through the edit panel (ambiguous parts, so it lands here
+	// as an unpublished draft) has `has_music: false` even though the draft
+	// this page is about to show carries one. A draft without a music file
+	// still fails below, when its file fetch does.
+	if (!entry.has_music && !entry.pending_generated_version_id) {
 		throw error(400, m.ai_edit_missing_files());
 	}
 	// A PDF isn't required to reach this page when there's a pending draft
