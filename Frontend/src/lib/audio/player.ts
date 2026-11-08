@@ -52,6 +52,18 @@ interface JSSynthesizer {
 	close(): void;
 }
 
+// Tap-to-hear (`previewNote`) gets its own channel so its volume never
+// depends on the mixer: playback uses channels 0..N-1, one per mixer bucket
+// (`playbackMidiBuilder.ts`'s `channelForPart`), and a choir piece never
+// gets anywhere near 16 of those. 15 rather than "the next free one" so it
+// also stays clear of 9, which General MIDI reserves for drums.
+const PREVIEW_CHANNEL = 15;
+const PREVIEW_DURATION_MS = 600;
+const PREVIEW_VELOCITY = 100;
+// How long after the preview's note-off to keep the `<audio>` element
+// running, so FluidSynth's release tail isn't cut off mid-decay.
+const PREVIEW_RELEASE_TAIL_MS = 400;
+
 export const MIN_TEMPO_BPM = 40;
 export const MAX_TEMPO_BPM = 240;
 
@@ -153,6 +165,13 @@ export class MidiPlayer {
 	// and diverges only once the human moves the tempo control.
 	private currentTempoBPM = 120;
 	private destroyed = false;
+	// The note `previewNote` currently has sounding (if any), and the timers
+	// that end it and later re-pause the `<audio>` element. Kept separate:
+	// `play()` cancels only the re-pause (so it can't pause real playback
+	// that just started), never the note-off (which would leave a stuck note).
+	private previewKey: number | null = null;
+	private previewNoteOffTimeout: ReturnType<typeof setTimeout> | undefined;
+	private previewPauseTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	private constructor(
 		context: AudioContext,
@@ -227,6 +246,7 @@ export class MidiPlayer {
 	async play(): Promise<void> {
 		if (this.destroyed) return;
 		if (this.playing) return;
+		this.cancelPreviewPause();
 		// Both fired before any other await, so the `<audio>` element's
 		// play() call still originates from the same user gesture that
 		// invoked this method — iOS Safari's autoplay gate requires that,
@@ -259,6 +279,8 @@ export class MidiPlayer {
 
 	destroy(): void {
 		if (this.destroyed) return;
+		this.endPreviewNote();
+		this.cancelPreviewPause();
 		this.synth.stopPlayer();
 		this.playing = false;
 		this.pausedAtMs = 0;
@@ -269,6 +291,61 @@ export class MidiPlayer {
 		this.audioEl.remove();
 		this.synth.close();
 		void this.context.close().catch(() => {});
+	}
+
+	/** Sounds one note briefly (~0.6s), for tap-to-hear on the score. Sent
+	 * straight to the synth as a live note on `PREVIEW_CHANNEL`, outside the
+	 * loaded SMF player, at a fixed channel volume set right here, so a
+	 * voice part the singer muted in the mixer is still audible when tapped.
+	 *
+	 * Like `play()`, resumes the `<audio>` element and `AudioContext`
+	 * synchronously, before anything else, so the call still counts as
+	 * inside the tap's user gesture for iOS Safari's autoplay gate. Neither
+	 * is awaited: the note-on can be queued immediately and simply starts
+	 * sounding once the context is running.
+	 *
+	 * A second tap before the first note ends cuts the first one off before
+	 * starting the new one, so rapid taps never pile up or leave a stuck
+	 * note. */
+	previewNote(midiPitch: number): void {
+		if (this.destroyed) return;
+		const key = Math.round(midiPitch);
+		if (!Number.isFinite(key) || key < 0 || key > 127) return;
+		if (this.audioEl.paused) void this.audioEl.play().catch(() => {});
+		if (this.context.state === 'suspended') void this.context.resume().catch(() => {});
+		this.endPreviewNote();
+		this.cancelPreviewPause();
+		this.synth.midiControl(PREVIEW_CHANNEL, 7, 127);
+		this.synth.midiNoteOn(PREVIEW_CHANNEL, key, PREVIEW_VELOCITY);
+		this.previewKey = key;
+		this.previewNoteOffTimeout = setTimeout(() => {
+			this.previewNoteOffTimeout = undefined;
+			this.endPreviewNote();
+			// Leaves the `<audio>` element as it found it (paused, if playback
+			// isn't running) once the release has rung out, so a lone preview
+			// doesn't leave the page looking like it's playing media.
+			this.previewPauseTimeout = setTimeout(() => {
+				this.previewPauseTimeout = undefined;
+				if (!this.destroyed && !this.playing) this.audioEl.pause();
+			}, PREVIEW_RELEASE_TAIL_MS);
+		}, PREVIEW_DURATION_MS);
+	}
+
+	/** Releases whichever preview note is sounding, if any. */
+	private endPreviewNote(): void {
+		if (this.previewNoteOffTimeout !== undefined) {
+			clearTimeout(this.previewNoteOffTimeout);
+			this.previewNoteOffTimeout = undefined;
+		}
+		if (this.previewKey === null) return;
+		this.synth.midiNoteOff(PREVIEW_CHANNEL, this.previewKey);
+		this.previewKey = null;
+	}
+
+	private cancelPreviewPause(): void {
+		if (this.previewPauseTimeout === undefined) return;
+		clearTimeout(this.previewPauseTimeout);
+		this.previewPauseTimeout = undefined;
 	}
 
 	seek(ms: number): void {

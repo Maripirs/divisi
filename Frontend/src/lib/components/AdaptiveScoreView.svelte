@@ -30,7 +30,7 @@
 		positionWholeNotes: number;
 		displayMode?: DisplayMode;
 		scoreTheme?: ResolvedTheme;
-		onNoteClick?: (wholeNotes: number) => void;
+		onNoteClick?: (wholeNotes: number, midiPitch: number | null) => void;
 		annotations?: Marker[];
 		annotateMode?: boolean;
 		onAnnotationPlace?: (wholeNotes: number) => void;
@@ -89,7 +89,7 @@
 					{scoreTheme}
 					positionWholeNotes={positionWholeNotes - section.startWholeNotes}
 					cursorActive={activeIndex === index}
-					onNoteClick={(position) => onNoteClick?.(position + section.startWholeNotes)}
+					onNoteClick={(position, midiPitch) => onNoteClick?.(position + section.startWholeNotes, midiPitch)}
 					annotations={sectionAnnotations[index]}
 					{annotateMode}
 					onAnnotationPlace={(position) => onAnnotationPlace?.(position + section.startWholeNotes)}
@@ -108,7 +108,7 @@
 					{scoreTheme}
 					positionWholeNotes={positionWholeNotes - section.startWholeNotes}
 					cursorActive={activeIndex === index}
-					onNoteClick={(position) => onNoteClick?.(position + section.startWholeNotes)}
+					onNoteClick={(position, midiPitch) => onNoteClick?.(position + section.startWholeNotes, midiPitch)}
 					annotations={sectionAnnotations[index]}
 					{annotateMode}
 					onAnnotationPlace={(position) => onAnnotationPlace?.(position + section.startWholeNotes)}

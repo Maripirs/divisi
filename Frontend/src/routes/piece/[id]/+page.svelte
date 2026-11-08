@@ -809,6 +809,21 @@
 		else player?.seek(ms);
 	}
 
+	/** Tapping a note on the score always seeks there, as before. While
+	 * nothing is playing it also sounds that note's pitch, so a singer can
+	 * check a note by tapping it. During playback a tap only seeks: the
+	 * preview would just clash with the music already sounding. The preview
+	 * always goes through the synth (`player`), even with the reference
+	 * recording selected, since that's the only thing that can sound an
+	 * arbitrary pitch; no `player` (e.g. it failed to load) just means no
+	 * sound. Annotate mode never gets here (`ScoreView` routes that tap to
+	 * `onAnnotationPlace` instead), so it stays silent. */
+	function handleNoteClick(wholeNotes: number, midiPitch: number | null) {
+		seek(wholeNotes * msPerWholeNote);
+		const playing = audioSource === 'reference' ? referencePlayer?.isPlaying : player?.isPlaying;
+		if (midiPitch !== null && !playing) player?.previewNote(midiPitch);
+	}
+
 	// `ids` is a mixer row's full `deskIds` — one id for the focus voice's
 	// own desks (each is its own row), every desk of a non-focus voice
 	// otherwise (see `mixerRows`'s doc comment): moving that row's single
@@ -1405,7 +1420,7 @@
 								{displayMode}
 								scoreTheme={$resolvedTheme}
 								positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
-								onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
+								onNoteClick={handleNoteClick}
 								annotations={ann.annotations}
 								annotateMode={ann.annotateMode}
 								onAnnotationPlace={ann.openCreate}
@@ -1423,7 +1438,7 @@
 							staffVisualStates={visibleStaffStates}
 							scoreTheme={$resolvedTheme}
 							positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
-							onNoteClick={(wholeNotes) => seek(wholeNotes * msPerWholeNote)}
+							onNoteClick={handleNoteClick}
 							annotations={ann.annotations}
 							annotateMode={ann.annotateMode}
 							onAnnotationPlace={ann.openCreate}

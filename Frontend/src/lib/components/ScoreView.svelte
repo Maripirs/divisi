@@ -8,6 +8,7 @@
 		paintSymbolsInMutedBands
 	} from '$lib/components/score/scoreTreatments';
 	import { baseOsmdOptions, quietOsmdLogging } from '$lib/components/score/osmd';
+	import { midiPitchForOsmdNote } from '$lib/components/score/osmdNotePitch';
 	import { pinchZoom, clampZoom } from '$lib/actions/pinchZoom';
 	import ScoreZoomControls from '$lib/components/score/ScoreZoomControls.svelte';
 	import ScoreRenderBadge from '$lib/components/score/ScoreRenderBadge.svelte';
@@ -43,7 +44,11 @@
 	 * `onNoteClick`, if given, is called with the whole-notes timestamp of
 	 * whichever note the user clicked, so the parent can seek playback
 	 * there — this component only reports the position, it never seeks
-	 * itself, matching `positionWholeNotes` staying parent-owned.
+	 * itself, matching `positionWholeNotes` staying parent-owned. It also
+	 * gets that note's MIDI pitch (`null` for a rest; see
+	 * `midiPitchForOsmdNote`), so the parent can sound the tapped note.
+	 * Same principle: this component never touches audio, it just reports
+	 * what was tapped.
 	 *
 	 * F4: `annotations` renders one extra OSMD cursor per marker (OSMD
 	 * natively supports several simultaneous cursors via `cursorsOptions`/
@@ -84,7 +89,7 @@
 		displayMode?: DisplayMode;
 		staffVisualStates?: VisualState[];
 		scoreTheme?: ResolvedTheme;
-		onNoteClick?: (wholeNotes: number) => void;
+		onNoteClick?: (wholeNotes: number, midiPitch: number | null) => void;
 		annotations?: ScoreAnnotationMarker[];
 		annotateMode?: boolean;
 		onAnnotationPlace?: (wholeNotes: number) => void;
@@ -212,7 +217,7 @@
 	}
 
 	/** Hit-tests a click against the rendered score and, if it landed near a
-	 * note, reports that note's timestamp via `onNoteClick`. Screen pixels
+	 * note, reports that note's timestamp and pitch via `onNoteClick`. Screen pixels
 	 * -> OSMD's internal coordinate space is `10 * Zoom` px per unit — OSMD's
 	 * own documented conversion for hit-testing (`unitInPixels`), so this
 	 * stays correct across the zoom controls above without extra bookkeeping:
@@ -234,7 +239,7 @@
 		// before it ever reaches here — so a click that does reach here is
 		// always "place a new one"/"seek", never "open an existing marker".
 		if (annotateMode) onAnnotationPlace?.(timestamp);
-		else onNoteClick?.(timestamp);
+		else onNoteClick?.(timestamp, midiPitchForOsmdNote(note.sourceNote));
 		// Additive, alongside whichever of the above just fired -- see this
 		// prop's own doc comment above the component's props block.
 		onMeasureClick?.(note.sourceNote.SourceMeasure.MeasureNumberXML);
