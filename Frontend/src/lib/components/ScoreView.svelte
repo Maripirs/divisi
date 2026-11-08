@@ -659,6 +659,10 @@
 	 * positioned at-or-before `target` (both callers `reset()`/check that
 	 * before calling this); OSMD's cursor only supports stepping via
 	 * next()/previous(), no direct jump. */
+	// Whole notes. Far below the shortest real note (a 1/128 is ~0.008),
+	// far above float rounding error.
+	const CURSOR_TIMESTAMP_EPSILON = 1e-6;
+
 	function stepCursorTo(cursor: CursorAPI, target: number): void {
 		const iterator = cursor.iterator;
 		const current = () => iterator.currentTimeStamp.RealValue;
@@ -667,10 +671,16 @@
 		// discrete note onsets, so a single next() can overshoot into the
 		// future — backing off the overshoot keeps the cursor on the last
 		// note at-or-before target instead.
+		// `target` usually comes back from a whole-notes -> ms -> whole-notes
+		// round trip (a note tap seeks in ms, the cursor follows in whole
+		// notes), which can leave it a float rounding error short of the
+		// tapped note's onset. Without this slack that note counts as an
+		// overshoot and the cursor backs off onto the note before it.
+		const reached = target + CURSOR_TIMESTAMP_EPSILON;
 		let attempts = 0;
 		while (current() < target && !iterator.EndReached && attempts < 10_000) {
 			cursor.next();
-			if (current() > target) {
+			if (current() > reached) {
 				cursor.previous();
 				break;
 			}
@@ -687,7 +697,7 @@
 		if (!osmd?.cursor) return;
 		const iterator = osmd.cursor.iterator;
 		const current = () => iterator.currentTimeStamp.RealValue;
-		if (Math.abs(current() - target) < 1e-6) return;
+		if (Math.abs(current() - target) < CURSOR_TIMESTAMP_EPSILON) return;
 
 		if (target < current()) {
 			osmd.cursor.reset();
