@@ -50,10 +50,121 @@ branch, not on `main`.
 
 ## Open work
 
+### Practice modes [ ]
+
+Scoped 2026-11-12, not started. Adds Step mode (note by note) and Pitch
+mode (microphone, "wait for pitch") beside today's Listen mode, on the
+notation-engine score view (vendored at `Frontend/vendor/notation-engine`
+via `npm run sync:engine`; source repo `~/projects/notation-engine`).
+Listen mode already drives the engine cursor from the app's own player.
+
+**Decisions (human, 2026-11-12):**
+- Step and Pitch mode walk measures in **written order**, matching Listen
+  mode, whose audio does not expand repeats. Repeats across all three
+  modes are a later, separate slice (see Backlog).
+- The engine becomes the **default renderer** before the practice modes
+  ship (Slice 2); OSMD stays reachable via `?renderer=osmd`.
+- The step-sequence builder is built in **Divisi first** and moved into
+  notation-engine once Step and Pitch mode have settled its shape.
+- Pitch mode is one part at a time (monophonic detection, no chords).
+
+**Where things live:**
+- Divisi: everything in Slices 0 to 8: step sequence (for now), mode UI,
+  YIN detector, mic tracker, pitch session logic, `MidiPlayer` additions.
+- notation-engine: `renderer.setNoteColors` (new, per-note ink; today's
+  `setStaffColors` only colours whole staves), and later the step-sequence
+  builder. The YIN detector is not notation-specific and stays in Divisi.
+
+**Acceptance criteria (whole milestone):**
+- [ ] Engine is the default score renderer, OSMD reachable via `?renderer=osmd`
+- [ ] Step mode steps a chosen part (or all parts) onset by onset on real
+      pieces, with touch buttons and arrow keys, playing each step
+- [ ] Pitch mode advances on a held, in-tune sung note and shows how far
+      off the singer is
+- [ ] `npm run check` / `test` / `build` green throughout
+
+**Tasks (Claude):**
+- [ ] **Slice 0: Foundation.** Remove the `[DEBUG-a4f2]` pitch-drift probe
+      from `Frontend/src/lib/audio/player.ts` (or keep it only until Slice
+      1's diagnosis lands), sync the vendored engine to v0.2.0, and commit
+      the engine path (`?renderer=engine`, tap-to-select, read-mode arrow
+      stepping, `RenderSourceBadge`). Acceptance: check/test/build green;
+      `vendor/notation-engine/VERSION` shows 0.2.0 with a clean SHA.
+      After the sync, pass `header: false` to `mountScore` in
+      `EngineScoreView` (no title block, like OSMD's `drawTitle: false`;
+      0.1.0 has no such option).
+- [ ] **Slice 1: Fix the audio pitch drift.** After a while on a piece,
+      playback and tapped notes go flat (C4 measured at 258 Hz vs 261.6,
+      about 24 cents) and sometimes recover; a fresh tab is in tune. Ruled
+      out so far: the synth's own output (in tune in a headless loop), the
+      `AudioContext` clock (audio/wall ratio stays 1.000 while flat), and
+      resetting the `<audio>` element's `srcObject`. Main suspect: the
+      `MediaStreamAudioDestinationNode` -> `<audio>` bridge (kept for iOS
+      background audio). Acceptance: diagnosis confirmed by the human's
+      `__divisiAudio.direct()` test, fix in, tuner stays in tune after
+      long use. Gate for Slice 2.
+- [ ] **Slice 2: Engine as the default renderer.** Flip the default in
+      `scoreRendererFromUrl`, with `?renderer=osmd` as the fallback; the
+      `RenderSourceBadge` still shows whenever a `renderer` param is
+      present. Acceptance: tests for the flag, and the human renderer
+      checks below pass first.
+- [ ] **Slice 3: Step sequence (pure).** From the engine `Score`, a part
+      filter (staves) and written order: the list of steps, each with its
+      onset (whole notes), note ids and MIDI pitches. Rests skipped by
+      default, a chord is one step, a tie continuation is not a new step,
+      grace notes skipped. In `engineAdapter.ts` (or a sibling module).
+      Acceptance: unit tests through `importMusicXml` on real fixtures.
+- [ ] **Slice 4: Mode switch + Step mode.** Listen / Step / Pitch switch
+      on the piece page. Step mode: a practice cursor (highlight via
+      `renderer.setPlaybackCursor` + `redrawMeasure`, follow-scroll via
+      `view.scrollToNote`), touch-sized previous / replay / next buttons,
+      arrow keys on desktop (in Step mode they move the practice cursor,
+      not the Listen-mode selection), a part picker, and an "also play
+      the other parts" toggle (others quieter). Needs a `MidiPlayer`
+      addition that sounds several notes at once at per-note volumes.
+      Acceptance: component/unit tests for the stepping state, plus a
+      Playwright pass stepping a real piece.
+- [x] **Slice 5: Pitch detector (pure).** YIN or similar over a
+      `Float32Array` and sample rate, returning frequency + confidence.
+      Acceptance: unit tests on synthetic signals (sines across the vocal
+      range, vibrato, noise/silence rejected, octave-error cases).
+- [ ] **Slice 6: Mic tracker.** `getUserMedia` only after a user gesture,
+      per-frame detection, reports nearest note and cents off, full
+      cleanup on stop (tracks stopped, nodes disconnected). Needs HTTPS
+      (localhost is fine). Acceptance: unit tests with a fake stream/frame
+      source; manual mic check.
+- [x] **Slice 7: Pitch session logic (pure).** State machine: the target
+      is the current step of the chosen part; holding within a tolerance
+      for a hold time advances; rests auto-advance; settings for tolerance
+      (default ±30 cents), hold time (default 400 ms) and "any octave".
+      Acceptance: unit tests on synthetic frame sequences (hold, wobble
+      out and back, wrong octave with and without "any octave", rests).
+- [ ] **Slice 8: Pitch mode UI.** Mic permission flow (prompt, denied,
+      unavailable), tuner-style cents needle, settings, matched note turns
+      green. Until `setNoteColors` lands in the engine, mark the current
+      note with the selection colour instead. Matching the last step goes
+      straight to `finished` with no one-frame `matched` state, so the UI
+      turns that last note green from `finished`. Acceptance: Playwright
+      pass with a fake mic stream; human sing-test below.
+
+**Tasks (Human):**
+- [ ] Slice 1: when the tuner reads flat, run `__divisiAudio.direct()` in
+      the dev-server tab and tap C4 again (back to 261 = the bridge).
+- [ ] Before Slice 2: the M8 renderer checks on the engine view (dark
+      theme, touch pinch, iOS Safari, long scores like der_abend), then
+      decide to flip the default.
+- [ ] notation-engine: add `renderer.setNoteColors` (per-note ink), then
+      `npm run sync:engine` in Divisi.
+- [ ] notation-engine, after Slice 8: adopt the step-sequence builder as a
+      public engine helper.
+- [ ] Sing-test Step and Pitch mode on a laptop, a phone, and iOS Safari.
+
+### Other open work
+
 None outstanding on the building side. Both halves of the ambiguous
 voice-part gate (Part A: `/review` confirmation, `cf362db`; Part B:
 Tracks-tab direct-upload gate, `4bb9fbc`) and the player "greying out" fix
-(`ace3802`) are done — see Log. What remains is deploy/verification/
+(`ace3802`) are done. What remains is deploy/verification/
 decision work, tracked in the two sections below.
 
 ## Awaiting human verification
@@ -62,8 +173,8 @@ Frontend code for all of these is built, committed to `main`, and
 `check`/`build`-clean. What's missing is a manual frontend redeploy and/or a
 real browser/touchscreen/device pass — not further Claude-side building.
 
-- [x] **Frontend redeploy.** Shipped 2026-09-15 (see Log). Still needs a live-site confirm pass.
-- [x] **Frontend redeploy, round 2.** Shipped 2026-09-23 (see Log) —
+- [x] **Frontend redeploy.** Shipped 2026-09-15. Still needs a live-site confirm pass.
+- [x] **Frontend redeploy, round 2.** Shipped 2026-09-23 —
   everything from that session's work is live on `divisi.maripi.net`.
   Still needs a live-site confirm pass.
 - [ ] **Real backend-hosted piece playback**: member and guest, including password-protected groups — sounds/looks right end to end.
@@ -101,6 +212,10 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 
 ## Backlog
 
+- Repeats: Listen mode's audio plays measures in written order (no repeat
+  or ending expansion), so Step and Pitch mode do too. A later slice should
+  expand repeats for all three together (engine `measurePlayOrder`, plus a
+  whole-note clock that maps to play order).
 - Real job queue (Celery/RQ) if background-task OMR processing, or
   Responsibilities recurrence/reminders, or the anonymous-participant
   sweep, ever need real scheduling instead of a manual command.
@@ -155,340 +270,13 @@ render, MusicXML-DOM as the editable model) was already spiked and proven.
 - Always deploy the frontend with `PUBLIC_API_BASE_URL` explicitly set to
   the real backend URL, never a bare `npm run build` (has caused a live
   outage before by baking in a local `.env`'s `localhost` value).
+- `POST /library/pieces/{id}/generate-lyrics` regenerates from the current
+  live version, not the pre-lyrics source, so a second run layers onto an
+  earlier partial one: notes the new run doesn't reach keep the old run's
+  lyrics. Regenerate from the pre-lyrics source (or clear all lyrics first)
+  before this button gets routine use.
 - `groups/[id]/+page.svelte`'s per-tab split and further god-file cleanup
   (`ResponsibilitiesTab` breakup, a `db/models/` split, player
   transport/mix composables) — partially done across two cleanup passes,
   more candidates flagged but not required.
-
-## Log
-
-- 2026-09-23: Fixed a live prod bug ("Odysseus and the Sirens"): 5 real
-  vocal parts (a Soprano 1/2 + Alto/Tenor/Bass divisi) exported from an
-  external scan tool as unnamed `<part-name>`s ("Part 1".."Part 6"), which
-  broke `assignVoiceParts`'s pitch-fallback (only fires when the unmatched
-  candidate count exactly equals the remaining SATB-slot count -- 5 != 4)
-  -- every real vocal part silently landed in the Accompaniment bucket,
-  SATB mixer entirely silent. Fixed by hand: renamed the 5 `<part-name>`s
-  by pitch-range/clef analysis, uploaded as a new approved `PieceVersion`
-  directly (DB insert + object-storage PUT, mirroring exactly what the
-  upload API does -- confirmed byte-identical round-trip). Piece id
-  `14d93c8d-df1a-4a2d-aa83-0d9222149b54`, new version
-  `5810e994-a9f8-4900-86b7-e4ad995e6c86`.
-- 2026-09-23: Shipped "ambiguous voice parts must be confirmed before
-  approval" Part A (the `/review` flow half), to prevent the above from
-  recurring: `assignVoiceParts` now also returns which candidate parts it
-  couldn't confidently place (`ambiguous`/`ambiguousParts`, threaded
-  through both parsers); new `partNameRewriter.ts`
-  (`applyPartNameAssignments`, a targeted regex rewrite of just
-  `<part-name>` text, no DOM round-trip, so the rest of the file stays
-  byte-for-byte untouched) and `ConfirmPartsPanel.svelte`; the review
-  page's Approve button is now disabled until every ambiguous part is
-  assigned to a voice/desk or Accompaniment, submitting the corrected
-  file through a new `resolveParts` action to the existing
-  `PUT /library/versions/{id}/file` endpoint -- no new backend
-  endpoint/schema needed. MusicXML only for v1 (MIDI types threaded
-  through for consistency, no UI/write-back yet); no "leave unresolved"
-  escape hatch (an unvisited row just blocks approval); merging two
-  candidates into one voice deferred (already expressible via two rows on
-  the same base voice with different desk numbers). New
-  `voicePartAssignment.test.ts`/`partNameRewriter.test.ts`; full suite
-  green (243 tests), `npm run check` clean. Commit `cf362db`.
-- 2026-09-23: Shipped Part B, closing the actual hole the real bug above
-  shipped through: a fresh MusicXML upload via the Tracks tab used to
-  auto-publish in one shot (upload -> submit -> approve -> distribute)
-  with zero review step. Backend: `working_draft`/`publish_version`/
-  `_omr_fields_batch` broadened to also recognize an unpublished
-  `source=original` version (a brand-new piece's still-draft first
-  version, not just an AI-edit "modification" draft); `list_my_library`
-  gained an admin-only branch surfacing a group piece with zero
-  `Distribution` rows, previously invisible to everyone including the
-  admin who just uploaded it. Frontend: new shared
-  `lib/pieces/parseMusicBytes.ts` (extracted from `remotePiece.ts`'s
-  MIDI/MusicXML dispatch); the Tracks tab now parses a selected file
-  client-side before submitting and, if it has ambiguous parts, skips the
-  publish chain and redirects to `/piece/{id}/review` to resolve them with
-  Part A's `ConfirmPartsPanel` instead of publishing blind; `/review`'s
-  PDF-required gate loosened for a music-only pending draft. No-ambiguity
-  uploads are unchanged. Backend suite green aside from 10 pre-existing,
-  unrelated failures in `test_lyrics.py`/`test_score_edit.py` (separate
-  in-progress Groq/NVIDIA work, not touched by this change); frontend
-  247/247. Commit `4bb9fbc`.
-- 2026-09-23: Applied the player "greying out" fix diagnosed earlier the
-  same day (see the prior entry below) -- `piece/[id]/+page.svelte`'s
-  `bootstrap()` now recomputes `visualStates`/`balance` fresh via
-  `presetVisualStates`/`presetBalances` for a preset display/mix mode,
-  only falling back to the persisted per-id cache (`materializePartRecord`)
-  in Custom mode. Commit `ace3802`.
-- 2026-09-23: Deleted the three throwaway `nav-retire-test-...@example.com`
-  accounts created verifying the bottom-nav removal (confirmed zero
-  related rows in any table first).
-- 2026-09-23: Redeployed the frontend (`npm run build && npx wrangler
-  deploy`) -- everything from this session (bottom-nav retirement, carpool
-  two-column desktop layout, ambiguous voice-part gate Parts A+B, the
-  greying-out fix) is now live on `divisi.maripi.net`. Smoke-checked
-  `/welcome` returns 200 post-deploy.
-- 2026-09-23: Gave the Carpool tab a real desktop layout -- the app's
-  first opt-in wide breakpoint (`.shell--wide`, 1040px at
-  `min-width: 1024px`; every other tab stays at today's 640px `.shell`).
-  Map and the drivers/riders posts split into a two-column CSS grid at
-  that width (unchanged single-column stack below it), map column sticky
-  so it stays in view while a long posts list scrolls past. Applies to
-  both the member carpool tab and the guest join page, since both share
-  `CarpoolBoard`. Commit `35892b8`.
-- 2026-09-23: Retired the persistent two-item bottom nav (Home/Library) --
-  Library folded into a link card on Home instead, since one nav item left
-  on its own didn't make sense as a "nav." `BottomNav.svelte` deleted,
-  `.shell`'s bottom padding shrunk now that nothing's pinned there
-  (5.5rem -> 1.75rem), unused `bottom_nav_*` i18n keys removed. Also
-  dropped a guest-only duplicate nav bar on the settings pages, found
-  along the way. Commit `985ea9c`. Verification created a throwaway test
-  account against the prod DB (`nav-retire-test-...@example.com`) --
-  cleanup still pending a human decision.
-- 2026-09-23: Root-caused (fix not yet applied) a live report: the
-  player's "My part + others" display mode wasn't greying out every part
-  it should on "Les djinns, Op. 12" (Alto stayed full-black alongside the
-  focus voice). Not a part-detection issue -- see Open work above for the
-  full diagnosis (`materializePartRecord` in `piece/[id]/+page.svelte`'s
-  `bootstrap()` letting a stale per-id cached value override a preset
-  display mode's fresh computation) and the exact fix to apply.
-- 2026-09-18: Shipped "AI edit" -- a second, more general AI-assisted
-  editing tool alongside "Generate lyrics from PDF": an admin selects a
-  measure range directly in the rendered score (two clicks; `ScoreView`'s
-  existing click hit-test already resolves a real MusicXML measure number
-  via `note.sourceNote.SourceMeasure.MeasureNumber`), writes a
-  plain-language instruction, and gets back a reviewable draft with just
-  that range changed. New `Backend/app/scoreedit/` package (`client.py`:
-  one Groq-only call, no NVIDIA fallback -- deliberately, since a subtly
-  wrong pitch/rhythm from a less-reliable provider is much harder to
-  catch at a glance than a missing lyric, unlike the lyrics feature's own
-  trade; `apply.py`: `extract_range`/`splice_range` in music21, validating
-  the AI's replacement has the exact same part count and measure count it
-  was given before ever touching the score, a clean 422 otherwise --
-  adding/removing whole measures is out of scope for v1) and
-  `POST /library/pieces/{id}/edit-measures`, landing its result in the
-  same one-working-draft-slot as lyrics generation.
-  Redesigned the review flow to match: the two admin-only review pages
-  built for lyrics review (`review-lyrics`, then generalized once AI edit
-  needed the same UI to `review-draft`) and the AI-edit picker
-  (`ai-edit`) merged into one page, `piece/[id]/review`, always reachable
-  once a track has both files (not gated on anything having been
-  generated first, per explicit user direction) -- shows the live
-  version with the AI-edit form active when nothing's pending, or a
-  pending draft with Approve/Discard when one exists, **and** the AI-edit
-  form stays available either way: an admin reviewing a draft that has a
-  wrong lyric in it can select that measure and ask for a fix without
-  discarding the draft first (`edit-measures` itself now edits whichever
-  of the pending draft or the live version is currently being reviewed,
-  draft taking priority -- "complement, don't compete for the slot").
-  Real layout bugs found and fixed against the actual deployed-locally
-  page, not just in review: the page wasn't locked to the viewport at all
-  (missing `export const ssr = false` -- `ScoreView`'s `onDestroy` touches
-  `window` directly and unlike `onMount` isn't automatically browser-only
-  in Svelte, a real SSR crash); a dockable edit panel (top/side toggle)
-  had one CSS rule not gated behind the same width breakpoint as its
-  siblings, producing a broken half-applied state below it; the panes'
-  and dock's breakpoints (a mix of 700px/900px) were unified to one
-  consistent 700px after the 900px one turned out to need a
-  nearly-maximized window in practice; the measure-range form's
-  `flex-wrap` layout left each field wrapping onto its own line with a
-  large empty gap, replaced with an explicit CSS grid; and `ScoreView`'s
-  own built-in zoom pill (a full-width bar sticky to the top of its
-  scrolling ancestor, with `!important`-pinned button styling of its own)
-  didn't match `PdfView`'s bottom-right floating pill at all -- rather
-  than fight `!important` with more `!important`, hid `ScoreView`'s
-  built-in one and added a direct copy of `PdfView`'s pill driving
-  `ScoreView`'s already-bindable `zoom` prop instead.
-  Also shipped the same night, already live: the underlying "hold
-  generated lyrics for admin review" change itself (`9a33439`,
-  2026-09-16/17) -- `generate-lyrics` no longer auto-publishes, landing
-  as an unpublished working draft instead, after real production runs on
-  "The Challenge of Thor" (see the entry below) showed lyric
-  classification isn't reliable enough to trust straight to the live
-  version.
-
-- 2026-09-16: First real-world exercise of the NVIDIA lyric-generation
-  fallback (shipped 2026-09-15 as a per-chunk design, `d141b1f`), triggered
-  live on "The Challenge of Thor" once Groq's separate per-day cap (200,000
-  tokens/day) actually ran out mid-piece. Two follow-up fixes shipped
-  overnight based on what production logs showed, one of which needed a
-  same-night revert:
-  - `622b57b`: NVIDIA was silently dropping most chunks it "failed" —
-    mostly schema drift (`{"soprano": {"syllables": [...]}}` instead of
-    the requested `{"voices": [...]}` wrapper, content itself usually
-    fine), plus one real truncation and two real `ReadTimeout`s at the old
-    180s ceiling. Added `_normalize_alternate_voice_shape` to recover the
-    drifted shape instead of discarding it, raised `max_tokens` 4500→5500
-    and `_NVIDIA_TIMEOUT_SECONDS` 180→220, and (mistakenly, see next)
-    added `frequency_penalty: 0.4` against a repetition-loop response also
-    seen in that run.
-  - `a7e4ff0`: re-tested against the real piece once deployed and the
-    frequency penalty made things categorically worse — 10/10 NVIDIA
-    attempts across the remaining 5 chunks came back with corrupted JSON
-    syntax (missing quotes, dropped keys), versus the prior run's mix of
-    successes and recoverable failures. A frequency penalty fights the
-    structural repetition JSON output requires ("text", "syllabic",
-    commas, braces, over and over), so it was reverted the same night with
-    a comment explaining why, before it could cause more harm than the
-    rare loop it was meant to fix.
-  - Also caught and left unfixed for now: `POST
-    /library/pieces/{id}/generate-lyrics` always regenerates from the
-    current *live* version (`live_version(piece, db)`), not the original
-    pre-lyrics upload — so clicking it again after a partial/bad run
-    layers a new attempt on top of the old one rather than starting clean.
-    `inject_lyrics` itself doesn't stack duplicate lyric lines (it clears
-    each note right before overwriting it), but any note a run's syllable
-    list doesn't reach keeps whatever an earlier, possibly worse run left
-    there — a real inconsistency, not just a cosmetic one. Worth fixing
-    (regenerate from the version's own pre-lyrics source, or at minimum
-    clear all existing lyrics up front) before this button gets used
-    routinely.
-  - Net state as of this entry: "The Challenge of Thor" has partial,
-    front-of-piece-only lyrics live (49/53/46/45 syllables per S/A/T/B
-    against true targets of 247/238/276/277 sung notes) — restored to this
-    (the better of two incomplete results produced overnight) after a
-    same-night regeneration attempt under the now-reverted penalty made it
-    worse (33/33/33/33). NVIDIA's reliability for this specific
-    long-structured-JSON task is still not solid even after both fixes;
-    Groq itself has been reliable throughout and should recover once its
-    daily quota resets. Not yet re-verified in a real browser — added to
-    "Awaiting human verification" below.
-- 2026-09-15: Frontend redeployed (`npm run build && npx wrangler deploy`)
-  to `https://divisi.maripi.net`, picking up the admin-triggered lyric
-  generation button and the divisi visual-merge fix below, plus everything
-  else committed to `main` since the last redeploy. Live-site smoke check
-  (200/303 on `/`) passed; a real touchscreen/browser confirm pass is still
-  open, same as every other item in "Awaiting human verification".
-- 2026-09-15: Fixed a display bug in the chord-based divisi auto-split
-  shipped earlier today: `splitChordalDivisi` correctly split a chordal
-  divisi voice into `${base}-1`/`${base}-2` desks for the mixer, but that
-  same split object fed the score renderer too, so the notation also came
-  out as two staff rows (confirmed on "The Challenge of Thor": "Soprano 1"
-  and "Soprano 2" each showing one note of what used to be a single
-  2-note chord). The split should only ever affect audio/mixer routing,
-  never the printed score. Added `mergeSplitDesksForDisplay` in
-  `notation/voicePartAssignment.ts`, the literal inverse of
-  `splitChordalDivisi`: collapses an auto-split base voice's two desks
-  back into one combined part before `musicXmlConverter.ts`'s
-  `convertVisualParts` builds staves, reconstructing the original 2-note
-  chord at a real divisi onset and deduping the duplicated note/lyric back
-  to one at a unison onset. Only pairs `splitChordalDivisi` itself
-  produced are merged — marked with a new `autoSplit` flag on
-  `VoicePartInfo` — so a file that names its own real two-staff divisi
-  split (e.g. actual "Soprano 1"/"Soprano 2" tracks/parts) still renders
-  as two staves, untouched. Mixer-facing `parsed.parts`/`notes`/`lyrics`
-  are never mutated; `convertVisualParts` builds a fresh transformed copy
-  for display only. New tests in `voicePartAssignment.test.ts` (split
-  reversed to one chord, unison duplicate deduped to one note, lyric
-  dedup, file-named split left alone, no-mutation check, full visual-state
-  merge-rule table) and a new `musicXmlConverter.test.ts` (one staff per
-  base voice for an auto-split piece, file-named splits still get two
-  staves, no mutation of the mixer's inputs). Full suite green (232
-  tests), `npm run check` clean.
-- 2026-09-15: Shipped the "Lyrics in the player" backlog item: an
-  admin-triggered "Generate lyrics from PDF" button (Tracks tab edit
-  panel, shown once a track has both a music file and a PDF) that reads
-  the piece's PDF text layer, classifies it into per-voice sung syllables
-  via Groq (`llama-3.3-70b-versatile`, OpenAI-compatible endpoint, JSON
-  requested in prose per the proven `~/projects/walkcode/server/llm.js`
-  shape rather than `response_format`), and sequentially injects them as
-  MusicXML `<lyric>` elements onto each voice part's note onsets (Nth
-  cleaned syllable -> Nth sung onset, skipping rests/tie-continuations —
-  the same positional-alignment principle `musicXmlConverter.ts`'s
-  `attachLyrics` already uses for MIDI lyric events). Scope decisions:
-  MusicXML/`.mxl`-sourced pieces only (MIDI-sourced pieces 400 with a
-  clear message — no OMR/note-data regeneration involved at all); no OCR
-  fallback for a scanned PDF with no real text layer (also a clean 400);
-  synchronous in the request, no job queue (Groq calls are fast, files
-  are small; a real job queue stays backlogged below for heavier work).
-  The new `PieceVersion` is immediately published (submit -> approve ->
-  distribute in one step via the existing `publish_version` helper)
-  rather than left as a review draft: unlike the OMR pipeline (a full
-  transcription redo `publish_version`'s draft step exists to guard),
-  this only ever adds lyric annotations on top of already-approved
-  note/rhythm data, and there's no frontend affordance today to review a
-  parked draft anyway (the OMR editor that would do that is deleted from
-  `main`, see below) — so draft-only would have been a dead end no admin
-  could reach. New code: `Backend/app/lyrics/` (`extract.py` PyMuPDF word
-  tokens + scanned-PDF detection, `groq_client.py` the Groq call + prompt
-  + defensive JSON extraction, `inject.py` the sequencing/injection logic
-  via music21), `Backend/app/api/routes/library/lyrics.py`
-  (`POST /library/pieces/{id}/generate-lyrics`, admin-only), two new
-  `Settings` fields (`groq_api_key`, `groq_lyrics_model`), and
-  `Backend/tests/test_lyrics.py` (33 tests: sequencing/tie/rest-skipping
-  unit tests against a synthetic music21 score, PDF extraction against
-  real generated PDFs, Groq response parsing against a monkeypatched
-  `_call_groq`, full route wiring, plus one `integration`-marked
-  real-network test skipped without a real `GROQ_API_KEY`). Full Backend
-  suite: 440 passed, 1 skipped. Frontend: `generateLyrics` action in
-  `Frontend/src/routes/groups/[id]/actions/tracks.ts` and a button in
-  `TracksTab.svelte`'s edit panel, `npm run check` clean.
-- 2026-09-15: Fixed a live prod bug (SFCC tester report): "The Challenge of
-  Thor" 404'd on load ("Malformed MusicXML... '<' not found"). Root cause:
-  `af05222` (2026-09-14) deleted `Backend/fixtures/SFCC/` believing it was
-  only the dead frontend bundled-demo copy, but a real Backend `Piece`
-  (group-owned, SFCC) was still distributed with `file_path` pointing at
-  that exact now-gone fixture path. Recovered the file's bytes from git
-  history (last commit before the deletion) and re-uploaded them through
-  the real service layer (`save_file` to object storage, `add_version` +
-  `publish_version`, as the group admin) rather than patching `file_path`
-  via raw SQL — same code path the upload UI uses. New version
-  `9fdcb139...` is live, round-trip verified readable from object storage.
-  The two older approved versions still point at the dead fixture path but
-  are no longer distributed, so nothing serves them; left alone.
-- 2026-09-15: Chord-based divisi split for the mixer, resolving the
-  backlog item's open design call. New `splitChordalDivisi` in
-  `notation/voicePartAssignment.ts`: groups a plain (unsplit) SATB voice's
-  notes by exact `startMs` onset, and where a real 2-note onset exists
-  somewhere in the voice, splits it into `${base}-1`/`${base}-2` desks by
-  pitch rank (higher pitch to desk 1). A 1-note onset duplicates onto both
-  desks rather than picking one, since both parts are genuinely sounding
-  the same pitch there. Bails out (leaves the voice unsplit) if any onset
-  stacks more than 2 notes, or if the voice never has a 2-note onset at
-  all. Wired into both `midi/parser.ts` and `musicxml/parser.ts` as a
-  post-process step after the existing name-based `assignVoiceParts` call,
-  so a file that already names its own split (e.g. "Soprano 1"/"Soprano
-  2") is untouched. New `voicePartAssignment.test.ts` covers clean splits,
-  mixed unison/2-note onsets, monophonic (no-op), 3+-note bail-out, lyric
-  duplication, and already-split no-op; full suite green (214 tests),
-  `npm run check` clean.
-- 2026-09-15: "Mostly Me" mix preset now drops non-focus parts to silence
-  (0) instead of a quiet 0.15, matching a +50/-50 delta from the 0.5 Even
-  baseline (focus was already at the +50 cap). Deployed the frontend
-  (`npm run build && npx wrangler deploy`, picking up `.env.production`'s
-  real backend URL) to `https://divisi.maripi.net` — clears the
-  long-standing "Frontend redeploy" item below; everything built over the
-  last several days is now live, not just committed.
-- 2026-09-14: Replaced `Backend/plan.md`, `Frontend/plan.md`, and
-  `OMR_EDITOR_PLAN.md` with this `PLAN.md`, tracking current state and
-  backlog going forward (the old files' full history was archived locally,
-  outside the repo). Cross-checked every milestone the source files marked
-  incomplete against `git log`: nearly all of the "not pushed/deployed"
-  notes scattered through the source plans turned out to be stale — the
-  commits were already reachable from `main`, and `main` matched
-  `origin/main` — so the only genuinely open work left is a manual frontend
-  redeploy, a batch of human real-browser/touchscreen passes, a handful of
-  backlog-tracked decisions, and the parked OMR/editor branch.
-- 2026-09-14: Backend test coverage for `PUT /groups/{id}/description`,
-  `PUT /groups/{id}/members/{user_id}/role` (last-admin-demote guard,
-  promote/demote, 404 on a non-member), and `DELETE
-  /responsibilities/roles/{id}` (role removal, cascading signup cleanup,
-  admin-only). Added `delete_file` to `app/storage/files.py` and wired it
-  into `delete_piece` so a deleted piece's local-disk/object-storage
-  files are actually reclaimed instead of left as orphans. Weekly-note
-  markdown renderer now supports `[text](url)` links (http/https/mailto
-  only; other schemes render as plain text). Guest join page's practice
-  link now carries the admin-set default tempo (`GuestPieceOut.
-  default_tempo_bpm`), matching the member Tracks tab.
-- 2026-09-14: Shipped two backlog items. `group_resources` (a group's
-  stable link list — playlist, portal, shared doc): new `GroupResource`
-  model/migration, admin CRUD at `/groups/{id}/resources`, a guest read
-  route, and a Resources section on the Info/About tab (member read
-  rides along with that page's existing `about` gate rather than a new
-  `GroupPage` of its own). Weekly-note promotion: `PieceRehearsalNote`
-  gained a nullable `source_weekly_note_id`, plus `POST
-  /weekly-notes/{id}/promote` (admin picks the piece; title/body default
-  to the source note's own) and a "Promote to rehearsal note" action on
-  the Weekly Notes tab. Both migrations verified upgrade/downgrade
-  clean against the local disposable Postgres; backend/frontend suites
-  green.
 
