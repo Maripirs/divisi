@@ -85,5 +85,16 @@ export default defineConfig({
 			// Frontend/plan.md's Log.
 			adapter: adapter()
 		})
-	]
+	],
+	server: {
+		fs: {
+			// `notation-engine` is a `file:./vendor/notation-engine` dependency
+			// (see scripts/sync-notation-engine.mjs), so node_modules holds a
+			// symlink that Vite resolves to `vendor/`. SvelteKit's default
+			// allow list does not include that directory, and without this the
+			// dev server answers 403 for the engine's modules and its
+			// `Bravura.woff2`. Build output is unaffected.
+			allow: ['vendor']
+		}
+	}
 });

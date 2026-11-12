@@ -41,6 +41,9 @@
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
 	import AdaptiveScoreView from '$lib/components/AdaptiveScoreView.svelte';
+	import EngineScoreView from '$lib/components/EngineScoreView.svelte';
+	import { scoreRendererFromUrl, showRenderSources } from '$lib/components/score/scoreRenderer';
+	import RenderSourceBadge from '$lib/components/score/RenderSourceBadge.svelte';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes, type PieceNote } from '$lib/api/pieceNotes';
@@ -363,7 +366,14 @@
 	let baseTempoBpm = $state(120);
 	let balance = $state<Record<MixPart, number>>(initialDefaults.mix.balance);
 
-	let scoreView: ScoreView | AdaptiveScoreView | undefined = $state();
+	let scoreView: ScoreView | AdaptiveScoreView | EngineScoreView | undefined = $state();
+	// `?renderer=engine` draws the score with notation-engine instead of
+	// OSMD, for A/B testing (see `EngineScoreView`). Read off the URL only,
+	// so it does not survive in-app navigation that drops the query.
+	let scoreRenderer = $derived(scoreRendererFromUrl(page.url));
+	// Same test sessions also label the tools behind the sound and the
+	// picture (`RenderSourceBadge`).
+	let renderSourcesShown = $derived(showRenderSources(page.url));
 	let pdfView: PdfView | undefined = $state();
 
 	// F4: annotations only ever exist for a real Backend piece (Backend's
@@ -1014,13 +1024,25 @@
 		if (event.code === 'Space') {
 			event.preventDefault();
 			void togglePlay();
-		} else if (event.key === 'ArrowRight') {
+		} else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
 			event.preventDefault();
-			seekByMeasure(1);
-		} else if (event.key === 'ArrowLeft') {
+			const direction = event.key === 'ArrowRight' ? 1 : -1;
+			// The engine renderer moves a selected note first (its read-mode
+			// stepping, see `EngineScoreView`); with nothing selected, or on
+			// OSMD, the arrows jump a measure as before.
+			if (!stepEngineSelection('stepSelection', direction)) seekByMeasure(direction);
+		} else if (
+			(event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+			stepEngineSelection('stepStaff', event.key === 'ArrowDown' ? 1 : -1)
+		) {
+			// Only with a selected note: otherwise Up/Down still scroll the page.
 			event.preventDefault();
-			seekByMeasure(-1);
 		}
+	}
+
+	function stepEngineSelection(step: 'stepSelection' | 'stepStaff', direction: 1 | -1): boolean {
+		if (scoreRenderer !== 'engine' || viewMode !== 'player' || !scoreView || !(step in scoreView)) return false;
+		return (scoreView as EngineScoreView | AdaptiveScoreView)[step](direction);
 	}
 
 	function measureDurationMs(): number {
@@ -1368,6 +1390,13 @@
 			</section>
 		{/if}
 
+		{#if renderSourcesShown}
+			<RenderSourceBadge
+				audio={audioSource === 'reference' ? 'youtube' : hasPlayer ? 'synth' : null}
+				visual={viewMode === 'pdf' ? 'pdf' : scoreRenderer}
+			/>
+		{/if}
+
 		<main class="score-area">
 			<!-- Both panes stay mounted once shown, toggling only via `hidden` —
 			     switching view modes used to swap them with an {#if}, which tore
@@ -1418,6 +1447,25 @@
 								showBadge={!menuOpen}
 								sections={adaptiveSections}
 								{displayMode}
+								scoreTheme={$resolvedTheme}
+								positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
+								onNoteClick={handleNoteClick}
+								annotations={ann.annotations}
+								annotateMode={ann.annotateMode}
+								onAnnotationPlace={ann.openCreate}
+								onAnnotationMarkerClick={ann.openMarker}
+								renderer={scoreRenderer}
+							/>
+						{:else if scoreRenderer === 'engine'}
+							<EngineScoreView
+								bind:this={scoreView}
+								bind:zoom={zoomLevel}
+								bind:autoFitZoom
+								bind:rendering={scoreRendering}
+								showBadge={!menuOpen}
+								{xml}
+								{displayMode}
+								staffVisualStates={visibleStaffStates}
 								scoreTheme={$resolvedTheme}
 								positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
 								onNoteClick={handleNoteClick}

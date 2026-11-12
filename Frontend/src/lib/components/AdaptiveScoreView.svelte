@@ -1,5 +1,7 @@
 <script lang="ts">
 	import ScoreView from './ScoreView.svelte';
+	import EngineScoreView from './EngineScoreView.svelte';
+	import type { ScoreRenderer } from './score/scoreRenderer';
 	import ScoreZoomControls from './score/ScoreZoomControls.svelte';
 	import ScoreRenderBadge from './score/ScoreRenderBadge.svelte';
 	import type { StaffLayoutSection } from '$lib/musicxml/adaptiveStaffLayout';
@@ -24,7 +26,8 @@
 		zoom = $bindable(1),
 		autoFitZoom = $bindable(false),
 		rendering = $bindable(false),
-		showBadge = true
+		showBadge = true,
+		renderer = 'osmd'
 	}: {
 		sections: StaffLayoutSection[];
 		positionWholeNotes: number;
@@ -39,9 +42,21 @@
 		autoFitZoom?: boolean;
 		rendering?: boolean;
 		showBadge?: boolean;
+		/** Which engraver draws each section (`?renderer=engine`). */
+		renderer?: ScoreRenderer;
 	} = $props();
 
-	let views = $state<Record<number, ScoreView>>({});
+	let views = $state<
+		Record<
+			number,
+			{
+				scrollCursorIntoView(): void;
+				// Engine sections only (see `EngineScoreView`'s keyboard section).
+				stepSelection?(direction: 1 | -1): boolean;
+				stepStaff?(direction: 1 | -1): boolean;
+			}
+		>
+	>({});
 	let renderingSections = $state<boolean[]>([]);
 	let sectionAnnotations = $derived(sections.map((section, index) =>
 		annotations
@@ -67,6 +82,17 @@
 	export function scrollCursorIntoView(): void {
 		views[activeIndex]?.scrollCursorIntoView();
 	}
+
+	// Engine renderer only: arrow keys move the selected note. Only the
+	// section holding the selection answers `true`; each step stays inside
+	// that section.
+	export function stepSelection(direction: 1 | -1): boolean {
+		return Object.values(views).some((view) => view.stepSelection?.(direction) ?? false);
+	}
+
+	export function stepStaff(direction: 1 | -1): boolean {
+		return Object.values(views).some((view) => view.stepStaff?.(direction) ?? false);
+	}
 </script>
 
 <!-- One zoom pill and one render badge for every section: each inner
@@ -75,7 +101,29 @@
 	<ScoreZoomControls bind:zoom />
 	{#each sections as section, index (section.firstMeasure)}
 		<div class="score-section">
-			{#if index === 0}
+			{#if renderer === 'engine'}
+				<!-- `autoFitZoom` is a no-op on the engine (see EngineScoreView),
+				     so every section can share the binding. -->
+				<EngineScoreView
+					bind:this={views[index]}
+					bind:zoom
+					bind:autoFitZoom
+					bind:rendering={() => renderingSections[index] ?? false, (value) => (renderingSections[index] = value)}
+					showBadge={false}
+					showZoomControls={false}
+					xml={section.xml}
+					{displayMode}
+					staffVisualStates={section.staffVisualStates}
+					{scoreTheme}
+					positionWholeNotes={positionWholeNotes - section.startWholeNotes}
+					cursorActive={activeIndex === index}
+					onNoteClick={(position, midiPitch) => onNoteClick?.(position + section.startWholeNotes, midiPitch)}
+					annotations={sectionAnnotations[index]}
+					{annotateMode}
+					onAnnotationPlace={(position) => onAnnotationPlace?.(position + section.startWholeNotes)}
+					{onAnnotationMarkerClick}
+				/>
+			{:else if index === 0}
 				<ScoreView
 					bind:this={views[index]}
 					bind:zoom

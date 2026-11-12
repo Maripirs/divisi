@@ -1,0 +1,19 @@
+{
+	"name": "notation-engine",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Vendored build of notation-engine at d6f4eb5-dirty. Do not edit: regenerate with `npm run sync:engine`.",
+	"license": "MIT",
+	"type": "module",
+	"main": "./index.js",
+	"types": "./index.d.ts",
+	"exports": {
+		".": {
+			"types": "./index.d.ts",
+			"import": "./index.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"sideEffects": false,
+	"notationEngineCommit": "d6f4eb5-dirty"
+}

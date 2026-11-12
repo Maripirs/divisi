@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import { MidiPlayer } from '$lib/audio/player';
 	import ConfirmButton from '$lib/components/ConfirmButton.svelte';
 	import ConfirmPartsPanel, { type PartChoice } from '$lib/components/ConfirmPartsPanel.svelte';
 	import PdfView from '$lib/components/PdfView.svelte';
 	import ScoreView from '$lib/components/ScoreView.svelte';
+	import EngineScoreView from '$lib/components/EngineScoreView.svelte';
+	import { scoreRendererFromUrl, showRenderSources } from '$lib/components/score/scoreRenderer';
+	import RenderSourceBadge from '$lib/components/score/RenderSourceBadge.svelte';
 	import '$lib/styles/shell.css';
 	import { resolvedTheme } from '$lib/theme';
 	import { withSubmitting } from '$lib/utils/enhance';
@@ -32,6 +36,11 @@
 	// Wrapped defensively: `data.xml` is always real content the Backend
 	// already accepted, but a parse failure here should just hide the
 	// confirm-parts panel rather than break the whole review page.
+	// `?renderer=engine`: draw the score with notation-engine instead of
+	// OSMD (see `EngineScoreView`), for A/B testing the measure picker too.
+	let scoreRenderer = $derived(scoreRendererFromUrl(page.url));
+	let renderSourcesShown = $derived(showRenderSources(page.url));
+
 	let parsed = $derived.by(() => {
 		try {
 			return parseMusicXmlFile(data.xml);
@@ -198,6 +207,12 @@
 
 <AppHeader title={data.pieceTitle} />
 
+<!-- Labels the score pane's renderer (the PDF pane is always pdf.js) and the
+     synth that plays it, in `?renderer=` test sessions only. -->
+{#if renderSourcesShown}
+	<RenderSourceBadge audio={player ? 'synth' : null} visual={scoreRenderer} />
+{/if}
+
 <!-- Deliberately not `<main class="shell">` (every other page's normal-flow,
      scrolls-with-the-document container) -- this page must fill exactly the
      viewport below the fixed header with no page-level scroll at all, only
@@ -303,6 +318,16 @@
 		     escape `PdfView` gets for free from its own internal structure. -->
 		<div class="pane pane-score">
 			<div class="pane-score-scroll">
+				{#if scoreRenderer === 'engine'}
+					<EngineScoreView
+						xml={data.xml}
+						positionWholeNotes={0}
+						scoreTheme={$resolvedTheme}
+						showBadge={false}
+						onMeasureClick={handleMeasureClick}
+						bind:zoom={scoreZoom}
+					/>
+				{:else}
 				<ScoreView
 					xml={data.xml}
 					positionWholeNotes={0}
@@ -311,6 +336,7 @@
 					onMeasureClick={handleMeasureClick}
 					bind:zoom={scoreZoom}
 				/>
+				{/if}
 			</div>
 			<!-- Sibling of `.pane-score-scroll`, not inside it -- see this
 			     component's own script-block comment on why this exists
