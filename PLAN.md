@@ -52,7 +52,7 @@ branch, not on `main`.
 
 ### Practice modes [ ]
 
-Scoped 2026-11-12, not started. Adds Step mode (note by note) and Pitch
+Scoped 2026-11-12. Slices 3, 4, 5, 7 done; engine path committed (e9bb335). Adds Step mode (note by note) and Pitch
 mode (microphone, "wait for pitch") beside today's Listen mode, on the
 notation-engine score view (vendored at `Frontend/vendor/notation-engine`
 via `npm run sync:engine`; source repo `~/projects/notation-engine`).
@@ -93,6 +93,9 @@ Listen mode already drives the engine cursor from the app's own player.
       After the sync, pass `header: false` to `mountScore` in
       `EngineScoreView` (no title block, like OSMD's `drawTitle: false`;
       0.1.0 has no such option).
+      Partly done: engine path committed on 0.1.0 (e9bb335). Left: the
+      probe removal and the 0.2.0 sync (notation-engine has no `v0.2.0`
+      tag yet and uncommitted work).
 - [ ] **Slice 1: Fix the audio pitch drift.** After a while on a piece,
       playback and tapped notes go flat (C4 measured at 258 Hz vs 261.6,
       about 24 cents) and sometimes recover; a fresh tab is in tune. Ruled
@@ -108,13 +111,13 @@ Listen mode already drives the engine cursor from the app's own player.
       `RenderSourceBadge` still shows whenever a `renderer` param is
       present. Acceptance: tests for the flag, and the human renderer
       checks below pass first.
-- [ ] **Slice 3: Step sequence (pure).** From the engine `Score`, a part
+- [x] **Slice 3: Step sequence (pure).** Done 5a21a86 (`src/lib/practice/stepSequence.ts`). From the engine `Score`, a part
       filter (staves) and written order: the list of steps, each with its
       onset (whole notes), note ids and MIDI pitches. Rests skipped by
       default, a chord is one step, a tie continuation is not a new step,
       grace notes skipped. In `engineAdapter.ts` (or a sibling module).
       Acceptance: unit tests through `importMusicXml` on real fixtures.
-- [ ] **Slice 4: Mode switch + Step mode.** Listen / Step / Pitch switch
+- [x] **Slice 4: Mode switch + Step mode.** Listen / Step / Pitch switch
       on the piece page. Step mode: a practice cursor (highlight via
       `renderer.setPlaybackCursor` + `redrawMeasure`, follow-scroll via
       `view.scrollToNote`), touch-sized previous / replay / next buttons,
@@ -124,6 +127,10 @@ Listen mode already drives the engine cursor from the app's own player.
       addition that sounds several notes at once at per-note volumes.
       Acceptance: component/unit tests for the stepping state, plus a
       Playwright pass stepping a real piece.
+      Done 102e4fd (`stepSession.ts`, `e2e/step-mode.spec.ts`, run with
+      `--no-deps`). Scoped out: declared divisi layouts
+      (`AdaptiveScoreView`, needs a cross-section staff mapping), and a
+      step always sounds for 1 s rather than its written length.
 - [x] **Slice 5: Pitch detector (pure).** YIN or similar over a
       `Float32Array` and sample rate, returning frequency + confidence.
       Acceptance: unit tests on synthetic signals (sines across the vocal
@@ -157,6 +164,9 @@ Listen mode already drives the engine cursor from the app's own player.
       `npm run sync:engine` in Divisi.
 - [ ] notation-engine, after Slice 8: adopt the step-sequence builder as a
       public engine helper.
+- [ ] Step mode device check (`?renderer=engine`): iOS Safari audio on
+      first tap, own-vs-other-parts volume, phone layout of the practice
+      bar, scroll-follow on Der Abend, default part pick.
 - [ ] Sing-test Step and Pitch mode on a laptop, a phone, and iOS Safari.
 
 ### Other open work
