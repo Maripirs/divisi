@@ -165,11 +165,12 @@ export class MidiPlayer {
 	// and diverges only once the human moves the tempo control.
 	private currentTempoBPM = 120;
 	private destroyed = false;
-	// The note `previewNote` currently has sounding (if any), and the timers
-	// that end it and later re-pause the `<audio>` element. Kept separate:
-	// `play()` cancels only the re-pause (so it can't pause real playback
-	// that just started), never the note-off (which would leave a stuck note).
-	private previewKey: number | null = null;
+	// The keys `previewChord` currently has sounding (empty if none), and the
+	// timers that end them and later re-pause the `<audio>` element. Kept
+	// separate: `play()` cancels only the re-pause (so it can't pause real
+	// playback that just started), never the note-off (which would leave a
+	// stuck note).
+	private previewKeys: number[] = [];
 	private previewNoteOffTimeout: ReturnType<typeof setTimeout> | undefined;
 	private previewPauseTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -297,27 +298,45 @@ export class MidiPlayer {
 	 * straight to the synth as a live note on `PREVIEW_CHANNEL`, outside the
 	 * loaded SMF player, at a fixed channel volume set right here, so a
 	 * voice part the singer muted in the mixer is still audible when tapped.
+	 * A one-note `previewChord`; see there for the gesture and overlap
+	 * rules. */
+	previewNote(midiPitch: number): void {
+		this.previewChord([{ midiPitch, volume: 1 }]);
+	}
+
+	/** Sounds several notes at once, each at its own `volume` (0 to 1, as
+	 * note velocity: the preview channel's volume is shared by every key on
+	 * it), for `durationMs`. Step mode sounds a step this way, the part being
+	 * practised at full volume and the other parts quieter. Out-of-range
+	 * pitches and silent notes are dropped.
 	 *
 	 * Like `play()`, resumes the `<audio>` element and `AudioContext`
 	 * synchronously, before anything else, so the call still counts as
 	 * inside the tap's user gesture for iOS Safari's autoplay gate. Neither
-	 * is awaited: the note-on can be queued immediately and simply starts
+	 * is awaited: the note-ons can be queued immediately and simply start
 	 * sounding once the context is running.
 	 *
-	 * A second tap before the first note ends cuts the first one off before
-	 * starting the new one, so rapid taps never pile up or leave a stuck
-	 * note. */
-	previewNote(midiPitch: number): void {
+	 * A second call before the first chord ends cuts the first one off
+	 * before starting the new one, so rapid taps never pile up or leave a
+	 * stuck note. */
+	previewChord(notes: readonly { midiPitch: number; volume: number }[], durationMs = PREVIEW_DURATION_MS): void {
 		if (this.destroyed) return;
-		const key = Math.round(midiPitch);
-		if (!Number.isFinite(key) || key < 0 || key > 127) return;
+		const keys = new Map<number, number>();
+		for (const { midiPitch, volume } of notes) {
+			const key = Math.round(midiPitch);
+			if (!Number.isFinite(key) || key < 0 || key > 127) continue;
+			const velocity = Math.round(Math.min(1, Math.max(0, volume)) * PREVIEW_VELOCITY);
+			// One key once: the loudest request wins.
+			if (velocity > 0 && velocity > (keys.get(key) ?? 0)) keys.set(key, velocity);
+		}
+		if (keys.size === 0) return;
 		if (this.audioEl.paused) void this.audioEl.play().catch(() => {});
 		if (this.context.state === 'suspended') void this.context.resume().catch(() => {});
 		this.endPreviewNote();
 		this.cancelPreviewPause();
 		this.synth.midiControl(PREVIEW_CHANNEL, 7, 127);
-		this.synth.midiNoteOn(PREVIEW_CHANNEL, key, PREVIEW_VELOCITY);
-		this.previewKey = key;
+		for (const [key, velocity] of keys) this.synth.midiNoteOn(PREVIEW_CHANNEL, key, velocity);
+		this.previewKeys = [...keys.keys()];
 		this.previewNoteOffTimeout = setTimeout(() => {
 			this.previewNoteOffTimeout = undefined;
 			this.endPreviewNote();
@@ -328,18 +347,17 @@ export class MidiPlayer {
 				this.previewPauseTimeout = undefined;
 				if (!this.destroyed && !this.playing) this.audioEl.pause();
 			}, PREVIEW_RELEASE_TAIL_MS);
-		}, PREVIEW_DURATION_MS);
+		}, durationMs);
 	}
 
-	/** Releases whichever preview note is sounding, if any. */
+	/** Releases whichever preview notes are sounding, if any. */
 	private endPreviewNote(): void {
 		if (this.previewNoteOffTimeout !== undefined) {
 			clearTimeout(this.previewNoteOffTimeout);
 			this.previewNoteOffTimeout = undefined;
 		}
-		if (this.previewKey === null) return;
-		this.synth.midiNoteOff(PREVIEW_CHANNEL, this.previewKey);
-		this.previewKey = null;
+		for (const key of this.previewKeys) this.synth.midiNoteOff(PREVIEW_CHANNEL, key);
+		this.previewKeys = [];
 	}
 
 	private cancelPreviewPause(): void {

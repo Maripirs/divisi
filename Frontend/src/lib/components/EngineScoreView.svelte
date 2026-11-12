@@ -24,7 +24,7 @@
 	// with a dynamic `import()` inside `onMount` (browser-only), the same way
 	// ScoreView loads OSMD, so the OSMD path's bundle never carries it and
 	// SSR never touches its canvas/DOM code.
-	import type { Measure, Note, NoteId, Score, ScoreView as EngineView } from 'notation-engine';
+	import type { Measure, Note, NoteId, OnsetIndex, Score, ScoreView as EngineView } from 'notation-engine';
 
 	type EngineModule = typeof import('notation-engine');
 
@@ -54,6 +54,10 @@
 	 *   `highlightedMutedInk` ScoreView paints them with.
 	 * - Annotation markers: DOM buttons over the score, moved on every
 	 *   `layout` event.
+	 * - Step mode: `practiceNoteIds` replaces the position-driven cursor
+	 *   with the host's practice step (painted the same way, scrolled to
+	 *   with the engine's `scrollToNote`), and `onScore` hands the host the
+	 *   imported `Score` to build its steps from.
 	 * The engine never plays audio here (`playback: false`): Divisi's own
 	 * `MidiPlayer` owns sound and drives `positionWholeNotes`.
 	 */
@@ -74,7 +78,9 @@
 		autoFitZoom = $bindable(false),
 		rendering = $bindable(false),
 		showBadge = true,
-		showZoomControls = true
+		showZoomControls = true,
+		practiceNoteIds = null,
+		onScore
 	}: {
 		xml: string;
 		positionWholeNotes: number;
@@ -98,6 +104,13 @@
 		rendering?: boolean;
 		showBadge?: boolean;
 		showZoomControls?: boolean;
+		/** Step mode's current step (note ids of the shown score): the cursor
+		 * sits on these instead of following `positionWholeNotes`, and a tap
+		 * only reports the note (no selection). `null` outside Step mode. */
+		practiceNoteIds?: readonly NoteId[] | null;
+		/** Called with every score the view shows (and its onset index), so
+		 * Step mode can walk the same note ids the view paints. */
+		onScore?: (score: Score, onsets: OnsetIndex) => void;
 	} = $props();
 
 	// Staff space at zoom 1, matching OSMD's 10 px per unit at `Zoom` 1.
@@ -293,7 +306,8 @@
 	}
 
 	function indexScore(module: EngineModule, score: Score): void {
-		groups = buildOnsetGroups(score, module.createOnsetIndex(score));
+		const onsetIndex = module.createOnsetIndex(score);
+		groups = buildOnsetGroups(score, onsetIndex);
 		const onsets = new Map<NoteId, number>();
 		for (const group of groups) for (const id of group.noteIds) onsets.set(id, group.wholes);
 		noteInfo = new Map();
@@ -309,6 +323,8 @@
 		if (view) paintSelection(view, null);
 		selectedId = null;
 		cursorSelectedId = null;
+		practiceShown = null;
+		onScore?.(score, onsetIndex);
 	}
 
 	// Theme change: remount with the new colours (the renderer takes them
@@ -376,6 +392,8 @@
 	// --- Cursor ------------------------------------------------------------
 
 	let cursorBox = $state<{ x: number; top: number; height: number } | null>(null);
+	// The practice step the cursor was last painted and scrolled to.
+	let practiceShown: readonly NoteId[] | null = null;
 
 	$effect(() => {
 		layoutVersion;
@@ -383,8 +401,18 @@
 		const active = cursorActive;
 		const current = view;
 		const onsets = groups;
+		const practice = practiceNoteIds;
 		let selected = selectedId;
 		if (!current) return;
+		if (practice) {
+			showPracticeStep(current, practice, selected);
+			return;
+		}
+		if (practiceShown) {
+			// Back from Step mode: repaint the position cursor from scratch.
+			practiceShown = null;
+			cursorGroup = -2;
+		}
 		if (!active) {
 			setCursorIds(current, []);
 			if (selected) {
@@ -417,6 +445,28 @@
 		cursorBox = box;
 		if (box) requestAnimationFrame(followCursorIfNeeded);
 	});
+
+	/** Step mode's cursor: the step's notes in the playback-cursor colour and
+	 * the bar at their onset, scrolled into view (only when the step
+	 * changes, so a relayout never fights the human's own scrolling). A
+	 * Listen-mode selection does not carry over. */
+	function showPracticeStep(current: EngineView, ids: readonly NoteId[], selected: NoteId | null): void {
+		if (selected) {
+			paintSelection(current, null);
+			selectedId = null;
+		}
+		const moved = ids !== practiceShown;
+		if (moved) {
+			practiceShown = ids;
+			cursorGroup = -2;
+			cursorSelectedId = null;
+			setCursorIds(current, ids);
+			if (ids.length > 0) current.scrollToNote(ids[0]);
+		}
+		const strip = onsetStrip(ids);
+		cursorBox = strip ? { x: strip.x - 5, top: strip.top, height: strip.bottom - strip.top } : null;
+		if (moved) lastCursorSystemTop = cursorBox?.top;
+	}
 
 	/** Accents the notes the cursor sits on (heads, stems, flags, ties: the
 	 * renderer's playback-cursor colour wins over staff ink), repainting only
@@ -562,6 +612,8 @@
 		const timestamp = info?.onset;
 		if (!info || timestamp === undefined) return;
 		if (annotateMode) onAnnotationPlace?.(timestamp);
+		// Step mode moves its own cursor there; no selection to paint.
+		else if (practiceNoteIds) onNoteClick?.(timestamp, midiPitchForEngineNote(info.note));
 		else selectNote(current, noteId);
 		onMeasureClick?.(printedMeasureNumber(info.measure));
 	}
@@ -600,7 +652,7 @@
 	function stepTo(next: (current: EngineView, from: NoteId) => NoteId | null): boolean {
 		const current = view;
 		const from = selectedId;
-		if (!current || !from || annotateMode) return false;
+		if (!current || !from || annotateMode || practiceNoteIds) return false;
 		const target = next(current, from);
 		if (target && selectNote(current, target)) current.scrollToNote(target);
 		return true;

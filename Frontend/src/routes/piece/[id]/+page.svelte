@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick as svelteTick } from 'svelte';
+	import { onDestroy, onMount, tick as svelteTick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -44,6 +44,15 @@
 	import EngineScoreView from '$lib/components/EngineScoreView.svelte';
 	import { scoreRendererFromUrl, showRenderSources } from '$lib/components/score/scoreRenderer';
 	import RenderSourceBadge from '$lib/components/score/RenderSourceBadge.svelte';
+	import {
+		buildStepSequence,
+		otherStavesSounding,
+		practiceParts,
+		type PracticePart,
+		type PracticeStep
+	} from '$lib/practice/stepSequence';
+	import { StepSession, stepSounds, type StepSessionState } from '$lib/practice/stepSession';
+	import type { OnsetIndex, Score as EngineScore } from 'notation-engine';
 	import AnnotationSheet from '$lib/components/AnnotationSheet.svelte';
 	import PieceNotesPanel from '$lib/components/PieceNotesPanel.svelte';
 	import { listGuestGroupNotes, type PieceNote } from '$lib/api/pieceNotes';
@@ -374,6 +383,62 @@
 	// Same test sessions also label the tools behind the sound and the
 	// picture (`RenderSourceBadge`).
 	let renderSourcesShown = $derived(showRenderSources(page.url));
+
+	// --- Practice modes --------------------------------------------------
+	// Listen is the player as it always was. Step walks the score note by
+	// note (see `$lib/practice/stepSequence` and `stepSession`), sounding
+	// each step as it lands; Pitch (mic, "wait for pitch") is not built yet
+	// and shows disabled. Step mode needs the engine renderer's note ids, so
+	// the switch only shows on the plain engine view: not on OSMD, and not on
+	// a declared divisi layout (`AdaptiveScoreView`), whose sections are
+	// separate scores with different staves each. Session-only, never
+	// persisted: a piece always opens in Listen mode.
+	type PracticeMode = 'listen' | 'step' | 'pitch';
+	// How long a step sounds, and how loud the other parts are under it
+	// with "also play the other parts" on.
+	const STEP_SOUND_MS = 1000;
+	const STEP_OTHERS_VOLUME = 0.4;
+	const ALL_PARTS = 'all';
+	let practiceMode = $state<PracticeMode>('listen');
+	// The score the engine view is showing, reported by its `onScore`.
+	let engineScore = $state.raw<{ score: EngineScore; onsets: OnsetIndex } | null>(null);
+	// The part picked to step through, as `partKey`, or null until the
+	// singer picks one (then `defaultStepPartKey` applies).
+	let stepPartKey = $state<string | null>(null);
+	let stepPlayOthers = $state(false);
+	// Not `$state`: `stepState` is the reactive snapshot of it. Cast so TS
+	// does not narrow it to `null` inside the deriveds below.
+	let stepSession = null as StepSession<PracticeStep> | null;
+	let stepState = $state.raw<StepSessionState | null>(null);
+	let stepModeAvailable = $derived(
+		scoreRenderer === 'engine' && !adaptiveSections && hasPlayer && viewMode === 'player' && loadState.kind === 'ready'
+	);
+	let stepParts = $derived(engineScore ? practiceParts(engineScore.score) : []);
+	// The singer's own part when the display shows exactly one staff as
+	// active (highlighted or solo display), else every part. Staff states
+	// line up with the engine's staves one to one (one staff per `<part>` in
+	// `xml`); when they do not, no guessing.
+	let defaultStepPartKey = $derived.by(() => {
+		const staffCount = engineScore?.score.staves.length ?? 0;
+		const active = visibleStaffStates.flatMap((state, staff) => (state === 'active' ? [staff] : []));
+		if (visibleStaffStates.length !== staffCount || active.length !== 1) return ALL_PARTS;
+		const part = stepParts.find((candidate) => candidate.staves.includes(active[0]));
+		return part ? partKey(part) : ALL_PARTS;
+	});
+	// A pick from a previous score layout that no longer exists falls back
+	// to the default.
+	let resolvedStepPartKey = $derived(
+		stepPartKey !== null && (stepPartKey === ALL_PARTS || stepParts.some((part) => partKey(part) === stepPartKey))
+			? stepPartKey
+			: defaultStepPartKey
+	);
+	let stepStaves = $derived(stepParts.find((part) => partKey(part) === resolvedStepPartKey)?.staves ?? null);
+	let stepSteps = $derived(
+		engineScore ? buildStepSequence(engineScore.score, engineScore.onsets, { staves: stepStaves }) : []
+	);
+	let currentStepNoteIds = $derived(
+		practiceMode === 'step' && stepState ? (stepSession?.steps[stepState.stepIndex]?.noteIds ?? []) : null
+	);
 	let pdfView: PdfView | undefined = $state();
 
 	// F4: annotations only ever exist for a real Backend piece (Backend's
@@ -829,6 +894,13 @@
 	 * sound. Annotate mode never gets here (`ScoreView` routes that tap to
 	 * `onAnnotationPlace` instead), so it stays silent. */
 	function handleNoteClick(wholeNotes: number, midiPitch: number | null) {
+		// Step mode: a tap moves the practice cursor there instead (the step
+		// at or before the tapped note, which may be another part's).
+		if (practiceMode === 'step' && stepSession) {
+			stepState = stepSession.goToOnset(wholeNotes);
+			soundStep();
+			return;
+		}
 		seek(wholeNotes * msPerWholeNote);
 		const playing = audioSource === 'reference' ? referencePlayer?.isPlaying : player?.isPlaying;
 		if (midiPitch !== null && !playing) player?.previewNote(midiPitch);
@@ -1004,6 +1076,78 @@
 		persistSettings();
 	}
 
+	/** Names a part across score reloads (a display change re-imports the
+	 * score and may drop staves, shifting the others' indices). */
+	function partKey(part: PracticePart): string {
+		return `${part.name ?? ''}@${part.staves.join(',')}`;
+	}
+
+	function setPracticeMode(mode: PracticeMode) {
+		if (mode === practiceMode || mode === 'pitch') return;
+		if (mode === 'step') {
+			// Stepping and playback would talk over each other.
+			player?.pause();
+			stepSession = new StepSession(stepSteps, msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0);
+			stepState = stepSession.state;
+			practiceMode = 'step';
+			soundStep();
+			return;
+		}
+		// Back to Listen from where stepping left off.
+		const step = stepSession?.currentStep;
+		if (step && msPerWholeNote > 0) seek(step.wholes * msPerWholeNote);
+		stepSession = null;
+		stepState = null;
+		practiceMode = mode;
+	}
+
+	// The piece reloaded its score (a display change): keep the step session
+	// on the new steps, at the same place in the music.
+	$effect(() => {
+		const steps = stepSteps;
+		if (practiceMode !== 'step') return;
+		untrack(() => {
+			if (stepSession && stepSession.steps !== steps) stepState = stepSession.setSteps(steps);
+		});
+	});
+
+	// Leaving the score view (the PDF tab, a divisi layout, a load error)
+	// leaves Step mode too.
+	$effect(() => {
+		if (!stepModeAvailable && untrack(() => practiceMode) !== 'listen') untrack(() => setPracticeMode('listen'));
+	});
+
+	function moveStep(direction: 1 | -1) {
+		if (!stepSession) return;
+		const before = stepSession.state;
+		stepState = stepSession.step(direction);
+		if (stepState !== before) soundStep();
+	}
+
+	function setStepPart(key: string) {
+		stepPartKey = key;
+		if (!stepSession) return;
+		stepState = stepSession.setSteps(stepSteps);
+		soundStep();
+	}
+
+	function setStepPlayOthers(on: boolean) {
+		stepPlayOthers = on;
+		soundStep();
+	}
+
+	/** Sounds the current step: its own notes, plus the other parts quieter
+	 * when asked. Through `previewChord`, so the mixer's muting does not
+	 * silence the part being practised. */
+	function soundStep() {
+		const step = stepSession?.currentStep;
+		if (!step || !engineScore) return;
+		const others = stepPlayOthers
+			? otherStavesSounding(engineScore.score, engineScore.onsets, step.wholes, stepStaves)
+			: [];
+		player?.previewChord(stepSounds(step.midiPitches, others, STEP_OTHERS_VOLUME), STEP_SOUND_MS);
+	}
+
 	function handleGlobalKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
 			menuOpen = false;
@@ -1011,6 +1155,13 @@
 		}
 		const target = event.target as HTMLElement | null;
 		const tag = target?.tagName;
+		// Step mode's arrows also work with focus on a button (the previous /
+		// next a mouse just clicked, say): arrows do nothing on a button.
+		if (practiceMode === 'step' && (event.key === 'ArrowRight' || event.key === 'ArrowLeft') && tag === 'BUTTON') {
+			event.preventDefault();
+			moveStep(event.key === 'ArrowRight' ? 1 : -1);
+			return;
+		}
 		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || target?.isContentEditable) {
 			return;
 		}
@@ -1019,6 +1170,18 @@
 			loadState.kind !== 'noNotesForVoicePart' &&
 			loadState.kind !== 'noVisibleTracks'
 		) {
+			return;
+		}
+		if (practiceMode === 'step') {
+			// Step mode owns Space (replay) and Left/Right (move the practice
+			// cursor, never the Listen-mode selection); Up/Down still scroll.
+			if (event.code === 'Space') {
+				event.preventDefault();
+				soundStep();
+			} else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+				event.preventDefault();
+				moveStep(event.key === 'ArrowRight' ? 1 : -1);
+			}
 			return;
 		}
 		if (event.code === 'Space') {
@@ -1397,6 +1560,55 @@
 			/>
 		{/if}
 
+		{#if stepModeAvailable}
+			<div class="practice-bar">
+				<div class="segmented practice-modes" role="group" aria-label={m.piece_practice_mode()}>
+					<button
+						type="button"
+						class:active={practiceMode === 'listen'}
+						aria-pressed={practiceMode === 'listen'}
+						onclick={() => setPracticeMode('listen')}
+					>
+						{m.piece_mode_listen()}
+					</button>
+					<button
+						type="button"
+						class:active={practiceMode === 'step'}
+						aria-pressed={practiceMode === 'step'}
+						onclick={() => setPracticeMode('step')}
+					>
+						{m.piece_mode_step()}
+					</button>
+					<button type="button" disabled title={m.piece_mode_pitch_soon()}>{m.piece_mode_pitch()}</button>
+				</div>
+				{#if practiceMode === 'step'}
+					<div class="practice-options">
+						<select
+							class="practice-part-select"
+							aria-label={m.piece_step_part()}
+							value={resolvedStepPartKey}
+							onchange={(e) => setStepPart((e.target as HTMLSelectElement).value)}
+						>
+							<option value={ALL_PARTS}>{m.piece_step_all_parts()}</option>
+							{#each stepParts as part, index (partKey(part))}
+								<option value={partKey(part)}>{part.name ?? m.piece_step_part_numbered({ number: index + 1 })}</option>
+							{/each}
+						</select>
+						{#if stepStaves}
+							<label class="practice-toggle">
+								<input
+									type="checkbox"
+									checked={stepPlayOthers}
+									onchange={(e) => setStepPlayOthers((e.target as HTMLInputElement).checked)}
+								/>
+								{m.piece_step_play_others()}
+							</label>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		<main class="score-area">
 			<!-- Both panes stay mounted once shown, toggling only via `hidden` —
 			     switching view modes used to swap them with an {#if}, which tore
@@ -1470,9 +1682,11 @@
 								positionWholeNotes={msPerWholeNote > 0 ? positionMs / msPerWholeNote : 0}
 								onNoteClick={handleNoteClick}
 								annotations={ann.annotations}
-								annotateMode={ann.annotateMode}
+								annotateMode={ann.annotateMode && practiceMode === 'listen'}
 								onAnnotationPlace={ann.openCreate}
 								onAnnotationMarkerClick={ann.openMarker}
+								practiceNoteIds={currentStepNoteIds}
+								onScore={(score, onsets) => (engineScore = { score, onsets })}
 							/>
 						{:else}
 						<ScoreView
@@ -1532,6 +1746,51 @@
 			     forced to `'reference'` for that shape (see the `$effect`
 			     above), so every control below already routes correctly. -->
 			<footer class="bottom-bar">
+				{#if practiceMode === 'step'}
+					<!-- Step mode's transport: touch-sized previous / replay /
+					     next in place of play and the scrubber. -->
+					<div class="step-controls">
+						<button
+							type="button"
+							class="step-btn"
+							disabled={!stepState || stepState.atFirst}
+							onclick={() => moveStep(-1)}
+							aria-label={m.piece_step_previous()}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M15 18l-6-6 6-6" />
+							</svg>
+						</button>
+						<button
+							type="button"
+							class="step-btn step-btn--replay"
+							disabled={!stepState || stepState.stepIndex < 0}
+							onclick={soundStep}
+							aria-label={m.piece_step_replay()}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M3 12a9 9 0 1 0 3-6.7" />
+								<path d="M3 4v5h5" />
+							</svg>
+						</button>
+						<button
+							type="button"
+							class="step-btn"
+							disabled={!stepState || stepState.atLast}
+							onclick={() => moveStep(1)}
+							aria-label={m.piece_step_next()}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true">
+								<path d="M9 18l6-6-6-6" />
+							</svg>
+						</button>
+					</div>
+					{#if stepState && stepState.stepIndex >= 0}
+						<span class="step-count" data-testid="step-count">
+							{m.piece_step_position({ current: stepState.stepIndex + 1, total: stepState.stepCount })}
+						</span>
+					{/if}
+				{:else}
 				<button class="play-btn" onclick={togglePlay} aria-label={isPlaying ? m.piece_pause() : m.piece_play()}>
 					{#if isPlaying}
 						<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1586,6 +1845,7 @@
 							</svg>
 						</button>
 					{/if}
+				{/if}
 				{/if}
 			</footer>
 		{/if}
@@ -2263,6 +2523,105 @@
 	.time-row {
 		display: flex;
 		justify-content: space-between;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-muted);
+	}
+
+	/* Listen / Step / Pitch switch, and Step mode's part picker, between
+	   the header and the score: outside `.score-area`, so it never scrolls
+	   away with the score. */
+	.practice-bar {
+		flex: 0 0 auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem 0.75rem;
+		padding: 0.5rem 1rem;
+		background: var(--surface);
+		border-bottom: 1px solid var(--border);
+	}
+
+	.practice-modes {
+		flex: 0 1 18rem;
+	}
+
+	.practice-options {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem 0.75rem;
+	}
+
+	.practice-part-select {
+		font: inherit;
+		font-size: 0.875rem;
+		font-weight: 600;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		border-radius: var(--radius-md);
+		padding: 0.4rem 0.6rem;
+		min-height: 36px;
+	}
+
+	.practice-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8125rem;
+		color: var(--text);
+		cursor: pointer;
+		min-height: 36px;
+	}
+
+	.step-controls {
+		flex: 1;
+		display: flex;
+		justify-content: center;
+		gap: 1rem;
+	}
+
+	/* Touch-sized: the singer taps these without looking, often with the
+	   phone on a music stand. */
+	.step-btn {
+		width: 56px;
+		height: 48px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-full);
+		background: var(--surface-2);
+		color: var(--text);
+		cursor: pointer;
+	}
+
+	.step-btn--replay {
+		border-color: var(--accent);
+		background: var(--accent);
+		color: var(--accent-contrast);
+	}
+
+	.step-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+
+	.step-btn svg {
+		width: 24px;
+		height: 24px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.25;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	.step-count {
+		flex: 0 0 auto;
 		font-size: 0.75rem;
 		font-variant-numeric: tabular-nums;
 		color: var(--text-muted);
