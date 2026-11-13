@@ -40,9 +40,9 @@ test('steps a real piece forward and back in Step mode', async ({ page }) => {
 	const next = page.getByRole('button', { name: 'Next note' });
 	await expect(page.getByRole('button', { name: 'Play this note again' })).toBeEnabled();
 
-	// One part at a time: the soprano line.
+	// One part at a time, starting on the singer's own (Soprano by default).
 	const partPicker = page.getByRole('combobox', { name: 'Part to step through' });
-	await partPicker.selectOption({ label: 'Soprano' });
+	await expect(partPicker.locator('option:checked')).toHaveText('Soprano');
 	await expect(page.getByRole('checkbox', { name: 'Also play the other parts' })).toBeVisible();
 
 	const [first, total] = await stepCount(page);
@@ -76,11 +76,15 @@ test('steps a real piece forward and back in Step mode', async ({ page }) => {
 	const backBox = await cursorBox(page);
 	expect([backBox.x, backBox.y]).toEqual([startBox.x, startBox.y]);
 
-	// All parts make a denser walk than one part, from the same place.
-	await partPicker.selectOption({ label: 'All parts' });
-	await expect(page.getByRole('checkbox', { name: 'Also play the other parts' })).toHaveCount(0);
-	const [, allTotal] = await stepCount(page);
-	expect(allTotal).toBeGreaterThan(total);
+	// Hearing the other parts still walks the singer's own steps.
+	await page.getByRole('checkbox', { name: 'Also play the other parts' }).check();
+	await next.click();
+	expect(await stepCount(page)).toEqual([2, total]);
+
+	// Another part is its own walk.
+	await partPicker.selectOption({ label: 'Alto' });
+	const [, altoTotal] = await stepCount(page);
+	expect(altoTotal).not.toBe(total);
 
 	// Back to Listen: the transport returns.
 	await modes.getByRole('button', { name: 'Listen' }).click();

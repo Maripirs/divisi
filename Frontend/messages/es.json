@@ -576,7 +576,6 @@
 	"piece_mode_pitch": "Afinación",
 	"piece_mode_pitch_soon": "El modo de afinación llegará pronto",
 	"piece_step_part": "Voz a recorrer",
-	"piece_step_all_parts": "Todas las voces",
 	"piece_step_part_numbered": "Voz {number}",
 	"piece_step_play_others": "Tocar también las otras voces",
 	"piece_step_previous": "Nota anterior",

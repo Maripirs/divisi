@@ -576,7 +576,6 @@
 	"piece_mode_pitch": "Pitch",
 	"piece_mode_pitch_soon": "Pitch mode is coming soon",
 	"piece_step_part": "Part to step through",
-	"piece_step_all_parts": "All parts",
 	"piece_step_part_numbered": "Part {number}",
 	"piece_step_play_others": "Also play the other parts",
 	"piece_step_previous": "Previous note",

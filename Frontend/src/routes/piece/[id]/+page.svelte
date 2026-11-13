@@ -14,6 +14,7 @@
 		VOICE_PARTS,
 		VISUAL_STATES,
 		type DisplayMode,
+		type MixBase,
 		type MixMode,
 		type MixPart,
 		type ParsedMIDI,
@@ -330,6 +331,8 @@
 	// `xml`, so the two arrays don't line up index-for-index (see
 	// `ConvertResult.staffVisualStates`).
 	let visibleStaffStates = $state<VisualState[]>([]);
+	// Each staff's base voice, same order (see `ConvertResult.staffBases`).
+	let visibleStaffBases = $state<MixBase[]>([]);
 	let positionMs = $state(0);
 	let durationMs = $state(0);
 	let isPlaying = $state(false);
@@ -398,12 +401,12 @@
 	// with "also play the other parts" on.
 	const STEP_SOUND_MS = 1000;
 	const STEP_OTHERS_VOLUME = 0.4;
-	const ALL_PARTS = 'all';
 	let practiceMode = $state<PracticeMode>('listen');
 	// The score the engine view is showing, reported by its `onScore`.
 	let engineScore = $state.raw<{ score: EngineScore; onsets: OnsetIndex } | null>(null);
 	// The part picked to step through, as `partKey`, or null until the
-	// singer picks one (then `defaultStepPartKey` applies).
+	// singer picks one (then `defaultStepPartKey` applies). Stepping always
+	// walks one part; "also play the other parts" is how to hear everyone.
 	let stepPartKey = $state<string | null>(null);
 	let stepPlayOthers = $state(false);
 	// Not `$state`: `stepState` is the reactive snapshot of it. Cast so TS
@@ -414,23 +417,21 @@
 		scoreRenderer === 'engine' && !adaptiveSections && hasPlayer && viewMode === 'player' && loadState.kind === 'ready'
 	);
 	let stepParts = $derived(engineScore ? practiceParts(engineScore.score) : []);
-	// The singer's own part when the display shows exactly one staff as
-	// active (highlighted or solo display), else every part. Staff states
-	// line up with the engine's staves one to one (one staff per `<part>` in
-	// `xml`); when they do not, no guessing.
+	// The singer's own voice part, found by each staff's base voice (one
+	// staff per `<part>` in `xml`, so they line up with the engine's
+	// staves); the first part when theirs is not on screen.
 	let defaultStepPartKey = $derived.by(() => {
+		const first = stepParts[0] ? partKey(stepParts[0]) : null;
 		const staffCount = engineScore?.score.staves.length ?? 0;
-		const active = visibleStaffStates.flatMap((state, staff) => (state === 'active' ? [staff] : []));
-		if (visibleStaffStates.length !== staffCount || active.length !== 1) return ALL_PARTS;
-		const part = stepParts.find((candidate) => candidate.staves.includes(active[0]));
-		return part ? partKey(part) : ALL_PARTS;
+		const own = visibleStaffBases.indexOf(voicePart);
+		if (visibleStaffBases.length !== staffCount || own < 0) return first;
+		const part = stepParts.find((candidate) => candidate.staves.includes(own));
+		return part ? partKey(part) : first;
 	});
 	// A pick from a previous score layout that no longer exists falls back
 	// to the default.
 	let resolvedStepPartKey = $derived(
-		stepPartKey !== null && (stepPartKey === ALL_PARTS || stepParts.some((part) => partKey(part) === stepPartKey))
-			? stepPartKey
-			: defaultStepPartKey
+		stepPartKey !== null && stepParts.some((part) => partKey(part) === stepPartKey) ? stepPartKey : defaultStepPartKey
 	);
 	let stepStaves = $derived(stepParts.find((part) => partKey(part) === resolvedStepPartKey)?.staves ?? null);
 	let stepSteps = $derived(
@@ -779,6 +780,7 @@
 			xml = '';
 			adaptiveSections = null;
 			visibleStaffStates = [];
+			visibleStaffBases = [];
 			loadState = { kind: 'noVisibleTracks' };
 			return;
 		}
@@ -786,6 +788,7 @@
 			xml = '';
 			adaptiveSections = null;
 			visibleStaffStates = [];
+			visibleStaffBases = [];
 			loadState = { kind: 'noNotesForVoicePart', part: visibleMixParts[0] };
 			return;
 		}
@@ -802,11 +805,13 @@
 			xml = result.xml;
 			msPerWholeNote = result.msPerWholeNote;
 			visibleStaffStates = result.staffVisualStates;
+			visibleStaffBases = result.staffBases;
 			loadState = { kind: 'ready' };
 		} catch {
 			xml = '';
 			adaptiveSections = null;
 			visibleStaffStates = [];
+			visibleStaffBases = [];
 			loadState = { kind: 'noNotesForVoicePart', part: voicePart };
 		}
 	}
@@ -1589,7 +1594,6 @@
 							value={resolvedStepPartKey}
 							onchange={(e) => setStepPart((e.target as HTMLSelectElement).value)}
 						>
-							<option value={ALL_PARTS}>{m.piece_step_all_parts()}</option>
 							{#each stepParts as part, index (partKey(part))}
 								<option value={partKey(part)}>{part.name ?? m.piece_step_part_numbered({ number: index + 1 })}</option>
 							{/each}

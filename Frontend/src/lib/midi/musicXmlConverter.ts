@@ -54,6 +54,9 @@ export interface ConvertResult {
 	/** One entry per emitted `<part>`, same order, so a caller doing
 	 * per-staff dimming doesn't have to re-derive which desks got merged. */
 	staffVisualStates: VisualState[];
+	/** Each emitted `<part>`'s base voice, same order (merged desks share
+	 * their base), so a caller can find the singer's own staff. */
+	staffBases: MixBase[];
 }
 
 /** Fallback color applied to non-selected notes in highlighted mode
@@ -74,7 +77,7 @@ export function convert(parsed: ParsedMIDI, partId: MixPart): ConvertResult {
 
 	const body = bodyXML(measureUnitSpans, useFlats, attributes);
 	const xml = scoreXML([{ id: 'P1', name: info.label, body }]);
-	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE, staffVisualStates: ['active'] };
+	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE, staffVisualStates: ['active'], staffBases: [info.base] };
 }
 
 /**
@@ -146,7 +149,8 @@ export function convertVisualParts(
 	return {
 		xml: scoreXML(parts),
 		msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE,
-		staffVisualStates: visibleParts.map((part) => displayVisualStates[part.id])
+		staffVisualStates: visibleParts.map((part) => displayVisualStates[part.id]),
+		staffBases: visibleParts.map((part) => part.base)
 	};
 }
 
