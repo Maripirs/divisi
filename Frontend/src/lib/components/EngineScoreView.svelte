@@ -253,11 +253,15 @@
 
 	async function load(module: EngineModule, source: string): Promise<void> {
 		const token = ++loadToken;
-		rendering = true;
 		loadError = null;
 		try {
-			await waitForPaint();
+			// Not `rendering` while hidden behind the PDF view: the piece
+			// page dims and disables its menu while a score renders, which
+			// would lock the very View switch that reveals this pane.
 			await waitForWidth();
+			if (token !== loadToken || destroyed) return;
+			rendering = true;
+			await waitForPaint();
 			if (token !== loadToken || destroyed) return;
 			const score = module.importMusicXml(source);
 			await mount(module, score);
