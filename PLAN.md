@@ -86,16 +86,15 @@ Listen mode already drives the engine cursor from the app's own player.
 **Tasks (Claude):**
 - [ ] **Slice 0: Foundation.** Remove the `[DEBUG-a4f2]` pitch-drift probe
       from `Frontend/src/lib/audio/player.ts` (or keep it only until Slice
-      1's diagnosis lands), sync the vendored engine to v0.2.0, and commit
+      1's diagnosis lands), sync the vendored engine to v0.3.0, and commit
       the engine path (`?renderer=engine`, tap-to-select, read-mode arrow
       stepping, `RenderSourceBadge`). Acceptance: check/test/build green;
-      `vendor/notation-engine/VERSION` shows 0.2.0 with a clean SHA.
+      `vendor/notation-engine/VERSION` shows 0.3.0 with a clean SHA.
       After the sync, pass `header: false` to `mountScore` in
-      `EngineScoreView` (no title block, like OSMD's `drawTitle: false`;
-      0.1.0 has no such option).
-      Partly done: engine path committed on 0.1.0 (e9bb335). Left: the
-      probe removal and the 0.2.0 sync (notation-engine has no `v0.2.0`
-      tag yet and uncommitted work).
+      `EngineScoreView` (no title block, like OSMD's `drawTitle: false`).
+      Partly done: engine path committed on 0.1.0 (e9bb335); synced to
+      0.3.0 (045ac8f) with `header: false`, Step mode skipping hidden
+      notes (78778c1). Left: the probe removal.
 - [ ] **Slice 1: Fix the audio pitch drift.** After a while on a piece,
       playback and tapped notes go flat (C4 measured at 258 Hz vs 261.6,
       about 24 cents) and sometimes recover; a fresh tab is in tune. Ruled
