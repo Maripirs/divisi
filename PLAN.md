@@ -168,13 +168,33 @@ Listen mode already drives the engine cursor from the app's own player.
       bar, scroll-follow on Der Abend, default part pick.
 - [ ] Sing-test Step and Pitch mode on a laptop, a phone, and iOS Safari.
 
+### Custom lines [ ] (design not started)
+
+Decided (human, 2026-11-14): a piece can carry **custom lines** beyond the
+SATB desks and accompaniment, e.g. solos and small subgroups (Ezekiel's
+"Altos" / "2 Tenors" doom-a-loom-a lines, today misnamed "Alto 2" /
+"Tenor 2" by `add_ezekiel_divisi.py`; Ezekiel's solo is not in the score
+at all yet). Likely a third `PartChoice` kind next to `voice` and
+`accompaniment` (`ConfirmPartsPanel.svelte`). Open design: how a line is
+recognised (file part name, admin choice, or both), its label, mixer and
+score defaults, whether singers can be assigned to it, and where the
+choice is stored.
+
 ### Other open work
 
-None outstanding on the building side. Both halves of the ambiguous
-voice-part gate (Part A: `/review` confirmation, `cf362db`; Part B:
-Tracks-tab direct-upload gate, `4bb9fbc`) and the player "greying out" fix
-(`ace3802`) are done. What remains is deploy/verification/
-decision work, tracked in the two sections below.
+- [ ] Piece-view converter ignores pickup measures: its fixed grid starts
+      full measures at time 0, so every barline of a piece with a pickup
+      (Ezekiel: eighth-note pickup) lands late by the pickup's length.
+      Found while fixing two-voice staves (75b92ad).
+- [ ] `assignVoiceParts` numbering: "Tenor" + "Tenor 2" falls back to
+      mean-pitch order and can swap desks (Ezekiel tenors). Unnumbered
+      parts should take the lowest free number in file order when the
+      explicit numbers don't collide. May be moot for Ezekiel once custom
+      lines land, still wrong in general.
+
+Both halves of the ambiguous voice-part gate (Part A: `/review`
+confirmation, `cf362db`; Part B: Tracks-tab direct-upload gate, `4bb9fbc`)
+and the player "greying out" fix (`ace3802`) are done.
 
 ## Awaiting human verification
 
