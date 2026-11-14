@@ -34,7 +34,8 @@ const DEFAULT_TEMPO_BPM = 120; // same fallback as `midi/parser.ts`, for files w
  * voice, every other measure splits by onset. That is why `readPart` keeps
  * each note's `<voice>` and measure span; they ride along on `MIDINote` as
  * `sourceVoice`/`measureIndex`/`endMeasureIndex` only as far as the split
- * and are stripped from the returned notes.
+ * and are stripped from the returned notes (lyrics carry the same voice and
+ * measure hints, also stripped).
  *
  * `voicePartChannels` is always empty: that field only represents source
  * MIDI channel numbers. Playback still gets separate live mixer channels
@@ -108,7 +109,15 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 					endMeasureIndex: note.endMeasureIndex
 				});
 			}
-			for (const lyric of raw.lyrics) lyrics.push({ ...lyric, partId });
+			for (const lyric of raw.lyrics) {
+				lyrics.push({
+					text: lyric.text,
+					timeMs: lyric.timeMs,
+					partId,
+					sourceVoice: lyric.voice,
+					measureIndex: lyric.measureIndex
+				});
+			}
 		} else {
 			for (const note of raw.notes) backingNotes.push(pitchAndTiming(note));
 		}
@@ -131,6 +140,7 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	// produces (and nothing comparing or serializing notes sees extra keys).
 	split.notes = split.notes.map(({ pitch, startMs, durationMs, partId }) => ({ pitch, startMs, durationMs, partId }));
 	split.notes.sort((a, b) => a.startMs - b.startMs);
+	split.lyrics = split.lyrics.map(({ text, timeMs, partId }) => ({ text, timeMs, partId }));
 	split.lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
 	// First-occurrence-in-part-order wins — same simplification
@@ -190,7 +200,7 @@ interface RawPart {
 	 * parts before voice-part assignment. */
 	staffCount: number;
 	notes: RawNote[];
-	lyrics: { text: string; timeMs: number }[];
+	lyrics: { text: string; timeMs: number; voice: string; measureIndex: number }[];
 	keySignatureFifths: number | null;
 	timeSignature: MIDITimeSignature | null;
 }
@@ -302,7 +312,9 @@ function readPart(doc: Document, partId: string, name: string | null, initialTem
 						else openTies.delete(tieKey);
 
 						for (const lyricText of el.querySelectorAll(':scope > lyric > text')) {
-							if (lyricText.textContent) result.lyrics.push({ text: lyricText.textContent, timeMs: startMs });
+							if (lyricText.textContent) {
+								result.lyrics.push({ text: lyricText.textContent, timeMs: startMs, voice, measureIndex });
+							}
 						}
 					}
 

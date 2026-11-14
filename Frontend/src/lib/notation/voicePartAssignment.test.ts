@@ -303,6 +303,24 @@ describe('splitChordalDivisi', () => {
 				{ text: 'is', timeMs: 500, partId: 'soprano-2' }
 			]);
 		});
+
+		it("sends a lyric that knows its voice to that voice's desk, even when both voices attack there", () => {
+			const notes: MIDINote[] = [
+				vnote(82, 0, '21', 0, 1000), // Bb5 held, ending one phrase...
+				vnote(78, 0, '22', 0, 500), // ...while Gb5 starts the next
+				vnote(78, 500, '22', 0, 500)
+			];
+			const lyrics: MIDILyricEvent[] = [
+				{ text: 'air.', timeMs: 0, partId: 'soprano', sourceVoice: '21', measureIndex: 0 },
+				{ text: "'Way", timeMs: 0, partId: 'soprano', sourceVoice: '22', measureIndex: 0 }
+			];
+			const result = splitChordalDivisi(flatParts, notes, lyrics);
+
+			expect(result.lyrics.map((l) => [l.text, l.partId])).toEqual([
+				['air.', 'soprano-1'],
+				["'Way", 'soprano-2']
+			]);
+		});
 	});
 });
 
@@ -355,7 +373,23 @@ describe('mergeSplitDesksForDisplay', () => {
 		const split = splitChordalDivisi(flatParts, notes, lyrics);
 		const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, activeStates(split.parts));
 
-		expect(result.lyrics).toEqual([{ text: 'Glo-', timeMs: 0, partId: 'soprano' }]);
+		expect(result.lyrics).toEqual([{ text: 'Glo-', timeMs: 0, partId: 'soprano', desks: [1, 2] }]);
+	});
+
+	it('tags each merged note with the desk(s) it came from', () => {
+		const notes: MIDINote[] = [
+			note(67, 0, 'soprano'), // 2-note onset: G4 -> desk 1, C4 -> desk 2
+			note(60, 0, 'soprano'),
+			note(64, 500, 'soprano') // unison clone on both desks
+		];
+		const split = splitChordalDivisi(flatParts, notes, []);
+		const result = mergeSplitDesksForDisplay(split.parts, split.notes, split.lyrics, activeStates(split.parts));
+
+		expect(result.notes.map((n) => [n.pitch, n.desks])).toEqual([
+			[67, [1]],
+			[60, [2]],
+			[64, [1, 2]]
+		]);
 	});
 
 	it('is a no-op when there is no split pair to merge', () => {

@@ -1,4 +1,9 @@
-import { mergeSplitDesksForDisplay } from '../notation/voicePartAssignment.ts';
+import {
+	mergeSplitDesksForDisplay,
+	type DisplayDesk,
+	type DisplayLyric,
+	type DisplayNote
+} from '../notation/voicePartAssignment.ts';
 import type {
 	MIDILyricEvent,
 	MIDINote,
@@ -75,7 +80,7 @@ export function convert(parsed: ParsedMIDI, partId: MixPart): ConvertResult {
 	const useFlats = parsed.keySignatureFifths < 0;
 	const attributes = attributesXML(parsed.timeSignature, parsed.keySignatureFifths, info.base);
 
-	const body = bodyXML(measureUnitSpans, useFlats, attributes);
+	const body = bodyXML(measureUnitSpans.map((pieces) => [pieces]), useFlats, attributes);
 	const xml = scoreXML([{ id: 'P1', name: info.label, body }]);
 	return { xml, msPerWholeNote: unitMs * UNITS_PER_WHOLE_NOTE, staffVisualStates: ['active'], staffBases: [info.base] };
 }
@@ -124,16 +129,20 @@ export function convertVisualParts(
 
 	if (visibleParts.length === 0) throw new Error('No visible voice parts selected.');
 
-	const measureUnitSpansByPart = new Map<MixPart, MeasurePiece[][]>();
+	const measureUnitSpansByPart = new Map<MixPart, Measure[]>();
 	for (const part of visibleParts) {
+		const deskNotes = merged.notes.filter((n) => n.partId === part.id && n.desks);
+		if (deskNotes.length > 0) {
+			const deskLyrics = merged.lyrics.filter((l) => l.partId === part.id);
+			measureUnitSpansByPart.set(part.id, deskMeasuresFor(deskNotes, deskLyrics, unitMs, unitsPerMeasure));
+			continue;
+		}
 		const notes = notesForPart(displayParsed, part, unitMs);
-		measureUnitSpansByPart.set(part.id, measuresFor(notes, unitMs, unitsPerMeasure));
+		measureUnitSpansByPart.set(part.id, measuresFor(notes, unitMs, unitsPerMeasure).map((pieces) => [pieces]));
 	}
 
 	const sharedMeasureCount = Math.max(1, ...[...measureUnitSpansByPart.values()].map((m) => m.length));
-	const restMeasure: MeasurePiece[] = [
-		{ durationUnits: unitsPerMeasure, pitches: null, lyric: null, continuesFromPrevious: false, continuesToNext: false }
-	];
+	const restMeasure: Measure = [restPieces(unitsPerMeasure)];
 	for (const part of visibleParts) {
 		const spans = measureUnitSpansByPart.get(part.id)!;
 		while (spans.length < sharedMeasureCount) spans.push(restMeasure);
@@ -203,6 +212,117 @@ function attachLyrics(notes: MIDINote[], lyricEvents: MIDILyricEvent[], unitMs: 
 			const lyric = bestIndex >= 0 ? remaining.splice(bestIndex, 1)[0].text : null;
 			return { pitch: note.pitch, startMs: note.startMs, durationMs: note.durationMs, lyric };
 		});
+}
+
+/** One measure as written: one piece list per `<voice>`. A single entry is
+ * the plain chord stream every part has always used (no `<voice>`/`<stem>`
+ * written); two entries are a merged divisi staff's desks written as
+ * independent voices (see `deskMeasuresFor`). */
+type Measure = MeasurePiece[][];
+
+function restPieces(unitsPerMeasure: number): MeasurePiece[] {
+	return [
+		{ durationUnits: unitsPerMeasure, pitches: null, lyric: null, continuesFromPrevious: false, continuesToNext: false }
+	];
+}
+
+/**
+ * Measures for a staff `mergeSplitDesksForDisplay` merged from two
+ * auto-split desks. Each desk gets its own timeline, built once for the
+ * whole part and split at barlines, so a note one desk holds while the
+ * other moves keeps its real length and ties across barlines within its
+ * own voice. Grouping both desks' onsets into one chord stream (the plain
+ * path) would instead stretch every chord to its longest note and shove
+ * the moving notes into whatever time is left.
+ *
+ * Mode is chosen per measure: where both desks' pieces line up exactly
+ * (same durations, rests and ties) the measure is zipped back into one
+ * chord stream, same output as an unsplit chordal part; otherwise the desks
+ * are written as voice 1 (stems up) and voice 2 (stems down). A desk silent
+ * for a whole two-voice measure still writes a full-measure rest, since
+ * every voice has to fill the measure. A chord measure tied to a
+ * neighboring two-voice measure is written as two voices too, so each tie
+ * stays within one voice on both sides of the barline.
+ */
+function deskMeasuresFor(
+	notes: DisplayNote[],
+	lyrics: DisplayLyric[],
+	unitMs: number,
+	unitsPerMeasure: number
+): Measure[] {
+	const deskMeasures = ([1, 2] as DisplayDesk[]).map((desk) => {
+		const deskNotes = notes.filter((n) => n.desks?.includes(desk));
+		const deskLyrics = lyrics.filter((l) => l.desks?.includes(desk));
+		return measuresFor(attachLyrics(deskNotes, deskLyrics, unitMs), unitMs, unitsPerMeasure);
+	});
+	const count = Math.max(...deskMeasures.map((m) => m.length));
+	const [upper, lower] = deskMeasures.map((m) =>
+		Array.from({ length: count }, (_, i) => m[i] ?? restPieces(unitsPerMeasure))
+	);
+
+	const twoVoice = upper.map((pieces, i) => !sameRhythm(pieces, lower[i]));
+	const tiedInto = (i: number, flag: 'continuesFromPrevious' | 'continuesToNext') =>
+		[...upper[i], ...lower[i]].some((piece) => piece[flag]);
+	for (let changed = true; changed; ) {
+		changed = false;
+		for (let i = 0; i < count; i++) {
+			if (twoVoice[i]) continue;
+			const tiedToTwoVoice =
+				(twoVoice[i - 1] && tiedInto(i, 'continuesFromPrevious')) ||
+				(twoVoice[i + 1] && tiedInto(i, 'continuesToNext'));
+			if (tiedToTwoVoice) {
+				twoVoice[i] = true;
+				changed = true;
+			}
+		}
+	}
+
+	return upper.map((pieces, i) =>
+		twoVoice[i] ? [pieces, withoutSharedLyrics(pieces, lower[i])] : [zipChords(pieces, lower[i])]
+	);
+}
+
+function sameRhythm(a: MeasurePiece[], b: MeasurePiece[]): boolean {
+	return (
+		a.length === b.length &&
+		a.every(
+			(piece, i) =>
+				piece.durationUnits === b[i].durationUnits &&
+				(piece.pitches === null) === (b[i].pitches === null) &&
+				piece.continuesFromPrevious === b[i].continuesFromPrevious &&
+				piece.continuesToNext === b[i].continuesToNext
+		)
+	);
+}
+
+/** Folds two rhythm-identical desks (see `sameRhythm`) into one chord
+ * stream: the pitches are unioned, and one syllable per onset is kept,
+ * desk 1's first. */
+function zipChords(upper: MeasurePiece[], lower: MeasurePiece[]): MeasurePiece[] {
+	return upper.map((piece, i) => {
+		const other = lower[i];
+		const pitches =
+			piece.pitches && other.pitches ? [...new Set([...piece.pitches, ...other.pitches])].sort((a, b) => a - b) : null;
+		return { ...piece, pitches, lyric: piece.lyric ?? other.lyric };
+	});
+}
+
+/** Drops voice 2's syllable wherever voice 1 sings the same text at the
+ * same moment: `splitChordalDivisi` gives a lyric to both desks when both
+ * attack under it, and it should only print once. */
+function withoutSharedLyrics(upper: MeasurePiece[], lower: MeasurePiece[]): MeasurePiece[] {
+	const upperLyrics = new Map<number, string>();
+	let offset = 0;
+	for (const piece of upper) {
+		if (piece.lyric !== null && !piece.continuesFromPrevious) upperLyrics.set(offset, piece.lyric);
+		offset += piece.durationUnits;
+	}
+	offset = 0;
+	return lower.map((piece) => {
+		const shared = piece.lyric !== null && upperLyrics.get(offset) === piece.lyric;
+		offset += piece.durationUnits;
+		return shared ? { ...piece, lyric: null } : piece;
+	});
 }
 
 function msPerUnit(tempoBPM: number): number {
@@ -464,7 +584,8 @@ function noteXML(
 	tieStop: boolean,
 	color?: string,
 	isChord = false,
-	lyric?: string
+	lyric?: string,
+	voice?: number
 ): string {
 	const dotsXML = '\n          <dot/>'.repeat(chunk.dots);
 	const chordXML = isChord ? '        <chord/>\n' : '';
@@ -510,10 +631,15 @@ function noteXML(
 		? `\n          <lyric number="1">\n            <syllabic>single</syllabic>\n            <text>${escapeXmlText(lyric)}</text>\n          </lyric>`
 		: '';
 
+	// Only a multi-voice measure numbers its voices; voice 1 stems up and
+	// voice 2 down so the two lines stay legible on one staff.
+	const voiceXML = voice !== undefined ? `\n        <voice>${voice}</voice>` : '';
+	const stemXML = voice !== undefined && pitch !== null ? `\n        <stem>${voice === 1 ? 'up' : 'down'}</stem>` : '';
+
 	return `      <note${colorAttrXML}>
 ${chordXML}${pitchOrRestXML}
-        <duration>${chunk.units}</duration>${tieXML}
-        <type>${chunk.type}</type>${dotsXML}${notationsXML}${lyricXML}
+        <duration>${chunk.units}</duration>${tieXML}${voiceXML}
+        <type>${chunk.type}</type>${dotsXML}${stemXML}${notationsXML}${lyricXML}
       </note>
 `;
 }
@@ -528,37 +654,47 @@ function escapeXmlText(text: string): string {
 
 /** Emits one part's `<measure>` elements, shared between the single-part
  * and multi-part conversions. `color`, when given, tints this part's
- * rendered symbols for muted/custom display modes. */
-function bodyXML(measureUnitSpans: MeasurePiece[][], useFlats: boolean, firstMeasureAttributesXML: string, color?: string): string {
+ * rendered symbols for muted/custom display modes. A measure with more than
+ * one voice writes each in turn, numbered, with a `<backup>` back to the
+ * barline between them. */
+function bodyXML(measures: Measure[], useFlats: boolean, firstMeasureAttributesXML: string, color?: string): string {
 	let body = '';
-	measureUnitSpans.forEach((measureEvents, measureIndex) => {
+	measures.forEach((voices, measureIndex) => {
 		body += `    <measure number="${measureIndex + 1}">\n`;
 		if (measureIndex === 0) body += firstMeasureAttributesXML;
-		for (const piece of measureEvents) {
-			const chunks = decompose(piece.durationUnits);
-			const isNote = piece.pitches !== null;
-			chunks.forEach((chunk, chunkIndex) => {
-				// A chunk needs a tie to its neighbor whenever there's a
-				// sounding note on both sides of the split — either
-				// because `decompose` broke one piece into several notated
-				// fragments, or because this piece itself is a
-				// measure-boundary fragment of a longer original note.
-				const tieStop = isNote && (chunkIndex > 0 || piece.continuesFromPrevious);
-				const tieStart = isNote && (chunkIndex < chunks.length - 1 || piece.continuesToNext);
-				// Only the first note of a chord, on the first written
-				// fragment of a tie group, carries the lyric — engraving
-				// convention is one syllable per chord/tie group, not one
-				// per stacked pitch or tied fragment.
-				const lyric = isNote && !tieStop ? (piece.lyric ?? undefined) : undefined;
-				if (piece.pitches) {
-					piece.pitches.forEach((pitch, pitchIndex) => {
-						body += noteXML(pitch, chunk, useFlats, tieStart, tieStop, color, pitchIndex > 0, pitchIndex === 0 ? lyric : undefined);
-					});
-				} else {
-					body += noteXML(null, chunk, useFlats, false, false, color);
-				}
-			});
-		}
+		voices.forEach((measureEvents, voiceIndex) => {
+			const voice = voices.length > 1 ? voiceIndex + 1 : undefined;
+			if (voiceIndex > 0) {
+				const backupUnits = voices[voiceIndex - 1].reduce((sum, piece) => sum + piece.durationUnits, 0);
+				body += `      <backup>\n        <duration>${backupUnits}</duration>\n      </backup>\n`;
+			}
+			for (const piece of measureEvents) {
+				const chunks = decompose(piece.durationUnits);
+				const isNote = piece.pitches !== null;
+				chunks.forEach((chunk, chunkIndex) => {
+					// A chunk needs a tie to its neighbor whenever there's a
+					// sounding note on both sides of the split, either
+					// because `decompose` broke one piece into several notated
+					// fragments, or because this piece itself is a
+					// measure-boundary fragment of a longer original note.
+					const tieStop = isNote && (chunkIndex > 0 || piece.continuesFromPrevious);
+					const tieStart = isNote && (chunkIndex < chunks.length - 1 || piece.continuesToNext);
+					// Only the first note of a chord, on the first written
+					// fragment of a tie group, carries the lyric: engraving
+					// convention is one syllable per chord/tie group, not one
+					// per stacked pitch or tied fragment.
+					const lyric = isNote && !tieStop ? (piece.lyric ?? undefined) : undefined;
+					if (piece.pitches) {
+						piece.pitches.forEach((pitch, pitchIndex) => {
+							const pitchLyric = pitchIndex === 0 ? lyric : undefined;
+							body += noteXML(pitch, chunk, useFlats, tieStart, tieStop, color, pitchIndex > 0, pitchLyric, voice);
+						});
+					} else {
+						body += noteXML(null, chunk, useFlats, false, false, color, false, undefined, voice);
+					}
+				});
+			}
+		});
 		body += '    </measure>\n';
 	});
 	return body;

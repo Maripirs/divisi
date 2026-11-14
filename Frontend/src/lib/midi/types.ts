@@ -104,6 +104,12 @@ export interface MIDILyricEvent {
 	text: string;
 	timeMs: number;
 	partId: MixPart;
+	/** Parse-time-only hints, same as `MIDINote`'s: the `<voice>` of the
+	 * note the syllable was written on and the 0-based `<measure>` index, so
+	 * `splitChordalDivisi` can send it to that voice's desk. Stripped by
+	 * `musicxml/parser.ts` before returning `ParsedMIDI`. */
+	sourceVoice?: string;
+	measureIndex?: number;
 }
 
 /** A track/part with real notes that `notation/voicePartAssignment.ts`'s

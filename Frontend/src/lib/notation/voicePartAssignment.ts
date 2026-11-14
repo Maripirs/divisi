@@ -296,12 +296,14 @@ export function assignVoiceParts(tracks: { name: string | null; pitches: number[
  * has 3+ distinct `<voice>` values, the voice rule is dropped for that
  * whole part and every measure falls back to the onset rule.
  *
- * Lyrics have no pitch or voice, so a lyric at a split base goes to every
- * desk with a note starting at its `timeMs`, or to both desks when neither
- * or both do. Under the onset rule both desks always share every onset, so
- * that is plain duplication, same reasoning as the 1-note-onset note case
- * above -- there's no way to prefer one desk over the other. Under the
- * voice rule it keeps a syllable off the desk that is resting under it.
+ * A lyric in a voice-rule measure that knows its source voice (MusicXML)
+ * goes to that voice's desk, like its note, so two voices singing different
+ * words at one moment keep their own syllables. Any other lyric has no
+ * pitch or voice to go by, so it goes to every desk with a note starting
+ * at its `timeMs`, or to both desks when neither or both do. Under the
+ * onset rule both desks always share every onset, so that is plain
+ * duplication, same reasoning as the 1-note-onset note case above --
+ * there's no way to prefer one desk over the other.
  */
 export function splitChordalDivisi(
 	parts: VoicePartInfo[],
@@ -368,6 +370,9 @@ export function splitChordalDivisi(
 		const desk2Onsets = new Set(splitNotes.filter((n) => n.partId === desk2Id).map((n) => n.startMs));
 		outLyrics = outLyrics.flatMap((lyric) => {
 			if (lyric.partId !== base) return [lyric];
+			const deskByVoice = lyric.measureIndex === undefined ? undefined : voiceDesks.get(lyric.measureIndex);
+			const voiceDesk = lyric.sourceVoice === undefined ? undefined : deskByVoice?.get(lyric.sourceVoice);
+			if (voiceDesk) return [{ ...lyric, partId: voiceDesk === 1 ? desk1Id : desk2Id }];
 			const onDesk1 = desk1Onsets.has(lyric.timeMs);
 			const onDesk2 = desk2Onsets.has(lyric.timeMs);
 			if (onDesk1 && !onDesk2) return [{ ...lyric, partId: desk1Id }];
@@ -440,37 +445,59 @@ function voiceDeskByMeasure(notes: MIDINote[]): Map<number, Map<string, 1 | 2>> 
 	return result;
 }
 
+/** Which auto-split desk(s) a merged display note or lyric came from. Set
+ * only by `mergeSplitDesksForDisplay`, on the copies it builds; the
+ * converter uses it to write the two desks as separate `<voice>`s where
+ * their rhythms differ (see `musicXmlConverter.ts`'s `deskMeasuresFor`). */
+export type DisplayDesk = 1 | 2;
+export type DisplayNote = MIDINote & { desks?: DisplayDesk[] };
+export type DisplayLyric = MIDILyricEvent & { desks?: DisplayDesk[] };
+
+/** Keeps the first of any repeated key, folding a repeat's `desks` into the
+ * kept copy. Every value carrying `desks` is a fresh copy built by
+ * `mergeSplitDesksForDisplay`, and the fold makes another copy anyway, so
+ * no input is mutated. */
+function dedupeByKey<T extends { desks?: DisplayDesk[] }>(items: T[], keyOf: (item: T) => string): T[] {
+	const indexByKey = new Map<string, number>();
+	const result: T[] = [];
+	for (const item of items) {
+		const key = keyOf(item);
+		const index = indexByKey.get(key);
+		if (index === undefined) {
+			indexByKey.set(key, result.length);
+			result.push(item);
+			continue;
+		}
+		const kept = result[index];
+		if (kept.desks && item.desks) {
+			const desks = [...new Set([...kept.desks, ...item.desks])].sort((a, b) => a - b);
+			result[index] = { ...kept, desks };
+		}
+	}
+	return result;
+}
+
 /** Dedupes a note list, keyed by part + onset + pitch, keeping the first of
  * any exact repeat. Used by `mergeSplitDesksForDisplay` to collapse a
  * unison-onset note that `splitChordalDivisi` cloned onto both desks back
- * down to the single note it started as -- two genuinely different pitches
- * at the same onset (a real 2-note chord) have different keys, so they're
- * never touched by this. */
-function dedupeNotes(notes: MIDINote[]): MIDINote[] {
-	const seen = new Set<string>();
-	const result: MIDINote[] = [];
-	for (const note of notes) {
-		const key = `${note.partId}:${note.startMs}:${note.pitch}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(note);
-	}
-	return result;
+ * down to the single note it started as (now tagged with both desks) -- two
+ * genuinely different pitches at the same onset (a real 2-note chord) have
+ * different keys, so they're never touched by this. A merged desk note also
+ * keys on its duration, so two voices that attack one pitch together but
+ * hold it for different lengths keep their own notes. */
+function dedupeNotes(notes: DisplayNote[]): DisplayNote[] {
+	return dedupeByKey(notes, (note) =>
+		note.desks
+			? `${note.partId}:${note.startMs}:${note.pitch}:${note.durationMs}`
+			: `${note.partId}:${note.startMs}:${note.pitch}`
+	);
 }
 
 /** Same idea as `dedupeNotes` but for lyrics, which have no pitch to key on
  * -- text + onset is the only thing distinguishing a real repeated lyric
  * from a duplicate `splitChordalDivisi` produced. */
-function dedupeLyrics(lyrics: MIDILyricEvent[]): MIDILyricEvent[] {
-	const seen = new Set<string>();
-	const result: MIDILyricEvent[] = [];
-	for (const lyric of lyrics) {
-		const key = `${lyric.partId}:${lyric.timeMs}:${lyric.text}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		result.push(lyric);
-	}
-	return result;
+function dedupeLyrics(lyrics: DisplayLyric[]): DisplayLyric[] {
+	return dedupeByKey(lyrics, (lyric) => `${lyric.partId}:${lyric.timeMs}:${lyric.text}`);
 }
 
 /** Merging rule for one pair of desks' visual states -- see the doc comment
@@ -483,8 +510,8 @@ function mergeVisualState(a: VisualState, b: VisualState): VisualState {
 
 export interface MergedForDisplay {
 	parts: VoicePartInfo[];
-	notes: MIDINote[];
-	lyrics: MIDILyricEvent[];
+	notes: DisplayNote[];
+	lyrics: DisplayLyric[];
 	visualStates: Record<MixPart, VisualState>;
 }
 
@@ -522,6 +549,10 @@ export interface MergedForDisplay {
  * duplicates a base voice's lyric event onto both desks at every onset
  * both desks share (not just unison ones -- see its own doc comment).
  *
+ * Every merged note and lyric keeps the desk(s) it came from in `desks`
+ * (`[1, 2]` for a deduped clone), so the score can still write the desks as
+ * two independent voices where their rhythms differ.
+ *
  * The two desks' visual states can differ if a user manually soloed/muted
  * just one desk in the mixer. `mergeVisualState` favors showing the merged
  * staff plainly over inventing partial-chord coloring (out of scope here):
@@ -538,8 +569,8 @@ export function mergeSplitDesksForDisplay(
 	visualStates: Record<MixPart, VisualState>
 ): MergedForDisplay {
 	let outParts = parts;
-	let outNotes = notes;
-	let outLyrics = lyrics;
+	let outNotes: DisplayNote[] = notes;
+	let outLyrics: DisplayLyric[] = lyrics;
 	const outVisualStates = { ...visualStates };
 
 	for (const base of VOICE_PARTS) {
@@ -558,8 +589,16 @@ export function mergeSplitDesksForDisplay(
 			return [mergedInfo];
 		});
 
-		outNotes = outNotes.map((n) => (n.partId === desk1Id || n.partId === desk2Id ? { ...n, partId: base } : n));
-		outLyrics = outLyrics.map((l) => (l.partId === desk1Id || l.partId === desk2Id ? { ...l, partId: base } : l));
+		const desksOf = (partId: MixPart): DisplayDesk[] | undefined =>
+			partId === desk1Id ? [1] : partId === desk2Id ? [2] : undefined;
+		outNotes = outNotes.map((n) => {
+			const desks = desksOf(n.partId);
+			return desks ? { ...n, partId: base, desks } : n;
+		});
+		outLyrics = outLyrics.map((l) => {
+			const desks = desksOf(l.partId);
+			return desks ? { ...l, partId: base, desks } : l;
+		});
 
 		outVisualStates[base] = mergeVisualState(outVisualStates[desk1Id], outVisualStates[desk2Id]);
 		delete outVisualStates[desk1Id];
