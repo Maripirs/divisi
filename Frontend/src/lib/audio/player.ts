@@ -1,4 +1,6 @@
+import { get } from 'svelte/store';
 import { buildPlaybackMidi } from '../midi/playbackMidiBuilder.ts';
+import { audioDiagnostics } from './audioDiagnostics.ts';
 import { MIX_PARTS, VOICE_PARTS, type MixPart, type ParsedMIDI } from '../midi/types.ts';
 
 const TICKS_PER_BEAT = 480; // must match `playbackMidiBuilder.ts`'s constant
@@ -150,8 +152,17 @@ export class MidiPlayer {
 	// playback (the Media Session API's lock-screen controls need that same
 	// real element to attach to; they don't grant background execution by
 	// themselves).
-	private readonly streamDestination: MediaStreamAudioDestinationNode;
-	private readonly audioEl: HTMLAudioElement;
+	//
+	// TEMPORARY (CarPlay audio diagnostics, see `./audioDiagnostics.ts`):
+	// both are `null` in "direct output" mode, where the synth node goes
+	// straight to `context.destination` and no bridge exists; every use
+	// below is null-safe for that. Background/lock-screen playback is
+	// expected not to survive in direct mode, which is an accepted part of
+	// the test. The Settings drawer's "Background audio" toggle has no say
+	// in this either way: it's a placeholder that's never persisted or read
+	// here, so the bridge is always on unless direct mode is.
+	private readonly streamDestination: MediaStreamAudioDestinationNode | null;
+	private readonly audioEl: HTMLAudioElement | null;
 	private channelForPart: Record<MixPart, number> | null = null;
 	private durationMs = 0;
 	private pausedAtMs = 0;
@@ -177,8 +188,8 @@ export class MidiPlayer {
 	private constructor(
 		context: AudioContext,
 		synth: JSSynthesizer,
-		streamDestination: MediaStreamAudioDestinationNode,
-		audioEl: HTMLAudioElement
+		streamDestination: MediaStreamAudioDestinationNode | null,
+		audioEl: HTMLAudioElement | null
 	) {
 		this.context = context;
 		this.synth = synth;
@@ -188,7 +199,10 @@ export class MidiPlayer {
 
 	static async create(): Promise<MidiPlayer> {
 		await loadVendorScripts();
-		const context = new AudioContext();
+		// TEMPORARY (CarPlay audio diagnostics): read once here, so a change
+		// applies to the next player created, never to a live one.
+		const diagnostics = get(audioDiagnostics);
+		const context = diagnostics.latencyPlayback ? new AudioContext({ latencyHint: 'playback' }) : new AudioContext();
 		// Must happen before constructing the node below — these register
 		// the processor into this context's own AudioWorklet global scope,
 		// a separate environment per `AudioContext`.
@@ -198,18 +212,41 @@ export class MidiPlayer {
 		const synth = new window.JSSynth.AudioWorkletNodeSynthesizer();
 		synth.init(context.sampleRate);
 		const node = synth.createAudioNode(context);
-		const streamDestination = context.createMediaStreamDestination();
-		node.connect(streamDestination);
 
-		// Not attached to the visible DOM tree (no layout/paint role — audio
-		// only) but still appended to `document.body`, which some browsers
-		// require for the background-audio/lock-screen allowances above to
-		// actually apply.
-		const audioEl = document.createElement('audio');
-		audioEl.style.display = 'none';
-		audioEl.setAttribute('playsinline', ''); // iOS Safari: never take over fullscreen
-		audioEl.srcObject = streamDestination.stream;
-		document.body.appendChild(audioEl);
+		let streamDestination: MediaStreamAudioDestinationNode | null = null;
+		let audioEl: HTMLAudioElement | null = null;
+		if (diagnostics.directOutput) {
+			// TEMPORARY (CarPlay audio diagnostics): no bridge at all, one
+			// buffering stage fewer. See the `streamDestination` field comment
+			// for what that costs (background audio).
+			node.connect(context.destination);
+		} else {
+			streamDestination = context.createMediaStreamDestination();
+			node.connect(streamDestination);
+
+			// Not attached to the visible DOM tree (no layout/paint role, audio
+			// only) but still appended to `document.body`, which some browsers
+			// require for the background-audio/lock-screen allowances above to
+			// actually apply.
+			audioEl = document.createElement('audio');
+			audioEl.style.display = 'none';
+			audioEl.setAttribute('playsinline', ''); // iOS Safari: never take over fullscreen
+			audioEl.srcObject = streamDestination.stream;
+			document.body.appendChild(audioEl);
+		}
+
+		// TEMPORARY (CarPlay audio diagnostics): one line per player so a
+		// Web Inspector session on the phone shows which variant is live.
+		// `outputLatency` is missing on some Safari versions (logs
+		// `undefined`), and both latencies can still read 0 until the
+		// context has actually started running.
+		console.info('[divisi audio]', {
+			latencyHint: diagnostics.latencyPlayback ? 'playback' : 'interactive (default)',
+			routing: diagnostics.directOutput ? 'direct (context.destination)' : 'bridge (<audio> element)',
+			sampleRate: context.sampleRate,
+			baseLatency: context.baseLatency,
+			outputLatency: context.outputLatency
+		});
 
 		const soundfont = await fetch(SOUNDFONT_URL).then((r) => r.arrayBuffer());
 		await synth.loadSFont(soundfont);
@@ -252,7 +289,7 @@ export class MidiPlayer {
 		// play() call still originates from the same user gesture that
 		// invoked this method — iOS Safari's autoplay gate requires that,
 		// not just that a gesture happened *somewhere* earlier in the chain.
-		const resumeAudioEl = this.audioEl.play().catch(() => {});
+		const resumeAudioEl = this.audioEl ? this.audioEl.play().catch(() => {}) : Promise.resolve();
 		const resumeContext = this.context.state === 'suspended' ? this.context.resume() : Promise.resolve();
 		await Promise.all([resumeAudioEl, resumeContext]);
 		this.synth.seekPlayer(this.msToTick(this.pausedAtMs));
@@ -266,14 +303,14 @@ export class MidiPlayer {
 		if (!this.playing) return;
 		this.pausedAtMs = this.positionMs;
 		this.synth.stopPlayer();
-		this.audioEl.pause();
+		this.audioEl?.pause();
 		this.playing = false;
 	}
 
 	private stop(): void {
 		if (this.destroyed) return;
 		this.synth.stopPlayer();
-		this.audioEl.pause();
+		this.audioEl?.pause();
 		this.playing = false;
 		this.pausedAtMs = 0;
 	}
@@ -287,9 +324,11 @@ export class MidiPlayer {
 		this.pausedAtMs = 0;
 		this.channelForPart = null;
 		this.destroyed = true;
-		this.audioEl.pause();
-		this.audioEl.srcObject = null;
-		this.audioEl.remove();
+		if (this.audioEl) {
+			this.audioEl.pause();
+			this.audioEl.srcObject = null;
+			this.audioEl.remove();
+		}
 		this.synth.close();
 		void this.context.close().catch(() => {});
 	}
@@ -330,7 +369,7 @@ export class MidiPlayer {
 			if (velocity > 0 && velocity > (keys.get(key) ?? 0)) keys.set(key, velocity);
 		}
 		if (keys.size === 0) return;
-		if (this.audioEl.paused) void this.audioEl.play().catch(() => {});
+		if (this.audioEl?.paused) void this.audioEl.play().catch(() => {});
 		if (this.context.state === 'suspended') void this.context.resume().catch(() => {});
 		this.endPreviewNote();
 		this.cancelPreviewPause();
@@ -345,7 +384,7 @@ export class MidiPlayer {
 			// doesn't leave the page looking like it's playing media.
 			this.previewPauseTimeout = setTimeout(() => {
 				this.previewPauseTimeout = undefined;
-				if (!this.destroyed && !this.playing) this.audioEl.pause();
+				if (!this.destroyed && !this.playing) this.audioEl?.pause();
 			}, PREVIEW_RELEASE_TAIL_MS);
 		}, durationMs);
 	}

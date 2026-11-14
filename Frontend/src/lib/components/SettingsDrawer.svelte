@@ -9,6 +9,7 @@
 	import { chooseDefaultVoicePart, playerDefaults, setPlayerDefaults, VIEW_MODES, type PlayerDefaults, type ViewMode } from '$lib/playerDefaults';
 	import { VOICE_PARTS as PLAYER_VOICE_PARTS, type DisplayMode, type MixMode, type VoicePart } from '$lib/midi/types';
 	import { DEFAULT_SETTINGS } from '$lib/fixtures/appData';
+	import { audioDiagnostics, pieceAdminForDiagnostics, setAudioDiagnostics } from '$lib/audio/audioDiagnostics';
 	// Mounted once in the root layout, so it can be opened from any page
 	// (including one that doesn't otherwise import this) — imported here
 	// directly rather than relying on the current page to have brought it in.
@@ -69,6 +70,24 @@
 	let keepScreenAwake = $state(DEFAULT_SETTINGS.keepScreenAwake);
 	let countIn = $state(DEFAULT_SETTINGS.countIn);
 	let backgroundAudio = $state(DEFAULT_SETTINGS.backgroundAudio);
+
+	// TEMPORARY (CarPlay audio diagnostics, `$lib/audio/audioDiagnostics.ts`):
+	// the two audio toggles are for admins only, so ordinary singers never
+	// see a knob that can break their background audio. "Admin" here is
+	// whatever the current page already knows, with no extra Backend call:
+	// a group route's `page.data.isAdmin`, Home's `page.data.groups` (admin
+	// of any of them), or the piece page's own `isOwningGroupAdmin` (via
+	// `pieceAdminForDiagnostics`). On any other page the rows are hidden;
+	// the URL flags still work for anyone, anywhere.
+	const showAudioDiagnostics = $derived.by(() => {
+		if (!user) return false;
+		const data = page.data as { isAdmin?: unknown; groups?: unknown };
+		if (data.isAdmin === true) return true;
+		if (Array.isArray(data.groups) && data.groups.some((g) => (g as { role?: unknown } | null)?.role === 'admin')) {
+			return true;
+		}
+		return $pieceAdminForDiagnostics;
+	});
 
 	// Account section: "Edit name" click-to-edit, same inline-form pattern
 	// as a group's member-title editor (`groups/[id]/+page.svelte`). Posts
@@ -495,6 +514,35 @@
 				<span>{m.settings_background_audio()}</span>
 				<input type="checkbox" bind:checked={backgroundAudio} />
 			</label>
+			{#if showAudioDiagnostics}
+				<!-- TEMPORARY (CarPlay audio diagnostics): remove with
+				     `$lib/audio/audioDiagnostics.ts`. -->
+				<label class="toggle-row">
+					<span>{m.settings_audio_latency_playback()}</span>
+					<input
+						type="checkbox"
+						checked={$audioDiagnostics.latencyPlayback}
+						onchange={(e) =>
+							setAudioDiagnostics({
+								...$audioDiagnostics,
+								latencyPlayback: (e.currentTarget as HTMLInputElement).checked
+							})}
+					/>
+				</label>
+				<label class="toggle-row">
+					<span>{m.settings_audio_direct_output()}</span>
+					<input
+						type="checkbox"
+						checked={$audioDiagnostics.directOutput}
+						onchange={(e) =>
+							setAudioDiagnostics({
+								...$audioDiagnostics,
+								directOutput: (e.currentTarget as HTMLInputElement).checked
+							})}
+					/>
+				</label>
+				<p class="card-meta">{m.settings_audio_diagnostics_note()}</p>
+			{/if}
 		</section>
 
 		<section class="menu-section">

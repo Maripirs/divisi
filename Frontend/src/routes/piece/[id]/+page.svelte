@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { MAX_TEMPO_BPM, MIN_TEMPO_BPM, MidiPlayer } from '$lib/audio/player';
+	import { pieceAdminForDiagnostics } from '$lib/audio/audioDiagnostics';
 	import { extractYoutubeVideoId, YoutubeAudioPlayer } from '$lib/audio/youtubeAudioPlayer';
 	import { convertVisualParts } from '$lib/midi/musicXmlConverter';
 	import { buildAdaptiveStaffSections, type StaffLayoutSection } from '$lib/musicxml/adaptiveStaffLayout';
@@ -98,6 +99,14 @@
 	let isOwningGroupAdmin = $state(false);
 	// Kept as the name the Piece Notes panel already binds to.
 	const canManagePieceNotes = $derived(isOwningGroupAdmin);
+	// TEMPORARY (CarPlay audio diagnostics): lets the Settings drawer show
+	// its admin-only audio toggles while an admin has a piece open. The
+	// drawer can't see `isOwningGroupAdmin` itself (it's resolved here,
+	// client-side, not in `page.data`). Reset on leaving the page.
+	$effect(() => {
+		pieceAdminForDiagnostics.set(isOwningGroupAdmin);
+		return () => pieceAdminForDiagnostics.set(false);
+	});
 	// A logged-in caller who isn't in this piece's group and couldn't be
 	// self-joined into it (e.g. the demo group) but opened it with a join
 	// code (`resolve/+server.ts`'s `viaJoinCode`): they get the guest view, so the member-only extras below (annotations, member

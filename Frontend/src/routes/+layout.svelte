@@ -5,12 +5,20 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { initTheme } from '$lib/theme';
+	import { browser } from '$app/environment';
+	import { initAudioDiagnosticsFromUrl } from '$lib/audio/audioDiagnostics';
 	import SettingsDrawer from '$lib/components/SettingsDrawer.svelte';
 	import { m } from '$lib/paraglide/messages';
 
 	let { children, data } = $props();
 
 	onMount(() => initTheme());
+
+	// TEMPORARY (CarPlay audio diagnostics, `$lib/audio/audioDiagnostics.ts`):
+	// `?latency=...` / `?audio=...` URL flags. Run in the script body, not
+	// `onMount`, because a child route's `onMount` (the piece page creating
+	// its `MidiPlayer`) fires before this layout's own `onMount` would.
+	if (browser) initAudioDiagnosticsFromUrl(window.location.search);
 
 	// Cold-start reconcile: `+layout.server.ts` gave up waiting on a
 	// still-waking Backend and painted with an optimistic session (real id,
