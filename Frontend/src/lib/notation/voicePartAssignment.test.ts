@@ -156,6 +156,154 @@ describe('splitChordalDivisi', () => {
 		expect(result.parts).toEqual(alreadySplitParts);
 		expect(result.notes).toEqual(notes);
 	});
+
+	describe('voice rule (notes carrying MusicXML voice + measure)', () => {
+		// 1000ms measures. Mirrors the shape of "The Challenge of Thor"'s
+		// closing soprano divisi: two `<voice>`s on one staff moving in
+		// different rhythms, voice "21" the higher line.
+		function vnote(
+			pitch: number,
+			startMs: number,
+			sourceVoice: string,
+			measureIndex: number,
+			durationMs = 500,
+			endMeasureIndex = measureIndex
+		): MIDINote {
+			return { pitch, startMs, durationMs, partId: 'soprano', sourceVoice, measureIndex, endMeasureIndex };
+		}
+		const desk = (notes: MIDINote[], id: string) =>
+			notes.filter((n) => n.partId === id).map((n) => [n.startMs, n.pitch]);
+
+		it('splits two voices with different rhythms by voice, with no cross-cloning', () => {
+			const notes: MIDINote[] = [
+				vnote(77, 0, '21', 0, 750), // F5, a dotted half...
+				vnote(76, 750, '21', 0, 250), // ...then E5
+				vnote(67, 0, '22', 0, 250), // G4 in quarters underneath
+				vnote(69, 250, '22', 0, 250),
+				vnote(71, 500, '22', 0, 250),
+				vnote(72, 750, '22', 0, 250)
+			];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			expect(result.parts.map((p) => p.id).slice(0, 2)).toEqual(['soprano-1', 'soprano-2']);
+			expect(desk(result.notes, 'soprano-1')).toEqual([
+				[0, 77],
+				[750, 76]
+			]);
+			expect(desk(result.notes, 'soprano-2')).toEqual([
+				[0, 67],
+				[250, 69],
+				[500, 71],
+				[750, 72]
+			]);
+		});
+
+		it('leaves a desk silent while its voice rests, including through a tie-held note in the other voice', () => {
+			const notes: MIDINote[] = [
+				// m0: voice 21 rests for the first half; voice 22 sings throughout.
+				vnote(77, 0, '22', 0, 500), // F5 on desk 2 only
+				vnote(79, 500, '21', 0, 500),
+				vnote(72, 500, '22', 0, 1500, 1), // C5 tied into m1
+				// m1: only voice 21 *starts* a note, but 22 is still holding its tie.
+				vnote(81, 1000, '21', 1, 1000)
+			];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			expect(desk(result.notes, 'soprano-1')).toEqual([
+				[500, 79],
+				[1000, 81]
+			]);
+			expect(desk(result.notes, 'soprano-2')).toEqual([
+				[0, 77],
+				[500, 72]
+			]);
+		});
+
+		it('ranks the voices by mean pitch over the run, not by voice number', () => {
+			const notes: MIDINote[] = [vnote(60, 0, '1', 0), vnote(72, 0, '2', 0), vnote(74, 500, '2', 0)];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			expect(desk(result.notes, 'soprano-1')).toEqual([
+				[0, 72],
+				[500, 74]
+			]);
+			expect(desk(result.notes, 'soprano-2')).toEqual([[0, 60]]);
+		});
+
+		it('keeps the onset rule (hi/lo chord split, unison cloned) for single-voice measures of the same part', () => {
+			const notes: MIDINote[] = [
+				// m0: one voice, a 2-note chord then a single note.
+				vnote(72, 0, '1', 0),
+				vnote(65, 0, '1', 0),
+				vnote(69, 500, '1', 0),
+				// m1: two voices.
+				vnote(74, 1000, '1', 1, 1000),
+				vnote(62, 1000, '2', 1, 500),
+				vnote(64, 1500, '2', 1, 500)
+			];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			expect(desk(result.notes, 'soprano-1')).toEqual([
+				[0, 72],
+				[500, 69],
+				[1000, 74]
+			]);
+			expect(desk(result.notes, 'soprano-2')).toEqual([
+				[0, 65],
+				[500, 69],
+				[1000, 62],
+				[1500, 64]
+			]);
+		});
+
+		it('splits a part with 2-voice measures even when it has no 2-note chord anywhere', () => {
+			const notes: MIDINote[] = [vnote(67, 0, '1', 0, 1000), vnote(72, 1000, '1', 1), vnote(64, 1500, '2', 1)];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			expect(desk(result.notes, 'soprano-1')).toEqual([
+				[0, 67],
+				[1000, 72]
+			]);
+			expect(desk(result.notes, 'soprano-2')).toEqual([
+				[0, 67],
+				[1500, 64]
+			]);
+		});
+
+		it('falls back to the onset rule for the whole part when any measure has 3+ voices', () => {
+			const notes: MIDINote[] = [
+				vnote(72, 0, '1', 0),
+				vnote(67, 500, '2', 0),
+				vnote(60, 750, '3', 0, 250),
+				vnote(74, 1000, '1', 1),
+				vnote(62, 1500, '2', 1)
+			];
+			const result = splitChordalDivisi(flatParts, notes, []);
+
+			// No 2-note onset anywhere, so the onset rule never splits.
+			expect(result.parts).toEqual(flatParts);
+			expect(result.notes).toEqual(notes);
+		});
+
+		it('sends a lyric only to the desk whose voice attacks there, and to both when both do', () => {
+			const notes: MIDINote[] = [
+				vnote(77, 0, '22', 0, 500), // desk 2 alone at 0
+				vnote(79, 500, '21', 0, 500), // both attack at 500
+				vnote(72, 500, '22', 0, 500)
+			];
+			const lyrics: MIDILyricEvent[] = [
+				{ text: 'Still', timeMs: 0, partId: 'soprano' },
+				{ text: 'is', timeMs: 500, partId: 'soprano' }
+			];
+			const result = splitChordalDivisi(flatParts, notes, lyrics);
+
+			expect(result.lyrics).toEqual([
+				{ text: 'Still', timeMs: 0, partId: 'soprano-2' },
+				{ text: 'is', timeMs: 500, partId: 'soprano-1' },
+				{ text: 'is', timeMs: 500, partId: 'soprano-2' }
+			]);
+		});
+	});
 });
 
 describe('mergeSplitDesksForDisplay', () => {

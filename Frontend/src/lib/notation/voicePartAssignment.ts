@@ -234,18 +234,45 @@ export function assignVoiceParts(tracks: { name: string | null; pitches: number[
  * `soprano`/`alto`/`tenor`/`bass` id, i.e. the file never named its own
  * split like "Soprano 1"/"Soprano 2"). Some sources still write real
  * two-voice divisi onto one staff/track, distinguishable only by looking at
- * which notes share an onset -- this recovers the same two-desk shape the
- * name-based split above produces, by pitch rank per onset rather than by
- * name.
+ * which notes share an onset (or, in MusicXML, which `<voice>` each note
+ * was written in) -- this recovers the same two-desk shape the name-based
+ * split above produces, by voice or pitch rank rather than by name.
  *
- * Rule: group a base voice's notes by exact `startMs` (same "onset" concept
- * the MusicXML parser's own `isChord`/`lastNoteStartMs` handling uses --
- * exact-ms equality, no epsilon, because the tempo-map conversion that
- * produces `startMs` is deterministic, so truly simultaneous notes always
- * land on the same ms value). At a 2-note onset, the higher pitch goes to
- * desk 1, the lower to desk 2 -- sopranos/altos/tenors/basses are written
- * top-voice-first by convention, so "desk 1" reads as "the higher part"
- * the same way "Soprano 1" does in a named split.
+ * Two rules, chosen per *measure*:
+ *
+ * **Voice rule** (MusicXML only -- needs `MIDINote.sourceVoice`/
+ * `measureIndex`, which `musicxml/parser.ts` sets and the MIDI parser never
+ * does). In a measure where the base voice's notes come from exactly 2
+ * distinct `<voice>` values, every note goes only to its own voice's desk.
+ * This is the shape engravers use when the two lines move independently
+ * (different rhythms, one resting while the other sings), where the onset
+ * rule below breaks down: most attacks there are 1-note onsets, which the
+ * onset rule clones onto both desks, so both desks end up nearly identical
+ * and the mixer sliders seem to do nothing (the motivating bug: "The
+ * Challenge of Thor"'s closing soprano divisi). A voice resting while the
+ * other sings leaves its desk silent, which is what the ear hears there.
+ * Which voice is desk 1 is decided per *contiguous run* of measures with
+ * the same 2-voice pair: the voice with the higher mean pitch across that
+ * run is desk 1 (same "desk 1 = the higher part" convention as below),
+ * ties broken by source voice order. Per run rather than per part because
+ * exporters renumber voices freely between passages, and per run rather
+ * than per measure because a single measure where the lines briefly cross
+ * should not swap the desks. A tie-merged note is assigned by the voice
+ * and measure of its first (tie-start) note -- which is just what the
+ * parser's tie merging leaves on it -- but its voice still counts as
+ * present in every measure it is held through (`endMeasureIndex`), so a
+ * line sustaining a tied note while the other moves keeps that measure a
+ * 2-voice measure instead of falling back to cloning.
+ *
+ * **Onset rule** (every other measure, and every MIDI note): group the
+ * notes by exact `startMs` (same "onset" concept the MusicXML parser's own
+ * `isChord`/`lastNoteStartMs` handling uses -- exact-ms equality, no
+ * epsilon, because the tempo-map conversion that produces `startMs` is
+ * deterministic, so truly simultaneous notes always land on the same ms
+ * value). At a 2-note onset, the higher pitch goes to desk 1, the lower to
+ * desk 2 -- sopranos/altos/tenors/basses are written top-voice-first by
+ * convention, so "desk 1" reads as "the higher part" the same way
+ * "Soprano 1" does in a named split.
  *
  * At a 1-note onset (a unison moment within an otherwise-2-voice passage,
  * or a monophonic stretch inside a piece that also has real divisi
@@ -258,18 +285,23 @@ export function assignVoiceParts(tracks: { name: string | null; pitches: number[
  * matches what the ear actually hears.
  *
  * A base voice only gets split when it *actually has* a real 2-note onset
- * somewhere -- a monophonic line left alone rather than duplicated onto two
- * identical rows for no reason (see the "no group has exactly 2 notes"
- * bail-out below). And a base voice with any onset stacking *more than* 2
- * notes is left alone entirely, not partially split -- this function only
- * handles clean 2-way divisi, not general chord-stacking; a 3+-note onset
- * has no unambiguous "desk 1 vs desk 2" pitch-rank mapping the way a 2-note
- * onset does, so it bails out rather than guessing.
+ * or a 2-voice measure somewhere -- a monophonic line left alone rather
+ * than duplicated onto two identical rows for no reason (see the "never
+ * actually splits" bail-out below). And a base voice with any onset-rule
+ * onset stacking *more than* 2 notes is left alone entirely, not partially
+ * split -- the onset rule only handles clean 2-way divisi, not general
+ * chord-stacking; a 3+-note onset has no unambiguous "desk 1 vs desk 2"
+ * pitch-rank mapping the way a 2-note onset does, so it bails out rather
+ * than guessing. Same caution for voices: if any measure of the base voice
+ * has 3+ distinct `<voice>` values, the voice rule is dropped for that
+ * whole part and every measure falls back to the onset rule.
  *
- * Lyrics have no pitch, and after a split both desks have a sounding note
- * at every onset, so a lyric at a split base's `startMs`/`timeMs` is
- * duplicated onto both desks too, same reasoning as the 1-note-onset note
- * case above -- there's no way to prefer one desk over the other.
+ * Lyrics have no pitch or voice, so a lyric at a split base goes to every
+ * desk with a note starting at its `timeMs`, or to both desks when neither
+ * or both do. Under the onset rule both desks always share every onset, so
+ * that is plain duplication, same reasoning as the 1-note-onset note case
+ * above -- there's no way to prefer one desk over the other. Under the
+ * voice rule it keeps a syllable off the desk that is resting under it.
  */
 export function splitChordalDivisi(
 	parts: VoicePartInfo[],
@@ -290,8 +322,11 @@ export function splitChordalDivisi(
 		const baseNotes = outNotes.filter((n) => n.partId === base);
 		if (baseNotes.length === 0) continue;
 
+		const voiceDesks = voiceDeskByMeasure(baseNotes);
+		const onsetNotes = baseNotes.filter((n) => n.measureIndex === undefined || !voiceDesks.has(n.measureIndex));
+
 		const byOnset = new Map<number, MIDINote[]>();
-		for (const note of baseNotes) {
+		for (const note of onsetNotes) {
 			const group = byOnset.get(note.startMs) ?? [];
 			group.push(note);
 			byOnset.set(note.startMs, group);
@@ -299,7 +334,7 @@ export function splitChordalDivisi(
 
 		const groups = [...byOnset.values()];
 		if (groups.some((g) => g.length > 2)) continue; // 3+-note onset: bail out, no clean pitch-rank split
-		if (!groups.some((g) => g.length === 2)) continue; // never actually splits: leave the plain voice alone
+		if (voiceDesks.size === 0 && !groups.some((g) => g.length === 2)) continue; // never actually splits: leave the plain voice alone
 
 		const desk1Id = `${base}-1`;
 		const desk2Id = `${base}-2`;
@@ -314,6 +349,11 @@ export function splitChordalDivisi(
 				splitNotes.push({ ...only, partId: desk1Id }, { ...only, partId: desk2Id });
 			}
 		}
+		for (const note of baseNotes) {
+			const deskByVoice = note.measureIndex === undefined ? undefined : voiceDesks.get(note.measureIndex);
+			if (!deskByVoice) continue; // onset-rule note, handled above
+			splitNotes.push({ ...note, partId: deskByVoice.get(note.sourceVoice!) === 1 ? desk1Id : desk2Id });
+		}
 
 		const desk1Info: VoicePartInfo = { id: desk1Id, base, subIndex: 1, label: `${capitalize(base)} 1`, autoSplit: true };
 		const desk2Info: VoicePartInfo = { id: desk2Id, base, subIndex: 2, label: `${capitalize(base)} 2`, autoSplit: true };
@@ -324,17 +364,80 @@ export function splitChordalDivisi(
 			...splitNotes.sort((a, b) => a.startMs - b.startMs)
 		];
 
-		outLyrics = outLyrics.flatMap((lyric) =>
-			lyric.partId === base
-				? [
-						{ ...lyric, partId: desk1Id },
-						{ ...lyric, partId: desk2Id }
-					]
-				: [lyric]
-		);
+		const desk1Onsets = new Set(splitNotes.filter((n) => n.partId === desk1Id).map((n) => n.startMs));
+		const desk2Onsets = new Set(splitNotes.filter((n) => n.partId === desk2Id).map((n) => n.startMs));
+		outLyrics = outLyrics.flatMap((lyric) => {
+			if (lyric.partId !== base) return [lyric];
+			const onDesk1 = desk1Onsets.has(lyric.timeMs);
+			const onDesk2 = desk2Onsets.has(lyric.timeMs);
+			if (onDesk1 && !onDesk2) return [{ ...lyric, partId: desk1Id }];
+			if (onDesk2 && !onDesk1) return [{ ...lyric, partId: desk2Id }];
+			return [
+				{ ...lyric, partId: desk1Id },
+				{ ...lyric, partId: desk2Id }
+			];
+		});
 	}
 
 	return { parts: outParts, notes: outNotes, lyrics: outLyrics };
+}
+
+/** The voice rule's desk map for one base voice's notes (see
+ * `splitChordalDivisi`'s doc comment): measure index -> (source voice ->
+ * desk 1 or 2), with an entry only for measures where notes from exactly
+ * 2 distinct voices sound (a tie-held note counts in every measure it
+ * spans). Empty when the notes carry no voice info (MIDI), when
+ * no measure has 2 voices, or when any measure has 3+ (the "don't guess"
+ * fallback to the onset rule for the whole part). */
+function voiceDeskByMeasure(notes: MIDINote[]): Map<number, Map<string, 1 | 2>> {
+	// A voice counts as present in every measure its notes sound in, not
+	// just where they start: a line holding a tied note through a measure
+	// while the other line moves is still two voices there.
+	const voicesByMeasure = new Map<number, Set<string>>();
+	for (const note of notes) {
+		if (note.measureIndex === undefined || note.sourceVoice === undefined) continue;
+		for (let m = note.measureIndex; m <= (note.endMeasureIndex ?? note.measureIndex); m++) {
+			const voices = voicesByMeasure.get(m) ?? new Set<string>();
+			voices.add(note.sourceVoice);
+			voicesByMeasure.set(m, voices);
+		}
+	}
+	const result = new Map<number, Map<string, 1 | 2>>();
+	if ([...voicesByMeasure.values()].some((v) => v.size > 2)) return result;
+
+	// Group 2-voice measures into contiguous runs sharing one voice pair,
+	// then rank each run's pair by mean pitch over the run.
+	const pairKey = (voices: Set<string>) => [...voices].sort().join('|');
+	const twoVoiceMeasures = [...voicesByMeasure.entries()].filter(([, v]) => v.size === 2).sort(([a], [b]) => a - b);
+	const runs: { measures: number[]; key: string }[] = [];
+	for (const [measure, voices] of twoVoiceMeasures) {
+		const key = pairKey(voices);
+		const last = runs.at(-1);
+		if (last && last.key === key && last.measures.at(-1) === measure - 1) last.measures.push(measure);
+		else runs.push({ measures: [measure], key });
+	}
+
+	for (const run of runs) {
+		const inRun = new Set(run.measures);
+		const pitchesByVoice = new Map<string, number[]>();
+		for (const note of notes) {
+			if (note.measureIndex === undefined || !inRun.has(note.measureIndex)) continue;
+			const pitches = pitchesByVoice.get(note.sourceVoice!) ?? [];
+			pitches.push(note.pitch);
+			pitchesByVoice.set(note.sourceVoice!, pitches);
+		}
+		const [upper, lower] = [...pitchesByVoice.entries()]
+			.sort(
+				([va, pa], [vb, pb]) => meanPitch(pb) - meanPitch(pa) || va.localeCompare(vb, undefined, { numeric: true })
+			)
+			.map(([voice]) => voice);
+		const desks = new Map<string, 1 | 2>([
+			[upper, 1],
+			[lower, 2]
+		]);
+		for (const measure of run.measures) result.set(measure, desks);
+	}
+	return result;
 }
 
 /** Dedupes a note list, keyed by part + onset + pitch, keeping the first of
@@ -412,10 +515,12 @@ export interface MergedForDisplay {
  *   not divided, so retagging both copies produces two identical notes at
  *   one onset under one partId -- `dedupeNotes` above collapses that back
  *   down to the single original note.
+ * - A voice-rule note (a 2-voice measure, see `splitChordalDivisi`) sits
+ *   on just one desk, so retagging it restores the original note as-is.
  * Lyrics get the same duplicate-then-dedupe treatment (`dedupeLyrics`),
  * keyed by text + onset rather than pitch, since `splitChordalDivisi`
- * duplicates a base voice's lyric event onto both desks unconditionally
- * (every onset, not just unison ones -- see its own doc comment).
+ * duplicates a base voice's lyric event onto both desks at every onset
+ * both desks share (not just unison ones -- see its own doc comment).
  *
  * The two desks' visual states can differ if a user manually soloed/muted
  * just one desk in the mixer. `mergeVisualState` favors showing the merged

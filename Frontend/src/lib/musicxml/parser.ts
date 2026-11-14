@@ -29,6 +29,13 @@ const DEFAULT_TEMPO_BPM = 120; // same fallback as `midi/parser.ts`, for files w
  * i.e. not even meant to be displayed) — see `readPart`'s `staffCount`
  * filtering below for how.
  *
+ * Unnamed divisi on one staff is recovered by `splitChordalDivisi` (see its
+ * doc comment): measures where a vocal part writes two `<voice>`s split by
+ * voice, every other measure splits by onset. That is why `readPart` keeps
+ * each note's `<voice>` and measure span; they ride along on `MIDINote` as
+ * `sourceVoice`/`measureIndex`/`endMeasureIndex` only as far as the split
+ * and are stripped from the returned notes.
+ *
  * `voicePartChannels` is always empty: that field only represents source
  * MIDI channel numbers. Playback still gets separate live mixer channels
  * because `playbackMidiBuilder` rebuilds a fresh MIDI blob from `notes` and
@@ -92,25 +99,37 @@ export function parseMusicXmlFile(xmlText: string): ParsedMIDI {
 	for (const [index, raw] of rawParts.entries()) {
 		const partId = trackParts[index];
 		if (partId) {
-			for (const note of raw.notes) notes.push({ ...note, partId });
+			for (const note of raw.notes) {
+				notes.push({
+					...pitchAndTiming(note),
+					partId,
+					sourceVoice: note.voice,
+					measureIndex: note.measureIndex,
+					endMeasureIndex: note.endMeasureIndex
+				});
+			}
 			for (const lyric of raw.lyrics) lyrics.push({ ...lyric, partId });
 		} else {
-			for (const note of raw.notes) backingNotes.push(note);
+			for (const note of raw.notes) backingNotes.push(pitchAndTiming(note));
 		}
 	}
 	notes.sort((a, b) => a.startMs - b.startMs);
 	backingNotes.sort((a, b) => a.startMs - b.startMs);
 	lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
-	// Recover unnamed chord-based divisi (a plain SATB part whose notes still
-	// stack into 2-voice chords per onset) into the same two-desk shape a
-	// named split produces. `trackParts` above intentionally still reflects
+	// Recover unnamed divisi (a plain SATB part whose notes still stack into
+	// 2-voice chords per onset, or that writes two `<voice>`s in a measure)
+	// into the same two-desk shape a named split produces. `trackParts` above intentionally still reflects
 	// the pre-split, part-level id (a chord-split part has no per-desk
 	// source part to point at) -- not consumed anywhere outside these parser
 	// files, so the imprecision is harmless. `voicePartChannels` is always
 	// empty here regardless (MusicXML has no MIDI channel concept), so
 	// there's nothing to reconcile there.
 	const split = splitChordalDivisi(allParts, notes, lyrics);
+	// `sourceVoice`/`measureIndex`/`endMeasureIndex` were only input for the split above; drop
+	// them so the returned notes have the same plain shape the MIDI parser
+	// produces (and nothing comparing or serializing notes sees extra keys).
+	split.notes = split.notes.map(({ pitch, startMs, durationMs, partId }) => ({ pitch, startMs, durationMs, partId }));
 	split.notes.sort((a, b) => a.startMs - b.startMs);
 	split.lyrics.sort((a, b) => a.timeMs - b.timeMs);
 
@@ -145,6 +164,23 @@ interface RawNote {
 	pitch: number;
 	startMs: number;
 	durationMs: number;
+	/** The `<voice>` it was written in ("1" when the file omits it). For a
+	 * tie-merged note, the voice of its first (tie-start) note -- ties only
+	 * merge within one voice anyway (see `openTies`). */
+	voice: string;
+	/** 0-based position of its starting `<measure>` within the part, by
+	 * document order rather than the `number` attribute (which can repeat
+	 * or be non-numeric, e.g. pickup measures). For a tie-merged note, the
+	 * tie-start's measure. */
+	measureIndex: number;
+	/** Last measure the note sounds in: `measureIndex` itself unless a tie
+	 * carried it across barlines. Lets `splitChordalDivisi` see that a voice
+	 * holding a tied note is still present in a later measure. */
+	endMeasureIndex: number;
+}
+
+function pitchAndTiming(note: RawNote): BackingNote {
+	return { pitch: note.pitch, startMs: note.startMs, durationMs: note.durationMs };
 }
 
 interface RawPart {
@@ -197,7 +233,7 @@ function readPart(doc: Document, partId: string, name: string | null, initialTem
 
 	const divisionsToMs = (durationDivisions: number) => (durationDivisions / divisions) * (60_000 / tempoBPM);
 
-	for (const measure of partEl.querySelectorAll(':scope > measure')) {
+	for (const [measureIndex, measure] of partEl.querySelectorAll(':scope > measure').entries()) {
 		let cursorMs = measureStartMs;
 		let measureEndMs = measureStartMs;
 
@@ -255,9 +291,10 @@ function readPart(doc: Document, partId: string, name: string | null, initialTem
 						let note: RawNote;
 						if (openNote) {
 							openNote.durationMs += durationMs;
+							openNote.endMeasureIndex = measureIndex;
 							note = openNote;
 						} else {
-							note = { pitch, startMs, durationMs };
+							note = { pitch, startMs, durationMs, voice, measureIndex, endMeasureIndex: measureIndex };
 							result.notes.push(note);
 						}
 

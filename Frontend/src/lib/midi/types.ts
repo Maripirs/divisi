@@ -77,6 +77,17 @@ export interface MIDINote {
 	startMs: number;
 	durationMs: number;
 	partId: MixPart;
+	/** Parse-time-only hints for `splitChordalDivisi`'s voice-aware rule
+	 * (`notation/voicePartAssignment.ts`): the source `<voice>` value, the
+	 * 0-based index of the `<measure>` the note starts in, and of the last
+	 * one it still sounds in (later than the start only for a note tied
+	 * across a barline; defaults to `measureIndex` when absent). Only
+	 * `musicxml/parser.ts` sets them (MIDI has no equivalent, so the MIDI
+	 * path keeps the plain onset rule), and it strips them again before
+	 * returning `ParsedMIDI`, so nothing downstream ever sees them. */
+	sourceVoice?: string;
+	measureIndex?: number;
+	endMeasureIndex?: number;
 }
 
 /** A note that belongs to accompaniment or another non-SATB source. These
