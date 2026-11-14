@@ -400,6 +400,15 @@ export declare const GLYPH_METRICS: {
         readonly bBoxNE: readonly [1.876, 0];
         readonly anchors: {};
     };
+    readonly systemDivider: {
+        readonly name: "systemDivider";
+        readonly codepoint: 57351;
+        readonly description: "System divider";
+        readonly advance: 4.232;
+        readonly bBoxSW: readonly [0, -0.272];
+        readonly bBoxNE: readonly [4.232, 4.24];
+        readonly anchors: {};
+    };
     readonly articStaccatoAbove: {
         readonly name: "articStaccatoAbove";
         readonly codepoint: 58530;
@@ -844,6 +853,150 @@ export declare const GLYPH_METRICS: {
         readonly bBoxNE: readonly [0.4, 0.2];
         readonly anchors: {};
     };
+    readonly breathMarkComma: {
+        readonly name: "breathMarkComma";
+        readonly codepoint: 58574;
+        readonly description: "Breath mark (comma)";
+        readonly advance: 0.612;
+        readonly bBoxSW: readonly [0.004, 0.008];
+        readonly bBoxNE: readonly [0.608, 1.004];
+        readonly anchors: {};
+    };
+    readonly breathMarkTick: {
+        readonly name: "breathMarkTick";
+        readonly codepoint: 58575;
+        readonly description: "Breath mark (tick-like)";
+        readonly advance: 2;
+        readonly bBoxSW: readonly [0, 0];
+        readonly bBoxNE: readonly [2, 2.008];
+        readonly anchors: {};
+    };
+    readonly breathMarkSalzedo: {
+        readonly name: "breathMarkSalzedo";
+        readonly codepoint: 58581;
+        readonly description: "Breath mark (Salzedo)";
+        readonly advance: 2.1;
+        readonly bBoxSW: readonly [0, 0.008];
+        readonly bBoxNE: readonly [2.112, 1.732];
+        readonly anchors: {};
+    };
+    readonly caesura: {
+        readonly name: "caesura";
+        readonly codepoint: 58577;
+        readonly description: "Caesura";
+        readonly advance: 1.54;
+        readonly bBoxSW: readonly [0, -0.004];
+        readonly bBoxNE: readonly [1.536, 2.128];
+        readonly anchors: {};
+    };
+    readonly caesuraShort: {
+        readonly name: "caesuraShort";
+        readonly codepoint: 58579;
+        readonly description: "Short caesura";
+        readonly advance: 0.74;
+        readonly bBoxSW: readonly [0, 0];
+        readonly bBoxNE: readonly [0.744, 2.132];
+        readonly anchors: {};
+    };
+    readonly tuplet0: {
+        readonly name: "tuplet0";
+        readonly codepoint: 59520;
+        readonly description: "Tuplet 0";
+        readonly advance: 1.276;
+        readonly bBoxSW: readonly [0, -0.032];
+        readonly bBoxNE: readonly [1.272, 1.5];
+        readonly anchors: {};
+    };
+    readonly tuplet1: {
+        readonly name: "tuplet1";
+        readonly codepoint: 59521;
+        readonly description: "Tuplet 1";
+        readonly advance: 0.984;
+        readonly bBoxSW: readonly [0.04, 0];
+        readonly bBoxNE: readonly [1.024, 1.488];
+        readonly anchors: {};
+    };
+    readonly tuplet2: {
+        readonly name: "tuplet2";
+        readonly codepoint: 59522;
+        readonly description: "Tuplet 2";
+        readonly advance: 1.276;
+        readonly bBoxSW: readonly [0.04, -0.024];
+        readonly bBoxNE: readonly [1.316, 1.5];
+        readonly anchors: {};
+    };
+    readonly tuplet3: {
+        readonly name: "tuplet3";
+        readonly codepoint: 59523;
+        readonly description: "Tuplet 3";
+        readonly advance: 1.184;
+        readonly bBoxSW: readonly [0.04, -0.032];
+        readonly bBoxNE: readonly [1.224, 1.5];
+        readonly anchors: {};
+    };
+    readonly tuplet4: {
+        readonly name: "tuplet4";
+        readonly codepoint: 59524;
+        readonly description: "Tuplet 4";
+        readonly advance: 1.212;
+        readonly bBoxSW: readonly [0.04, 0];
+        readonly bBoxNE: readonly [1.252, 1.488];
+        readonly anchors: {};
+    };
+    readonly tuplet5: {
+        readonly name: "tuplet5";
+        readonly codepoint: 59525;
+        readonly description: "Tuplet 5";
+        readonly advance: 1.268;
+        readonly bBoxSW: readonly [0.04, -0.032];
+        readonly bBoxNE: readonly [1.308, 1.492];
+        readonly anchors: {};
+    };
+    readonly tuplet6: {
+        readonly name: "tuplet6";
+        readonly codepoint: 59526;
+        readonly description: "Tuplet 6";
+        readonly advance: 1.216;
+        readonly bBoxSW: readonly [0.04, -0.032];
+        readonly bBoxNE: readonly [1.256, 1.5];
+        readonly anchors: {};
+    };
+    readonly tuplet7: {
+        readonly name: "tuplet7";
+        readonly codepoint: 59527;
+        readonly description: "Tuplet 7";
+        readonly advance: 1.212;
+        readonly bBoxSW: readonly [0.12, -0.016];
+        readonly bBoxNE: readonly [1.332, 1.488];
+        readonly anchors: {};
+    };
+    readonly tuplet8: {
+        readonly name: "tuplet8";
+        readonly codepoint: 59528;
+        readonly description: "Tuplet 8";
+        readonly advance: 1.252;
+        readonly bBoxSW: readonly [0.04, -0.032];
+        readonly bBoxNE: readonly [1.292, 1.5];
+        readonly anchors: {};
+    };
+    readonly tuplet9: {
+        readonly name: "tuplet9";
+        readonly codepoint: 59529;
+        readonly description: "Tuplet 9";
+        readonly advance: 1.216;
+        readonly bBoxSW: readonly [0.04, -0.032];
+        readonly bBoxNE: readonly [1.256, 1.5];
+        readonly anchors: {};
+    };
+    readonly tupletColon: {
+        readonly name: "tupletColon";
+        readonly codepoint: 59530;
+        readonly description: "Tuplet colon";
+        readonly advance: 0.444;
+        readonly bBoxSW: readonly [0.04, 0.232];
+        readonly bBoxNE: readonly [0.484, 1.072];
+        readonly anchors: {};
+    };
 };
 /** Name of any glyph this engine knows how to draw. */
 export type GlyphName = keyof typeof GLYPH_METRICS;
@@ -876,6 +1029,7 @@ export declare const ENGRAVING_DEFAULTS: {
     readonly slurMidpointThickness: 0.22;
     readonly bracketThickness: 0.5;
     readonly hairpinThickness: 0.16;
+    readonly tupletBracketThickness: 0.16;
 };
 /**
  * Staff spaces per em. SMuFL fixes this at 4: a font size of `4 * staffSpacePx`

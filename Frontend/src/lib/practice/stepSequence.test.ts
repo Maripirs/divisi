@@ -193,6 +193,48 @@ describe('buildStepSequence with a tie under another voice', () => {
 	});
 });
 
+/** A hidden C5 (print-object="no") between two visible notes, then a bar
+ * whose only rest is hidden, then one a `<forward>` fills. */
+const HIDDEN_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="3.1">
+	<part-list><score-part id="P1"><part-name>S</part-name></score-part></part-list>
+	<part id="P1">
+		<measure number="1">
+			<attributes><divisions>1</divisions><time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+			<note><pitch><step>A</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type></note>
+			<note print-object="no"><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type></note>
+			<note><pitch><step>B</step><octave>4</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type></note>
+		</measure>
+		<measure number="2">
+			<note print-object="no"><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/></note>
+		</measure>
+		<measure number="3">
+			<forward><duration>3</duration><voice>1</voice></forward>
+		</measure>
+		<measure number="4">
+			<note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/></note>
+		</measure>
+	</part>
+</score-partwise>`;
+
+describe('buildStepSequence with hidden notes', () => {
+	const score = importMusicXml(HIDDEN_XML);
+	const index = createOnsetIndex(score);
+	const hidden = new Set(staffNotes(score, 0).filter((note) => note.hidden).map((note) => note.id));
+
+	it('never stops on a hidden note or rest', () => {
+		// The hidden C5, the hidden rest and the forward's spacer.
+		expect(hidden.size).toBeGreaterThanOrEqual(3);
+		const steps = buildStepSequence(score, index, { includeRests: true });
+		for (const step of steps) for (const id of step.noteIds) expect(hidden.has(id)).toBe(false);
+		expect(steps.map((step) => [step.wholes, step.midiPitches])).toEqual([
+			[0, [69]],
+			[0.5, [71]],
+			[2.25, []]
+		]);
+	});
+});
+
 describe('practiceParts', () => {
 	it('lists each voice and the piano once, leaving out bracket groups', () => {
 		expect(LACRYMOSA.parts.some((part) => part.staffIndices.length === 4)).toBe(true);

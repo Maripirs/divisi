@@ -225,6 +225,14 @@ export declare function measureLengthsWholes(score: Score): number[];
  */
 export declare function computePlaybackTimeline(score: Score): OnsetEvent[];
 /**
+ * When each played measure starts, in seconds: one entry per
+ * `measurePlayOrder(score)` item, on the same clock as
+ * `computePlaybackTimeline`'s events (fermatas stretch it the same way). A
+ * measure's start is its barline, so a measure opening with a rest still has
+ * one. Ascending, starting at 0; empty for a score without measures.
+ */
+export declare function playedMeasureStartsSeconds(score: Score): number[];
+/**
  * Where playback should start to play from `noteId` (M6 Slice 15): the
  * `startSeconds` of its earliest event, so a note inside a repeat starts at
  * its first pass, not a later one. Hand the result to `PlaybackEngine.seek`.

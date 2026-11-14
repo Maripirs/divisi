@@ -20,6 +20,7 @@ export interface StepSequenceSource {
 				readonly pitch: Pitch | null;
 				readonly isGrace: boolean;
 				readonly tiedToId: NoteId | null;
+				readonly hidden: boolean;
 			}[];
 		}[];
 	}[];
@@ -63,6 +64,9 @@ function onsetKey(wholes: number): number {
  *   began. At an onset where one voice continues a tie and another strikes,
  *   the step holds only the struck note.
  * - Grace notes are skipped (they have no written duration to stop on).
+ * - Hidden notes and rests (`print-object="no"`, or a `<forward>`) are
+ *   skipped: they draw nothing for the cursor to sit on. They still sound
+ *   in playback.
  * - Rests are skipped unless `includeRests`.
  */
 export function buildStepSequence(
@@ -91,7 +95,7 @@ export function buildStepSequence(
 		if (wanted && !wanted.has(staffIndex)) continue;
 		for (const measure of staff.measures) {
 			for (const note of measure.notes) {
-				if (note.isGrace) continue;
+				if (note.isGrace || note.hidden) continue;
 				const onset = index.onsetWholes(note.id);
 				if (onset === undefined) continue;
 				const key = onsetKey(onset);

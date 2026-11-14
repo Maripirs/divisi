@@ -54,8 +54,9 @@ export declare function restValuesFor(onset: number, wholes: number): NoteValue[
  * time-of-2 (`{ actualNotes: 3, normalNotes: 2 }`); a quintuplet would be
  * `{ actualNotes: 5, normalNotes: 4 }`. Modelling it as a ratio rather than a
  * `'triplet'` enum means any other ratio is already representable by the same
- * field; this slice only ever constructs `TRIPLET`, and rendering the bracket
- * and number over a tuplet group is left to whichever later slice needs it.
+ * field. Layout draws the number and bracket over a group (M10 Slice 4) from
+ * the source's passthrough `<tuplet>` marks, or infers the group from this
+ * ratio when there are none.
  */
 export interface TupletRatio {
     readonly actualNotes: number;
@@ -354,6 +355,14 @@ export interface NoteSpec {
     readonly lyrics?: readonly (Lyric | LyricSpec)[];
     /** See `Note.passthrough`. */
     readonly passthrough?: readonly OpaqueElement[];
+    /**
+     * Not printed (M10 Slice 1; MusicXML `<note print-object="no">`): the
+     * note or rest still takes its time, so onsets, voice alignment, measure
+     * duration and playback are unchanged, but layout draws nothing for it
+     * (head, stem, flag, dots, accidental, ties, articulations, lyrics), it
+     * adds no ink to the staff gaps and hit-testing never returns it.
+     */
+    readonly hidden?: boolean;
 }
 export declare class Note {
     readonly id: NoteId;
@@ -398,6 +407,8 @@ export declare class Note {
      * element are immutable, which is what lets `Score.clone` share them.
      */
     passthrough: readonly OpaqueElement[];
+    /** See `NoteSpec.hidden`. */
+    hidden: boolean;
     constructor(id: NoteId, spec: NoteSpec);
     /** Whether this is a grace note; see `NoteSpec.grace`. */
     get isGrace(): boolean;
@@ -625,6 +636,9 @@ export declare class Staff {
  */
 export interface Part {
     readonly name?: string;
+    /** The name is not printed (M10 Slice 1; `<part-name print-object="no">`):
+     *  layout draws no label for this part, export writes the attribute back. */
+    readonly nameHidden?: boolean;
     readonly staffIndices: readonly number[];
     /**
      * Unowned children of the `<score-part>` this part came from
@@ -634,7 +648,24 @@ export interface Part {
      * export merges them back in schema order.
      */
     readonly passthrough?: readonly OpaqueElement[];
+    /**
+     * The `<group-symbol>` of the `<part-group>` this part records (M10 Slice
+     * 9): what layout draws at each system's start and export writes back.
+     * Absent for a hand-built part, which `partGroupSymbol` derives from its
+     * staff count instead.
+     */
+    readonly groupSymbol?: PartGroupSymbol;
 }
+/** What a multi-staff `Part` draws at a system's start (M10 Slice 9).
+ *  MusicXML's `line` and `square` are read as `bracket`. */
+export type PartGroupSymbol = 'brace' | 'bracket' | 'none';
+/**
+ * The symbol `part` draws: its own `groupSymbol` when a source stated one,
+ * else exactly two staves read as a keyboard pair (`brace`) and three or
+ * more as an ensemble (`bracket`). Shared by layout, export and score
+ * equivalence so the rule lives in one place.
+ */
+export declare function partGroupSymbol(part: Part): PartGroupSymbol;
 export interface TimeSignature {
     readonly beats: number;
     readonly beatType: number;
@@ -918,7 +949,7 @@ export declare class Score {
     /** Add a new `Part` grouping `staffIndices`, returning it. See `Part`'s own
      *  comment: this only records the grouping, it draws no brace/bracket
      *  (Slice 5's job). */
-    addPart(staffIndices: readonly number[], name?: string, passthrough?: readonly OpaqueElement[]): Part;
+    addPart(staffIndices: readonly number[], name?: string, passthrough?: readonly OpaqueElement[], nameHidden?: boolean, groupSymbol?: PartGroupSymbol): Part;
     /** Append a measure to a staff (`staves[0]` by default, preserving every
      *  single-staff call site from before M2 Slice 3 unchanged) and return it. */
     appendMeasure(staffIndex?: number): Measure;
@@ -1223,7 +1254,7 @@ export declare class Score {
      * call, not something to guess. The rest's fermata and articulations stay
      * on the note; its passthrough payload (typically a `<rest>`'s
      * display-step/octave, meaningless on a note) is dropped, as `noteToRest`
-     * drops the note's.
+     * drops the note's. A hidden rest (`Note.hidden`) becomes a visible note.
      */
     restToNote(id: NoteId, pitch: Pitch): readonly MeasureRef[] | null;
     /**

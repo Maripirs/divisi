@@ -1,8 +1,8 @@
 {
 	"name": "notation-engine",
-	"version": "0.1.0",
+	"version": "0.3.0",
 	"private": true,
-	"description": "Vendored build of notation-engine at d6f4eb5-dirty. Do not edit: regenerate with `npm run sync:engine`.",
+	"description": "Vendored build of notation-engine at 045ac8f. Do not edit: regenerate with `npm run sync:engine`.",
 	"license": "MIT",
 	"type": "module",
 	"main": "./index.js",
@@ -15,5 +15,5 @@
 		"./package.json": "./package.json"
 	},
 	"sideEffects": false,
-	"notationEngineCommit": "d6f4eb5-dirty"
+	"notationEngineCommit": "045ac8f"
 }

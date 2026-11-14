@@ -293,6 +293,7 @@
 				followScroll: false,
 				staffSpacePx: STAFF_SPACE_AT_ZOOM_1 * level,
 				scrollElement: outerScroller ?? undefined,
+				header: false,
 				renderer: { foreground: colors.ink, background: colors.page, playbackCursor: colors.accent }
 			});
 			if (destroyed) {

@@ -1,35 +1,52 @@
+import { type MusicXmlBytes } from '../io/mxl.js';
 import { type HitResult } from '../layout/hit-test.js';
+import type { Markup } from '../layout/markup.js';
 import type { LaidOutScore, Rect } from '../layout/types.js';
 import type { MeasureRef, NoteId, Score } from '../model/score.js';
 import { type OnsetEvent } from '../playback/timeline.js';
-import { CanvasRenderer, type CanvasRendererOptions } from '../render/renderer.js';
+import { CanvasRenderer, type CanvasRendererOptions, type ScoreColors } from '../render/renderer.js';
 /** Staff space the view lays out at when `staffSpacePx` is not given. */
 export declare const DEFAULT_STAFF_SPACE_PX = 10;
+/** How far into a measure, in seconds, a step back with `seekMeasure`
+ *  rewinds to that measure's own start instead of the previous one. */
+export declare const MEASURE_RESTART_SECONDS = 0.5;
 export interface MountOptions {
     /** Pixels between two staff lines: the zoom. Default `DEFAULT_STAFF_SPACE_PX`. */
     readonly staffSpacePx?: number;
     /** Fixed system width. Omit it to fit systems to the container's width,
      *  re-cast-off whenever the container resizes. */
     readonly systemWidthPx?: number;
+    /** Draw the score's title block (title, subtitle, composer, lyricist)
+     *  above the first system. Default true; see `LayoutOptions.header`. */
+    readonly header?: boolean;
+    /** Announce clef, key and time changes at a system break at the end of
+     *  the system before. Default true; see `LayoutOptions.courtesy`. */
+    readonly courtesy?: boolean;
+    /** Draw the "//" system divider between systems of a score with three or
+     *  more staves. Default false; see `LayoutOptions.systemSeparators`. */
+    readonly systemSeparators?: boolean;
     /** Where to load the SMuFL font from. Default: the Bravura shipped with
      *  the package (see `loadSmuflFont`). */
     readonly fontUrl?: string | URL;
-    /** Colours and the label font, passed to `CanvasRenderer`. */
+    /** Colours (`ScoreColors`) and the label font, passed to
+     *  `CanvasRenderer`. Change colours later with `setColors`. */
     readonly renderer?: Omit<CanvasRendererOptions, 'fontFamily'>;
     /** Scroll to keep the playback cursor in view. Default true. */
     readonly followScroll?: boolean;
     /**
-     * An ancestor of the container that does the scrolling, for hosts that
-     * stack several views (or other content) in one scrolling element. The
-     * container then grows to the score's full height and the canvas sticks
-     * to this element's top while the container passes through view. The
-     * container and every element between it and this one must not scroll
-     * themselves (`overflow: visible`), or the sticky canvas sticks to them
-     * instead. Omit it (or pass the container itself) for the default, where
-     * the container is the scroll element. Document scrolling is not
-     * supported: pass an element.
+     * What does the scrolling when it is not the container: an ancestor
+     * element, or the page itself (`window`, `document`, or the document's
+     * root or scrolling element, all treated alike), for hosts that stack
+     * several views (or other content) in one scrolling element or in a page
+     * that scrolls as a whole. The container then grows to the score's full
+     * height and the canvas sticks to the scroller's top (the viewport's, for
+     * the page) while the container passes through view. The container and
+     * every element between it and the scroller must not scroll themselves
+     * (`overflow: visible`), or the sticky canvas sticks to them instead.
+     * Omit it (or pass the container itself) for the default, where the
+     * container is the scroll element.
      */
-    readonly scrollElement?: HTMLElement;
+    readonly scrollElement?: HTMLElement | Window | Document;
     /** `false` makes the view silent: `play()` does nothing and no
      *  `AudioContext` is ever created. Default true. */
     readonly playback?: boolean;
@@ -55,7 +72,8 @@ export interface ScoreViewEvents {
 }
 export interface ScoreView {
     /** Show a new score: stops playback, lays out, scrolls to the top (with
-     *  `scrollElement`, only when the container's top was scrolled past). */
+     *  `scrollElement`, only when the container's top was scrolled past).
+     *  Synchronous, so it takes no bytes: `load(await importMxl(bytes))`. */
     load(source: string | Score): void;
     /** Start or resume. The first call creates the `AudioContext`, so call it
      *  from a user gesture (a click handler) for the browser to allow sound. */
@@ -69,6 +87,19 @@ export interface ScoreView {
     /** Seek to the first time `noteId` sounds (repeats play it more than
      *  once). Returns false, without seeking, for a note that never sounds. */
     seekToNote(noteId: NoteId): boolean;
+    /**
+     * Move to the start of the measure `delta` measures away, in playing
+     * order (repeats and voltas followed, so a step past a repeat sign lands
+     * where the repeat goes back to), playing on from there if playing. A
+     * negative step counts from the current measure's start when the
+     * position is more than `MEASURE_RESTART_SECONDS` into it, so one step
+     * back first rewinds to the measure's own start, like a media player's
+     * previous-track button. A step past either end stops at the first or
+     * last measure; returns false, without seeking, when that leaves nowhere
+     * to go (already at the very start, or already in the last measure) or
+     * `delta` is 0.
+     */
+    seekMeasure(delta: number): boolean;
     readonly isPlaying: boolean;
     readonly positionSeconds: number;
     /** The piece's length in seconds, repeats included. */
@@ -77,6 +108,25 @@ export interface ScoreView {
      *  view (with `scrollElement`, only when the container is at its top). */
     setZoom(staffSpacePx: number): void;
     readonly staffSpacePx: number;
+    /**
+     * Change some colours (M9 Slice 6), e.g. when the host switches to a dark
+     * theme, and repaint. Keys left out keep their colour; see
+     * `CanvasRenderer.setColors`. No relayout: the `layout` event does not
+     * fire. The container's own CSS background is the host's to match.
+     */
+    setColors(colors: Partial<ScoreColors>): void;
+    /**
+     * Colour individual notes (M9), e.g. green for a pitch hit in a practice
+     * mode, or `null` to clear them; replaces the whole map. Repaints only the
+     * measures whose note colours changed; no relayout, so the `layout` event
+     * does not fire. Selection and the playback cursor win over a note colour,
+     * which wins over a staff colour. Kept across `setZoom`, resizes,
+     * `refresh` and `setScore` (a deleted note's colour stops drawing);
+     * `load` clears them. See `CanvasRenderer.setNoteColors`.
+     */
+    setNoteColors(colors: ReadonlyMap<NoteId, string> | null): void;
+    /** The current note colours, as last set. */
+    readonly noteColors: ReadonlyMap<NoteId, string>;
     /** Scroll the container (or `scrollElement`) so `noteId`'s measure is in
      *  view, if it is not. */
     scrollToNote(noteId: NoteId): void;
@@ -98,6 +148,28 @@ export interface ScoreView {
      *  `noteBox`: the union of its measures' regions there, e.g. to shade a
      *  muted part. Empty for an unknown staff. */
     staffBoxes(staffIndex: number): Rect[];
+    /**
+     * Replace the markup layer (M9): the host's own marks (breath marks,
+     * caesuras, short text) drawn over the score at its scale, anchored to
+     * notes or measures. Repaints only the measures whose marks changed; no
+     * relayout, so the `layout` event does not fire. The view keeps the list
+     * across `setZoom`, resizes, `refresh` and `setScore` (re-resolving it
+     * against the new layout, so a mark on a deleted note stops drawing);
+     * `load` clears it, since a new score has other notes. Marks are never
+     * part of the score: not exported, not undone. See `Markup`.
+     */
+    setMarkup(marks: readonly Markup[]): void;
+    /** The current markup list, as last set. */
+    readonly markup: readonly Markup[];
+    /** The id of the mark under a pointer event (client coordinates), or
+     *  `null`, e.g. from a `noteclick` handler to edit or remove a mark. */
+    markupAt(event: {
+        readonly clientX: number;
+        readonly clientY: number;
+    }): string | null;
+    /** Where mark `id` is drawn, in the same coordinates as `noteBox`, or
+     *  `null` when it is not drawn. */
+    markupBox(id: string): Rect | null;
     /** Subscribe; returns the unsubscribe function. */
     on<K extends keyof ScoreViewEvents>(name: K, handler: ScoreViewEvents[K]): () => void;
     readonly score: Score;
@@ -124,8 +196,9 @@ export interface ScoreView {
     destroy(): void;
 }
 /**
- * Render `source` (a MusicXML string or a `Score`) into `container` and return
- * a handle to play, zoom and repaint it.
+ * Render `source` (a MusicXML string, the bytes of a `.mxl` or MusicXML file,
+ * or a `Score`) into `container` and return a handle to play, zoom and repaint
+ * it. Bytes go through `importMxl`.
  *
  * By default the container is the scroll element. The view appends a canvas
  * sized to the visible window (sticky at the container's top, so it can render
@@ -135,15 +208,17 @@ export interface ScoreView {
  * it. If its `overflow` is `visible` the view sets `overflow: auto` (restored
  * by `destroy`); no other styling is imposed.
  *
- * With `options.scrollElement` an ancestor scrolls instead: the container's
- * `overflow` is left alone and it grows to the score's full height, the canvas
- * is as tall as that ancestor's visible height and sticks to its top while the
- * container is in view, and scrolling, following the cursor, `load` and
- * `setZoom` act on the ancestor. Several views can share one scroll element,
- * each sticking within its own container. Throws when the scroll element does
- * not contain the container.
+ * With `options.scrollElement` an ancestor or the page scrolls instead: the
+ * container's `overflow` is left alone and it grows to the score's full
+ * height, the canvas is as tall as the scroller's visible height (the
+ * viewport's, less any horizontal scrollbar, for the page) and sticks to its
+ * top while the container is in view, and scrolling, following the cursor,
+ * `load` and `setZoom` act on the scroller. Several views can share one
+ * scroller, each sticking within its own container. Throws when the scroll
+ * element does not contain the container, or for the page, when the
+ * container is not attached to that document.
  *
  * Resolves once the music font has loaded, since text drawn before then stays
  * as tofu.
  */
-export declare function mountScore(container: HTMLElement, source: string | Score, options?: MountOptions): Promise<ScoreView>;
+export declare function mountScore(container: HTMLElement, source: string | Score | MusicXmlBytes, options?: MountOptions): Promise<ScoreView>;

@@ -21,6 +21,26 @@ export interface LayoutOptions {
      * exactly the trade real optical justification (Phase 1+) exists to fix.
      */
     readonly systemWidthPx?: number;
+    /**
+     * Draw the score's title block (title, subtitle, composer, lyricist; see
+     * `scoreHeader`) above the first system, pushing every system down by its
+     * height (M9 Slice 3). Default true; a score with none of that text draws
+     * nothing either way.
+     */
+    readonly header?: boolean;
+    /**
+     * Announce a clef, key or time change that lands on a system's first
+     * measure at the end of the system before it (M9 Slice 5): a change clef
+     * before the barline, the key and time signature after it. Default true.
+     */
+    readonly courtesy?: boolean;
+    /**
+     * Draw SMuFL's system divider (the "//" mark) at the left margin between
+     * two systems of a score with three or more staves, so a reader scanning
+     * a tall page sees where one system ends (M10 Slice 9). The blank between
+     * those systems grows to fit it. Default false.
+     */
+    readonly systemSeparators?: boolean;
 }
 /** The diatonic index of a clef's middle staff line, for callers outside
  *  layout that need the same middle-line reference `computeBeamGroups` and

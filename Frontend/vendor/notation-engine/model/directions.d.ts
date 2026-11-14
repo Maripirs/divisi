@@ -111,15 +111,22 @@ export interface MetronomeMark {
 }
 /**
  * One drawable text direction: its words (the first line, when the source
- * wrote several), a metronome mark after them, or both ("Allegro q = 120").
- * `placement` is the source's, `null` when unstated. `italic`/`bold` come from
- * the first `<words>`' `font-style`/`font-weight`.
+ * wrote several), metronome marks after them, or both ("Allegro q = 120").
+ * `metronomes` is every plain `<metronome>` of the direction, in source order
+ * (M10 Slice 5; only the first used to be read), and `metronome` the first of
+ * them. `tempo` says it is a tempo mark: it carries a metronome or a
+ * `<sound tempo>` ("Allegro" with its playback speed), which layout draws once
+ * per system when several parts repeat it. `placement` is the source's, `null`
+ * when unstated. `italic`/`bold` come from the first `<words>`'
+ * `font-style`/`font-weight`.
  */
 export interface TextDirection {
     readonly onset: number;
     readonly placement: Placement | null;
     readonly text: string | null;
     readonly metronome: MetronomeMark | null;
+    readonly metronomes: readonly MetronomeMark[];
+    readonly tempo: boolean;
     readonly italic: boolean;
     readonly bold: boolean;
 }

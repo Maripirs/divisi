@@ -1,4 +1,4 @@
-import type { NoteId } from '../model/score.js';
+import type { ClefType, NoteId, TimeSignature } from '../model/score.js';
 import type { GlyphName } from '../render/glyph-metrics.js';
 export interface Rect {
     readonly x: number;
@@ -6,6 +6,16 @@ export interface Rect {
     readonly width: number;
     readonly height: number;
 }
+/**
+ * What a `glyph` or `rect` op is part of, when that is not plain music ink
+ * (M9 Slice 6), so the renderer can give it its own colour:
+ * - `'text'`: drawn as part of text, e.g. a lyric's hyphens and extender
+ *   line, or the note glyph in a tempo marking. Paints in
+ *   `ScoreColors.text`, like every `text` op.
+ * - `'rest'`: a rest, or one of its augmentation dots. Paints in
+ *   `ScoreColors.rest`.
+ */
+export type DrawOpRole = 'text' | 'rest';
 /**
  * One thing to draw.
  *
@@ -31,6 +41,9 @@ export interface Rect {
  * own font size rather than reusing `LaidOutScore.fontSizePx` (the shared
  * Bravura size every `glyph` op draws at) and is rendered in an ordinary text
  * font, not the music font.
+ *
+ * `role` (M9 Slice 6) marks a non-text op the renderer paints in a colour
+ * other than the plain ink: see `DrawOpRole`.
  */
 export type DrawOp = {
     readonly kind: 'glyph';
@@ -50,6 +63,7 @@ export type DrawOp = {
      */
     readonly fontSizePx?: number;
     readonly noteId?: NoteId;
+    readonly role?: DrawOpRole;
 } | {
     readonly kind: 'text';
     readonly text: string;
@@ -62,9 +76,10 @@ export type DrawOp = {
      * Horizontal alignment about `x` (M6 Slice 9): `'center'` for a lyric
      * syllable centred under its note. The renderer measures and centres
      * the real text itself, so centring stays exact even though layout
-     * only estimates text widths. Omitted means `'left'`.
+     * only estimates text widths. Omitted means `'left'`. `'right'` (M9
+     * Slice 3: a composer credit) ends the text at `x`.
      */
-    readonly align?: 'left' | 'center';
+    readonly align?: 'left' | 'center' | 'right';
     /** A CSS font style prefix, e.g. `'italic'` or `'bold'` (M8 Slice 5:
      *  a text direction's `font-style`/`font-weight`). */
     readonly fontStyle?: string;
@@ -85,7 +100,15 @@ export type DrawOp = {
     readonly y: number;
     readonly width: number;
     readonly height: number;
+    /**
+     * How far the right edge sits below the left one, pixels (negative:
+     * above), M9 Slice 4: an angled beam is a parallelogram with vertical
+     * ends, its corners `(x, y)`, `(x + width, y + rise)` and `height`
+     * below each. Omitted (or 0) is an ordinary axis-aligned rectangle.
+     */
+    readonly rise?: number;
     readonly noteId?: NoteId;
+    readonly role?: DrawOpRole;
 } | {
     readonly kind: 'curve';
     /** Start point, e.g. just clear of the first notehead's ink. */
@@ -155,6 +178,38 @@ export interface LaidOutMeasure {
         readonly top: number;
         readonly bottom: number;
     };
+    /**
+     * The vertical extent (canvas y) of the ink that sizes the gaps around
+     * this measure's staff (M9 Slice 7): `inkExtent` plus the dynamics,
+     * hairpins, texts, lyrics and volta brackets the row adds, less any
+     * cross-staff beam half, which meets the next staff's at the split
+     * between them by construction. Recorded so a scoped `relayoutMeasure`
+     * can tell whether an edit changed a gap without laying the neighbouring
+     * rows out again. Optional, like `inkExtent`, for hand-built fixtures.
+     */
+    readonly gapExtent?: {
+        readonly top: number;
+        readonly bottom: number;
+    };
+    /**
+     * What this measure announces at the end of its system (M9 Slice 5): the
+     * clef, key and time signature the next measure changes to, when that
+     * measure opens the next system. The change clef sits just before the
+     * barline, the key (with any cancelling naturals) and time signature just
+     * after it, inside this measure's own region and ops. Absent when nothing
+     * changes there, for the score's last measure, and with
+     * `LayoutOptions.courtesy: false`.
+     */
+    readonly courtesy?: CourtesyChange;
+}
+/** The changes a system-ending measure announces (`LaidOutMeasure.courtesy`).
+ *  Only the fields that actually change are present. */
+export interface CourtesyChange {
+    readonly clef?: ClefType;
+    /** The new key, with `previousFifths` the one it cancels. */
+    readonly keyFifths?: number;
+    readonly previousFifths?: number;
+    readonly time?: TimeSignature;
 }
 export interface LaidOutScore {
     /** Canvas size this layout expects, CSS pixels. */
@@ -225,8 +280,11 @@ export interface LaidOutScore {
     /**
      * Part-grouping decorations (M2 Slice 5): a brace or bracket per
      * multi-staff `Part`, drawn at every system, plus a part-name label per
-     * named `Part`, drawn only at the score's first system. See `layout.ts`'s
-     * `layoutSystemPartDecorations` for how these are built.
+     * named `Part` (abbreviations on later systems). Since M10 Slice 9 also
+     * each multi-staff system's left barline, ending exactly where its
+     * measures' regions start, and the system dividers between systems
+     * (`LayoutOptions.systemSeparators`), in the blank between their ink. See
+     * `layout.ts`'s `layoutSystemPartDecorations` for how these are built.
      *
      * Deliberately *not* folded into any `LaidOutMeasure`'s own `ops`/
      * `region`, unlike everything else this engine draws. A brace/bracket's
@@ -243,4 +301,17 @@ export interface LaidOutScore {
      * `redrawMeasure`/`redrawMeasures` never need to touch them at all.
      */
     readonly partDecorations: readonly DrawOp[];
+    /**
+     * The title block above the first system (M9 Slice 3; see `scoreHeader`):
+     * the title centred, a subtitle under it, the lyricist left and the
+     * composer right below them. Absent when the score has none of these or
+     * `LayoutOptions.header` is false. Like `partDecorations`, its ops belong
+     * to no measure, so `drawAll()` paints them and a scoped redraw never
+     * touches them; `region` is the band their text occupies, which every
+     * system sits below and a scoped `relayoutMeasure` may not grow into.
+     */
+    readonly header?: {
+        readonly region: Rect;
+        readonly ops: readonly DrawOp[];
+    };
 }

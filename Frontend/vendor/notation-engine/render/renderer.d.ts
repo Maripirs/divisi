@@ -1,42 +1,78 @@
+import { type Markup } from '../layout/markup.js';
 import type { LaidOutScore, Rect } from '../layout/types.js';
 import type { NoteId } from '../model/score.js';
-export interface CanvasRendererOptions {
-    /** Font family the SMuFL font is registered under. */
-    readonly fontFamily?: string;
-    /** Font family a `text` op (M2 Slice 5's part-name labels) draws with.
-     *  Ordinary text, not a music glyph, so it uses a normal text font rather
-     *  than `fontFamily`'s SMuFL one. */
-    readonly labelFontFamily?: string;
-    /** Ink colour for staff, glyphs and stems. */
-    readonly foreground?: string;
+/**
+ * Every colour the renderer paints with (M9 Slice 6), as one value a host can
+ * pass at construction (`CanvasRendererOptions`) and change at runtime
+ * (`CanvasRenderer.setColors`, `ScoreView.setColors`), e.g. to follow a dark
+ * theme. Any CSS colour string works.
+ *
+ * Precedence per op: `playbackCursor`, then `selection`, then a note's own
+ * colour (`setNoteColors`), then a staff's own colour (`setStaffColors`),
+ * then `text`/`rest`, then `foreground`. Markup
+ * (`setMarkup`) paints in its own `Markup.color`, else `markup`.
+ */
+export interface ScoreColors {
+    /** Ink colour for staff lines, barlines, glyphs, stems and everything
+     *  else not covered by `text` or `rest`. */
+    readonly foreground: string;
     /**
      * Colour painted over a region before redrawing it. `null` uses
      * `clearRect` instead, for a canvas layered over something else.
      */
-    readonly background?: string | null;
+    readonly background: string | null;
+    /**
+     * Colour for text: part names, lyrics (with their hyphens and extender
+     * lines), the title block, measure numbers and text directions (words,
+     * tempo markings, volta labels). `null` (the default) follows
+     * `foreground`, so changing only `foreground` recolours text too.
+     * Dynamics are music glyphs, not text, and stay in `foreground`.
+     */
+    readonly text: string | null;
+    /** Colour for rests and their augmentation dots. `null` (the default)
+     *  follows `foreground`. */
+    readonly rest: string | null;
     /** Ink colour for the ops belonging to the selected note. */
-    readonly selection?: string;
+    readonly selection: string;
     /**
      * Ink colour for the ops belonging to a note currently under the playback
      * cursor (M4 Slice 2). Deliberately distinct from `selection`'s orange/rust
      * so a live editor selection and an in-progress playback highlight never
      * read as the same thing on screen.
      */
-    readonly playbackCursor?: string;
+    readonly playbackCursor: string;
     /**
      * Translucent fill painted over the whole region of every measure in the
      * current measure range (M5 Slice 4). A background tint, not an ink
      * colour, and deliberately a pale blue distinct from both `selection` and
      * `playbackCursor`: see `#paintMeasureRangeTint`'s own comment on why.
      */
-    readonly measureRange?: string;
+    readonly measureRange: string;
     /**
      * Fill colour for a seam marker strip (M5 Slice 6, see `setSeamMarkers`).
      * Translucent so the barline it sits on still shows through, and a red
      * distinct from every other highlight colour here, since a seam is a
      * host annotation, not an editing state.
      */
-    readonly seamMarker?: string;
+    readonly seamMarker: string;
+    /**
+     * Ink colour for the markup layer (`setMarkup`): a mark without its own
+     * `color`. A pencil-like slate blue by default, so personal marks read
+     * apart from the printed music; give it a lighter one on a dark
+     * background.
+     */
+    readonly markup: string;
+}
+/** The colours a renderer uses for every `ScoreColors` key it is not given:
+ *  near-black ink on white, text and rests following the ink. */
+export declare const DEFAULT_COLORS: Readonly<ScoreColors>;
+export interface CanvasRendererOptions extends Partial<ScoreColors> {
+    /** Font family the SMuFL font is registered under. */
+    readonly fontFamily?: string;
+    /** Font family a `text` op (M2 Slice 5's part-name labels) draws with.
+     *  Ordinary text, not a music glyph, so it uses a normal text font rather
+     *  than `fontFamily`'s SMuFL one. */
+    readonly labelFontFamily?: string;
 }
 /** One measure boundary to mark (M5 Slice 6). See `regionForMeasureBoundary`
  *  for exactly which boundary `boundaryIndex` names. */
@@ -79,6 +115,35 @@ export declare class CanvasRenderer {
      * full repaint on every layout change, which is exactly OSMD's shape.
      */
     setLayout(layout: LaidOutScore): void;
+    get markup(): readonly Markup[];
+    /**
+     * Replace the markup layer (M9): the host's personal marks (breath marks,
+     * caesuras, short text) drawn over the score. `[]` clears it. See
+     * `Markup` and `layoutMarkup` for anchoring and placement.
+     *
+     * Marks are render state, like the selection: never part of the model,
+     * never exported, never undone by `EditHistory`. They are positioned in
+     * layout units and every `setLayout` re-resolves the list, so they follow
+     * a zoom, a recast or an edit without the host calling this again; a
+     * mark whose note was deleted simply stops drawing. They never change
+     * spacing.
+     *
+     * Like `setSelection`, this does not paint: it returns the `(staffIndex,
+     * index)` pairs of the measures whose marks changed, for the caller to
+     * redraw. Each mark belongs to one measure, and a scoped redraw clears
+     * the area the measure's marks last covered as well as its region, so a
+     * removed or moved mark leaves no pixels behind.
+     */
+    setMarkup(marks: readonly Markup[]): {
+        staffIndex: number;
+        index: number;
+    }[];
+    /** The id of the mark painted at layout point `(x, y)`, topmost first, or
+     *  `null`. */
+    markupAt(x: number, y: number): string | null;
+    /** The area mark `id` covers, in layout coordinates, or `null` when it is
+     *  not drawn (unknown id, or its anchor is not in the layout). */
+    markupBounds(id: string): Rect | null;
     get selectedNoteId(): NoteId | null;
     /**
      * Change the selection, returning the `(staffIndex, index)` pairs whose
@@ -152,14 +217,14 @@ export declare class CanvasRenderer {
     /**
      * Paint every measure of a staff in its own ink colour (M8 Slice 3), e.g.
      * a muted voice part dimmed to grey, or `null` to put every staff back in
-     * `foreground`. Keys are `staffIndex`; a staff left out keeps `foreground`.
+     * the score colours. Keys are `staffIndex`; a staff left out keeps them.
      *
-     * All of a measure's ops take the colour, staff lines and barlines
-     * included, so a dimmed part reads as one faded band rather than faded
-     * notes on full-strength lines. Selection and the playback cursor still
-     * win over it per note, as they win over `foreground`. `partDecorations`
-     * (braces, brackets, part names) belong to no single staff and keep
-     * `foreground`; a barline shared down into the next staff belongs to the
+     * All of a measure's ops take the colour, staff lines, barlines, text and
+     * rests included, so a dimmed part reads as one faded band rather than
+     * faded notes on full-strength lines. Selection and the playback cursor
+     * still win over it per note, as they win over `foreground`.
+     * `partDecorations` (braces, brackets, part names) belong to no single
+     * staff and keep the score colours; a barline shared down into the next staff belongs to the
      * upper staff's measure and takes that staff's colour.
      *
      * Like `setMeasureRange`, this does not paint: it returns the
@@ -171,6 +236,44 @@ export declare class CanvasRenderer {
         staffIndex: number;
         index: number;
     }[];
+    get noteColors(): ReadonlyMap<NoteId, string>;
+    /**
+     * Paint individual notes in their own ink colour (M9), e.g. green for a
+     * pitch a practising student hit, or `null` to clear every note colour.
+     * Replaces the whole map. Every op carrying the note's id takes the
+     * colour: its head, stem, flag, dots, accidental, ties and articulations,
+     * or a rest's glyph and dots. Each chord member has its own id, so a
+     * chord's notes colour separately; a shared stem carries one member's id
+     * and follows that member. Lyrics and other text under a note carry no
+     * note id and keep their own colour.
+     *
+     * Selection and the playback cursor win over a note colour; a note colour
+     * wins over the staff's colour (`setStaffColors`) and the `rest` colour.
+     * Keyed by `NoteId`, so the colours persist across `setLayout`; an id the
+     * layout no longer has draws nothing.
+     *
+     * Like `setStaffColors`, this does not paint: it returns the
+     * `(staffIndex, index)` pairs of every measure holding a note whose
+     * colour changed (old or new), deduplicated, for the caller to redraw.
+     */
+    setNoteColors(colors: ReadonlyMap<NoteId, string> | null): {
+        staffIndex: number;
+        index: number;
+    }[];
+    /** The current colours, as set: `text` and `rest` are `null` while they
+     *  follow `foreground`. */
+    get colors(): ScoreColors;
+    /**
+     * Change some colours (M9 Slice 6), keeping the rest. A key that is absent
+     * or `undefined` stays as it is; `text: null` or `rest: null` makes that
+     * colour follow `foreground` again.
+     *
+     * Like `setSeamMarkers`, this does not paint: every pixel may change,
+     * including the title block and part decorations that only `drawAll`
+     * paints, so the caller repaints with `drawAll()`. No relayout is
+     * involved, and the colours persist across `setLayout`.
+     */
+    setColors(colors: Partial<ScoreColors>): void;
     get viewport(): Rect | null;
     /**
      * Limit painting to the part of the layout the host actually shows (M6
